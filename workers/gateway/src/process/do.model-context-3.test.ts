@@ -129,10 +129,10 @@ describe("model context", () => {
     expect(result.messages[0]).toMatchObject({
       role: "system",
     });
-    expect(result.messages[0].content).toContain("Scheduled event `nightly` fired.");
+    expect(result.messages[0].content).toContain("Schedule `nightly` fired.");
     expect(result.contextMessages[0]).toMatchObject({
       role: "user",
-      content: expect.stringContaining("[From: schedule sched-1]"),
+      content: expect.stringContaining("ID: `sched-1`"),
     });
     expect(result.contextMessages[0].content).toContain("[Directed endpoint: this GSV process.]");
     expect(result.contextMessages[0].content).toContain("[GSV EVENT]");
@@ -309,7 +309,8 @@ describe("model context", () => {
       });
       const contextMessages = await process.history.buildContextMessages("default");
       expect(contextMessages).toHaveLength(1);
-      expect(contextMessages[0].content).toContain("[From: schedule sched-busy]");
+      expect(contextMessages[0].content).toContain("ID: `sched-busy`");
+      expect(contextMessages[0].content).not.toContain("Reply destination:");
       expect(contextMessages[0].content).not.toContain("[Directed endpoint:");
 
       await process.run.finishRun("run-busy", { status: "ok", resultText: "done" });
@@ -328,8 +329,8 @@ describe("model context", () => {
       mockGeneration(process, async (request: any) => {
         expect(request.context.systemPrompt).toBe("Test system prompt.");
         const input = JSON.stringify(request.context.messages);
-        expect(input).toContain("[From: schedule sched-adapter-reply]");
-        expect(input).toContain("[Directed endpoint: this Telegram direct message.]");
+        expect(input).toContain("ID: `sched-adapter-reply`");
+        expect(input).toContain("Reply destination: this Telegram direct message.");
         expect(input).not.toContain("message send");
         expect(input).not.toContain("--also");
         expect(input).not.toContain("telegram-user-1");

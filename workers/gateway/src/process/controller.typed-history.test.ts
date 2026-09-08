@@ -163,7 +163,7 @@ describe("typed controller history producers", () => {
         kind: "event",
         payload: { kind: "schedule.fired", payload, severity: "info", audience: "model" },
       })));
-      expect(process.store.messages.getMessages()[0]?.content).toContain("Scheduled event `nightly` fired.");
+      expect(process.store.messages.getMessages()[0]?.content).toContain("Schedule `nightly` fired.");
     });
   });
 

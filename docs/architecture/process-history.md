@@ -33,6 +33,9 @@ renderers own their text. Golden fixtures captured before extraction guard exact
 provider content and metadata, including missing media and shared hydration
 budgets. A person-only event contributes no provider message and cannot change
 origin annotations or consume model context.
+Model-facing events start with `[GSV EVENT]` before any origin annotations.
+Scheduled events name an explicit reply target once in their body. Without one,
+they retain ordinary run destination annotations and do not redirect an active run.
 
 Responsibility events retain their complete ledger transition and an optional
 `contextFields` projection. Process selects those fields when it appends the

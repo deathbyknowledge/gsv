@@ -24,7 +24,7 @@ exports[`immutable model history baseline > preserves exact mixed groups, origin
   },
   {
     "role": "user",
-    "content": "[From: Slack thread Synthetic room thread thread:one from Fixture actor]\\n[Directed endpoint: this Slack thread.]\\n[GSV EVENT]\\nA legacy event with an independent origin.",
+    "content": "[GSV EVENT]\\n[From: Slack thread Synthetic room thread thread:one from Fixture actor]\\n[Directed endpoint: this Slack thread.]\\nA legacy event with an independent origin.",
     "timestamp": 1700000000000
   },
   {
@@ -335,12 +335,12 @@ exports[`immutable model history baseline > preserves exact mixed groups, origin
   },
   {
     "role": "user",
-    "content": "[From: schedule schedule:golden]\\n[Directed endpoint: this Slack thread.]\\n[GSV EVENT]\\nScheduled event \`Synthetic reminder\` fired.\\nSchedule id: \`schedule:golden\`.\\nScheduled at: 2023-11-14T22:13:19.500Z.\\nFired at: 2023-11-14T22:13:20.000Z.\\n\\nInspect the fixture.\\n\\nEvent data:\\n\`\`\`json\\n{\\n  \\"count\\": 2\\n}\\n\`\`\`",
+    "content": "[GSV EVENT]\\nSchedule \`Synthetic reminder\` fired.\\nID: \`schedule:golden\`\\nReply destination: this Slack thread.\\nScheduled: 2023-11-14T22:13:19.500Z\\nFired: 2023-11-14T22:13:20.000Z\\n\\nInspect the fixture.\\n\\nData:\\n\`\`\`json\\n{\\n  \\"count\\": 2\\n}\\n\`\`\`",
     "timestamp": 1700000000000
   },
   {
     "role": "user",
-    "content": "[Directed endpoint: this GSV process.]\\n[GSV EVENT]\\nObserved watched signal \`proc.changed\` from process \`proc:other\`.\\nWatch key: \`watch:fixture\`.\\n\\nWatch state:\\n\`\`\`json\\n{\\n  \\"revision\\": 2\\n}\\n\`\`\`\\n\\nSignal payload:\\n\`\`\`json\\n{\\n  \\"changes\\": [\\n    \\"messages\\"\\n  ]\\n}\\n\`\`\`",
+    "content": "[GSV EVENT]\\n[Directed endpoint: this GSV process.]\\nObserved watched signal \`proc.changed\` from process \`proc:other\`.\\nWatch key: \`watch:fixture\`.\\n\\nWatch state:\\n\`\`\`json\\n{\\n  \\"revision\\": 2\\n}\\n\`\`\`\\n\\nSignal payload:\\n\`\`\`json\\n{\\n  \\"changes\\": [\\n    \\"messages\\"\\n  ]\\n}\\n\`\`\`",
     "timestamp": 1700000000000
   },
   {

@@ -8,8 +8,8 @@ import { buildFallbackMediaBlocks, describeStoredProcessMedia } from "./media-re
 import { normalizeAssistantStopReason, usageStateToPiUsage } from "../storage/metadata-codec";
 import type { MessageMetadata } from "../storage/records";
 import { renderHistoryEvent } from "./event-renderer";
-import type { AdapterSurface } from "../../adapter-interface";
-import type { ReplyDestination } from "../internal/schemas";
+import { formatInteractionOriginForContext, formatReplyDestinationForContext } from "../../prompts/context-origin";
+export { formatInteractionOriginForContext, formatReplyDestinationForContext } from "../../prompts/context-origin";
 import { MAX_PROCESS_MEDIA_READ_BYTES } from "../internal/lifecycle";
 
 /** One original message and its ordered typed members share a model-context position. */
@@ -87,21 +87,30 @@ function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: 
     if (group.runId) seenRunIds.add(group.runId);
     const primary = group.records[0];
     if (primary.kind !== "message" && primary.kind !== "event") continue;
+    const schedule = primary.kind === "event" && primary.payload.kind === "schedule.fired"
+      ? primary.payload.payload : undefined;
+    const origin = schedule
+      ? { kind: "scheduler" as const, scheduleId: schedule.scheduleId, replyTo: schedule.replyTo }
+      : group.origin;
 
-    const source = formatInteractionOriginForContext(group.origin);
-    const shouldRenderSource = source !== null && source !== previousSource;
+    const source = formatInteractionOriginForContext(origin);
+    const shouldRenderSource = !schedule && source !== null && source !== previousSource;
     if (primary.kind === "message" || source !== null) previousSource = source;
 
-    const replyDestination = ownsDistinctRun ? formatReplyDestinationForContext(group.origin) : null;
+    const replyDestination = ownsDistinctRun || schedule?.replyTo ? formatReplyDestinationForContext(origin) : null;
     const shouldRenderReplyDestination =
       replyDestination !== null && replyDestination.key !== previousReplyDestinationKey;
     if (replyDestination) previousReplyDestinationKey = replyDestination.key;
+    if (schedule?.replyTo) continue;
 
     const message = messages[index];
     if (message?.role !== "user" || (!shouldRenderSource && !shouldRenderReplyDestination)) continue;
-    messages[index] = prefixUserMessageContent(message, formatContextOriginLines(
+    const annotations = formatContextOriginLines(
       source, shouldRenderSource, replyDestination, shouldRenderReplyDestination,
-    ));
+    );
+    messages[index] = primary.kind === "event"
+      ? renderModelEvent(primary.payload, group.createdAt, annotations)
+      : prefixUserMessageContent(message, annotations);
   }
 }
 
@@ -138,8 +147,8 @@ function hasModelHistoryMessage(group: ModelHistoryGroup): boolean {
   return true;
 }
 
-export function renderModelEvent(event: ProcHistoryEvent, timestamp: number): UserMessage {
-  return { role: "user", content: `[GSV EVENT]\n${renderHistoryEvent(event)}`, timestamp };
+export function renderModelEvent(event: ProcHistoryEvent, timestamp: number, annotations?: string): UserMessage {
+  return { role: "user", content: ["[GSV EVENT]", ...(annotations ? [annotations] : []), renderHistoryEvent(event)].join("\n"), timestamp };
 }
 
 function assistantHistoryMessage(
@@ -235,56 +244,6 @@ function buildFallbackUserContent(text: string, media: StoredProcessMedia[]): Te
   return content;
 }
 
-const PROCESS_REPLY_DESTINATION = {
-  key: "process",
-  description: "this GSV process",
-} as const;
-
-export function formatReplyDestinationForContext(
-  origin: InteractionOrigin | undefined,
-): ReplyDestination {
-  if (!origin) return PROCESS_REPLY_DESTINATION;
-
-  const adapterDestination =
-    origin.kind === "adapter" ? origin : origin.kind === "scheduler" ? origin.replyTo : undefined;
-  if (adapterDestination) {
-    const surface = adapterDestination.surface;
-    const surfaceLabel = surface.kind === "dm" ? "direct message" : surface.kind;
-    return {
-      key: JSON.stringify([
-        "adapter",
-        adapterDestination.adapter,
-        adapterDestination.accountId,
-        adapterDestination.actorId,
-        surface.kind,
-        surface.id,
-        surface.threadId ?? "",
-      ]),
-      description: `this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
-    };
-  }
-  if (origin.kind === "scheduler") return PROCESS_REPLY_DESTINATION;
-  if (origin.kind === "client") {
-    return {
-      key: `client:${origin.connectionId}`,
-      description: "this GSV client",
-    };
-  }
-  if (origin.kind === "process") {
-    return {
-      key: `process:${origin.sourcePid}`,
-      description: "the calling GSV process",
-    };
-  }
-  if (origin.kind === "device") {
-    return {
-      key: `device:${origin.deviceId}`,
-      description: "this GSV device client",
-    };
-  }
-  throw new Error("Interaction origin has no reply destination");
-}
-
 export function prefixUserMessageContent(message: UserMessage, prefix: string): UserMessage {
   if (!Array.isArray(message.content)) {
     return { ...message, content: `${prefix}\n${message.content}` };
@@ -305,73 +264,6 @@ export function prefixUserMessageContent(message: UserMessage, prefix: string): 
     ...message,
     content,
   };
-}
-
-export function formatInteractionOriginForContext(
-  origin: InteractionOrigin | undefined,
-): string | null {
-  if (!origin) return null;
-
-  if (origin.kind === "adapter") {
-    const adapter = titleCase(origin.adapter);
-    const surface = formatAdapterSurfaceForContext(origin.surface);
-    const actor = origin.surface.kind === "dm" ? null : origin.actorLabel || origin.actorId;
-    return [adapter, surface ? ` ${surface}` : "", actor ? ` from ${actor}` : ""].join("");
-  }
-
-  if (origin.kind === "client") {
-    return formatClientOriginForContext(origin.platform, origin.clientId);
-  }
-
-  if (origin.kind === "device") {
-    return `device ${origin.deviceId}${origin.cwd ? ` cwd ${origin.cwd}` : ""}`;
-  }
-
-  if (origin.kind === "process") {
-    return `process ${origin.sourcePid}${origin.uid !== undefined ? ` uid ${origin.uid}` : ""}`;
-  }
-
-  if (origin.kind === "scheduler") {
-    return `schedule ${origin.scheduleId}`;
-  }
-
-  return null;
-}
-
-function formatClientOriginForContext(
-  platform: string | undefined,
-  clientId: string | undefined,
-): string {
-  if (clientId === "gsv-ui" || platform === "browser" || platform === "web") {
-    return "GSV Web Desktop";
-  }
-  const label = platform || "client";
-  return clientId ? `${label} ${clientId}` : label;
-}
-
-function formatAdapterSurfaceForContext(surface: AdapterSurface): string {
-  const label = surface.name || surface.handle || surface.id;
-  if (surface.kind === "dm") {
-    return "direct message";
-  }
-  if (surface.kind === "thread") {
-    const thread = surface.threadId ? ` thread ${surface.threadId}` : "";
-    return `${surface.kind} ${label}${thread}`;
-  }
-  return `${surface.kind} ${label}`;
-}
-
-function titleCase(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  const known = new Map([
-    ["whatsapp", "WhatsApp"],
-    ["discord", "Discord"],
-    ["gsv", "GSV"],
-  ]);
-  const mapped = known.get(trimmed.toLowerCase());
-  if (mapped) return mapped;
-  return `${trimmed.slice(0, 1).toUpperCase()}${trimmed.slice(1)}`;
 }
 
 export function orderMessagesForProvider(messages: Message[]): Message[] {

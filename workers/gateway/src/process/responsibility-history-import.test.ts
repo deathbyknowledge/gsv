@@ -99,7 +99,7 @@ describe("responsibility history import", () => {
         }
         const model = await process.history.buildContextMessages();
         expect(model.map((message) => message.content)).toEqual(messages.map((message, index) => (
-          `${index === 0 ? "[Directed endpoint: this GSV process.]\n" : ""}[GSV EVENT]\n${message.content}`
+          `[GSV EVENT]\n${index === 0 ? "[Directed endpoint: this GSV process.]\n" : ""}${message.content}`
         )));
         return { records, messages: messages.map((message) => message.content) };
       });

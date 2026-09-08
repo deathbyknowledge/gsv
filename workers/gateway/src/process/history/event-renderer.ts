@@ -5,13 +5,13 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import type {
-  ProcessAdapterWorkReturnedRuntimeEvent, ProcessScheduleDeliverArgs,
+  ProcessAdapterWorkReturnedRuntimeEvent,
 } from "../../protocol/process-frames";
 import type { WatchedSignalPayload } from "../internal/schemas";
 import {
   ipcReplyPayloadSchema, nonEmptyStringSchema,
 } from "../internal/schemas";
-import { normalizeOptionalString, parseOptionalJsonObject } from "../internal/messages";
+import { parseOptionalJsonObject } from "../internal/messages";
 import { parseStoredProcessMedia } from "../media";
 import { describeStoredProcessMedia } from "./media-renderer";
 import {
@@ -23,6 +23,8 @@ import type { RunControlResult } from "../internal/contracts";
 import { formatProviderErrorMessage, formatProviderContextOverflowMessage } from "../../inference/errors";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
+import { formatScheduleEventMessage } from "../../prompts/schedule-events";
+export { formatScheduleEventMessage } from "../../prompts/schedule-events";
 import { formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
 export { formatResponsibilityTransitionEvent, formatResponsibilityLine } from "../../prompts/responsibility-events";
 
@@ -118,36 +120,6 @@ export function formatProcessRuntimeEvent(event: ProcessAdapterWorkReturnedRunti
     `The user returned from work process \`${event.workPid}\` to their personal intelligence.`,
     "No work-session transcript was attached to this event.",
   ].join("\n");
-}
-
-export function formatScheduleEventMessage(value: ProcessScheduleDeliverArgs): string {
-  const scheduleId = normalizeOptionalString(value.scheduleId);
-  const scheduleName = normalizeOptionalString(value.scheduleName);
-  const message = normalizeOptionalString(value.message) ?? "Scheduled event fired.";
-  const scheduledAtMs = value.scheduledAtMs !== undefined && value.scheduledAtMs !== null
-    && Number.isFinite(value.scheduledAtMs)
-    ? value.scheduledAtMs
-    : null;
-  const firedAtMs = Number.isFinite(value.firedAtMs) ? value.firedAtMs : Date.now();
-
-  const lines = [
-    scheduleName
-      ? `Scheduled event \`${scheduleName}\` fired.`
-      : "Scheduled event fired.",
-  ];
-  if (scheduleId) {
-    lines.push(`Schedule id: \`${scheduleId}\`.`);
-  }
-  if (scheduledAtMs !== null) {
-    lines.push(`Scheduled at: ${new Date(scheduledAtMs).toISOString()}.`);
-  }
-  lines.push(`Fired at: ${new Date(firedAtMs).toISOString()}.`, "", message);
-
-  const renderedData = renderJsonBlock(value.data);
-  if (renderedData) {
-    lines.push("", "Event data:", "```json", renderedData, "```");
-  }
-  return lines.join("\n");
 }
 
 export function formatWatchedSignalMessage(
