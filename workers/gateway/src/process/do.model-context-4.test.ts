@@ -790,7 +790,7 @@ describe("model context", () => {
     expect(result.calls[1]).toMatchObject({ provider: "openrouter", model: "small-fallback" });
     expect(result.calls[1].context).toContain("Fallback compact summary.");
     expect(result.calls[1].context).toContain("Context that must stay live.");
-    expect(result.calls[1].context).toContain("Context runway is getting low.");
+    expect(result.calls[1].context).toContain("Context low:");
     expect(result.calls[1].context).not.toContain("old context A");
     expect(result.compactionConfigs).toEqual([
       { provider: "openrouter", model: "small-fallback" },
@@ -802,7 +802,7 @@ describe("model context", () => {
     ).toEqual([
       ["system", expect.stringContaining("Fallback compact summary.")],
       ["user", "Context that must stay live."],
-      ["system", expect.stringContaining("Context runway is getting low.")],
+      ["system", expect.stringContaining("Context low:")],
       ["assistant", "fallback after compaction"],
     ]);
     expect(result.segments).toHaveLength(1);

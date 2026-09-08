@@ -325,7 +325,7 @@ exports[`immutable model history baseline > preserves exact mixed groups, origin
   },
   {
     "role": "user",
-    "content": "[GSV EVENT]\\nContext runway is getting low.\\n\\nAbout 12,000 input tokens remain before the model's reserved output budget.\\nPreserve anything that should survive compaction now: use the Personal wiki for durable knowledge, standing context only for explicit stable facts or preferences, and the responsibility ledger for unresolved commitments.\\nDo not promote transient details merely because the context window is filling.\\nAbout 8,000 tokens of that runway remain before GSV automatically compacts older Process history at the configured 90% safety boundary.\\nContinue normally if there is nothing worth preserving.",
+    "content": "[GSV EVENT]\\nContext low: ~12,000 input tokens remain. Automatic compaction in ~8,000 tokens (90% boundary).\\n\\nPreserve durable knowledge in the Personal wiki, explicit stable facts or preferences in standing context, and unresolved commitments in the responsibility ledger.\\nDon’t preserve transient details just because context is low. Continue normally if nothing needs preserving.",
     "timestamp": 1700000000000
   },
   {

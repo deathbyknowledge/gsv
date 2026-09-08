@@ -579,23 +579,23 @@ describe("model context", () => {
     });
 
     expect(result.generationContexts).toHaveLength(4);
-    expect(result.generationContexts[0]).not.toContain("Context runway is getting low.");
+    expect(result.generationContexts[0]).not.toContain("Context low:");
     expect(result.generationContexts[1]).toContain("[GSV EVENT]");
-    expect(result.generationContexts[1]).toContain("Context runway is getting low.");
-    expect(result.generationContexts[1]).toContain("About 164,000 input tokens remain");
+    expect(result.generationContexts[1]).toContain("Context low:");
+    expect(result.generationContexts[1]).toContain("~164,000 input tokens remain.");
     expect(result.generationContexts[1]).toContain(
-      "About 64,000 tokens of that runway remain before GSV automatically compacts",
+      "Automatic compaction in ~64,000 tokens (90% boundary).",
     );
-    expect(result.generationContexts[2].match(/Context runway is getting low\./gu)).toHaveLength(
+    expect(result.generationContexts[2].match(/Context low:/gu)).toHaveLength(
       1,
     );
-    expect(result.generationContexts[3].match(/Context runway is getting low\./gu)).toHaveLength(
+    expect(result.generationContexts[3].match(/Context low:/gu)).toHaveLength(
       1,
     );
     expect(
       result.messages.filter(
         (message: any) =>
-          message.role === "system" && message.content.includes("Context runway is getting low."),
+          message.role === "system" && message.content.includes("Context low:"),
       ),
     ).toHaveLength(1);
     expect(result.segments).toHaveLength(1);
@@ -643,7 +643,7 @@ describe("model context", () => {
       process.history.updateContextState = vi.fn(
         async (runId: string, _config: AiConfigResult, context: Context) => {
           const includesRunwayAlert = JSON.stringify(context).includes(
-            "Context runway is getting low.",
+            "Context low:",
           );
           const inputTokens = includesRunwayAlert ? 900_100 : 899_999;
           revision += 1;
@@ -691,7 +691,7 @@ describe("model context", () => {
     });
 
     expect(result.generationContexts).toHaveLength(1);
-    expect(result.generationContexts[0]).toContain("Context runway is getting low.");
+    expect(result.generationContexts[0]).toContain("Context low:");
     expect(
       result.messages.some(
         (message: any) =>
