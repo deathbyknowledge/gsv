@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
 
 /* ---------- the prompt line ---------- */
@@ -89,7 +90,65 @@ export type Moment = {
   activities: Activity[];
   /** The ship's working narration for this run: what it told itself, not what it sent. Folded by default. */
   narration: string;
+  attribution?: AnswerAttribution | null;
 };
+
+export type AnswerHistoryEntry = {
+  runId: string | null;
+  timestamp: number | null;
+  metadata?: ProcMessageMetadata;
+};
+
+export type AnswerHistorySnapshot = { entries: AnswerHistoryEntry[]; through: number };
+
+/** Delta pages can expose Send results before their updated assistant groups; attribute only a complete snapshot. */
+export function answerHistorySnapshot(
+  history: Pick<ProcHistoryRecordsResult, "pid" | "records" | "hasMore"> | undefined,
+  pid: string | null,
+): AnswerHistorySnapshot {
+  if (!history || history.pid !== pid || history.hasMore) return { entries: [], through: 0 };
+  const entries = history.records.filter((record) => record.kind === "note" || record.kind === "call")
+    .map(({ runId, createdAt, metadata }) => ({ runId, timestamp: createdAt, metadata }));
+  return { entries, through: history.records.reduce((through, record) => Math.max(through, record.createdAt), 0) };
+}
+
+export type AnswerAttribution = {
+  model: string | null;
+  provider: string | null;
+  fallbacks: Array<{ from: string; to: string; reason: string | null }>;
+  omittedFallbacks: number;
+};
+
+/** Attribute a committed answer to its generation, never to the process's current model setting. */
+export function answerAttribution(
+  moment: Pick<Moment, "role" | "text" | "runId" | "timestamp" | "streaming">,
+  history: readonly AnswerHistoryEntry[],
+  historyThrough: number,
+): AnswerAttribution | null {
+  if (moment.role !== "ship" || !moment.text.trim() || moment.streaming || !moment.runId || moment.timestamp === null) return null;
+  // Delivery can arrive before the refreshed Process history; an older generation is not evidence for that reply.
+  if (historyThrough < moment.timestamp) return null;
+  const cutoff = moment.timestamp;
+  const candidates = history.filter((entry): entry is AnswerHistoryEntry & { timestamp: number } => entry.runId === moment.runId
+    && entry.timestamp !== null && entry.timestamp <= cutoff)
+    .sort((left, right) => left.timestamp - right.timestamp);
+  const metadata = candidates.at(-1)?.metadata;
+  const model = metadata?.provider?.responseModel?.trim() || metadata?.provider?.model?.trim() || null;
+  const provider = metadata?.provider?.provider?.trim() || null;
+  const fallbacks = new Map<string, AnswerAttribution["fallbacks"][number]>();
+  for (const entry of candidates) {
+    const fallback = entry.metadata?.fallback;
+    if (!fallback?.used) continue;
+    const from = fallback.from?.model?.trim() || fallback.from?.provider?.trim() || "unknown model";
+    const to = fallback.to?.model?.trim() || fallback.to?.provider?.trim() || "unknown model";
+    const reason = fallback.reason?.slice(0, 241).replace(/\s+/g, " ").trim() || null;
+    const key = JSON.stringify([from, to]);
+    fallbacks.delete(key);
+    fallbacks.set(key, { from, to, reason: reason && reason.length > 240 ? `${reason.slice(0, 239)}…` : reason });
+  }
+  if (!model && fallbacks.size === 0) return null;
+  return { model, provider, fallbacks: [...fallbacks.values()].slice(-3), omittedFallbacks: Math.max(0, fallbacks.size - 3) };
+}
 
 const OUTPUT_LIMIT = 600;
 

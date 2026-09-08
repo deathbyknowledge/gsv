@@ -21,6 +21,8 @@ import { PromptLine, type PromptPlace } from "../shared/PromptLine";
 import { Wordmark } from "../shared/Wordmark";
 import {
   activityDuration,
+  answerAttribution,
+  answerHistorySnapshot,
   countLabel,
   defaultPlace,
   formatSeconds,
@@ -418,6 +420,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
 
   /* history, then live signals reduced into the runtime state */
   const historyLoaded = Boolean(processRuntime.history.data) || processRuntime.history.isError;
+  const answerHistory = useMemo(() => answerHistorySnapshot(processRuntime.history.data, pid), [pid, processRuntime.history.data]);
   /* both halves of the transcript, what was said and what was done, are shown together or not yet */
   const ready = historyLoaded && conversation.loaded;
   useEffect(() => {
@@ -448,7 +451,8 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
 
   /* moments: the runtime's, plus the commands run by hand */
   const moments = useMemo(() => {
-    const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId);
+    const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
+      .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     const fromLocal: Moment[] = localRuns.map((run) => ({
       id: run.id,
       role: "ship",
@@ -480,7 +484,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
       ],
     }));
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-  }, [conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
+  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
 
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
@@ -545,6 +549,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   }, [moments, tick]);
 
   const latest = moments[moments.length - 1];
+  const lastAnswer = [...moments].reverse().find((moment) => moment.role === "ship" && moment.text.trim() && !moment.streaming && !moment.thinking);
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
 
   const toggleActivity = useCallback((key: string) => {
@@ -762,7 +767,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
       return [
         part("is-live", "thinking"),
         part("", formatSeconds(elapsed)),
-        part("", runtime.context?.model ?? ""),
+        part("", runtime.context?.model ? `attempting ${runtime.context.model}` : ""),
         part("", `${placeLabel(where ?? "gsv", places)} ready`),
       ].filter((entry) => entry.text);
     }
@@ -782,7 +787,9 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
       ];
     }
     const parts: StatusPart[] = [];
-    if (runtime.context?.model) parts.push(part("is-on", `answered by ${runtime.context.model}`));
+    if (lastAnswer?.attribution?.model) parts.push(part("is-on", `answered by ${lastAnswer.attribution.model}`));
+    const fallback = lastAnswer?.attribution?.fallbacks.at(-1);
+    if (fallback) parts.push(part("is-warn", `fallback from ${fallback.from}`));
     if (lastRun && lastRun.endedAt !== null) parts.push(part("", formatSeconds(lastRun.endedAt - lastRun.startedAt)));
     const usage = runtime.context?.usage;
     if (usage?.cost) parts.push(part("", `$${usage.cost.total.toFixed(2)} so far`));
@@ -790,7 +797,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
     if (latest && latest.role === "ship") parts.push(part("", `${countLabel(placesUsed(latest), "place")} used`));
     if (parts.length === 0) parts.push(part("", "nothing yet"));
     return parts;
-  }, [browse, connected, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
+  }, [browse, connected, lastAnswer, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
   const onlinePlaces = places.filter((place) => place.online);
   const empty = ready && moments.length === 0 && pid !== null;
@@ -883,7 +890,20 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
               }
               return (
                 <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
-                  <div class="who">{moment.role === "human" ? who : "ship"}</div>
+                  <div class="who">
+                    {moment.role === "human" ? who : "ship"}
+                    {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}> · {moment.attribution.model}</span> : null}
+                  </div>
+                  {moment.attribution?.fallbacks.length ? (
+                    <div class="zen-model-fallback">
+                      {moment.attribution.fallbacks.map((fallback, index) => (
+                        <span key={`${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
+                          {index ? " · " : "fallback: "}{fallback.from} → {fallback.to}
+                        </span>
+                      ))}
+                      {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : null}
+                    </div>
+                  ) : null}
                   {moment.activities
                     .filter((activity) => activity.you)
                     .map((activity) => (

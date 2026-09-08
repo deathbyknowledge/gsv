@@ -64,6 +64,17 @@
   color: var(--text-dim);
   margin-bottom: 8px;
 }
+.zen-moment .answer-model {
+  letter-spacing: normal;
+  text-transform: none;
+}
+.zen-model-fallback {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
 .zen-moment.is-human .text {
   font-family: var(--gsv-font-prose);
   font-weight: 500;
