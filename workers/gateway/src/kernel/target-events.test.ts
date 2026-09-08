@@ -175,7 +175,73 @@ describe("registered target event watches", () => {
     } finally { send.mockRestore(); }
   });
 
-  it.each(["acknowledged", "failed"] as const)("preserves a replacement watch when the previous delivery is %s", async (outcome) => {
+  it.each([
+    ["resetting", true], ["resetting", false],
+    ["server-error", true], ["server-error", false],
+    ["transport-error", true], ["transport-error", false],
+  ] as const)("retains a watch after %s with once=%s and handles the next connection transition", async (failure, once) => {
+    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
+    const entered = deferred();
+    const release = deferred();
+    const send = acknowledgeEvents();
+    send.mockImplementationOnce(async (_installationId, _pid, frame) => {
+      entered.resolve();
+      await release.promise;
+      if (failure === "transport-error") throw new Error("Fixture RPC transport unavailable");
+      return {
+        type: "res", id: frame.id, ok: false,
+        error: { code: failure === "resetting" ? 409 : 503, message: "Fixture Process temporarily unavailable" },
+      };
+    });
+    try {
+      await runInDurableObject(stub, async (kernel: Kernel) => {
+        const ctx = setup(kernel);
+        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once }, ctx);
+        const waits: Promise<unknown>[] = [];
+        const waiting = vi.spyOn(kernel.ctx, "waitUntil").mockImplementation((promise) => { waits.push(promise); });
+        try {
+          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "connected");
+          await entered.promise;
+          release.resolve();
+          await Promise.all(waits);
+          expect(send).toHaveBeenCalledTimes(1);
+          expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
+            { watchId: watch.watchId, revision: 1, once, status: "active", error: null },
+          ]);
+
+          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
+          await Promise.all(waits);
+          expect(send).toHaveBeenCalledTimes(2);
+          const delivered = send.mock.calls.map(([, , frame]) => {
+            if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
+            return frame.args.event.payload.event;
+          });
+          expect(delivered).toEqual(["connected", "disconnected"]);
+          const remaining = kernel.signalWatches.matchTarget(event.targetId, "target.status");
+          if (once) expect(remaining).toEqual([]);
+          else expect(remaining).toMatchObject([{ watchId: watch.watchId, status: "active", error: null }]);
+        } finally { release.resolve(); waiting.mockRestore(); }
+      });
+    } finally { release.resolve(); send.mockRestore(); }
+  });
+
+  it("marks a watch failed when its Process permanently rejects the delivery", async () => {
+    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
+    const send = acknowledgeEvents();
+    send.mockResolvedValueOnce({ type: "res", id: "gone", ok: false, error: { code: 410, message: "Process no longer exists" } });
+    try {
+      await runInDurableObject(stub, async (kernel: Kernel) => {
+        const ctx = setup(kernel);
+        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: false }, ctx);
+        await deliverTargetConnectionEvent(kernel, event, "transition:gone", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
+        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watch.watchId).toArray())
+          .toEqual([{ status: "failed" }]);
+        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
+      });
+    } finally { send.mockRestore(); }
+  });
+
+  it.each(["acknowledged", "failed", "resetting"] as const)("preserves a replacement watch when the previous delivery is %s", async (outcome) => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const entered = deferred();
     const release = deferred();
@@ -184,7 +250,12 @@ describe("registered target event watches", () => {
       if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
       entered.resolve();
       await release.promise;
-      if (outcome === "failed") throw new Error("Fixture delivery failed");
+      if (outcome !== "acknowledged") {
+        return {
+          type: "res", id: frame.id, ok: false,
+          error: { code: outcome === "resetting" ? 409 : 410, message: "Fixture delivery rejected" },
+        };
+      }
       return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: null, queued: false } };
     });
     try {

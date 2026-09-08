@@ -236,6 +236,21 @@ describe("typed history authenticated wire integration", () => {
       expect(connected.activeRunId).toBeNull();
       expect(runtime.ai.requests).toHaveLength(generations);
       expect((await history(runtime, { pid: process.pid, since: cursor(connected) })).records).toEqual([]);
+
+      expect(await runtime.client.proc.reset({ pid: process.pid })).toMatchObject({ ok: true });
+      const reset = await history(runtime, { pid: process.pid, since: cursor(connected) });
+      expect(reset).toMatchObject({ reset: true, records: [], activeRunId: null });
+      machine.close();
+      await runtime.waitFor(async () => (await history(runtime, { pid: process.pid, since: cursor(reset) })).records.some((record) =>
+        record.kind === "event" && record.payload.kind === "target.connection"
+      ), "persistent target watch after Process reset");
+      const afterReset = await history(runtime, { pid: process.pid, since: cursor(reset) });
+      expect(afterReset.records).toHaveLength(1);
+      expect(afterReset.records[0]).toMatchObject({ kind: "event", runId: null, payload: {
+        kind: "target.connection", audience: "person", payload: { targetId, event: "disconnected" },
+      } });
+      expect(afterReset.activeRunId).toBeNull();
+      expect(runtime.ai.requests).toHaveLength(generations);
     } finally {
       await runtime.close();
     }

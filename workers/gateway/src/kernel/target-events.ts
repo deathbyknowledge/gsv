@@ -2,7 +2,7 @@ import {
   procHistoryTargetEventRegistry, type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import type { ProcessEventDeliverResult, InternalRequestFrame } from "../protocol/process-frames";
+import type { ProcessEventDeliverResult, InternalRequestFrame, InternalResponseFrame } from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { Kernel } from "./do";
 import { getVisibleTarget } from "./targets";
@@ -47,7 +47,18 @@ export async function deliverTargetConnectionEvent(
           event: { kind: definition.kind, payload, severity: definition.severity, audience },
         },
       };
-      const response = await sendFrameToProcess(kernel.installationId, watch.targetProcessId, request);
+      let response: InternalResponseFrame<"proc.event.deliver"> | null;
+      try {
+        response = await sendFrameToProcess(kernel.installationId, watch.targetProcessId, request);
+      } catch {
+        // A transport failure skips this transition without retiring the subscription.
+        continue;
+      }
+      if (response?.type === "res" && !response.ok && (
+        response.error.code === 409 || (response.error.code >= 500 && response.error.code < 600)
+      )) {
+        continue;
+      }
       if (!response || response.type !== "res" || !response.ok) {
         throw new Error("Target event delivery was not acknowledged");
       }
