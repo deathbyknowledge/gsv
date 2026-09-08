@@ -261,9 +261,27 @@ function StreamingText({ text, tick }: { text: string; tick: number }) {
   );
 }
 
-function NoteMoment({ moment, open, focus, index, onToggle }: { moment: Moment; open: boolean; focus: boolean; index: number; onToggle: () => void }) {
+function NoteMoment({
+  moment,
+  open,
+  focus,
+  index,
+  phase,
+  onToggle,
+}: {
+  moment: Moment;
+  open: boolean;
+  focus: boolean;
+  index: number;
+  /** Where the note is in the load cascade: waiting its turn, taking it, or settled. */
+  phase: "pending" | "materialising" | "settled";
+  onToggle: () => void;
+}) {
   return (
-    <div data-index={index} class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}`}>
+    <div
+      data-index={index}
+      class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
+    >
       <div class="who">memory</div>
       <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
         <span class="tri">{open ? "▾" : "▸"}</span>
@@ -519,7 +537,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
       // the history as first loaded is not news, but it does materialise: the recent messages settle one after another
       seenMomentsRef.current = new Set(whole);
       if (reducedMotion()) return;
-      const recent = moments.filter((moment) => moment.role !== "note" && !moment.streaming).map((moment) => moment.id).slice(-SETTLE_ON_LOAD);
+      const recent = moments.filter((moment) => !moment.streaming).map((moment) => moment.id).slice(-SETTLE_ON_LOAD);
       const startedAt = Date.now();
       setSettling((current) => {
         const next = new Map(current);
@@ -878,12 +896,16 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
           <div class="zen-moments" ref={momentsRef}>
             {moments.map((moment, index) => {
               const isLatest = index === moments.length - 1;
+              const settleStart = settling.get(moment.id);
+              const pending = settleStart !== undefined && Date.now() < settleStart;
+              const materialising = settleStart !== undefined && !pending;
               if (moment.role === "note") {
                 return (
                   <NoteMoment
                     key={moment.id}
                     moment={moment}
                     index={index}
+                    phase={pending ? "pending" : materialising ? "materialising" : "settled"}
                     focus={browse === index}
                     open={openNotes.has(moment.id)}
                     onToggle={() =>
@@ -897,9 +919,6 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                   />
                 );
               }
-              const settleStart = settling.get(moment.id);
-              const pending = settleStart !== undefined && Date.now() < settleStart;
-              const materialising = settleStart !== undefined && !pending;
               return (
                 <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
                   <div class="who">{moment.role === "human" ? who : "ship"}</div>

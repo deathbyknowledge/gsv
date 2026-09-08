@@ -233,6 +233,7 @@
 .zen-moment.is-pending { visibility: hidden; }
 .zen-moment.is-materialising .who,
 .zen-moment.is-materialising .receipt,
+.zen-moment.is-materialising .note-line,
 .zen-moment.is-materialising .activity { animation: zen-materialise 360ms steps(6) both; }
 @keyframes zen-materialise { from { opacity: 0; } to { opacity: 1; } }
 .zen-moment .text.is-settling { position: relative; white-space: pre-wrap; }
@@ -241,6 +242,7 @@
 @media (prefers-reduced-motion: reduce) {
   .zen-moment.is-materialising .who,
   .zen-moment.is-materialising .receipt,
+  .zen-moment.is-materialising .note-line,
   .zen-moment.is-materialising .activity { animation: none; }
 }
 .zen-moment .text .noise {
