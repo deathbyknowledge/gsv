@@ -39,6 +39,15 @@ import { materializeToolResponse } from "../tool-response";
 import { raceWithAbort } from "../../shared/abort";
 import { stableOpaqueId } from "../../shared/stable-id";
 
+const READ_PATHS_REMEMBERED = 64;
+const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
+
+/** The place and path a Read named, as one key, so a later Send may attach what the run already read. */
+export function readPathKey(args: JsonValue): string | null {
+  const parsed = readPathArgsSchema.safeParse(args);
+  return parsed.success ? `${parsed.data.target ?? "gsv"}\0${parsed.data.path}` : null;
+}
+
 export type ToolResultIngestion = {
   interrupted: number;
   appended: number;
@@ -315,6 +324,15 @@ export class ProcessTools {
     if (!transitioned) {
       await this.host.resources.deletePreparedToolResultMedia(prepared.createdKeys);
       return false;
+    }
+    if (resolvedOutcome === "completed" && current.call === "fs.read") {
+      const key = readPathKey(current.args);
+      if (key) {
+        this.host.mutateActiveRun(runId, (run) => ({
+          ...run,
+          readPaths: [...new Set([...(run.readPaths ?? []), key])].slice(-READ_PATHS_REMEMBERED),
+        }));
+      }
     }
     const resumeRun = transitioned && this.host.store.tools.isRunResolved(runId);
     if (transitioned && wasStarted) {

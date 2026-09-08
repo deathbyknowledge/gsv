@@ -139,6 +139,8 @@ export const runStateSchema = z.object({
   responsibilityBatches: z.array(responsibilityBatchStateSchema).optional(),
   offeredToolNames: z.array(z.string()).optional(),
   terminalCorrectionRounds: z.number().optional(),
+  /** Files this run has read through the Read tool, as `target\0path`: an approval given there carries to a Send that attaches the same file. */
+  readPaths: z.array(z.string()).optional(),
   terminalCommandFailures: z.number().optional(),
   terminalDeliveryFailures: z.number().optional(),
   config: aiConfigResultSchema.optional(),

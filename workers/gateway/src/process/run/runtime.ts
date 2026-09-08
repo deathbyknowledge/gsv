@@ -20,7 +20,8 @@ import {
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
 import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
-import type { FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
+import { readPathKey } from "../tools/runtime";
+import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -92,7 +93,24 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    // files the Send names are referenced on their place, retained and staged first; a message goes out whole or not at all
+    // a finishing call is admitted by the responsibilities first, before anything it names is staged:
+    // a refused finish then leaves nothing behind for a later Send to carry by accident
+    let responsibilityAdmissionKey: string | undefined;
+    if (parsed.command.action === "yield" || parsed.command.finish) {
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (!responsibilityCheck.ok) {
+        return {
+          ok: false,
+          action: parsed.command.action,
+          text: parsed.command.action === "message" ? parsed.command.text : "",
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: responsibilityCheck.error,
+        };
+      }
+      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
+    }
+    // files the Send names are referenced on their place, retained and staged; a message goes out whole or not at all
     let media = stagedMedia;
     if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
       const attached = await this.attachSendFiles(runId, parsed.command.attach);
@@ -126,21 +144,6 @@ export class ProcessRun {
         failureKind: "command",
         error: "Message requires non-empty text or attached media",
       };
-    }
-    let responsibilityAdmissionKey: string | undefined;
-    if (command.action === "yield" || command.finish) {
-      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
-      if (!responsibilityCheck.ok) {
-        return {
-          ok: false,
-          action: command.action,
-          text: command.action === "message" ? command.text : "",
-          delivery: { kind: "none" },
-          failureKind: "command",
-          error: responsibilityCheck.error,
-        };
-      }
-      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
     }
     if (command.action === "yield") {
       await this.host.streams.silence(runId, actionId);
@@ -186,23 +189,22 @@ export class ProcessRun {
       if (approval.action === "deny") {
         return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
       }
-      if (approval.action === "ask") {
+      // a Read of the same file earlier in this run was approved, once or for good; that approval carries here
+      const alreadyRead = (run?.readPaths ?? []).includes(readPathKey(readArgs) ?? "");
+      if (approval.action === "ask" && !alreadyRead) {
         return {
           ok: false,
           error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
         };
       }
-      let result: FsReadResult;
-      try {
-        result = await this.host.kernel.kernelRpc("fs.read", readArgs, this.runAbortSignal(runId));
-      } catch (error) {
-        return { ok: false, error: `cannot attach ${spec}: ${errorMessageFromUnknown(error)}` };
+      const referenced = await this.referenceFile(runId, spec, readArgs);
+      if (!referenced.ok) return referenced;
+      const ref = referenced.ref;
+      // the place answers for itself and nothing else: a reference naming another place would be retained from
+      // there under this process's authority, so it is refused
+      if (ref.target !== target) {
+        return { ok: false, error: `cannot attach ${spec}: ${target} answered with a reference for ${ref.target}` };
       }
-      if (!result.ok) return { ok: false, error: `cannot attach ${spec}: ${result.error}` };
-      if (!("resource" in result) || !result.resource) {
-        return { ok: false, error: `cannot attach ${spec}: it is not a file` };
-      }
-      const ref = result.resource;
       media.push({
         type: "resource",
         ref,
@@ -212,6 +214,36 @@ export class ProcessRun {
     }
     const attached = await this.host.resources.handleProcRunAttach({ runId, media });
     return attached.ok ? { ok: true } : { ok: false, error: attached.error };
+  }
+
+  /**
+   * The immutable reference for a file, from the place that holds it. A daemon
+   * from before the `reference` representation still answers an image by
+   * reference when asked for the `resource` one, so that is the fallback; for
+   * anything else it has to be updated first.
+   */
+  async referenceFile(
+    runId: string,
+    spec: string,
+    readArgs: FsReadArgs,
+  ): Promise<{ ok: true; ref: FileResourceReference } | { ok: false; error: string }> {
+    const read = async (args: FsReadArgs): Promise<FsReadResult> => {
+      try {
+        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId));
+      } catch (error) {
+        return { ok: false, error: errorMessageFromUnknown(error) };
+      }
+    };
+    let result = await read(readArgs);
+    if (result.ok && "kind" in result && !result.resource && result.kind === "image") {
+      result = await read({ ...readArgs, representation: "resource" });
+    }
+    if (!result.ok) return { ok: false, error: `cannot attach ${spec}: ${result.error}` };
+    if (!("kind" in result)) return { ok: false, error: `cannot attach ${spec}: it is a folder` };
+    if (!result.resource) {
+      return { ok: false, error: `cannot attach ${spec}: the GSV on that place must be updated before it can send this file` };
+    }
+    return { ok: true, ref: result.resource };
   }
 
   async executeMessageRunControlAction(options: {

@@ -5,10 +5,24 @@ import type { ProcAbortResult } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
-  captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, deferred,
-  runInProcess, ROOT_IDENTITY, initProcess, makeRuntimeEventDeliverReq, messageAction,
-  messageUpdateAction, offeredTools, terminalTestConfig, terminalTestResponse, testUsage,
+  captureSignals,
+  mockGeneration,
+  processTestConfig,
+  generationRun,
+  assistantResponse,
+  deferred,
+  runInProcess,
+  ROOT_IDENTITY,
+  initProcess,
+  makeRuntimeEventDeliverReq,
+  messageAction,
+  messageUpdateAction,
+  offeredTools,
+  terminalTestConfig,
+  terminalTestResponse,
+  testUsage,
   yieldAction,
+  registerToolBlock,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -715,6 +729,70 @@ describe("model context", () => {
         }, []),
       ).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
       expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
+
+      // a Read of the file earlier in the run, approved once or for good, lets the Send attach it under an ask rule
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "ask", rules: [] } });
+      registerToolBlock(process, runId, [{ id: "read-1", name: "Read", arguments: { path: "/tmp/private.pdf" } }]);
+      await process.tools.resolveStartedTool(runId, "dispatch-read-1", {
+        ok: true,
+        path: "/tmp/private.pdf",
+        kind: "file",
+        contentType: "application/pdf",
+        size: 12,
+      });
+      expect(process.runs.active.readPaths).toEqual(["gsv\u0000/tmp/private.pdf"]);
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-5", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: true, action: "message" });
+
+      // a place answers for itself: a reference naming another place is refused
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({
+        ok: true,
+        path: args.path,
+        kind: "file",
+        contentType: "application/pdf",
+        size: 12,
+        resource: { type: "file", target: "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+      }));
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-6", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/report.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: "cannot attach laptop:/home/e/report.pdf: laptop answered with a reference for gsv" });
+
+      // a daemon from before the reference representation still hands out an image by reference under the resource one
+      const asked: string[] = [];
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => {
+        asked.push(args.representation);
+        if (args.representation === "reference") return { ok: true, path: args.path, kind: "image", contentType: "image/png", size: 4 };
+        return {
+          ok: true,
+          path: args.path,
+          kind: "image",
+          contentType: "image/png",
+          size: 4,
+          resource: { type: "file", target: "laptop", path: args.path, revision: "rev-9", contentType: "image/png", size: 4 },
+        };
+      });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-7", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/shot.png"] },
+        }, []),
+      ).toMatchObject({ ok: true, action: "message" });
+      expect(asked).toEqual(["reference", "resource"]);
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({ ok: true, path: args.path, kind: "text", contentType: "text/plain", size: 4 }));
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-8", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/notes.txt"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("must be updated") });
     });
   });
 
