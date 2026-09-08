@@ -355,7 +355,7 @@ exports[`immutable model history baseline > preserves exact mixed groups, origin
   },
   {
     "role": "user",
-    "content": "[GSV EVENT]\\nYour last turn was plain assistant text, which is Process activity and was not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say.",
+    "content": "[GSV EVENT]\\nYour last turn was plain text, which is not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say.",
     "timestamp": 1700000000000
   },
   {
