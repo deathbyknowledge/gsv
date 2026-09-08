@@ -151,7 +151,8 @@ describe("ConfigStore", () => {
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
     expect(targets).toContain("message destinations");
     expect(targets).toContain("message attach PATH...");
-    expect(targets).toContain("sending does not finish the run");
+    expect(targets).toContain("Send tool");
+    expect(targets).toContain("the run continues");
     expect(targets).toContain("message send");
     expect(targets).toContain("yield");
     expect(targets).toContain(
