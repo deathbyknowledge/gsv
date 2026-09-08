@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { procHistoryRecordSchema, procHistoryArchivedRecordSchema } from "@humansandmachines/gsv/protocol";
+import { mergeTranscriptRows } from "./transcriptMerge";
 import { transcriptRowsFromRecords } from "./typedHistory";
 import { momentsFromConversation, activitiesForRows } from "../../instrument/zen/zenModel";
 
@@ -42,6 +43,37 @@ describe("typed history projection", () => {
     const moments = momentsFromConversation([{ id: "committed", text: "sent", time: "", timestamp: 2, runId: "r", role: "assistant" }], rows, null);
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ text: "sent", narration: "working" });
+  });
+
+  it("excludes classified Shell sends while retaining ordinary Shell calls with identical arguments", () => {
+    const records = [null, "shell.exec"].flatMap((syscall, index) => [
+      procHistoryRecordSchema.parse({ ...identity, id: index * 2 + 1, messageId: index * 2 + 1, kind: "call", payload: {
+        runId: "r", callId: `shell-${index}`, tool: "Shell", syscall, target: syscall ? "gsv" : null, args: { input: "message send --message hello" },
+      } }),
+      procHistoryRecordSchema.parse({ ...identity, id: index * 2 + 2, messageId: index * 2 + 2, kind: "result", payload: {
+        callId: `shell-${index}`, tool: "Shell", outcome: "completed", output: "done", media: [], resources: [],
+      } }),
+    ]);
+    const rows = transcriptRowsFromRecords(records);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.toolRunControl)).toEqual([true, false]);
+    const moments = momentsFromConversation([{ id: "committed", text: "hello", time: "", timestamp: 2, runId: "r", role: "assistant" }], rows, null);
+    expect(moments).toHaveLength(1);
+    expect(moments[0].text).toBe("hello");
+    expect(moments[0].activities.flatMap((activity) => activity.calls.map((call) => call.callId))).toEqual(["shell-1"]);
+  });
+
+  it("keeps unlinked Shell results visible and carries typed run control into a running row", () => {
+    const result = procHistoryRecordSchema.parse({ ...identity, kind: "result", payload: {
+      callId: "unknown", tool: "Shell", outcome: "completed", output: "done", media: [], resources: [],
+    } });
+    expect(activitiesForRows(transcriptRowsFromRecords([result]), "r", false)).toHaveLength(1);
+    const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+      runId: "r", callId: "send", tool: "Shell", syscall: null, target: null, args: { input: "message send --message hello" },
+    } });
+    const running = mergeTranscriptRows([{ id: "raw", role: "tool", toolCallId: "send", toolName: "Shell", toolSyscall: null, runId: "r", text: "", timestamp: 1, time: "", status: "running" }], transcriptRowsFromRecords([call]));
+    expect(running).toEqual([expect.objectContaining({ status: "running", toolRunControl: true })]);
+    expect(activitiesForRows(running, "r", true)).toEqual([]);
   });
 
   it("shows person events while idle and keeps model-only events out of human conversation", () => {

@@ -46,6 +46,10 @@ export function historyEventText(event: ProcHistoryEvent): string {
   return generic;
 }
 
+function isRunControlCall(call: Extract<ProcHistoryRecord, { kind: "call" }>["payload"]): boolean {
+  return call.syscall === null && (call.tool === "Send" || call.tool === "Shell");
+}
+
 /** One typed boundary feeds process inspection and the instrument's folded working. */
 export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord | ProcHistoryArchivedRecord)[]): ChatTranscriptRow[] {
   const calls = new Map(records.flatMap((record) => record.kind === "call"
@@ -87,6 +91,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           text: displayValue(record.payload.args), toolArgs: record.payload.args,
           toolCallId: record.payload.callId, toolName: record.payload.tool,
           toolSyscall: record.payload.syscall, toolTarget: record.payload.target,
+          toolRunControl: isRunControlCall(record.payload),
           status: "planning", meta: record.payload.syscall ?? undefined,
         });
         break;
@@ -100,6 +105,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           toolOutput: record.payload.output, toolOutcome: record.payload.outcome,
           toolArgs: call?.payload.args, toolSyscall: call?.payload.syscall ?? null,
           toolTarget: call?.payload.target ?? null,
+          toolRunControl: call ? isRunControlCall(call.payload) : false,
           media: [...record.payload.media, ...record.payload.resources],
           isError, status: isError ? "error" : "done", meta: call?.payload.syscall ?? undefined,
         };

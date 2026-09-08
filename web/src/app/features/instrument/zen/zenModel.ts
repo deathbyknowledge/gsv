@@ -187,7 +187,8 @@ function isToolRow(row: ChatTranscriptRow): boolean {
  */
 /** A `message` command is the ship sending the moment itself; it is not something it did along the way. */
 export function isMessageSend(row: ChatTranscriptRow): boolean {
-  return row.toolName === "Send" && row.toolSyscall === null;
+  return row.toolSyscall === null && (row.toolName === "Send"
+    || (row.toolName === "Shell" && row.toolRunControl === true));
 }
 
 export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: string, active: boolean): Activity[] {

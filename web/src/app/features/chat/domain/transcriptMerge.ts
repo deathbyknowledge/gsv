@@ -204,7 +204,7 @@ export function mergeTranscriptRows(
     }
     const current = merged.get(key);
     if (current && shouldKeepCurrentToolRow(current, row)) {
-      merged.set(key, { ...current, toolArgs: row.toolArgs ?? current.toolArgs, toolSyscall: row.toolSyscall ?? current.toolSyscall, toolTarget: row.toolTarget ?? current.toolTarget });
+      merged.set(key, { ...current, toolArgs: row.toolArgs ?? current.toolArgs, toolSyscall: row.toolSyscall ?? current.toolSyscall, toolTarget: row.toolTarget ?? current.toolTarget, toolRunControl: row.toolRunControl ?? current.toolRunControl });
       continue;
     }
     merged.set(key, row);

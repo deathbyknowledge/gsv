@@ -219,6 +219,8 @@ describe("isMessageSend", () => {
   it("recognizes the exact run-control tool without guessing from shell prose", () => {
     expect(isMessageSend(row({ id: "send", toolName: "Send", toolSyscall: null }))).toBe(true);
     expect(isMessageSend(row({ id: "shell", toolName: "Shell", toolSyscall: "shell.exec", toolArgs: { input: "message ana hi" } }))).toBe(false);
+    expect(isMessageSend(row({ id: "classified-shell", toolName: "Shell", toolSyscall: null, toolRunControl: true }))).toBe(true);
+    expect(isMessageSend(row({ id: "stream-shell", toolName: "Shell", toolSyscall: null }))).toBe(false);
     expect(isMessageSend(row({ id: "other", toolName: "Send", toolSyscall: "adapter.send" }))).toBe(false);
   });
 });

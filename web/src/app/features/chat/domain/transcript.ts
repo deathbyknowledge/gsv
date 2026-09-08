@@ -110,6 +110,7 @@ export type ChatTranscriptRow = {
   toolOutput?: ChatTranscriptValue;
   toolSyscall?: string | null;
   toolTarget?: string | null;
+  toolRunControl?: boolean;
   historyRecordKey?: string;
   historyKind?: ProcHistoryRecordKind;
   messageDirection?: "in" | "out";
