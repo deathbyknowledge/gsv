@@ -244,10 +244,7 @@ fn prepare_history_scroll_gesture(
     }
     *last_event = Some(now);
 
-    if accumulator.is_infinite() {
-        return false;
-    }
-    true
+    !accumulator.is_infinite()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
