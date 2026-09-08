@@ -632,3 +632,47 @@ export type SysLinkListResult = {
     linkedByUid: number;
   }>;
 };
+
+/* ---------- the ledger: what ran, one line per dispatched syscall ---------- */
+
+export type SysLedgerOutcome = "ok" | "failed" | "denied" | "cancelled";
+
+/**
+ * One dispatched syscall. `args` is the call's arguments as sent, as JSON
+ * text, whole; a line longer than 16 KB is cut with the cut marked, so
+ * `JSON.parse` failing on it is how a reader knows.
+ */
+export type SysLedgerLine = {
+  seq: number;
+  timestamp: number;
+  principalKind: string;
+  uid: number;
+  pid: string | null;
+  runId: string | null;
+  target: string;
+  call: string;
+  args: string;
+  /** Null while the call is still in flight. */
+  outcome: SysLedgerOutcome | null;
+  durationMs: number | null;
+  tokens?: number | null;
+  costNanoUsd?: number | null;
+};
+
+export type SysLedgerListArgs = {
+  pid?: string;
+  target?: string;
+  callPrefix?: string;
+  since?: number;
+  until?: number;
+  /** At most 200. */
+  limit?: number;
+  /** From a previous result's `nextCursor`. */
+  cursor?: string;
+};
+
+export type SysLedgerListResult = {
+  /** Newest first. */
+  lines: SysLedgerLine[];
+  nextCursor: string | null;
+};

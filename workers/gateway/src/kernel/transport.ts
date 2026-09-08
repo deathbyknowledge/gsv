@@ -332,7 +332,7 @@ handleRes(
       frame = this.decodeWebSocketResponseFrame(connection, wireFrame);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid frame body";
-      this.cancelRoute(wireEnvelope.id);
+      this.cancelRoute(wireEnvelope.id, "failed");
       this.deliverToOrigin(
         route.origin,
         errFrame(
@@ -351,6 +351,7 @@ handleRes(
     }
 
     this.host.routes.remove(frame.id);
+    this.host.completeLedger(frame);
     this.cancelRoutedBody(frame.id, "Device response received");
 
     if (route.scheduleId) {
@@ -659,7 +660,7 @@ async registerRouteWithExpiry(route: {
     }
 
     return {
-      cancel: () => this.cancelRoute(route.id),
+      cancel: (outcome: "cancelled" | "failed" = "cancelled") => this.cancelRoute(route.id, outcome),
       attachBody: (body) => {
         const previous = this.routedBodies.get(route.id);
         this.routedBodies.set(route.id, body);
@@ -794,8 +795,9 @@ sendTargetRequestCancel(
     } catch {}
   }
 
-cancelRoute(routeId: string): void {
+cancelRoute(routeId: string, outcome: "cancelled" | "failed" = "cancelled"): void {
     const route = this.host.routes.remove(routeId);
+    if (route) this.host.completeLedgerAs(routeId, outcome);
     if (route?.scheduleId) {
       this.host.cancelSchedule(route.scheduleId).catch(() => {});
     }
@@ -832,6 +834,7 @@ cancelRoutedBody(routeId: string, reason: string): void {
       error: { code: 504, message: `Syscall ${expired.call} timed out (device: ${expired.targetId})` },
     };
 
+    this.host.completeLedger(timeoutFrame);
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
@@ -894,6 +897,7 @@ failRoutesForPeerConnection(connectionId: string): void {
 
 failTargetRoutes(failed: FailedTargetRoute[]): void {
     for (const entry of failed) {
+      this.host.completeLedgerAs(entry.id, "failed");
       this.cancelRoutedBody(entry.id, "Device disconnected");
       if (entry.scheduleId) {
         this.host.cancelSchedule(entry.scheduleId).catch(() => {});
@@ -912,6 +916,7 @@ failTargetRoutes(failed: FailedTargetRoute[]): void {
 failRoutesForConnection(connectionId: string): void {
     const failed = this.host.routes.failForConnection(connectionId);
     for (const entry of failed) {
+      this.host.completeLedgerAs(entry.id, "failed");
       this.sendTargetRequestCancel(
         entry.targetId,
         entry.peerConnectionId,

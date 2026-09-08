@@ -27,8 +27,10 @@ import {
 } from "./fs-persistence";
 import { throwIfAborted } from "./abort";
 import type { FileStat, TargetFileSystem } from "./types";
+import { isString } from "../shared/schemas";
 
 type FsReadArgs = {
+  representation?: unknown;
   path?: unknown;
   offset?: unknown;
   limit?: unknown;
@@ -69,7 +71,17 @@ type FsCopyArgs = {
 type TransferArgs = {
   path?: unknown;
   contentType?: unknown;
+  revision?: unknown;
 };
+
+/** A browser file has no inode; its revision is its content. */
+async function contentRevision(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", copy.buffer);
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hex}`;
+}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -468,7 +480,11 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 }
 
 export class BrowserFsDriver {
-  constructor(private readonly fs: TargetFileSystem) {}
+  constructor(
+    private readonly fs: TargetFileSystem,
+    /** This target's own id, named in the references it hands out. */
+    private readonly targetId: () => Promise<string> = async () => "browser",
+  ) {}
 
   async handle(call: string, args: unknown, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
     switch (call) {
@@ -506,7 +522,31 @@ export class BrowserFsDriver {
 
       const bytes = await this.fs.read(path);
       const contentType = stat.contentType ?? inferFsContentType(path);
-      if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
+      const isImage = contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType);
+      // `reference` answers any file with its immutable reference alone, the thing a message or a transfer works from
+      const resource = args.representation === "reference"
+        ? {
+          type: "file" as const,
+          target: await this.targetId(),
+          path,
+          revision: await contentRevision(bytes),
+          contentType,
+          size: bytes.byteLength,
+        }
+        : null;
+      if (resource) {
+        return {
+          data: {
+            ok: true,
+            path,
+            size: bytes.byteLength,
+            kind: isImage ? "image" : isTextContentType(contentType) ? "text" : "file",
+            contentType,
+            resource,
+          },
+        };
+      }
+      if (isImage) {
         return {
           data: {
             ok: true,
@@ -619,6 +659,7 @@ export class BrowserFsDriver {
     const path = parsePath(args.path, "fs.transfer.stat");
     try {
       const stat = await this.fs.stat(path);
+      const revision = stat.isFile ? await contentRevision(await this.fs.read(path)) : undefined;
       return {
         ok: true,
         path,
@@ -626,6 +667,7 @@ export class BrowserFsDriver {
         isFile: stat.isFile,
         isDirectory: stat.isDirectory,
         contentType: stat.contentType ?? inferFsContentType(path),
+        revision,
       };
     } catch (error) {
       return {
@@ -640,12 +682,17 @@ export class BrowserFsDriver {
     const path = parsePath(args.path, "fs.transfer.send");
     const bytes = await this.fs.read(path);
     const stat = await this.fs.stat(path);
+    const revision = await contentRevision(bytes);
+    if (isString(args.revision) && args.revision !== revision) {
+      return { data: { ok: false, error: `Source revision is no longer available: ${path}` } };
+    }
     return {
       data: {
         ok: true,
         path,
         size: bytes.byteLength,
         contentType: stat.contentType ?? inferFsContentType(path),
+        revision,
       },
       body: bodyFromBytes(bytes),
     };

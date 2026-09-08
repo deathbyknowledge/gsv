@@ -1,3 +1,4 @@
+use crate::content_type::{content_type_for, sniff_header};
 use crate::file_revision::file_revision;
 use crate::protocol::ToolDefinition;
 use crate::tools::{Tool, ToolBody, ToolOutput};
@@ -6,9 +7,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-const MIME_SNIFF_BYTES: u64 = 8192;
+use tokio::io::AsyncReadExt;
 
 pub struct ReadTool {
     workspace: PathBuf,
@@ -81,7 +80,16 @@ fn read_directory(path: &Path) -> Result<ToolOutput, String> {
             .file_type()
             .map_err(|e| format!("Failed to inspect '{}': {}", entry.path().display(), e))?;
 
-        if file_type.is_dir() {
+        // A link to a directory is a directory to whoever lists it: follow links when deciding.
+        let is_directory = if file_type.is_symlink() {
+            fs::metadata(entry.path())
+                .map(|metadata| metadata.is_dir())
+                .unwrap_or(false)
+        } else {
+            file_type.is_dir()
+        };
+
+        if is_directory {
             directories.push(name);
         } else {
             files.push(name);
@@ -137,26 +145,54 @@ impl Tool for ReadTool {
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
 
         if metadata.is_dir() {
-            return read_directory(&resolved);
+            // Listing walks the directory and follows links synchronously; a slow mount must not hold a
+            // runtime worker, so the whole listing runs on the blocking pool.
+            let listing_path = resolved.clone();
+            return tokio::task::spawn_blocking(move || read_directory(&listing_path))
+                .await
+                .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
         }
 
         let size = metadata.len();
         let mut file = tokio::fs::File::open(&resolved)
             .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        let mut header = Vec::new();
-        (&mut file)
-            .take(MIME_SNIFF_BYTES)
-            .read_to_end(&mut header)
+        let header = sniff_header(&mut file)
             .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        file.rewind()
-            .await
-            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        let content_type = infer::get(&header)
-            .map(|kind| kind.mime_type())
-            .unwrap_or_else(|| infer_content_type(&resolved));
+        let content_type = content_type_for(&header, &resolved);
 
+        // `reference` answers any file with its immutable reference alone, the
+        // thing a message or a transfer works from; `resource` keeps its meaning,
+        // an image by reference and text by content.
+        let reference = || {
+            json!({
+                "type": "file",
+                "target": self.device_id,
+                "path": resolved.display().to_string(),
+                "revision": file_revision(&metadata),
+                "contentType": content_type,
+                "size": size,
+            })
+        };
+        if args.representation.as_deref() == Some("reference") {
+            let kind = if content_type.starts_with("image/") && !is_text_content_type(content_type)
+            {
+                "image"
+            } else if is_text_content_type(content_type) {
+                "text"
+            } else {
+                "file"
+            };
+            return Ok(ToolOutput::json(json!({
+                "ok": true,
+                "path": resolved.display().to_string(),
+                "size": size,
+                "kind": kind,
+                "contentType": content_type,
+                "resource": reference(),
+            })));
+        }
         if content_type.starts_with("image/") && !is_text_content_type(content_type) {
             if args.representation.as_deref() == Some("resource") {
                 return Ok(ToolOutput::json(json!({
@@ -165,14 +201,7 @@ impl Tool for ReadTool {
                     "size": size,
                     "kind": "image",
                     "contentType": content_type,
-                    "resource": {
-                        "type": "file",
-                        "target": self.device_id,
-                        "path": resolved.display().to_string(),
-                        "revision": file_revision(&metadata),
-                        "contentType": content_type,
-                        "size": size,
-                    },
+                    "resource": reference(),
                 })));
             }
             return Ok(ToolOutput::with_body(
@@ -280,45 +309,6 @@ fn select_text_lines(
     })
 }
 
-fn infer_content_type(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("md") => "text/markdown",
-        Some("json" | "map") => "application/json",
-        Some("yaml" | "yml") => "application/yaml",
-        Some("xml") => "application/xml",
-        Some("toml") => "application/toml",
-        Some("js" | "cjs" | "mjs" | "jsx") => "application/javascript",
-        Some("ts" | "tsx") => "application/typescript",
-        Some("html" | "htm") => "text/html",
-        Some("css") => "text/css",
-        Some("txt" | "log") => "text/plain",
-        Some("csv") => "text/csv",
-        Some("sh") => "text/x-shellscript",
-        Some("py") => "text/x-python",
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("wasm") => "application/wasm",
-        Some("data") => "application/octet-stream",
-        Some("mp3") => "audio/mpeg",
-        Some("wav") => "audio/wav",
-        Some("ogg") => "audio/ogg",
-        Some("webm") => "audio/webm",
-        Some("m4a") => "audio/mp4",
-        Some("mp4") => "video/mp4",
-        Some("mov") => "video/quicktime",
-        Some("pdf") => "application/pdf",
-        _ => "text/plain",
-    }
-}
-
 fn is_text_content_type(content_type: &str) -> bool {
     let content_type = content_type
         .split(';')
@@ -418,6 +408,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn returns_a_resource_for_any_file() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n".to_vec();
+        fs::write(root.join("report.pdf"), &bytes).unwrap();
+
+        let result = ReadTool::for_device(root.clone(), "laptop".to_string())
+            .execute(json!({ "path": "report.pdf", "representation": "reference" }))
+            .await
+            .unwrap();
+
+        assert!(result.body.is_none());
+        assert_eq!(result.data["kind"], "file");
+        assert_eq!(result.data["resource"]["target"], "laptop");
+        assert_eq!(result.data["resource"]["contentType"], "application/pdf");
+        assert_eq!(result.data["resource"]["size"], bytes.len());
+        assert!(result.data["resource"]["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn references_a_text_file_without_its_content() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("notes.md"), "hello\nworld\n").unwrap();
+
+        let tool = ReadTool::for_device(root.clone(), "laptop".to_string());
+        let referenced = tool
+            .execute(json!({ "path": "notes.md", "representation": "reference" }))
+            .await
+            .unwrap();
+        assert!(referenced.body.is_none());
+        assert_eq!(referenced.data["kind"], "text");
+        assert_eq!(referenced.data["resource"]["contentType"], "text/markdown");
+        assert_eq!(referenced.data["resource"]["size"], 12);
+
+        // the resource representation the model's Reads ask for is unchanged: text is its content
+        let read = tool
+            .execute(json!({ "path": "notes.md", "representation": "resource" }))
+            .await
+            .unwrap();
+        assert!(read.body.is_some());
+        assert!(read.data.get("resource").is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn names_a_mislabelled_file_by_its_bytes_like_a_transfer_does() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = b"%PDF-1.4\n1 0 obj\n".to_vec();
+        fs::write(root.join("report.dat"), &bytes).unwrap();
+
+        let result = ReadTool::for_device(root.clone(), "laptop".to_string())
+            .execute(json!({ "path": "report.dat", "representation": "reference" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["resource"]["contentType"], "application/pdf");
+        assert_eq!(
+            result.data["resource"]["contentType"],
+            content_type_for(&bytes, &root.join("report.dat"))
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn bounds_text_by_utf8_bytes_and_reports_continuation() {
         let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -458,5 +519,33 @@ mod tests {
         assert_eq!(actual, "é");
 
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use super::read_directory;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_link_to_a_directory_lists_as_a_directory() {
+        let root = std::env::temp_dir().join(format!("gsv-read-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("real")).expect("create real dir");
+        fs::write(root.join("note.txt"), "hi").expect("write file");
+        symlink(root.join("real"), root.join("linked")).expect("link dir");
+        symlink(root.join("note.txt"), root.join("linked-note")).expect("link file");
+
+        let output = read_directory(&root).expect("listing");
+        let directories: Vec<String> =
+            serde_json::from_value(output.data["directories"].clone()).expect("dirs");
+        let files: Vec<String> =
+            serde_json::from_value(output.data["files"].clone()).expect("files");
+        assert!(directories.contains(&"linked".to_string()));
+        assert!(directories.contains(&"real".to_string()));
+        assert!(files.contains(&"linked-note".to_string()));
+        assert!(files.contains(&"note.txt".to_string()));
+        let _ = fs::remove_dir_all(&root);
     }
 }

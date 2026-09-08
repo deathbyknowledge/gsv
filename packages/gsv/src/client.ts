@@ -336,6 +336,7 @@ const SYSCALL_NAMES = [
   "sys.target.get",
   "sys.target.update",
   "sys.target.delete",
+  "sys.ledger.list",
   "sys.oauth.start",
   "sys.oauth.device.start",
   "sys.oauth.device.poll",

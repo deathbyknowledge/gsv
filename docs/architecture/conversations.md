@@ -33,8 +33,17 @@ work, or remain silent.
 Ordinary assistant text is Process activity. It is never implicitly sent to a user. Human-facing
 delivery and run completion are separate operations:
 
-- A literal block commits a canonical user-visible message without interpreting its contents. The
-  run remains active, so the intelligence can update the user and then continue working:
+- The `Send` tool commits a canonical user-visible message without interpreting its contents. With
+  `text` alone the run remains active, so the intelligence can update the user and then continue
+  working; with `yield: true` the run finishes after the message, preserving its durable Process; with
+  `yield: true` and no text it finishes without another user-visible message. `attach` names files to
+  send, a path on the cloud home or `target:path` for a file on a place; each is referenced where it
+  lives through `fs.read` in its `reference` representation, retained into the process archive, and sent with the message, or the send is
+  refused naming the file that could not be read. Those reads obey the person's tool approval rules the
+  way a Read does: a file that would need approval is refused until it has been read once.
+- The same three actions exist as commands, so a person or a script can do what the model does. A
+  literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
+  with ordinary shell success semantics:
 
   ```bash
   message send <<'GSV_MESSAGE'
@@ -42,23 +51,20 @@ delivery and run completion are separate operations:
   GSV_MESSAGE
   ```
 
-- `yield` finishes the run while preserving its durable Process. A bare `yield` completes without
-  another user-visible message.
-- A final message composes both operations with ordinary shell success semantics:
-
   ```bash
   message send <<'GSV_MESSAGE' && yield
   your final user-visible response
   GSV_MESSAGE
   ```
 
-The Process recognizes these exact commands inside a direct `Shell` call before normal shell
-dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and cannot
+The Process recognizes a `Send` call, and these exact commands inside a direct `Shell` call, before
+normal shell dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and cannot
 be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit, Delete,
-Search, Shell, and CodeMode surface. A successful send returns a tool result and schedules the next
-model turn unless it was composed with `yield`. If a generation stops without yielding, the Process
-adds one `[GSV EVENT]` correction and retries once. A second omission ends the run with an inspectable
-error instead of looping indefinitely. A malformed message or run-control command has its own
+Search, Shell, CodeMode, and Send surface. A successful send returns a tool result and schedules the
+next model turn unless it yielded. If a generation stops without yielding, the Process adds a
+`[GSV EVENT]` correction naming `Send`, up to three times, with the tool set unchanged so the cached
+prompt prefix survives. A further omission ends the run with an inspectable error instead of looping
+indefinitely, and the person receives a short notice that a reply was written but not sent. A malformed message or run-control command has its own
 five-attempt recovery budget. Delivery failures are tracked separately, so they cannot exhaust either
 omission or command correction. Each send has a stable action id, allowing several exactly-once
 Messages in one run and safe replay after an uncertain response.

@@ -5,7 +5,8 @@
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
-import type { MCPClientManager } from "agents/mcp/client";
+import type { LedgerStore } from "./ledger";
+import type { McpClientManager } from "./mcp-client";
 import type {
   FederationDeliveryReceipt,
   JsonObject,
@@ -52,7 +53,7 @@ export type KernelContext = {
   procs: ProcessRegistry;
   conversations: ConversationRegistry;
   oauth: OAuthStore;
-  mcp: MCPClientManager;
+  mcp: McpClientManager;
   mcpServers: McpServerStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
@@ -72,6 +73,8 @@ export type KernelContext = {
   requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
+  /** The ledger of dispatched syscalls; absent only in contexts built for tests. */
+  ledger?: LedgerStore;
   serverVersion: string;
   defer: (promise: Promise<unknown>) => void;
   broadcastToUserUid: (uid: number, signal: string, payload?: JsonValue) => void;
@@ -125,7 +128,7 @@ export type KernelContext = {
     toolName: string,
     args: JsonObject,
     signal?: AbortSignal,
-  ) => ReturnType<MCPClientManager["callTool"]>;
+  ) => ReturnType<McpClientManager["callTool"]>;
   request?: (
     frame: RequestFrame,
     ctx: KernelContext,

@@ -61,6 +61,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.target.list",
     "sys.target.update",
     "sys.target.delete",
+    "sys.ledger.list",
     "sys.oauth.device.poll",
     "sys.oauth.device.start",
     "sys.oauth.forget",

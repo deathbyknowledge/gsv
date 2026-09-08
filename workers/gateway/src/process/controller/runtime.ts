@@ -1056,7 +1056,9 @@ export class ProcessController {
   ): Promise<ProcHilResult> {
     const remembered = this.rememberHilApproval(args, pending, run);
     this.host.store.tools.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
-    if (args.decision === "deny") {
+    if (args.decision === "approve") {
+      this.host.tools.rememberApprovedRead(pending, pending.runId);
+    } else {
       await this.host.tools.failStartedTool(
         pending.runId,
         pending.ownerDispatchId ?? approval.dispatchId,
@@ -1111,6 +1113,7 @@ export class ProcessController {
     const remembered = this.rememberHilApproval(args, pending, run);
     this.host.store.tools.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
     if (args.decision === "approve") {
+      this.host.tools.rememberApprovedRead(pending, pending.runId);
       const dispatchReady = await this.host.tools.beginToolDispatch(
         pending.runId,
         toolCall.dispatchId,

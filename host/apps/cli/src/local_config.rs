@@ -52,6 +52,7 @@ pub(crate) fn run_local_config(
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace.map(|path| path.display().to_string())
                 }
+                "device.auto_update" => Some(cfg.device_auto_update().to_string()),
                 _ => {
                     eprintln!("Unknown config key: {}", key);
                     eprintln!("\nValid keys:");
@@ -60,7 +61,7 @@ pub(crate) fn run_local_config(
                     eprintln!("  release.channel");
                     eprintln!("  session.default_key");
                     eprintln!("  device.id, device.label, device.token, device.workspace");
-                    eprintln!("  device.gateway_url, device.gateway_username");
+                    eprintln!("  device.gateway_url, device.gateway_username, device.auto_update");
                     return Ok(());
                 }
             };
@@ -95,6 +96,7 @@ pub(crate) fn run_local_config(
                     | "node.gateway_username"
                     | "device.workspace"
                     | "node.workspace"
+                    | "device.auto_update"
             ) {
                 eprintln!("Unknown config key: {}", key);
                 return Ok(());
@@ -121,6 +123,18 @@ pub(crate) fn run_local_config(
                 eprintln!("release.channel must be 'stable' or 'dev'");
                 return Ok(());
             }
+            let auto_update = if key == "device.auto_update" {
+                match value.trim().to_ascii_lowercase().as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => {
+                        eprintln!("device.auto_update must be 'true' or 'false'");
+                        return Ok(());
+                    }
+                }
+            } else {
+                None
+            };
 
             CliConfig::update(|cfg| match key.as_str() {
                 "gateway.url" => cfg.gateway.url = Some(value.clone()),
@@ -147,6 +161,7 @@ pub(crate) fn run_local_config(
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace = Some(PathBuf::from(value.clone()))
                 }
+                "device.auto_update" => cfg.device.auto_update = auto_update,
                 _ => {}
             })?;
             let display_value = if key == "session.default_key" {

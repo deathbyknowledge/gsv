@@ -9,15 +9,19 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  FINAL_MESSAGE_BLOCK_EXAMPLE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE,
-  MAX_RETRYABLE_GENERATION_ATTEMPTS, PENDING_RUN_CONTROL_CALL, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
+  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";
-import type { RunControlCommandParseResult } from "../run-control-command";
+import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
+import { mediaTypeFromContentType } from "../history/helpers";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
+import { readPathKey } from "../tools/runtime";
+import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -56,18 +60,18 @@ import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../..
 import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
-import { piToolParametersSchema } from "../internal/schemas";
+import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
 
-function hasRunControlRegistration(
+/** The name a run-control result is recorded under: the Send tool's own, or the Shell's syscall. */
+function runControlRegistration(
   host: Process,
   runId: string,
   dispatchId: string,
   toolCallId: string,
-): boolean {
+): { resultName: string } | null {
   const pending = host.store.tools.getPending(dispatchId);
-  return pending?.runId === runId
-    && pending.callId === toolCallId
-    && pending.call === PENDING_RUN_CONTROL_CALL;
+  if (pending?.runId !== runId || pending.callId !== toolCallId || !isRunControlCall(pending.call)) return null;
+  return { resultName: pending.call === SEND_TOOL_NAME ? SEND_TOOL_NAME : "shell.exec" };
 }
 
 export class ProcessRun {
@@ -77,8 +81,7 @@ export class ProcessRun {
     runId: string,
     actionId: string,
     parsed: RunControlCommandParseResult,
-    media: RunOutputMedia[],
-    assistantText = "",
+    stagedMedia: RunOutputMedia[],
   ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
@@ -90,19 +93,49 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    const activeRun = this.host.runs.active;
-    const isHumanFacingRun = activeRun?.runId === runId && !activeRun.returnToCaller;
-    if (parsed.command.action === "yield" && isHumanFacingRun && assistantText.trim()) {
-      return {
-        ok: false,
-        action: "yield",
-        text: "",
-        delivery: { kind: "none" },
-        failureKind: "command",
-        error: "yield cannot accompany non-empty assistant text",
-      };
+    // a finishing call is admitted by the responsibilities first, before anything it names is staged:
+    // a refused finish then leaves nothing behind for a later Send to carry by accident
+    let responsibilityAdmissionKey: string | undefined;
+    if (parsed.command.action === "yield" || parsed.command.finish) {
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (!responsibilityCheck.ok) {
+        return {
+          ok: false,
+          action: parsed.command.action,
+          text: parsed.command.action === "message" ? parsed.command.text : "",
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: responsibilityCheck.error,
+        };
+      }
+      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
     }
-    if (parsed.command.action === "message" && !parsed.command.text.trim() && media.length === 0) {
+    // files the Send names are referenced on their place, retained and staged; a message goes out whole or not at all
+    let media = stagedMedia;
+    if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
+      const attached = await this.attachSendFiles(runId, parsed.command.attach);
+      if (!attached.ok) {
+        return {
+          ok: false,
+          action: "message",
+          text: parsed.command.text,
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: attached.error,
+        };
+      }
+      media = await this.host.resources.promoteRunOutputMedia(runId);
+    }
+    // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message.
+    // Whatever the turn narrated as assistant text is Process activity, never a reply: it does not hold a yield.
+    const command: RunControlCommand =
+      parsed.command.action === "message"
+        && parsed.command.emptyMeansYield === true
+        && !parsed.command.text.trim()
+        && media.length === 0
+        ? { action: "yield" }
+        : parsed.command;
+    if (command.action === "message" && !command.text.trim() && media.length === 0) {
       return {
         ok: false,
         action: "message",
@@ -111,22 +144,6 @@ export class ProcessRun {
         failureKind: "command",
         error: "Message requires non-empty text or attached media",
       };
-    }
-    const command = parsed.command;
-    let responsibilityAdmissionKey: string | undefined;
-    if (command.action === "yield" || command.finish) {
-      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
-      if (!responsibilityCheck.ok) {
-        return {
-          ok: false,
-          action: command.action,
-          text: command.action === "message" ? command.text : "",
-          delivery: { kind: "none" },
-          failureKind: "command",
-          error: responsibilityCheck.error,
-        };
-      }
-      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
     }
     if (command.action === "yield") {
       await this.host.streams.silence(runId, actionId);
@@ -147,6 +164,87 @@ export class ProcessRun {
       media,
       responsibilityAdmissionKey,
     });
+  }
+
+  /**
+   * Files a Send names become immutable references through `fs.read` on their
+   * place, then are retained and staged the way `message attach` stages them.
+   * The reads are the process's own calls, so the ledger shows them, and they
+   * obey the person's tool approval rules the way a Read does: a file that
+   * would need approval is refused until it has been read once.
+   */
+  async attachSendFiles(
+    runId: string,
+    specs: readonly string[],
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const media: ResourceBlock[] = [];
+    const run = this.host.runs.active;
+    // the same policy a Read would face, resolved from the account and the remembered approvals when the run has none yet
+    const policy = run?.runId === runId ? this.host.tools.resolveToolApprovalPolicy(run) : DEFAULT_TOOL_APPROVAL_POLICY;
+    for (const spec of specs) {
+      const { target, path } = parseAttachPath(spec);
+      const readArgs: FsReadArgs = target === "gsv"
+        ? { path, representation: "reference" }
+        : { target, path, representation: "reference" };
+      const approval = resolveToolApproval(policy, "fs.read", readArgs);
+      if (approval.action === "deny") {
+        return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
+      }
+      // the person approved reading this file earlier in the run, once or for good; that approval carries here
+      const approvedRead = (run?.approvedReads ?? []).includes(readPathKey(readArgs) ?? "");
+      if (approval.action === "ask" && !approvedRead) {
+        return {
+          ok: false,
+          error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
+        };
+      }
+      const referenced = await this.referenceFile(runId, spec, readArgs);
+      if (!referenced.ok) return referenced;
+      const ref = referenced.ref;
+      // the place answers for itself and nothing else: a reference naming another place would be retained from
+      // there under this process's authority, so it is refused
+      if (ref.target !== target) {
+        return { ok: false, error: `cannot attach ${spec}: ${target} answered with a reference for ${ref.target}` };
+      }
+      media.push({
+        type: "resource",
+        ref,
+        mediaType: mediaTypeFromContentType(ref.contentType),
+        filename: ref.path.split(/[/\\]/).pop() || "attachment",
+      });
+    }
+    const attached = await this.host.resources.handleProcRunAttach({ runId, media });
+    return attached.ok ? { ok: true } : { ok: false, error: attached.error };
+  }
+
+  /**
+   * The immutable reference for a file, from the place that holds it. A daemon
+   * from before the `reference` representation still answers an image by
+   * reference when asked for the `resource` one, so that is the fallback; for
+   * anything else it has to be updated first.
+   */
+  async referenceFile(
+    runId: string,
+    spec: string,
+    readArgs: FsReadArgs,
+  ): Promise<{ ok: true; ref: FileResourceReference } | { ok: false; error: string }> {
+    const read = async (args: FsReadArgs): Promise<FsReadResult> => {
+      try {
+        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId));
+      } catch (error) {
+        return { ok: false, error: errorMessageFromUnknown(error) };
+      }
+    };
+    let result = await read(readArgs);
+    if (result.ok && "kind" in result && !result.resource && result.kind === "image") {
+      result = await read({ ...readArgs, representation: "resource" });
+    }
+    if (!result.ok) return { ok: false, error: `cannot attach ${spec}: ${result.error}` };
+    if (!("kind" in result)) return { ok: false, error: `cannot attach ${spec}: it is a folder` };
+    if (!result.resource) {
+      return { ok: false, error: `cannot attach ${spec}: the GSV on that place must be updated before it can send this file` };
+    }
+    return { ok: true, ref: result.resource };
   }
 
   async executeMessageRunControlAction(options: {
@@ -391,6 +489,7 @@ export class ProcessRun {
     const run = this.host.runs.active;
     if (!run || run.runId !== runId) return;
     if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
+      await this.deliverCorrectionNotice(runId);
       await this.finishRun(runId, {
         reason: "message.action.missing",
         status: "error",
@@ -405,13 +504,33 @@ export class ProcessRun {
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
     }));
     if (!correctedRun) return;
-    const message = [
-      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      "Run `yield` now if the work is complete.",
-      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
-    ].join("\n");
-    await this.host.history.appendSystemMessage(runId, message);
+    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
+  }
+
+  /** The run could not be corrected into sending; the person hears that much rather than nothing. */
+  async deliverCorrectionNotice(runId: string): Promise<void> {
+    const run = this.host.runs.active;
+    if (!run || run.runId !== runId || run.returnToCaller) return;
+    const actionId = `correction-notice-${runId}`;
+    try {
+      const release = this.beginRunControlCommit(runId);
+      try {
+        const request = this.buildRunControlMessageCommitRequest(run, {
+          runId,
+          actionId,
+          text: CORRECTION_FAILURE_NOTICE,
+          media: [],
+        });
+        await this.commitRunControlMessage(runId, actionId, request);
+      } finally {
+        release();
+      }
+    } catch (error) {
+      console.warn(
+        `[Process] Could not deliver the correction notice for ${runId}: ${errorMessageFromUnknown(error)}`,
+      );
+    }
   }
 
   async finishRun(
@@ -1176,7 +1295,6 @@ export class ProcessRun {
         call.toolCall.id,
         call.parsed,
         outputMedia,
-        turn.text,
       );
     } catch (error) {
       this.persistRunControlExecutionError(
@@ -1202,7 +1320,8 @@ export class ProcessRun {
     return this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return false;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) {
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) {
         throw new Error("Run-control tool registration was lost before its result");
       }
       const updated = result.ok ? active : incrementRunControlFailure(active, result.failureKind);
@@ -1216,7 +1335,7 @@ export class ProcessRun {
       }
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         content,
         !result.ok,
         runId,
@@ -1236,12 +1355,13 @@ export class ProcessRun {
     this.host.ctx.storage.transactionSync(() => {
       const active = this.host.runs.active;
       if (this.host.killed || !active || active.runId !== runId) return;
-      if (!hasRunControlRegistration(this.host, runId, dispatchId, toolCallId)) return;
+      const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
+      if (!registration) return;
       const message = `Run-control execution failed: ${error}`;
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,
-        "shell.exec",
+        registration.resultName,
         message,
         true,
         runId,
@@ -1258,7 +1378,7 @@ export class ProcessRun {
     const { prepared, response, fallbackMetadata, inferenceSpanId } = generated;
     const turn = classifyAssistantTurn(
       response,
-      prepared.workTools.map((tool) => tool.name),
+      prepared.run.offeredToolNames ?? prepared.workTools.map((tool) => tool.name),
     );
     let outputMedia =
       turn.toolCalls.length === 0 && turn.unofferedToolCalls.length === 0
@@ -1391,11 +1511,12 @@ export class ProcessRun {
       const call = turn.runControlCalls[0];
       if (!call) throw new Error("Run-control turn omitted its command");
       const dispatchId = crypto.randomUUID();
+      // registered under the tool's own name, Shell or Send, so its result and any interruption carry that name
       this.host.store.tools.register(
         dispatchId,
         call.toolCall.id,
         runId,
-        PENDING_RUN_CONTROL_CALL,
+        call.toolCall.name,
         jsonObjectSchema.parse(call.toolCall.arguments),
       );
       return dispatchId;
@@ -1510,7 +1631,8 @@ export class ProcessRun {
       options: {
         reason: run.returnToCaller ? "ipc.returned" : "run.yielded",
         status: "ok",
-        resultText: result.action === "message" ? result.text : persisted.turn.text || null,
+        // a bounded call returns its text to the caller; a human-facing run that yielded quietly said nothing
+        resultText: result.action === "message" ? result.text : run.returnToCaller ? persisted.turn.text || null : null,
         delivery: result.delivery,
         usage: persisted.response.usage,
       },
@@ -1827,8 +1949,13 @@ export class ProcessRun {
       description: tool.description,
       parameters: piToolParametersSchema.parse(tool.inputSchema),
     }));
+    // the tool set is part of the cached prompt prefix and stays the same from turn to turn, corrections included
     const tools = run.returnToCaller ? workTools : withRunControlInstructions(workTools);
-    const offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
+    // the offered names are what the turn is classified against; Send counts only where the model was given it
+    const offeredToolNames = [
+      ...new Set(workTools.map((tool) => tool.name)),
+      ...(run.returnToCaller ? [] : [SEND_TOOL.name]),
+    ];
     const offeredRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
       offeredToolNames,

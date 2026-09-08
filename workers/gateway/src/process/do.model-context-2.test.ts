@@ -5,9 +5,22 @@ import type { ProcAbortResult } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
-  captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, deferred,
-  runInProcess, ROOT_IDENTITY, initProcess, makeRuntimeEventDeliverReq, messageAction,
-  messageUpdateAction, offeredTools, terminalTestConfig, terminalTestResponse, testUsage,
+  captureSignals,
+  mockGeneration,
+  processTestConfig,
+  generationRun,
+  assistantResponse,
+  deferred,
+  runInProcess,
+  ROOT_IDENTITY,
+  initProcess,
+  makeRuntimeEventDeliverReq,
+  messageAction,
+  messageUpdateAction,
+  offeredTools,
+  terminalTestConfig,
+  terminalTestResponse,
+  testUsage,
   yieldAction,
 } from "./do-test-harness";
 
@@ -280,7 +293,7 @@ describe("model context", () => {
       process.generation = {
         async generate(request: any) {
           generationCalls += 1;
-          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell"]);
+          expect(request.context.tools.map((tool: any) => tool.name)).toEqual(["Read", "Shell", "Send"]);
           return generationCalls === 1
             ? assistantResponse([
                 {
@@ -542,15 +555,18 @@ describe("model context", () => {
     }
   });
 
-  it("requires an explicit yield and bounds the correction", async () => {
+  it("keeps the same tool set while correcting, so the cached prefix survives, then tells the person rather than going silent", async () => {
     const pid = "mech-terminal-action-required";
     const runId = "run-terminal-action-required";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
+      const offered: string[][] = [];
       process.run.scheduleTick = vi.fn(async () => {});
-      mockGeneration(process, async () => {
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "notice" }));
+      mockGeneration(process, async (request: any) => {
+        offered.push((request.context?.tools ?? []).map((tool: any) => tool.name));
         return terminalTestResponse([{ type: "text", text: "This is only a draft." }]);
       }, async () => {
         return "unused";
@@ -563,20 +579,34 @@ describe("model context", () => {
       const correction = process.store.messages
         .getMessages()
         .find((message: any) => message.role === "system" && message.runId === runId);
-      expect(correction?.content).toContain("Run `yield` now");
+      expect(correction?.content).toContain("Call the Send tool");
       expect(
         (await process.history.buildContextMessages("default")).find((message: any) =>
-          message.content.includes("Run `yield` now"),
+          message.content.includes("Call the Send tool"),
         )?.content,
       ).toContain("[GSV EVENT]");
-
       await process.run.runTick(runId);
-      return { emitted, messages: process.store.messages.getMessages() };
+      await process.run.runTick(runId);
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        offered,
+        notices: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
     });
 
-    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(
-      2,
-    );
+    expect(result.messages.filter((message: any) => message.role === "assistant")).toHaveLength(4);
+    expect(
+      result.messages.filter((message: any) => message.role === "system" && message.content.includes("Call the Send tool")),
+    ).toHaveLength(3);
+    // every generation, corrections included, saw the same tools: a changed tool list would invalidate the provider's prompt cache
+    expect(result.offered).toEqual([["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"]]);
+    expect(result.notices).toHaveLength(1);
+    expect(result.notices[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, text: "I wrote a reply but did not send it. Ask me again." },
+    });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({
@@ -584,6 +614,265 @@ describe("model context", () => {
       reason: "message.action.missing",
       error: "The model did not yield after correction",
     });
+  });
+
+  it("treats a Send that only yields as a bare yield, or as a final message when media is staged", async () => {
+    const pid = "mech-send-yield-only";
+    const runId = "run-send-yield-only";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.streams.silence = vi.fn(async () => {});
+      process.streams.complete = vi.fn(async () => {});
+      process.run.commitMessageRunControlAction = vi.fn(async (options: any) => ({
+        ok: true,
+        action: "message",
+        finish: options.finish,
+        text: options.text,
+        delivery: { kind: "none" },
+      }));
+      const yieldOnly = {
+        ok: true as const,
+        command: { action: "message" as const, text: "", finish: true, emptyMeansYield: true as const },
+      };
+      expect(await process.run.executeRunControlAction(runId, "send-yield-1", yieldOnly, [])).toMatchObject({
+        ok: true,
+        action: "yield",
+        finish: true,
+      });
+      const staged = [{ type: "image", mimeType: "image/png", key: "k", path: "p", size: 1 }];
+      expect(
+        await process.run.executeRunControlAction(runId, "send-yield-2", yieldOnly, staged),
+      ).toMatchObject({ ok: true, action: "message", finish: true });
+      expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("attaches the files a Send names before committing, and refuses the send when one cannot be read", async () => {
+    const pid = "mech-send-attach";
+    const runId = "run-send-attach";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.streams.complete = vi.fn(async () => {});
+      process.kernel.kernelRpc = vi.fn(async (call: string, args: any) => {
+        expect(call).toBe("fs.read");
+        expect(args.representation).toBe("reference");
+        if (args.path.endsWith("missing.pdf")) return { ok: false, error: "no such file" };
+        return {
+          ok: true,
+          path: args.path,
+          kind: "file",
+          contentType: "application/pdf",
+          size: 12,
+          resource: { type: "file", target: args.target ?? "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+        };
+      });
+      process.resources.handleProcRunAttach = vi.fn(async (args: any) => ({ ok: true, runId, media: args.media }));
+      process.resources.promoteRunOutputMedia = vi.fn(async () => [
+        { type: "document", mimeType: "application/pdf", key: "k", path: "/p", size: 12, revision: "rev-1" },
+      ]);
+      process.run.commitMessageRunControlAction = vi.fn(async (options: any) => ({
+        ok: true,
+        action: "message",
+        finish: options.finish,
+        text: options.text,
+        delivery: { kind: "none" },
+      }));
+
+      const sent = await process.run.executeRunControlAction(runId, "send-attach-1", {
+        ok: true as const,
+        command: { action: "message" as const, text: "here it is", finish: false, attach: ["laptop:/home/e/report.pdf", "/tmp/a.pdf"] },
+      }, []);
+      expect(sent).toMatchObject({ ok: true, action: "message" });
+      expect(process.kernel.kernelRpc.mock.calls.map((call: any[]) => call[1])).toEqual([
+        { target: "laptop", path: "/home/e/report.pdf", representation: "reference" },
+        { path: "/tmp/a.pdf", representation: "reference" },
+      ]);
+      expect(process.resources.handleProcRunAttach.mock.calls[0][0].media).toHaveLength(2);
+      expect(process.resources.handleProcRunAttach.mock.calls[0][0].media[0]).toMatchObject({
+        type: "resource",
+        mediaType: "document",
+        filename: "report.pdf",
+        ref: { target: "laptop", path: "/home/e/report.pdf" },
+      });
+      expect(process.run.commitMessageRunControlAction.mock.calls[0][0].media).toHaveLength(1);
+
+      const refused = await process.run.executeRunControlAction(runId, "send-attach-2", {
+        ok: true as const,
+        command: { action: "message" as const, text: "and this", finish: true, attach: ["laptop:/home/e/missing.pdf"] },
+      }, []);
+      expect(refused).toMatchObject({
+        ok: false,
+        failureKind: "command",
+        error: "cannot attach laptop:/home/e/missing.pdf: no such file",
+      });
+      expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+
+      // the person's tool approval rules apply to these reads as they do to a Read
+      const reads = process.kernel.kernelRpc.mock.calls.length;
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "ask", rules: [] } });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-3", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "deny", rules: [] } });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-4", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
+      expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
+
+      // a run that has not resolved its policy yet still faces the account's: a fresh run's first action may be this Send
+      process.runs.active = generationRun(
+        runId,
+        processTestConfig(pid, { generationStreaming: "off", accountApprovalPolicy: JSON.stringify({ default: "ask", rules: [] }) }),
+        { approvalPolicy: undefined },
+      );
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-4b", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
+      expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
+
+      // the person approving a Read of the file, once or for good, lets a Send attach it under an ask rule,
+      // whatever the Read itself returned: a PDF's ordinary Read is refused as binary, and the approval still counts
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), {
+        approvalPolicy: { default: "ask", rules: [] },
+        offeredToolNames: ["Read", "Send"],
+      });
+      process.kernel.dispatchSyscall = vi.fn(async () => {});
+      process.store.tools.register("dispatch-read-1", "read-1", runId, "fs.read", { path: "/tmp/private.pdf" });
+      process.store.tools.setPendingHil({
+        requestId: "approval-read-1",
+        runId,
+        toolCallId: "read-1",
+        toolName: "Read",
+        syscall: "fs.read",
+        args: { path: "/tmp/private.pdf" },
+        createdAt: Date.now(),
+      });
+      expect(
+        await process.controller.handleProcHil({ requestId: "approval-read-1", decision: "approve" }),
+      ).toMatchObject({ ok: true });
+      expect(process.runs.active.approvedReads).toEqual(["gsv\u0000/tmp/private.pdf"]);
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({
+        ok: true,
+        path: args.path,
+        kind: "file",
+        contentType: "application/pdf",
+        size: 12,
+        resource: { type: "file", target: args.target ?? "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+      }));
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-5", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: true, action: "message" });
+      // a file the person did not approve is still refused
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-5b", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/other.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
+
+      // a place answers for itself: a reference naming another place is refused
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({
+        ok: true,
+        path: args.path,
+        kind: "file",
+        contentType: "application/pdf",
+        size: 12,
+        resource: { type: "file", target: "gsv", path: args.path, revision: "rev-1", contentType: "application/pdf", size: 12 },
+      }));
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-6", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/report.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: "cannot attach laptop:/home/e/report.pdf: laptop answered with a reference for gsv" });
+
+      // a daemon from before the reference representation still hands out an image by reference under the resource one
+      const asked: string[] = [];
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => {
+        asked.push(args.representation);
+        if (args.representation === "reference") return { ok: true, path: args.path, kind: "image", contentType: "image/png", size: 4 };
+        return {
+          ok: true,
+          path: args.path,
+          kind: "image",
+          contentType: "image/png",
+          size: 4,
+          resource: { type: "file", target: "laptop", path: args.path, revision: "rev-9", contentType: "image/png", size: 4 },
+        };
+      });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-7", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/shot.png"] },
+        }, []),
+      ).toMatchObject({ ok: true, action: "message" });
+      expect(asked).toEqual(["reference", "resource"]);
+      process.kernel.kernelRpc = vi.fn(async (_call: string, args: any) => ({ ok: true, path: args.path, kind: "text", contentType: "text/plain", size: 4 }));
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-8", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["laptop:/home/e/notes.txt"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("must be updated") });
+    });
+  });
+
+  it("sends and ends the run through the Send tool", async () => {
+    const pid = "mech-send-tool";
+    const runId = "run-send-tool";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const result = await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent" }));
+      mockGeneration(process, async () => {
+        return terminalTestResponse([
+          { type: "toolCall", id: "send-1", name: "Send", arguments: { text: "all done", yield: true } },
+        ]);
+      }, async () => {
+        return "unused";
+      });
+      process.store.messages.appendMessage("user", "Do the thing.", { runId });
+      process.runs.active = generationRun(runId, terminalTestConfig(pid));
+
+      await process.run.runTick(runId);
+      return {
+        emitted,
+        commits: process.run.commitRunControlMessage.mock.calls,
+        messages: process.store.messages.getMessages(),
+      };
+    });
+
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0][2]).toMatchObject({
+      call: "proc.message.commit",
+      args: { runId, actionId: "send-1", text: "all done" },
+    });
+    const sendResult = result.messages.find((message: any) => message.role === "toolResult");
+    expect(sendResult).toMatchObject({ content: "Message committed and run yielded", toolCallId: "send-1" });
+    // the result is recorded under the tool's own name, so the call and its result pair up for every provider
+    expect(sendResult?.toolCalls).toContain('"toolName":"Send"');
+    expect(
+      result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
+    ).toMatchObject({ status: "ok", reason: "run.yielded" });
   });
 
   it("does not resurrect a superseded run after yield correction awaits", async () => {
@@ -844,80 +1133,42 @@ describe("model context", () => {
     });
   });
 
-  it("rejects assistant text before finishing silently without a canonical message", async () => {
+  it("lets a bare yield end the run whatever the turn narrated, since assistant text is never a reply", async () => {
     const pid = "mech-terminal-silence";
     const runId = "run-terminal-silence";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
-      let generationCalls = 0;
       process.streams.emitProjection = vi.fn(async () => {});
       process.run.scheduleTick = vi.fn(async () => {});
-      process.kernel.dispatchSyscall = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:home", id: "never" }));
       mockGeneration(process, async () => {
-        generationCalls += 1;
-        return terminalTestResponse(generationCalls === 1
-          ? [
-              { type: "text", text: "This reply should be delivered." },
-              yieldAction("text-yield-action"),
-            ]
-          : [
-              { type: "text", text: "" },
-              { type: "thinking", thinking: "No interruption is useful." },
-              yieldAction("yield-action"),
-            ]);
+        return terminalTestResponse([
+          { type: "text", text: "Nothing to tell the person; closing quietly." },
+          yieldAction("text-yield-action"),
+        ]);
       }, async () => {
         return "unused";
       });
       process.store.messages.appendMessage("user", "No reply needed.", { runId });
-      process.runs.active = generationRun(runId, terminalTestConfig(pid), {
-        conversationId: "conv:home",
-        systemPrompt: "Test system prompt.",
-        approvalPolicy: {
-          default: "auto",
-          rules: [{ match: "shell.exec", action: "ask" }],
-        }
-      });
-
-      await process.run.runTick(runId);
-      expect(process.runs.active).toMatchObject({
-        runId,
-        terminalCommandFailures: 1,
-      });
-      expect(process.run.scheduleTick).toHaveBeenCalledOnce();
-      const rejectedYield = process.store.messages
-        .getMessages()
-        .find((message: any) => message.toolCallId === "text-yield-action");
-      expect(rejectedYield).toMatchObject({
-        content: expect.stringContaining("yield cannot accompany non-empty assistant text"),
-      });
-      expect(JSON.parse(rejectedYield.toolCalls)).toMatchObject({ isError: true });
-      expect(emitted.some((entry) => entry.signal === "proc.run.finished")).toBe(false);
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { conversationId: "conv:home" });
 
       await process.run.runTick(runId);
       return {
         emitted,
-        streamCalls: process.streams.emitProjection.mock.calls,
+        commits: process.run.commitRunControlMessage.mock.calls,
         messages: process.store.messages.getMessages(),
-        dispatchCalls: process.kernel.dispatchSyscall.mock.calls,
       };
     });
 
-    expect(result.streamCalls).toEqual([
-      [runId, expect.objectContaining({ id: `draft:${runId}:yield-action` }), "silenced"],
-    ]);
-    expect(
-      result.messages.find((message: any) => message.toolCallId === "yield-action"),
-    ).toMatchObject({ content: "Run yielded" });
-    expect(result.dispatchCalls).toEqual([]);
+    expect(result.commits).toEqual([]);
+    expect(result.messages.find((message: any) => message.toolCallId === "text-yield-action")).toMatchObject({
+      content: "Run yielded",
+    });
+    expect(result.messages.find((message: any) => message.role === "assistant")?.content).toContain("closing quietly");
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
-    ).toMatchObject({
-      status: "ok",
-      reason: "run.yielded",
-      result: { text: null },
-      delivery: { kind: "none" },
-    });
+    ).toMatchObject({ status: "ok", reason: "run.yielded", result: { text: null }, delivery: { kind: "none" } });
   });
 });

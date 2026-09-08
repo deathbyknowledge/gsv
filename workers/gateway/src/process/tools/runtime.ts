@@ -12,7 +12,7 @@ import type { PreparedJsonToolArgs, DynamicRequestFrameData } from "../internal/
 import type { Process } from "../do";
 import type { RunState } from "../run/state";
 import {
-  INTERRUPTED_RUN_CONTROL_MESSAGE, PENDING_RUN_CONTROL_CALL, SHELL_SESSION_TARGET_KEY_PREFIX,
+  INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
   TOOL_APPROVAL_OVERRIDES_KEY, TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
 } from "../internal/lifecycle";
@@ -38,6 +38,15 @@ import { hasCapability } from "../../kernel/capabilities";
 import { materializeToolResponse } from "../tool-response";
 import { raceWithAbort } from "../../shared/abort";
 import { stableOpaqueId } from "../../shared/stable-id";
+
+const APPROVED_READS_REMEMBERED = 64;
+const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
+
+/** The place and path a Read named, as one key, so a later Send may attach what the person approved reading. */
+export function readPathKey(args: JsonValue): string | null {
+  const parsed = readPathArgsSchema.safeParse(args);
+  return parsed.success ? `${parsed.data.target ?? "gsv"}\0${parsed.data.path}` : null;
+}
 
 export type ToolResultIngestion = {
   interrupted: number;
@@ -138,6 +147,17 @@ export class ProcessTools {
 
   shellSessionTargetKey(sessionId: string): string {
     return `${SHELL_SESSION_TARGET_KEY_PREFIX}${sessionId}`;
+  }
+
+  /** A read the person approved, once or for good, is one a Send may attach in this run without asking again. */
+  rememberApprovedRead(pendingHil: PendingHilRecord, runId: string): void {
+    if (pendingHil.syscall !== "fs.read") return;
+    const key = readPathKey(pendingHil.args);
+    if (!key) return;
+    this.host.mutateActiveRun(runId, (run) => ({
+      ...run,
+      approvedReads: [...new Set([...(run.approvedReads ?? []), key])].slice(-APPROVED_READS_REMEMBERED),
+    }));
   }
 
   rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
@@ -436,7 +456,7 @@ export class ProcessTools {
     toolCall: ToolCallRecord,
     approvalPolicy: ToolApprovalPolicy,
   ): AdmittedToolCall | null {
-    if (toolCall.call === PENDING_RUN_CONTROL_CALL) {
+    if (isRunControlCall(toolCall.call)) {
       this.host.store.tools.fail(toolCall.dispatchId, INTERRUPTED_RUN_CONTROL_MESSAGE);
       return null;
     }

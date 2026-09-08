@@ -34,9 +34,38 @@ irm https://install.gsv.space/install.ps1 | iex
 ```
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
-`GSV_VERSION=vX.Y.Z` to install an immutable release tag. `GSV_INSTALL_DIR`
-overrides the destination. The default is `/usr/local/bin` on Linux and macOS,
-and `%LOCALAPPDATA%\Programs\gsv\bin` on Windows.
+`GSV_VERSION=vX.Y.Z` to install an immutable release tag.
+
+## Install location
+
+New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,
+`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. No `sudo` is involved, the
+daemon can update itself there, and `~/.gsv` then holds everything GSV writes
+on the machine besides `config.toml` and the service definition. The installer
+puts the directory on `PATH` for new shells: one marked, guarded line in
+`~/.profile`, plus `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, and
+`~/.config/fish/conf.d/gsv.fish` where those exist, never added twice; on
+Windows it is the user `Path` in the registry. Set `GSV_NO_MODIFY_PATH=1` to
+skip that and add it yourself. The daemon service never depends on `PATH`; it
+is registered with the absolute path of `gsvd`.
+
+`GSV_INSTALL_DIR` overrides the destination. A directory this user cannot write
+is installed with `sudo`, and the daemon there cannot update itself.
+
+An existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
+installer updates the directory the `gsvd` service runs from, or a previous
+`/usr/local/bin` installation, in place, and prints how to move if that
+directory is not user-writable. A daemon that Desktop enrolled from inside its
+macOS application bundle is the exception: Desktop updates that bundle as a
+whole, so the installer leaves it and its service alone and adds a separate
+command-line installation in the default directory. To migrate by hand:
+
+```bash
+curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
+sudo rm /usr/local/bin/gsv /usr/local/bin/gsvd /usr/local/bin/gsv-desktop \
+  /usr/local/bin/gsv-transcribe /usr/local/bin/gsv-vision
+gsv daemon install
+```
 
 Every artifact is checked against the release's `checksums.txt` before an
 installed binary is changed. The installer preserves the existing config and
@@ -56,6 +85,42 @@ When the `gsvd` user service already exists, the installer:
 If migration or the health check fails, the previous executable and service
 definition are restored. A machine without an existing service is not silently
 enrolled; run `gsv daemon install` after configuring a driver credential.
+
+## Automatic daemon updates
+
+A connected machine keeps itself current. When the gateway is redeployed,
+`gsvd` learns about it the next time it connects: a gateway that requires a
+newer protocol rejects the handshake and names the release it needs, and a
+gateway that merely runs a newer release reports it on a successful connect.
+In both cases the daemon runs this same installer, pinned to that release,
+detached from its own service so the installer can stop, replace, restart,
+health-check, and if necessary roll back the daemon exactly as a manual
+upgrade would. A stable daemon only follows stable releases; a daemon on the
+`dev` channel follows the `dev` tag.
+
+Automatic updates need the install directory to be writable by the user
+running `gsvd`, which the per-user default guarantees. Only a pre-existing
+system-wide installation, such as one under `/usr/local/bin`, updates manually
+until it is migrated, and a daemon inside the Desktop application bundle is
+updated by Desktop. The daemon also
+only updates itself when a service manager runs it (systemd, launchd, or the
+Windows scheduled task), since something has to restart it afterwards; a
+`gsvd --foreground` started by hand reports the newer release and leaves the
+update to you. The daemon makes at most one attempt per hour and only
+ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
+and `gsv daemon diagnostics` shows the latest decision. To turn the mechanism
+off:
+
+```bash
+gsv config --local set device.auto_update false
+```
+
+The daemon reads that setting again at every handshake, so the change applies
+the next time it connects; `gsv daemon reload` applies it immediately.
+
+The CLI and Desktop are never replaced while a person is using them. The CLI
+prints a hint when the gateway runs a newer release; rerun the installer to
+update them.
 
 ## Desktop
 

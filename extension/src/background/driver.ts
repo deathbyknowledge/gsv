@@ -6,6 +6,7 @@ import type {
 } from "@humansandmachines/gsv/client";
 import type { ActivityEntry, ActivityKind, ActivityStatus } from "../shared/ui-state";
 import { createBrowserCommands } from "../target/commands";
+import { loadConfig } from "../shared/config";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "../target/fs";
 import { createRuntimeFileSystem } from "../target/runtime-fs";
 import { BrowserTargetShell } from "../target/shell";
@@ -22,7 +23,7 @@ export function createBrowserTargetDriver(
   observeActivity?: BrowserTargetActivityObserver,
 ): BrowserTargetDriver {
   const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
-  const fsDriver = new BrowserFsDriver(fs);
+  const fsDriver = new BrowserFsDriver(fs, async () => (await loadConfig()).deviceId);
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
 
   return {

@@ -59,6 +59,8 @@ export class ProcessKernelClient {
     if (response.data === undefined) {
       throw new Error(`Synchronous response for ${call} omitted its result`);
     }
+    // an RPC hands back data alone; a body a place attached anyway is released, never left to back up
+    if (response.body) await cancelResponseBody(response, "Synchronous response body unused");
     return response.data;
   }
 

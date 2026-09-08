@@ -4,7 +4,18 @@
 set -euo pipefail
 
 REPO="deathbyknowledge/gsv"
-INSTALL_DIR="${GSV_INSTALL_DIR:-/usr/local/bin}"
+# New installations go to a per-user directory so the daemon can update itself
+# without privileges. GSV_INSTALL_DIR overrides it; an existing installation is
+# updated where it is.
+DEFAULT_INSTALL_DIR="${HOME}/.gsv/bin"
+# Where installations landed before the per-user default; overridable so a
+# machine with an unrelated system-wide install can be told to ignore it.
+LEGACY_INSTALL_DIR="${GSV_LEGACY_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR=""
+INSTALL_DIR_SOURCE=""
+# Set when the gsvd service runs from inside the Desktop application bundle,
+# which Desktop updates as a whole; the installer leaves it alone.
+DESKTOP_MANAGED_DAEMON=0
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -55,6 +66,86 @@ validate_channel() {
         case "$VERSION" in
             *[!A-Za-z0-9._-]*) error "Invalid GSV_VERSION release tag"; exit 1 ;;
         esac
+    fi
+}
+
+# Turn a plist string back into the path it encodes: the five XML entities
+# and their numeric forms. `&amp;` goes last so an encoded entity stays literal.
+decode_plist_string() {
+    sed -e 's/&lt;/</g; s/&#60;/</g' \
+        -e 's/&gt;/>/g; s/&#62;/>/g' \
+        -e 's/&quot;/"/g; s/&#34;/"/g' \
+        -e "s/&apos;/'/g; s/&#39;/'/g" \
+        -e 's/&#38;/\&/g; s/&amp;/\&/g'
+}
+
+# The first word of a systemd ExecStart line: the CLI writes it as a
+# double-quoted string with embedded quotes and backslashes escaped.
+decode_exec_start_program() {
+    local line="$1"
+    case "$line" in
+        \"*)
+            printf '%s\n' "$line" \
+                | sed -n 's/^"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+                | sed 's/\\\(.\)/\1/g'
+            ;;
+        *) printf '%s\n' "${line%% *}" ;;
+    esac
+}
+
+# The program a previous installation registered as the gsvd service, if any:
+# gsvd itself, or gsv from the `gsv device run` compatibility launcher.
+service_definition_executable() {
+    local line=""
+    if [ "$OS" = "linux" ]; then
+        local unit="${CONFIG_HOME}/systemd/user/gsvd.service"
+        [ -f "$unit" ] || return 0
+        line="$(grep -m 1 '^ExecStart=' "$unit" || true)"
+        decode_exec_start_program "${line#ExecStart=}"
+    else
+        local plist="${HOME}/Library/LaunchAgents/gsvd.plist"
+        [ -f "$plist" ] || return 0
+        sed -n '/<key>ProgramArguments<\/key>/,/<\/array>/p' "$plist" \
+            | sed -n 's/^[[:space:]]*<string>\(.*\)<\/string>.*/\1/p' \
+            | head -n 1 \
+            | decode_plist_string
+    fi
+}
+
+# Where a previous installation lives: the directory the gsvd service runs
+# from, else the pre-per-user default. Empty when this is a fresh install. A
+# service inside the Desktop application bundle does not count: loose release
+# binaries must never be written into the bundle.
+existing_install_dir() {
+    local service_exe
+    service_exe="$(service_definition_executable)"
+    case "$service_exe" in
+        *.app/Contents/*) service_exe="" ;;
+    esac
+    if [ -n "$service_exe" ] && [ -x "$(dirname "$service_exe")/gsv" ]; then
+        dirname "$service_exe"
+        return
+    fi
+    if [ -x "${LEGACY_INSTALL_DIR}/gsv" ]; then
+        printf '%s\n' "$LEGACY_INSTALL_DIR"
+    fi
+}
+
+resolve_install_dir() {
+    case "$(service_definition_executable)" in
+        *.app/Contents/*) DESKTOP_MANAGED_DAEMON=1 ;;
+    esac
+    if [ -n "${GSV_INSTALL_DIR:-}" ]; then
+        INSTALL_DIR="$GSV_INSTALL_DIR"
+        INSTALL_DIR_SOURCE="explicit"
+    else
+        INSTALL_DIR="$(existing_install_dir)"
+        if [ -n "$INSTALL_DIR" ]; then
+            INSTALL_DIR_SOURCE="existing"
+        else
+            INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+            INSTALL_DIR_SOURCE="default"
+        fi
     fi
     case "$INSTALL_DIR" in
         ""|/|"$HOME") error "GSV_INSTALL_DIR must name a dedicated binary directory"; exit 1 ;;
@@ -175,12 +266,84 @@ prepare_install_dir() {
         USE_SUDO=0
         return
     fi
+    if [ "$INSTALL_DIR_SOURCE" = "default" ]; then
+        error "Cannot write $INSTALL_DIR"
+        exit 1
+    fi
     if ! command -v sudo >/dev/null 2>&1; then
         error "Cannot write $INSTALL_DIR and sudo is unavailable"
         exit 1
     fi
     sudo mkdir -p "$INSTALL_DIR"
     USE_SUDO=1
+}
+
+explain_existing_install_dir() {
+    if [ "$DESKTOP_MANAGED_DAEMON" -eq 1 ]; then
+        info "The Desktop application manages the gsvd service and updates it; adding a separate command-line installation in $INSTALL_DIR"
+    fi
+    [ "$INSTALL_DIR_SOURCE" = "existing" ] || return 0
+    if [ -w "$INSTALL_DIR" ]; then
+        info "Updating the existing installation in $INSTALL_DIR"
+        return
+    fi
+    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
+}
+
+PATH_MARKER="# Added by the GSV installer"
+
+path_already_configured() {
+    case ":${PATH}:" in
+        *":${INSTALL_DIR}:"*) return 0 ;;
+    esac
+    return 1
+}
+
+append_path_line() {
+    local file="$1"
+    local line="$2"
+    if [ -f "$file" ] && grep -qF "$PATH_MARKER" "$file"; then
+        return 1
+    fi
+    mkdir -p "$(dirname "$file")"
+    printf '\n%s %s\n' "$line" "$PATH_MARKER" >> "$file"
+    return 0
+}
+
+# Put the default directory on PATH for new shells, the way rustup does: one
+# guarded, marked line per shell profile, never twice, and never when asked
+# not to.
+configure_path() {
+    [ "$INSTALL_DIR_SOURCE" = "default" ] || return 0
+    PATH_FILES_UPDATED=""
+    if [ "${GSV_NO_MODIFY_PATH:-0}" = "1" ]; then
+        info "Left PATH alone (GSV_NO_MODIFY_PATH=1); add $INSTALL_DIR yourself"
+        return
+    fi
+    if path_already_configured; then
+        return
+    fi
+    local posix_line='case ":$PATH:" in *":$HOME/.gsv/bin:"*) ;; *) export PATH="$HOME/.gsv/bin:$PATH" ;; esac'
+    local fish_line='if not contains "$HOME/.gsv/bin" $PATH; set -gx PATH "$HOME/.gsv/bin" $PATH; end'
+    local file
+    for file in "${HOME}/.profile" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+        case "$file" in
+            "${HOME}/.profile") ;;
+            "${HOME}/.zshrc") [ -f "$file" ] || case "${SHELL:-}" in */zsh) ;; *) continue ;; esac ;;
+            *) [ -f "$file" ] || continue ;;
+        esac
+        if append_path_line "$file" "$posix_line"; then
+            PATH_FILES_UPDATED="${PATH_FILES_UPDATED:+$PATH_FILES_UPDATED, }~${file#"$HOME"}"
+        fi
+    done
+    if [ -d "${HOME}/.config/fish" ]; then
+        if append_path_line "${HOME}/.config/fish/conf.d/gsv.fish" "$fish_line"; then
+            PATH_FILES_UPDATED="${PATH_FILES_UPDATED:+$PATH_FILES_UPDATED, }~/.config/fish/conf.d/gsv.fish"
+        fi
+    fi
+    if [ -n "$PATH_FILES_UPDATED" ]; then
+        success "Added $INSTALL_DIR to PATH in $PATH_FILES_UPDATED"
+    fi
 }
 
 as_installer() {
@@ -195,6 +358,9 @@ service_snapshot() {
     SERVICE_INSTALLED=0
     SERVICE_WAS_ACTIVE=0
     SERVICE_WAS_ENABLED=0
+    # Desktop owns that service and the executable it runs; do not stop,
+    # migrate, or restart it here.
+    [ "$DESKTOP_MANAGED_DAEMON" -eq 0 ] || return 0
     if [ "$OS" = "linux" ]; then
         SERVICE_PATH="${CONFIG_HOME}/systemd/user/gsvd.service"
         if [ -f "$SERVICE_PATH" ]; then
@@ -330,16 +496,54 @@ ensure_config_file() {
         echo "# gsv config --local set gateway.url wss://<your-gateway>.workers.dev/ws"
         echo ""
         echo "[release]"
-        if [ -z "$VERSION" ]; then echo "channel = \"${CHANNEL}\""; else echo "# channel = \"stable\""; fi
+        if [ -z "$VERSION" ]; then
+            echo "channel = \"${CHANNEL}\""
+        elif [ "$VERSION" = "$DEV_RELEASE_TAG" ]; then
+            # A pinned install of the moving tag is a dev-channel machine.
+            echo "channel = \"${DEV_RELEASE_TAG}\""
+        else
+            echo "# channel = \"stable\""
+        fi
     } > "$config_file"
     chmod 0600 "$config_file"
     success "Created config at $config_file"
+}
+
+# Set release.channel in an existing config without touching anything else:
+# replace the key inside [release], add it to an existing [release] table, or
+# append the table.
+set_release_channel_in_config() {
+    local channel="$1"
+    local config_file="${CONFIG_DIR}/config.toml"
+    [ -f "$config_file" ] || return 0
+    local updated="${config_file}.new.$$"
+    awk -v channel="$channel" '
+        function emit_channel() { print "channel = \"" channel "\""; done = 1 }
+        /^[[:space:]]*\[release\][[:space:]]*$/ { in_release = 1; seen_release = 1; print; next }
+        /^[[:space:]]*\[/ {
+            if (in_release && !done) emit_channel()
+            in_release = 0; print; next
+        }
+        in_release && !done && /^[[:space:]]*#?[[:space:]]*channel[[:space:]]*=/ { emit_channel(); next }
+        { print }
+        END {
+            if (!done) {
+                if (!seen_release) { print ""; print "[release]" }
+                emit_channel()
+            }
+        }
+    ' "$config_file" > "$updated" || { rm -f "$updated"; return 1; }
+    chmod 0600 "$updated" && mv "$updated" "$config_file"
 }
 
 persist_release_channel() {
     if [ -z "$VERSION" ]; then
         "${INSTALL_DIR}/gsv" config --local set release.channel "$CHANNEL" >/dev/null 2>&1 || \
             warn "Could not persist release.channel"
+    elif [ "$VERSION" = "$DEV_RELEASE_TAG" ]; then
+        # A machine on the moving tag is a dev-channel machine, whatever its
+        # config said before; a pinned stable tag leaves the channel alone.
+        set_release_channel_in_config "$DEV_RELEASE_TAG" || warn "Could not persist release.channel"
     fi
 }
 
@@ -360,6 +564,7 @@ main() {
     detect_platform
     validate_channel
     delegate_to_pinned_installer
+    resolve_install_dir
     local release_ref
     release_ref="$(resolve_release_ref)"
     TMP_DIR="$(mktemp -d)"
@@ -407,6 +612,7 @@ main() {
     done
     success "Verified ${#ASSETS[@]} release artifacts"
 
+    explain_existing_install_dir
     prepare_install_dir
     service_snapshot
     INSTALL_IN_PROGRESS=1
@@ -416,6 +622,11 @@ main() {
         error "Could not replace the host binaries"
         exit 1
     fi
+
+    # The config must be complete before the replacement daemon starts, or
+    # it reads the old release channel until its next restart.
+    ensure_config_file
+    persist_release_channel
 
     if [ "$SERVICE_INSTALLED" -eq 1 ]; then
         if ! "${INSTALL_DIR}/gsv" daemon start >/dev/null || ! health_check_service; then
@@ -431,10 +642,12 @@ main() {
 
     INSTALL_IN_PROGRESS=0
     remove_backups
-    ensure_config_file
-    persist_release_channel
+    configure_path
     success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
+    if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
+        echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
+    fi
     echo "  Next: gsv auth setup"
     echo "  Open: gsv desktop"
     echo ""

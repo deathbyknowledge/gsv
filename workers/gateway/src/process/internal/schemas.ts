@@ -1,21 +1,16 @@
 /** Internal Process schemas primitives. */
 
 import type { CodeModeExecArgs } from "../../syscalls/codemode";
-import { RUN_CONTROL_INSTRUCTION } from "./lifecycle";
+import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
+import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@earendil-works/pi-ai";
 import { jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { processIdentitySchema } from "../../protocol/peer-schemas";
+
+export { processIdentitySchema };
 
 export const nonEmptyStringSchema = z.string().trim().min(1);
-
-export const processIdentitySchema = z.object({
-  uid: z.number(),
-  gid: z.number(),
-  gids: z.array(z.number()),
-  username: z.string(),
-  home: z.string(),
-  cwd: z.string(),
-});
 
 export const aiToolsDeviceSchema = z.object({
   id: z.string(),
@@ -44,6 +39,37 @@ export const RUN_CONTROL_SHELL_TOOL: Tool = {
     additionalProperties: false,
   },
 };
+
+/** The run-control actions as one tool: text sends, yield ends, both send and end. */
+export const SEND_TOOL: Tool = {
+  name: SEND_TOOL_NAME,
+  description: SEND_TOOL_DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "The message for the person.",
+      },
+      yield: {
+        type: "boolean",
+        description: "True when all work is complete; the run ends after this call.",
+      },
+      attach: {
+        type: "array",
+        items: { type: "string" },
+        description: "Files to send: a path on the cloud home, target:path for a file on a place, or [target]:path when the target id itself has a colon.",
+      },
+    },
+    additionalProperties: false,
+  },
+};
+
+export const sendToolArgsSchema = z.object({
+  text: z.string().optional(),
+  yield: z.boolean().optional(),
+  attach: z.array(z.string()).max(MAX_MESSAGE_MEDIA_ITEMS).optional(),
+}).strict();
 
 export const routedFetchOptionsSchema = z.object({
   timeoutMs: z.number().optional(),

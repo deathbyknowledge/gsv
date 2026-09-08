@@ -929,7 +929,7 @@ describe("process history", () => {
         provider: "workers-ai",
         model: "@cf/test/model",
         maxTokens: 100,
-        contextWindowTokens: 1000,
+        contextWindowTokens: 1500,
         generationTimeoutMs: 180000,
         fallbacks: [
           {
@@ -937,7 +937,7 @@ describe("process history", () => {
             model: "fallback-model",
             apiKey: "fallback-key",
             maxTokens: 100,
-            contextWindowTokens: 1000,
+            contextWindowTokens: 1500,
             contextWindowSource: "config",
             generationTimeoutMs: 180000,
           },

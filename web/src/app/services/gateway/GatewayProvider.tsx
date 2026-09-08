@@ -19,7 +19,7 @@ function createWebGsvClient(): GSVClient {
   return new GSVClient({
     peer: {
       id: "gsv-ui",
-      version: "0.4.1",
+      version: "0.5.0",
       platform: "browser",
     },
   });

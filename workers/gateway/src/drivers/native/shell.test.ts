@@ -277,7 +277,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.4.1";
+        if (key === "config/server/version") return "0.5.0";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -352,7 +352,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.4.1",
+    serverVersion: "0.5.0",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -745,6 +745,31 @@ describe("native shell execution", () => {
     });
     expect(read.data).not.toHaveProperty("nextOffset");
     expect(read.body && await bodyToText(read.body)).toBe("é");
+  });
+
+  it("references any file without its content, while resource reads stay as they were", async () => {
+    const bytes = new TextEncoder().encode("%PDF-1.4\n1 0 obj\n");
+    await env.STORAGE.put("tmp/fs-read-report", bytes, {
+      httpMetadata: { contentType: "application/pdf" },
+    });
+    await env.STORAGE.put("tmp/fs-read-note", new TextEncoder().encode("hello\n"), {
+      httpMetadata: { contentType: "text/plain" },
+    });
+    const ctx = makeContext();
+    const document = await handleFsRead({ path: "/tmp/fs-read-report", representation: "reference" }, ctx);
+    expect(document.body).toBeUndefined();
+    expect(document.data).toMatchObject({
+      ok: true,
+      kind: "file",
+      resource: { type: "file", target: "gsv", path: "/tmp/fs-read-report", contentType: "application/pdf", size: bytes.byteLength },
+    });
+    const note = await handleFsRead({ path: "/tmp/fs-read-note", representation: "reference" }, ctx);
+    expect(note.body).toBeUndefined();
+    expect(note.data).toMatchObject({ ok: true, kind: "text", resource: { contentType: "text/plain", size: 6 } });
+    // the resource representation the model's Reads ask for is unchanged: a text file is its content
+    const read = await handleFsRead({ path: "/tmp/fs-read-note", representation: "resource" }, ctx);
+    expect(read.body && await bodyToText(read.body)).toBe("hello\n");
+    expect(read.data).not.toHaveProperty("resource");
   });
 
   it("uses stored MIME types for reads and transfer metadata", async () => {
@@ -3880,8 +3905,8 @@ describe("native administration shell commands", () => {
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("current conversation: Telegram direct message");
-    expect(current.stdout).toContain("reply command: message send");
-    expect(current.stdout).toContain("omit --to and --also");
+    expect(current.stdout).toContain("reply: the Send tool, or `message send` as its own direct Shell tool call");
+    expect(current.stdout).toContain("Omit --to and --also when replying here.");
     const currentOutput = currentDestinationOutputSchema.safeParse(
       JSON.parse(currentJson.stdout),
     );
