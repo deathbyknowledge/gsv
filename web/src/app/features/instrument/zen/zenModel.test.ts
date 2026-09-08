@@ -12,6 +12,10 @@ import {
   outputText,
   parsePromptInput,
   placeLabel,
+  receiptDuration,
+  receiptPhrases,
+  receiptRunning,
+  receiptSteps,
   resolvePlace,
   resolveTail,
   trimOutput,
@@ -235,5 +239,44 @@ describe("outputText", () => {
   it("lists a directory and shows a file", () => {
     expect(outputText("fs.read", { ok: true, entries: [{ name: "Downloads", kind: "directory" }, { name: "a.txt", kind: "file" }] }, "")).toBe("Downloads/\na.txt");
     expect(outputText("fs.read", { content: "hello" }, "")).toBe("hello");
+  });
+});
+
+describe("receipt", () => {
+  const moment = (rows: ChatTranscriptRow[], active = false) => ({
+    id: "m",
+    role: "ship" as const,
+    text: "",
+    streaming: false,
+    thinking: false,
+    runId: "run",
+    timestamp: null,
+    activities: activitiesForRows(rows, "run", active),
+    narration: "",
+  });
+  it("names each finished call by verb and place-qualified argument, in order", () => {
+    const rows = [
+      row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
+      row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
+      row({ id: "t3", role: "toolResult", toolCallId: "3", toolSyscall: "shell.exec", toolArgs: { target: "laptop", input: "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/" }, toolOutcome: "denied", status: "done", timestamp: 300 }),
+    ];
+    // places come in first-touch order, and each place's calls in theirs
+    expect(receiptPhrases(moment(rows)).map((phrase) => [phrase.verb, phrase.what, phrase.failed])).toEqual([
+      ["searched", "~/mail", false],
+      ["read", "laptop:~/Downloads/Q2.pdf", false],
+      ["ran", "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/", true],
+    ]);
+    expect(receiptSteps(moment(rows))).toBe(3);
+    expect(receiptDuration(moment(rows))).toBe(formatSeconds(200));
+  });
+  it("folds three or more alike calls into a count and keeps two apart", () => {
+    const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolArgs: { path }, status: "done", timestamp: 1 });
+    expect(receiptPhrases(moment([read("1", "a"), read("2", "b"), read("3", "c")]))).toEqual([{ verb: "read", what: null, count: 3, noun: "files", failed: false }]);
+    expect(receiptPhrases(moment([read("1", "a"), read("2", "b")])).map((phrase) => phrase.what)).toEqual(["a", "b"]);
+  });
+  it("says what is still running in the present tense", () => {
+    const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
+    expect(receiptRunning(moment(rows, true))).toMatchObject({ verb: "reading", what: "laptop:~/x" });
+    expect(receiptRunning(moment([]))).toBeNull();
   });
 });

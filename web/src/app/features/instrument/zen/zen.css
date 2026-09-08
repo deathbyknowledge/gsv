@@ -143,6 +143,38 @@
 .activity .detail { display: none; }
 .activity.is-open .detail { display: block; }
 
+/* the receipt under a ship's message: what it did, in words; the working opens beneath */
+.receipt {
+  margin-top: 10px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  border-left: 2px solid var(--border-raised);
+  padding-left: 12px;
+  letter-spacing: 0.02em;
+}
+.receipt .line { cursor: pointer; }
+.receipt .line:hover { color: var(--text-hi); }
+.receipt em { font-style: normal; color: var(--path); }
+.receipt .n { color: var(--faint); }
+.receipt .is-failed { color: var(--warn); }
+.receipt .now { color: var(--text); }
+.receipt .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.receipt .detail { display: none; margin-top: 8px; }
+.receipt.is-open .detail { display: block; }
+.receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
+.receipt .place-rail:first-child .ph { margin-top: 0; }
+
 /* approvals: a boxed question with keys, as the TUI does it */
 .zen-approval {
   margin: 16px 0 4px;

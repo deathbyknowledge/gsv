@@ -39,9 +39,16 @@ import {
   resolveTail,
   trimOutput,
   noteSummary,
+  receiptDuration,
+  receiptPhrases,
+  receiptRunning,
+  receiptSteps,
+  CLOUD_PLACE_ID,
   type Activity,
   type Moment,
-  type Place, CLOUD_PLACE_ID } from "./zenModel";
+  type Place,
+  type ReceiptPhrase,
+} from "./zenModel";
 import "./zen.css";
 
 export type ZenProps = {
@@ -145,6 +152,76 @@ function ActivityLine({
       </div>
       <div class="detail">
         <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+      </div>
+    </div>
+  );
+}
+
+/** One line under a ship's message: what it did, generated from its calls; the working opens beneath. */
+function Receipt({ moment, places, open, onToggle }: { moment: Moment; places: readonly Place[]; open: boolean; onToggle: () => void }) {
+  const phrases = receiptPhrases(moment);
+  const running = receiptRunning(moment);
+  const steps = receiptSteps(moment);
+  const duration = receiptDuration(moment);
+  const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
+  const worked = moment.activities.filter((activity) => !activity.you);
+  const phrase = (entry: ReceiptPhrase) =>
+    entry.what === null ? (
+      <>
+        {entry.verb} {entry.count} {entry.noun}
+      </>
+    ) : (
+      <>
+        {entry.verb} <em>{entry.what}</em>
+      </>
+    );
+  return (
+    <div class={`receipt${open ? " is-open" : ""}`}>
+      <div
+        class="line"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        {running ? (
+          <span class="now">
+            <span class="pulse blink" />
+            {phrase(running)}
+          </span>
+        ) : null}
+        {phrases.map((entry, index) => (
+          <span key={index} class={entry.failed ? "is-failed" : ""}>
+            {index > 0 || running ? " · " : ""}
+            {phrase(entry)}
+            {entry.failed ? " · failed" : ""}
+          </span>
+        ))}
+        <span class="n">
+          {steps > 0 ? ` · ${countLabel(steps, "step")}${duration ? `, ${duration}` : ""}` : ""}
+          {notes > 0 ? ` · ${countLabel(notes, "note")}` : ""}
+          {` · ${open ? "close" : "open"}`}
+        </span>
+      </div>
+      <div class="detail">
+        {worked.map((activity) => (
+          <div key={activity.key} class="place-rail">
+            <div class="ph">on {placeLabel(activity.target, places)}</div>
+            <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+          </div>
+        ))}
+        {moment.narration ? (
+          <div class="place-rail">
+            <div class="ph">thought it through</div>
+            <div class="machine-rail narration">{moment.narration}</div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -751,26 +828,17 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
               return (
                 <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
                   <div class="who">{moment.role === "human" ? who : "ship"}</div>
-                  {moment.activities.map((activity) => (
-                    <ActivityLine
-                      key={activity.key}
-                      activity={activity}
-                      places={places}
-                      open={openActivities.has(activity.key)}
-                      onToggle={() => toggleActivity(activity.key)}
-                    />
-                  ))}
-                  {moment.narration ? (
-                    <div class={`activity is-thoughts${openActivities.has(`thoughts:${moment.id}`) ? " is-open" : ""}`}>
-                      <div class="line" role="button" tabIndex={0} aria-expanded={openActivities.has(`thoughts:${moment.id}`)} onClick={() => toggleActivity(`thoughts:${moment.id}`)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleActivity(`thoughts:${moment.id}`); } }}>
-                        <span class="tri">{openActivities.has(`thoughts:${moment.id}`) ? "▾" : "▸"}</span>
-                        thought it through <span class="n">· {countLabel(moment.narration.split(/\n\n+/).length, "note")}</span>
-                      </div>
-                      <div class="detail">
-                        <div class="machine-rail narration">{moment.narration}</div>
-                      </div>
-                    </div>
-                  ) : null}
+                  {moment.activities
+                    .filter((activity) => activity.you)
+                    .map((activity) => (
+                      <ActivityLine
+                        key={activity.key}
+                        activity={activity}
+                        places={places}
+                        open={openActivities.has(activity.key)}
+                        onToggle={() => toggleActivity(activity.key)}
+                      />
+                    ))}
                   {moment.role === "human" ? (
                     <div class="text">{moment.text}</div>
                   ) : moment.streaming ? (
@@ -784,6 +852,14 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
                     <div class="text">
                       <span class="zen-caret blink" />
                     </div>
+                  ) : null}
+                  {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration) ? (
+                    <Receipt
+                      moment={moment}
+                      places={places}
+                      open={openActivities.has(`receipt:${moment.id}`)}
+                      onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                    />
                   ) : null}
                   {isLatest && pendingHil ? (
                     <div class="zen-approval">

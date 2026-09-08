@@ -486,3 +486,114 @@ export function momentsFromConversation(
 
   return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }
+
+/* the receipt: what a ship moment did, in plain words, generated from its calls */
+
+type ReceiptVerb = { past: string; present: string; noun: string };
+const verb = (past: string, present: string, noun: string): ReceiptVerb => ({ past, present, noun });
+const RECEIPT_VERBS = new Map<string, ReceiptVerb>([
+  ["fs.read", verb("read", "reading", "files")],
+  ["fs.write", verb("wrote", "writing", "files")],
+  ["fs.edit", verb("edited", "editing", "files")],
+  ["fs.delete", verb("deleted", "deleting", "files")],
+  ["fs.list", verb("listed", "listing", "folders")],
+  ["fs.search", verb("searched", "searching", "searches")],
+  ["fs.grep", verb("searched", "searching", "searches")],
+  ["fs.copy", verb("copied", "copying", "files")],
+  ["fs.stat", verb("checked", "checking", "files")],
+  ["fs.transfer.send", verb("sent", "sending", "files")],
+  ["shell.exec", verb("ran", "running", "commands")],
+  ["codemode.exec", verb("ran code", "running code", "scripts")],
+  ["net.fetch", verb("fetched", "fetching", "pages")],
+]);
+
+/** The words that stand for a syscall; an unknown one keeps its own name, which is still true. */
+function receiptVerb(syscall: string, present: boolean): [verb: string, noun: string] {
+  const known = RECEIPT_VERBS.get(syscall);
+  if (known) return [present ? known.present : known.past, known.noun];
+  return [present ? `${syscall}…` : syscall, "steps"];
+}
+
+function shortenMiddle(text: string, max = 48): string {
+  if (text.length <= max) return text;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${text.slice(0, head)}…${text.slice(-tail)}`;
+}
+
+/** The one argument a person wants to see, qualified by its place when that place is not the cloud home. */
+function receiptWhat(syscall: string, summary: string, target: string): string {
+  if (!summary) return "";
+  if (syscall.startsWith("net.")) {
+    try {
+      return new URL(summary).host;
+    } catch {
+      return shortenMiddle(summary);
+    }
+  }
+  const qualified = syscall.startsWith("fs.") && target !== CLOUD_PLACE_ID ? `${target}:${summary}` : summary;
+  return shortenMiddle(qualified);
+}
+
+export type ReceiptPhrase = {
+  verb: string;
+  /** The argument shown; null when three or more alike calls were folded into a count. */
+  what: string | null;
+  count: number;
+  noun: string;
+  failed: boolean;
+};
+
+const RECEIPT_FOLD_AT = 3;
+
+/** Finished calls as phrases, in order; a run of three or more with the same verb folds into a count. */
+export function receiptPhrases(moment: Moment): ReceiptPhrase[] {
+  const singles: ReceiptPhrase[] = [];
+  for (const activity of moment.activities) {
+    if (activity.you) continue;
+    for (const call of activity.calls) {
+      if (!call.finished) continue;
+      const [verb, noun] = receiptVerb(call.syscall, false);
+      singles.push({ verb, what: receiptWhat(call.syscall, call.summary, activity.target), count: 1, noun, failed: call.failed });
+    }
+  }
+  const phrases: ReceiptPhrase[] = [];
+  let index = 0;
+  while (index < singles.length) {
+    let end = index + 1;
+    while (end < singles.length && singles[end].verb === singles[index].verb && !singles[end].failed && !singles[index].failed) end += 1;
+    const run = end - index;
+    if (run >= RECEIPT_FOLD_AT) phrases.push({ ...singles[index], what: null, count: run });
+    else phrases.push(...singles.slice(index, end));
+    index = end;
+  }
+  return phrases;
+}
+
+/** The call still running, in the present tense, or null when nothing is. */
+export function receiptRunning(moment: Moment): ReceiptPhrase | null {
+  for (const activity of moment.activities) {
+    if (activity.you) continue;
+    const call = activity.calls.find((entry) => !entry.finished);
+    if (!call) continue;
+    const [verb, noun] = receiptVerb(call.syscall, true);
+    return { verb, what: receiptWhat(call.syscall, call.summary, activity.target), count: 1, noun, failed: false };
+  }
+  return null;
+}
+
+export function receiptSteps(moment: Moment): number {
+  return moment.activities.reduce((total, activity) => (activity.you ? total : total + activity.calls.length), 0);
+}
+
+/** From the first call's start to the last call's end across every place the moment touched. */
+export function receiptDuration(moment: Moment): string {
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const activity of moment.activities) {
+    if (activity.you) continue;
+    if (activity.startedAt !== null && (start === null || activity.startedAt < start)) start = activity.startedAt;
+    if (activity.endedAt !== null && (end === null || activity.endedAt > end)) end = activity.endedAt;
+  }
+  return start !== null && end !== null && end > start ? formatSeconds(end - start) : "";
+}
