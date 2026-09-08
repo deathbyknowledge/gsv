@@ -16,7 +16,6 @@ export function GatewaySignalInvalidator() {
 
       if (signal === "proc.changed") {
         void queryClient.invalidateQueries({ queryKey: ["processes"] });
-        void queryClient.invalidateQueries({ queryKey: ["process"] });
         return;
       }
 
@@ -35,7 +34,6 @@ export function GatewaySignalInvalidator() {
 
       if (signal === "proc.run.finished") {
         void queryClient.invalidateQueries({ queryKey: ["processes"] });
-        void queryClient.invalidateQueries({ queryKey: ["process"] });
         return;
       }
 

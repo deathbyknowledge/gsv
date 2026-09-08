@@ -3,9 +3,12 @@ import type {
   ProcContextState,
   ProcHilRequest,
   ProcToolResultOutcome,
+  ProcHistoryEvent,
+  ProcHistoryRecordKind,
 } from "@humansandmachines/gsv/protocol";
 import type { ChatHistory, ChatRunState } from "./processes";
 import { normalizeHilRequest } from "./hil";
+import { transcriptRowsFromRecords } from "./typedHistory";
 import { z } from "zod";
 
 export type ChatTranscriptRowRole = "assistant" | "system" | "tool" | "toolResult" | "user";
@@ -76,53 +79,6 @@ const contextStateSchema = z.object({
   source: z.enum(["estimate", "provider", "mixed"]),
   updatedAt: z.number(),
 });
-const adapterSurfaceSchema = z.object({
-  kind: z.enum(["dm", "group", "channel", "thread"]),
-  id: z.string(),
-  name: z.string().optional(),
-  handle: z.string().optional(),
-  threadId: z.string().optional(),
-});
-const adapterDestinationSchema = z.object({
-  kind: z.literal("adapter"),
-  adapter: z.string(),
-  accountId: z.string(),
-  surface: adapterSurfaceSchema,
-  actorId: z.string(),
-});
-const interactionOriginSchema: z.ZodType<InteractionOrigin> = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("client"),
-    connectionId: z.string(),
-    clientId: z.string().optional(),
-    platform: z.string().optional(),
-  }),
-  z.object({
-    kind: z.literal("adapter"),
-    adapter: z.string(),
-    accountId: z.string(),
-    surface: adapterSurfaceSchema,
-    actorId: z.string(),
-    actorLabel: z.string().optional(),
-    messageId: z.string().optional(),
-  }),
-  z.object({
-    kind: z.literal("device"),
-    deviceId: z.string(),
-    cwd: z.string().optional(),
-  }),
-  z.object({
-    kind: z.literal("process"),
-    sourcePid: z.string(),
-    uid: z.number().optional(),
-  }),
-  z.object({
-    kind: z.literal("scheduler"),
-    scheduleId: z.string(),
-    replyTo: adapterDestinationSchema.optional(),
-  }),
-]);
-
 export type ChatBackupModelInfo = {
   from?: {
     provider?: string;
@@ -153,6 +109,11 @@ export type ChatTranscriptRow = {
   toolOutcome?: ChatToolOutcome;
   toolOutput?: ChatTranscriptValue;
   toolSyscall?: string | null;
+  toolTarget?: string | null;
+  historyRecordKey?: string;
+  historyKind?: ProcHistoryRecordKind;
+  messageDirection?: "in" | "out";
+  event?: ProcHistoryEvent;
   role?: ChatTranscriptRowRole;
   meta?: string;
   runId?: string;
@@ -180,28 +141,6 @@ export type ChatSignalReduction = {
   matched: boolean;
   refreshHistory: boolean;
   state: ChatRuntimeState;
-};
-
-type AssistantHistory = {
-  text: string;
-  thinking: string[];
-  toolCalls: Array<{
-    args: ChatTranscriptValue;
-    callId: string;
-    syscall: string | null;
-    toolName: string;
-  }>;
-};
-
-type ToolResultHistory = {
-  callId: string;
-  error: string | null;
-  ok: boolean;
-  outcome: ChatToolOutcome | null;
-  output: ChatTranscriptValue;
-  media: unknown[];
-  syscall: string | null;
-  toolName: string;
 };
 
 const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
@@ -381,6 +320,23 @@ export function applyChatSignal(
     };
   }
 
+  if (signal === "proc.run.tool.finished") {
+    const record = asRecord(payloadValue);
+    const callId = asString(record?.callId);
+    const runId = asString(record?.runId);
+    const outcome = normalizeToolOutcome(record?.outcome);
+    return {
+      matched: true,
+      refreshHistory: true,
+      state: {
+        ...state,
+        rows: state.rows.map((row) => row.toolCallId === callId && row.runId === runId
+          ? { ...row, toolOutcome: outcome ?? undefined, status: outcome === "completed" ? "done" : "error", isError: outcome !== "completed" }
+          : row),
+      },
+    };
+  }
+
   if (signal === "proc.run.hil.requested") {
     const pendingHil = normalizeHilRequest(payload);
     if (!pendingHil) {
@@ -440,151 +396,8 @@ export function applyChatSignal(
  *  rows carry no structural severity, so errors are recognized by text.
  *  Fail-safe: anything unmatched renders as a neutral informational row —
  *  a new gateway error format degrades to neutral, never to a false red. */
-export const SYSTEM_ERROR_PREFIXES: readonly string[] = [
-  "Generation failed",
-  "Context limit reached",
-  "Context limit policy stopped this run.",
-  "Auto-compaction failed before model call:",
-  "Message media preparation timed out after",
-  "Failed to prepare message media:",
-  "Failed to schedule media timeout:",
-  "Failed to schedule process run:",
-  "Failed to schedule delegated task:",
-  "Failed to schedule runtime event:",
-];
-
-export function classifySystemError(text: string): boolean {
-  const head = text.trimStart();
-  return SYSTEM_ERROR_PREFIXES.some((prefix) => head.startsWith(prefix));
-}
-
 export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptRow[] {
-  const rows: ChatTranscriptRow[] = [];
-
-  history.messages.forEach((message, index) => {
-    if (message.role === "assistant") {
-      const parsed = extractAssistantHistory(message.content, message.text);
-      const media = extractMessageMedia(message.content);
-      const backupModel = normalizeBackupModelInfo(message.metadata?.fallback);
-      if (parsed.text.trim() || parsed.thinking.length > 0 || media.length > 0) {
-        rows.push({
-          id: `message:${message.clientId}`,
-          role: "assistant",
-          text: parsed.text,
-          thinking: parsed.thinking,
-          messageId: message.id,
-          origin: message.origin,
-          timestamp: message.timestamp,
-          time: formatTranscriptTime(message.timestamp),
-          runId: message.runId ?? undefined,
-          ...(media.length > 0 ? { media } : undefined),
-          ...(backupModel ? { backupModel } : undefined),
-          status: "done",
-        });
-      } else if (backupModel) {
-        rows.push({
-          id: `backup:${message.clientId}`,
-          role: "assistant",
-          text: "",
-          messageId: message.id,
-          origin: message.origin,
-          timestamp: message.timestamp,
-          time: formatTranscriptTime(message.timestamp),
-          runId: message.runId ?? undefined,
-          backupModel,
-          status: "done",
-          streaming: false,
-        });
-      }
-      for (const toolCall of parsed.toolCalls) {
-        rows.push({
-          id: `tool:${toolCall.callId}`,
-          role: "tool",
-          text: formatToolInput(toolCall.args),
-          messageId: message.id,
-          origin: message.origin,
-          timestamp: message.timestamp,
-          time: formatTranscriptTime(message.timestamp),
-          runId: message.runId ?? undefined,
-          toolArgs: toolCall.args,
-          toolCallId: toolCall.callId,
-          toolName: toolCall.toolName,
-          toolSyscall: toolCall.syscall,
-          status: "planning",
-          meta: toolCall.syscall ?? undefined,
-        });
-      }
-      return;
-    }
-
-    if (message.role === "toolResult") {
-      const parsed = extractToolResultHistory(message.content, message.text);
-      if (parsed) {
-        const row = {
-          id: `tool:${parsed.callId}`,
-          role: "toolResult" as const,
-          text: formatToolOutput(parsed.output, parsed.error, message.text),
-          messageId: message.id,
-          origin: message.origin,
-          timestamp: message.timestamp,
-          time: formatTranscriptTime(message.timestamp),
-          runId: message.runId ?? undefined,
-          toolCallId: parsed.callId,
-          toolName: parsed.toolName,
-          ...(parsed.outcome ? { toolOutcome: parsed.outcome } : undefined),
-          toolOutput: parsed.output,
-          ...(parsed.media.length > 0 ? { media: parsed.media } : undefined),
-          toolSyscall: parsed.syscall,
-          isError: !parsed.ok,
-          status: parsed.ok ? "done" as const : "error" as const,
-          meta: parsed.syscall ?? undefined,
-        };
-        const existingIndex = rows.findIndex((candidate) => sameToolActivityRow(candidate, row));
-        if (existingIndex >= 0) {
-          rows[existingIndex] = {
-            ...rows[existingIndex],
-            ...row,
-            toolArgs: rows[existingIndex].toolArgs,
-          };
-        } else {
-          rows.push(row);
-        }
-        return;
-      }
-    }
-
-    const role = message.role === "user" || message.role === "system"
-      ? message.role
-      : "system";
-    const media = message.role === "user" ? extractMessageMedia(message.content) : [];
-    rows.push({
-      id: `message:${message.clientId || index}`,
-      role,
-      text: message.text,
-      ...(role === "system" && classifySystemError(message.text) ? { isError: true } : undefined),
-      ...(media.length > 0 ? { media } : undefined),
-      messageId: message.id,
-      origin: message.origin,
-      timestamp: message.timestamp,
-      time: formatTranscriptTime(message.timestamp),
-      runId: message.runId ?? undefined,
-      status: "done",
-    });
-  });
-
-  return rows.sort(compareTranscriptRows);
-}
-
-function compareTranscriptRows(left: ChatTranscriptRow, right: ChatTranscriptRow): number {
-  return transcriptRowSortValue(left) - transcriptRowSortValue(right);
-}
-
-function transcriptRowSortValue(row: ChatTranscriptRow): number {
-  const timestamp = asNumber(row.timestamp);
-  if (timestamp !== null) return timestamp;
-  const messageId = asNumber(row.messageId);
-  if (messageId !== null) return messageId;
-  return Number.MAX_SAFE_INTEGER;
+  return transcriptRowsFromRecords(history.records);
 }
 
 function isToolActivityRow(row: Pick<ChatTranscriptRow, "role">): boolean {
@@ -626,15 +439,7 @@ function applyProcChanged(state: ChatRuntimeState, payload: TranscriptRpcPayload
   let refreshHistory = false;
 
   if (changes.includes("messages")) {
-    const row = rowFromProcChangedMessage(record);
     refreshHistory = true;
-    if (row) {
-      next = {
-        ...next,
-        messageCount: next.messageCount + 1,
-        rows: appendUniqueMessageRow(next.rows, row),
-      };
-    }
   }
 
   if (changes.includes("context")) {
@@ -659,49 +464,6 @@ function applyProcChanged(state: ChatRuntimeState, payload: TranscriptRpcPayload
   }
 
   return { matched: true, refreshHistory, state: next };
-}
-
-function rowFromProcChangedMessage(record: ChatTranscriptRecord | null): ChatTranscriptRow | null {
-  if (!record) {
-    return null;
-  }
-  const role = record.role === "user" || record.role === "assistant" || record.role === "system"
-    ? record.role
-    : null;
-  if (!role) {
-    return null;
-  }
-  const text = formatMessageContent(record.content);
-  const media = extractMessageMedia(record.content);
-  if (!text.trim() && media.length === 0) {
-    return null;
-  }
-  const timestamp = asNumber(record.timestamp) ?? Date.now();
-  const messageId = asNumber(record.messageId);
-  const runId = asString(record.runId);
-  return {
-    id: messageId !== null ? `message:${messageId}` : `live:${role}:${timestamp}`,
-    role,
-    text,
-    ...(role === "system" && classifySystemError(text) ? { isError: true } : undefined),
-    ...(media.length > 0 ? { media } : undefined),
-    messageId,
-    origin: normalizeInteractionOrigin(record.origin),
-    timestamp,
-    time: formatTranscriptTime(timestamp),
-    ...(runId ? { runId } : undefined),
-    status: "done",
-  };
-}
-
-function appendUniqueMessageRow(rows: ChatTranscriptRow[], row: ChatTranscriptRow): ChatTranscriptRow[] {
-  if (rows.some((candidate) => candidate.id === row.id)) {
-    return rows;
-  }
-  const withoutMatchingOptimistic = row.role === "user"
-    ? dropOneMatchingOptimisticUserRow(rows, row)
-    : rows;
-  return dropEmptyTransientRows(withoutMatchingOptimistic, row.runId).concat(row);
 }
 
 export function dropOneMatchingOptimisticUserRow(
@@ -969,18 +731,6 @@ function clearTransientRowsForRun(rows: ChatTranscriptRow[], runId: string): Cha
   });
 }
 
-function dropEmptyTransientRows(rows: ChatTranscriptRow[], runId?: string | null): ChatTranscriptRow[] {
-  return rows.filter((row) => {
-    if (row.role !== "assistant" || row.id.startsWith("message:")) {
-      return true;
-    }
-    if (runId && row.runId !== runId) {
-      return true;
-    }
-    return row.text.trim().length > 0 || Boolean(row.thinking?.length) || Boolean(row.backupModel);
-  });
-}
-
 function dropTransientAssistantRowsForOutput(rows: ChatTranscriptRow[], runId?: string | null): ChatTranscriptRow[] {
   return rows.filter((row) => {
     if (row.role !== "assistant" || row.id.startsWith("message:")) {
@@ -1036,7 +786,7 @@ function toolRowFromStarted(record: ChatTranscriptRecord | null): ChatTranscript
   const now = Date.now();
   const callId = asString(record?.callId) ?? `tool:${now}`;
   const toolName = asString(record?.name) ?? "Tool";
-  const syscall = inferToolSyscall(toolName, asString(record?.syscall));
+  const syscall = asString(record?.syscall);
   return {
     id: `tool:${callId}`,
     role: "tool",
@@ -1047,6 +797,7 @@ function toolRowFromStarted(record: ChatTranscriptRecord | null): ChatTranscript
     toolCallId: callId,
     toolName,
     toolSyscall: syscall,
+    toolTarget: asString(record?.target),
     runId: asString(record?.runId) ?? undefined,
     status: "running",
     meta: syscall ?? undefined,
@@ -1066,7 +817,7 @@ function toolRowFromStreamEvent(event: ChatTranscriptRecord, runId: string): Cha
   }
   const toolName = asString(rawToolCall.name) ?? "Tool";
   const args = rawToolCall.arguments ?? rawToolCall.args ?? {};
-  const syscall = inferToolSyscall(toolName, asString(rawToolCall.syscall));
+  const syscall = asString(rawToolCall.syscall);
   const now = Date.now();
   return {
     id: `tool:${callId}`,
@@ -1078,6 +829,7 @@ function toolRowFromStreamEvent(event: ChatTranscriptRecord, runId: string): Cha
     toolCallId: callId,
     toolName,
     toolSyscall: syscall,
+    toolTarget: asString(rawToolCall.target),
     runId,
     status: "planning",
     meta: syscall ?? undefined,
@@ -1104,6 +856,7 @@ function upsertToolRow(rows: ChatTranscriptRow[], row: ChatTranscriptRow): ChatT
       ...row,
       toolArgs: row.toolArgs ?? next[index].toolArgs,
       toolSyscall: row.toolSyscall ?? next[index].toolSyscall,
+      toolTarget: row.toolTarget ?? next[index].toolTarget,
     };
     return next;
   }
@@ -1135,69 +888,6 @@ function dropSupersededStreamPlanningRows(
 
 function isStreamFallbackToolCallId(runId: string, toolCallId: string): boolean {
   return toolCallId.startsWith(`${runId}:tool:`);
-}
-
-function extractAssistantHistory(content: TranscriptRpcPayload, fallbackText: string): AssistantHistory {
-  const record = asRecord(content);
-  if (!record) {
-    return {
-      text: asString(content) ?? fallbackText,
-      thinking: [],
-      toolCalls: [],
-    };
-  }
-
-  const storedText = z.string().safeParse(record.text);
-  const text = storedText.success ? storedText.data : fallbackText;
-  const thinking = (Array.isArray(record.thinking) ? record.thinking : [])
-    .map((item) => {
-      const text = asString(item);
-      if (text) return text.trim();
-      const block = asRecord(item);
-      return (asString(block?.thinking) ?? asString(block?.text) ?? "").trim();
-    })
-    .filter(Boolean);
-  const toolCalls: AssistantHistory["toolCalls"] = (Array.isArray(record.toolCalls) ? record.toolCalls : [])
-    .map((item, index): AssistantHistory["toolCalls"][number] | null => {
-      const call = asRecord(item);
-      if (!call) {
-        return null;
-      }
-      const toolName = asString(call.name) ?? "Tool";
-      const callId = asString(call.id) ?? asString(call.callId) ?? `history-tool-${index}`;
-      return {
-        toolName,
-        callId,
-        args: call.arguments ?? call.args ?? {},
-        syscall: inferToolSyscall(toolName, asString(call.syscall)),
-      };
-    })
-    .filter((item): item is AssistantHistory["toolCalls"][number] => item !== null);
-
-  return { text, thinking, toolCalls };
-}
-
-function extractToolResultHistory(content: TranscriptRpcPayload, fallbackText: string): ToolResultHistory | null {
-  const record = asRecord(content);
-  const toolName = asString(record?.toolName) ?? asString(record?.name);
-  if (!toolName) {
-    return null;
-  }
-  const callId = asString(record?.toolCallId) ?? asString(record?.callId) ?? asString(record?.id) ?? toolName;
-  const outcome = normalizeToolOutcome(record?.outcome);
-  return {
-    toolName,
-    callId,
-    ok: outcome === "completed" || (outcome === null && (record?.ok === true || record?.isError !== true)),
-    outcome,
-    output: record?.output ?? fallbackText,
-    media: [
-      ...(Array.isArray(record?.media) ? record.media : []),
-      ...(Array.isArray(record?.resources) ? record.resources : []),
-    ],
-    error: asString(record?.error),
-    syscall: inferToolSyscall(toolName, asString(record?.syscall)),
-  };
 }
 
 function normalizeToolOutcome(value: TranscriptRpcPayload): ChatToolOutcome | null {
@@ -1297,27 +987,9 @@ function signalMatchesTarget(payload: TranscriptRpcPayload, target: ChatSignalTa
   return true;
 }
 
-function formatMessageContent(value: TranscriptRpcPayload): string {
-  const record = asRecord(value);
-  if (record && "text" in record) {
-    const text = asString(record.text);
-    if (text !== null) {
-      return text;
-    }
-  }
-  const text = asString(value);
-  if (text) return text;
-  return prettyJson(value);
-}
-
 function extractMessageMedia(value: TranscriptRpcPayload): unknown[] {
   const record = asRecord(value);
   return Array.isArray(record?.media) ? record.media : [];
-}
-
-function normalizeInteractionOrigin(value: TranscriptRpcPayload): InteractionOrigin | undefined {
-  const parsed = interactionOriginSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
 }
 
 function normalizeBackupModelInfo(value: TranscriptRpcPayload): ChatBackupModelInfo | null {
@@ -1357,42 +1029,6 @@ function normalizeBackupModelRef(value: TranscriptRpcPayload): ChatBackupModelIn
 function formatToolInput(value: TranscriptRpcPayload): string {
   const text = prettyJson(value);
   return text === "{}" ? "Waiting for tool input." : text;
-}
-
-function formatToolOutput(output: TranscriptRpcPayload, error: string | null | undefined, fallback: string): string {
-  if (error) {
-    return error;
-  }
-  if (output === undefined || output === null) {
-    return fallback || "Tool completed.";
-  }
-  const text = asString(output);
-  if (text) return text;
-  return prettyJson(output);
-}
-
-function inferToolSyscall(toolName: string, syscall?: string | null): string | null {
-  if (syscall?.trim()) {
-    return syscall.trim();
-  }
-  switch (toolName) {
-    case "Read":
-      return "fs.read";
-    case "Search":
-      return "fs.search";
-    case "Shell":
-      return "shell.exec";
-    case "Write":
-      return "fs.write";
-    case "Edit":
-      return "fs.edit";
-    case "Delete":
-      return "fs.delete";
-    case "CodeMode":
-      return "codemode.exec";
-    default:
-      return null;
-  }
 }
 
 function prettyJson(value: TranscriptRpcPayload): string {

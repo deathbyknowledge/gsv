@@ -6,18 +6,12 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import {
   decideChatHil,
-  getChatHistory,
   listChatProcesses,
   sendChatMessage,
   spawnChatProcess,
 } from "../../chat/backend/chatService";
-import {
-  applyChatSignal,
-  chatRuntimeStateFromHistory,
-  emptyChatRuntimeState,
-  type ChatRuntimeState,
-} from "../../chat/domain/transcript";
 import { useChatConversation } from "../../chat/hooks/useChatConversation";
+import { useChatRuntime } from "../../chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
@@ -283,7 +277,7 @@ function NoteMoment({
       data-index={index}
       class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
     >
-      <div class="who">memory</div>
+      <div class="who">{moment.event && moment.event.kind !== "history.compacted" ? moment.event.severity === "error" ? "error" : "event" : "memory"}</div>
       <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
         <span class="tri">{open ? "▾" : "▸"}</span>
         <span class="note-summary">{noteSummary(moment.text)}</span>
@@ -299,10 +293,10 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   const who = snapshot.username || "you";
 
   const [pid, setPid] = useState<string | null>(null);
-  const [runtime, setRuntime] = useState<ChatRuntimeState>(() => emptyChatRuntimeState());
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
-  const runtimeRef = useRef(runtime);
+  const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
+  const runtime = processRuntime.runtime;
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(null);
   const [localRuns, setLocalRuns] = useState<LocalRun[]>([]);
@@ -382,10 +376,6 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   const momentsRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    runtimeRef.current = runtime;
-  }, [runtime]);
-
   /* the personal process, spawned if the account has none yet */
   useEffect(() => {
     if (!connected) return undefined;
@@ -427,48 +417,12 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   }, [targetsQuery.data]);
 
   /* history, then live signals reduced into the runtime state */
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const refreshHistory = useCallback(async () => {
-    if (!pid) return;
-    try {
-      const history = await getChatHistory(client, { pid, tail: true, limit: HISTORY_LIMIT });
-      const next = chatRuntimeStateFromHistory(history);
-      runtimeRef.current = next;
-      setRuntime(next);
-    } finally {
-      setHistoryLoaded(true);
-    }
-  }, [client, pid]);
+  const historyLoaded = Boolean(processRuntime.history.data) || processRuntime.history.isError;
   /* both halves of the transcript, what was said and what was done, are shown together or not yet */
   const ready = historyLoaded && conversation.loaded;
-
   useEffect(() => {
-    if (!connected || !pid) return undefined;
-    let active = true;
-    let observing = false;
-    setHistoryLoaded(false);
-    void refreshHistory().catch((error: Error) => setNote(error.message));
-    void client.proc
-      .observe({ pid })
-      .then(() => {
-        if (!active) return client.proc.unobserve({ pid }).then(() => undefined);
-        observing = true;
-        return undefined;
-      })
-      .catch(() => undefined);
-    const unsubscribe = client.onSignal((signal, payload) => {
-      const reduction = applyChatSignal(runtimeRef.current, signal, payload, { pid });
-      if (!reduction.matched) return;
-      runtimeRef.current = reduction.state;
-      setRuntime(reduction.state);
-      if (reduction.refreshHistory) void refreshHistory().catch(() => undefined);
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-      if (observing) void client.proc.unobserve({ pid }).catch(() => undefined);
-    };
-  }, [client, connected, pid, refreshHistory]);
+    if (processRuntime.history.error) setNote(processRuntime.history.error.message);
+  }, [processRuntime.history.error]);
 
   /* the run clock and the resolve animation */
   const thinking = runtime.activeRunId !== null;

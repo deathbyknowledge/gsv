@@ -80,6 +80,7 @@ export type Moment = {
   id: string;
   /** `note` is the ship's own memory: a compaction summary the gateway wrote when it folded older history. */
   role: "human" | "ship" | "note";
+  event?: ChatTranscriptRow["event"];
   text: string;
   streaming: boolean;
   thinking: boolean;
@@ -107,10 +108,6 @@ function stringField(value: ChatTranscriptValue | undefined, key: string): strin
 }
 
 /** The target a tool call touched: an explicit `target` argument, else the cloud home. */
-export function callTarget(args: ChatTranscriptValue | undefined): string {
-  return stringField(args, "target") ?? CLOUD_PLACE_ID;
-}
-
 /** The one argument a person wants to see: the command, the path, the URL, or the tool's name. */
 export function argumentThatMatters(syscall: string, args: ChatTranscriptValue | undefined): string {
   const input = stringField(args, "input") ?? stringField(args, "command");
@@ -166,19 +163,6 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
 
 /** Some rows carry the result as a JSON string in their text; read it as the result it is.
  * TODO: remove once process history stores tool results structured (typed history records) instead of the model-facing text. */
-function resultOf(row: ChatTranscriptRow): ChatTranscriptValue | undefined {
-  if (row.toolOutput !== undefined && row.toolOutput !== null && !isStringValue(row.toolOutput)) return row.toolOutput;
-  const text = isStringValue(row.toolOutput) ? row.toolOutput : row.text;
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return row.toolOutput ?? undefined;
-  try {
-    const parsed: ChatTranscriptValue = JSON.parse(trimmed);
-    return parsed;
-  } catch {
-    return row.toolOutput ?? undefined;
-  }
-}
-
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? row.toolName ?? "call";
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
@@ -187,7 +171,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     callId: row.toolCallId ?? row.id,
     syscall,
     summary,
-    output: finished ? trimOutput(outputText(syscall, resultOf(row), row.text)) : "",
+    output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
     finished,
     failed: row.isError === true || row.toolOutcome === "failed" || row.toolOutcome === "denied",
   };
@@ -203,16 +187,14 @@ function isToolRow(row: ChatTranscriptRow): boolean {
  */
 /** A `message` command is the ship sending the moment itself; it is not something it did along the way. */
 export function isMessageSend(row: ChatTranscriptRow): boolean {
-  if ((row.toolSyscall ?? row.toolName) !== "shell.exec") return false;
-  const input = stringField(row.toolArgs, "input") ?? "";
-  return /^\s*(gsv\s+)?message\b/.test(input);
+  return row.toolName === "Send" && row.toolSyscall === null;
 }
 
 export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: string, active: boolean): Activity[] {
   const activities: Activity[] = [];
   for (const row of rows) {
     if (!isToolRow(row) || isMessageSend(row)) continue;
-    const target = callTarget(row.toolArgs);
+    const target = row.toolTarget ?? "unknown target";
     const call = callFromRow(row);
     const existing = activities.find((activity) => activity.target === target);
     const timestamp = row.timestamp ?? null;
@@ -317,9 +299,10 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
       return;
     }
     if (row.role === "system" && row.text.trim()) {
+      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") return;
       moments.push({
         id: row.id,
-        role: "note",
+        role: "note", event: row.event,
         text: row.text,
         streaming: false,
         thinking: false,
@@ -452,7 +435,8 @@ export function momentsFromConversation(
   const runStarted = new Map<string, number | null>();
   transcript.forEach((row, index) => {
     if (row.role === "system" && row.text.trim()) {
-      moments.push({ id: row.id, role: "note", text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, timestamp: row.timestamp ?? null, activities: [], narration: "" });
+      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") return;
+      moments.push({ id: row.id, role: "note", event: row.event, text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, timestamp: row.timestamp ?? null, activities: [], narration: "" });
       return;
     }
     const runKey = runKeyOf(row, index);
@@ -461,7 +445,7 @@ export function momentsFromConversation(
       const bucket = toolRowsByRun.get(runKey) ?? [];
       bucket.push(row);
       toolRowsByRun.set(runKey, bucket);
-    } else if (row.role === "assistant" && row.text.trim()) {
+    } else if (row.role === "assistant" && row.messageDirection !== "out" && row.text.trim()) {
       const bucket = narrationByRun.get(runKey) ?? [];
       bucket.push(row.text.trim());
       narrationByRun.set(runKey, bucket);

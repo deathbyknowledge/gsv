@@ -178,12 +178,15 @@ export async function decideChatHil(
 }
 
 export async function getChatHistory(
-  client: ChatGsvClient,
+  client: { proc: { history(args?: ProcHistoryArgs): Promise<ProcHistoryResult> } },
   args: ProcHistoryArgs = {},
 ): Promise<ChatHistory> {
   const result = throwIfFailed<Extract<ProcHistoryResult, { ok: true }>>(
-    await client.proc.history(args),
+    await client.proc.history({ ...args, format: 2 }),
   );
+  if (result.format !== 2) {
+    throw new Error("This gateway does not support typed process history. Update the gateway to inspect process activity.");
+  }
   return normalizeHistory(result);
 }
 
@@ -337,9 +340,13 @@ export async function readChatHistorySegment(
   client: ChatGsvClient,
   args: ProcHistorySegmentReadArgs,
 ): Promise<ChatHistorySegmentReadResult> {
-  return throwIfFailed<Extract<ProcHistorySegmentReadResult, { ok: true }>>(
-    await client.proc.history.segment.read(args),
+  const result = throwIfFailed<Extract<ProcHistorySegmentReadResult, { ok: true }>>(
+    await client.proc.history.segment.read({ ...args, format: 2 }),
   );
+  if (result.format !== 2) {
+    throw new Error("This gateway does not support typed process archives. Update the gateway to inspect archived activity.");
+  }
+  return result;
 }
 
 export async function getChatProcessAiConfig(
