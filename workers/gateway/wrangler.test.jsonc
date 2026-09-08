@@ -9,7 +9,9 @@
 	"name": "gateway-test",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-01",
-	"compatibility_flags": ["nodejs_compat"],
+	// pi-ai loads node:os for its user-agent. Production's newer compatibility
+	// date enables this builtin; the older unit-test date requires it explicitly.
+	"compatibility_flags": ["nodejs_compat", "enable_nodejs_os_module"],
 	"rules": [
 		{
 			"type": "Text",

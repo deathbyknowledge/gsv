@@ -23,6 +23,7 @@ const EMAIL_CONFIG_PATH = resolve(
 
 function integrationGatewayConfig(options: {
   name?: string;
+  workersAi?: boolean;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -108,7 +109,7 @@ function integrationGatewayConfig(options: {
                 }]),
           ]
         : []),
-    ],
+    ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };
 }
 
@@ -244,12 +245,14 @@ function managedInferenceProbeConfig(): Unstable_RawConfig {
   };
 }
 
-export function createGatewayTestHarness(): TestHarness {
+export function createGatewayTestHarness(options: {
+  workersAi?: boolean;
+} = {}): TestHarness {
   return createTestHarness({
     root: GATEWAY_ROOT,
     workers: [
       {
-        config: integrationGatewayConfig(),
+        config: integrationGatewayConfig(options),
       },
       {
         config: integrationDependencyConfig("gsv"),

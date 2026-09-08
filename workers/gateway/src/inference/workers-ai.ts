@@ -9,9 +9,8 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
-  createGatewayBindingFetch,
-  type AiGatewayBinding,
-} from "@earendil-works/pi-ai/api/cloudflare-gateway-binding";
+  createAiBindingFetch,
+} from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import * as z from "zod/mini";
@@ -23,10 +22,13 @@ export { DEFAULT_WORKERS_AI_MODEL };
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
 const WORKERS_AI_GATEWAY_ID = "default";
 const WORKERS_AI_GATEWAY_BASE_URL =
-  `https://gateway.ai.cloudflare.com/v1/binding/${WORKERS_AI_GATEWAY_ID}`;
+  `https://workers-binding.ai/ai-gateway/gateways/${WORKERS_AI_GATEWAY_ID}`;
 const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_GATEWAY_MODEL_PREFIX = "workers-ai/";
 
+// The 0.84.2 note below is historical: GSV now uses pi-ai 0.85.1's direct binding.
+// Production enables node:os through its compatibility date; unit tests request
+// it explicitly, resolving the earlier crash when loading the provider module.
 // pi-ai 0.84.3+ imports a Node user-agent helper that crashes the current
 // Workerd runtime during module evaluation. Keep 0.84.2's binding transport
 // and carry the newer catalog entry locally until that incompatibility clears.
@@ -107,27 +109,26 @@ export const workersAiProvider: Provider<"openai-completions"> =
         ...model,
         provider: WORKERS_AI_PROVIDER,
         baseUrl: WORKERS_AI_GATEWAY_COMPAT_URL,
+        // The binding URL does not match pi-ai's HTTPS gateway detection.
+        compat: {
+          maxTokensField: "max_tokens",
+          supportsReasoningEffort: false,
+          supportsStrictMode: false,
+          ...model.compat,
+        },
       };
       return [workersAiModel];
     }),
     api: openAICompletionsApi(),
   });
 
-const workersAiGatewayBinding: AiGatewayBinding = {
-  gateway(id) {
-    const binding = getWorkersAiBinding();
-    if (!binding) {
-      throw new Error("Workers AI binding is not configured for this worker");
-    }
-    return binding.gateway(id);
-  },
+export const workersAiBindingFetch: typeof fetch = (input, init) => {
+  const binding = getWorkersAiBinding();
+  if (!binding) {
+    throw new Error("Workers AI binding is not configured for this worker");
+  }
+  return createAiBindingFetch(binding)(input, init);
 };
-
-export const workersAiBindingFetch = createGatewayBindingFetch({
-  binding: workersAiGatewayBinding,
-  baseUrl: WORKERS_AI_GATEWAY_BASE_URL,
-  gateway: WORKERS_AI_GATEWAY_ID,
-});
 
 export function isWorkersAiProvider(provider: string): boolean {
   const normalized = provider.trim().toLowerCase();
