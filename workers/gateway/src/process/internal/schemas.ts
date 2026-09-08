@@ -232,6 +232,7 @@ export const archivedThinkingSchema = z.object({
 export const archivedMessageSchema = z.object({
   records: z.optional(z.array(procHistoryRecordDataSchema).min(1)),
   id: z.number().int().positive().optional().catch(undefined),
+  generation: z.number().int().nonnegative().optional().catch(undefined),
   run_id: optionalNonEmptyStringSchema,
   role: z.enum(["user", "assistant", "system", "toolResult"]),
   content: z.string().catch(""),

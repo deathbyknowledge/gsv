@@ -1621,6 +1621,32 @@ describe("targets native command", () => {
   });
 });
 
+describe("signal native command", () => {
+  it("enforces signal capabilities before attempting watch registration", async () => {
+    const result = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop"}'` },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("Permission denied: signal.watch");
+  });
+
+  it("validates syscall JSON and retains the Process-only watch boundary", async () => {
+    const malformed = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop","audience":"everyone"}'` },
+      makeContext({ capabilities: ["signal.watch"] }),
+    );
+    expect(malformed.status).toBe("failed");
+    expect(malformed.stderr).toContain("Invalid signal.watch arguments");
+    const directHuman = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop"}'` },
+      makeContext({ capabilities: ["signal.watch"], processId: null }),
+    );
+    expect(directHuman.status).toBe("failed");
+    expect(directHuman.stderr).toContain("signal.watch is only available to process runtimes");
+  });
+});
+
 describe("proc native command", () => {
   function makeLifecycleContext(capability: "proc.reset" | "proc.kill") {
     const process = {
@@ -2568,11 +2594,32 @@ describe("proc native command", () => {
       data: {
         ok: true,
         pid: "proc:child",
+        format: 2,
+        historyRevision: 2,
+        historyGeneration: 0,
+        historyResetRevision: 0,
+        reset: false,
+        hasMore: false,
+        records: [
+          {
+            id: 1, messageId: 1, index: 0, generation: 0, runId: null,
+            createdAt: 1_800_000_000_000, source: "typed", kind: "message",
+            payload: { direction: "in", text: "please investigate", media: [], origin: {} },
+          },
+          {
+            id: 2, messageId: 2, index: 0, generation: 0, runId: "run-child",
+            createdAt: 1_800_000_001_000, source: "typed", kind: "result",
+            payload: {
+              callId: "call-child", tool: "Shell", outcome: "completed",
+              output: "x".repeat(40), media: [], resources: [],
+            },
+          },
+        ],
         messages: [
           {
             id: 1,
             role: "user",
-            content: "please investigate",
+            content: "legacy compatibility text is not the surface contract",
             timestamp: 1_800_000_000_000,
           },
           {
@@ -2630,6 +2677,9 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("History proc:child");
     expect(result.stdout).toContain("Messages: 2/2");
+    expect(result.stdout).toContain("[#1:0] message in");
+    expect(result.stdout).toContain("result Shell completed call=call-child");
+    expect(result.stdout).not.toContain("legacy compatibility text");
     expect(result.stdout).toContain("please inves");
     expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
     expect(result.stdout).toContain("xxxxxxxxxxxx");
@@ -2641,6 +2691,7 @@ describe("proc native command", () => {
         call: "proc.history",
         args: {
           pid: "proc:child",
+          format: 2,
           limit: 2,
           tail: true,
         },

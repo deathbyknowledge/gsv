@@ -6,7 +6,28 @@ import {
   procHistoryEventSchema,
   procHistoryRecordDataSchema,
   procHistoryRecordSchema,
+  procHistoryArchivedRecordSchema,
+  procHistoryTargetEventRegistry,
 } from "../dist/protocol.js";
+
+test("archive records preserve unknown source coordinates and timestamps", () => {
+  const record = {
+    kind: "note", payload: { text: "Old reasoning", thinking: [] },
+    id: 2, messageId: 1, index: 1, generation: 3, runId: null, source: "legacy",
+  };
+  assert.deepEqual(procHistoryArchivedRecordSchema.parse(record), record);
+  assert.equal(procHistoryRecordSchema.safeParse(record).success, false);
+  const retained = { ...record, sourceMessageId: 50, createdAt: -0.5 };
+  assert.deepEqual(procHistoryArchivedRecordSchema.parse(retained), retained);
+  assert.equal(procHistoryArchivedRecordSchema.safeParse({ ...record, createdAt: null }).success, false);
+  assert.equal(procHistoryArchivedRecordSchema.safeParse({ ...record, sourceMessageId: 0 }).success, false);
+  const unlinkedResult = {
+    ...record, kind: "result",
+    payload: { callId: null, tool: "Read", outcome: "completed", output: "Old output", media: [], resources: [] },
+  };
+  assert.deepEqual(procHistoryArchivedRecordSchema.parse(unlinkedResult), unlinkedResult);
+  assert.equal(procHistoryRecordSchema.safeParse({ ...unlinkedResult, createdAt: 1 }).success, false);
+});
 
 const resource = {
   type: "resource",
@@ -211,7 +232,17 @@ const eventFixtures = {
   "history.compacted": { summary: "The earlier work is complete.", segmentId: "segment:1", archivedMessages: 10, archivePath: "/home/ship/archive.jsonl" },
   "runtime.wake": { source: "process", reason: "pending-events", pendingEvents: 1 },
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
+  "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
 };
+
+test("machine event registration has a typed payload and defaults to person-only delivery", () => {
+  const definition = procHistoryTargetEventRegistry["target.status"];
+  assert.equal(definition.kind, "target.connection");
+  assert.equal(definition.defaultAudience, "person");
+  assert.deepEqual(definition.allowedAudiences, ["person", "model", "both"]);
+  assert.deepEqual(definition.payloadSchema.parse(eventFixtures[definition.kind]), eventFixtures[definition.kind]);
+  assert.equal(definition.payloadSchema.safeParse({ ...eventFixtures[definition.kind], claimedOwnerUid: 0 }).success, false);
+});
 
 test("every registered event validates its own payload and rejects prose substitutes", () => {
   assert.deepEqual(Object.keys(eventFixtures).sort(), Object.keys(procHistoryEventPayloadSchemas).sort());

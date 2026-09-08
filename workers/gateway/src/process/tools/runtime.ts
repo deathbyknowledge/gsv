@@ -1,3 +1,4 @@
+import { renderToolExecutionError, renderToolResultOutput } from "../history/event-renderer";
 /** Owns Process tool policy, dispatch, results, and CodeMode execution. */
 
 import {
@@ -403,18 +404,17 @@ export class ProcessTools {
           JSON.stringify(stored.media),
         );
         output = stored.output;
-        const storedText = z.string().safeParse(stored.output);
-        content = storedText.success ? storedText.data : JSON.stringify(stored.output ?? null);
+        content = renderToolResultOutput(stored.output);
         media = stringifyStoredProcessMedia(ownedMedia) ?? undefined;
         outcome = result.outcome ?? "completed";
         isError = outcome !== "completed";
       } else if (result.status === "error") {
-        content = `Error: ${result.error}`;
+        content = renderToolExecutionError(result.error, "tool");
         error = { message: result.error ?? "Tool execution failed" };
         isError = true;
         outcome = result.outcome ?? "failed";
       } else if (options?.interruptPending) {
-        content = `Error: ${options.interruptPending}`;
+        content = renderToolExecutionError(options.interruptPending, "tool");
         error = { message: options.interruptPending };
         isError = true;
         outcome = "cancelled";

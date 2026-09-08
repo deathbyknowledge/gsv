@@ -14,9 +14,10 @@ import type { Process } from "../do";
 import {
   defaultHistoryPolicy, serializeInteractionOrigin, emptyProcessArchive, gunzip, gzipMessageRecords,
   historyArchiveFilename, parseArchivedMessageRecord, serializeArchivedMessage, buildCompactionSummaryContext,
-  formatCompactionSummaryMessage, contextBoundaryRemainingTokens, contextRunwayAlertThreshold,
-  isCompactionSummaryMessage, messageSnapshotsMatch, parseInteractionOrigin,
+  contextBoundaryRemainingTokens, contextRunwayAlertThreshold, isCompactionSummaryMessage, messageSnapshotsMatch,
 } from "./helpers";
+import { formatCompactionSummaryMessage } from "./event-renderer";
+import { archivedHistoryRecords } from "./archive";
 import {
   isHistoryOverflowPolicy, isNonNegativeInteger, isPositiveInteger, normalizeOptionalString,
   normalizeToolResultOutcome,
@@ -24,7 +25,7 @@ import {
 import { storedHistoryPolicySchema } from "../internal/schemas";
 import {
   type ArchivedMessageRecord, COMPACTION_SUMMARY_MAX_TOKENS, CONTEXT_PROVIDER_OVERFLOW_REASON,
-  CONTEXT_RUNWAY_ALERT_EPOCH_KEY, MAX_KILL_ARCHIVE_ATTEMPTS, MAX_PROCESS_MEDIA_READ_BYTES,
+  CONTEXT_RUNWAY_ALERT_EPOCH_KEY, MAX_KILL_ARCHIVE_ATTEMPTS,
 } from "../internal/lifecycle";
 import type {
   AssistantHistoryContent, RestoredToolResultMetadata, ProcessArchiveResult, CompactionTelemetryProperties,
@@ -37,16 +38,13 @@ import { stringifyStoredProcessMedia } from "../media";
 import { raceWithAbort } from "../../shared/abort";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
-  errorMessageFromUnknown, formatProviderErrorMessage, formatProviderContextOverflowMessage,
+  errorMessageFromUnknown, formatProviderErrorMessage,
 } from "../../inference/errors";
 import { isRetryableGenerationErrorMessage } from "../../inference/output";
 import { nextAiConfigFallback } from "../run-tick-policy";
 import type {
   AssistantMessage,
   Context,
-  Message,
-  ToolResultMessage,
-  UserMessage,
 } from "@earendil-works/pi-ai";
 import {
   buildProcContextState, estimateContextInputTokens, estimateContextMessagesTokens, measureContextInputTokens,
@@ -57,26 +55,15 @@ import {
   parseContextProjection, type ContextProjection,
 } from "../context";
 import type { RunState } from "../run/state";
-import { contextSnapshotFromRun, orderMessagesForProvider } from "../run/helpers";
-import { formatContextProjectionEvent } from "../../prompts/context-events";
+import { contextSnapshotFromRun } from "../run/helpers";
 import {
-  formatInteractionOriginForContext, formatReplyDestinationForContext, prefixUserMessageContent,
-} from "../context/formatters";
-import { formatResponsibilityBaseline, formatResponsibilityTransitionEvent } from "../internal/events";
+  renderContextHistory, renderModelEvent, renderModelHistoryGroup, type ModelHistoryRenderOptions,
+} from "./model-renderer";
+import { normalizeModelHistoryGroup } from "../storage/history-records";
+import { formatContextProjectionEvent } from "../../prompts/context-events";
+import { formatResponsibilityBaseline } from "../internal/events";
+import { formatResponsibilityTransitionEvent } from "./event-renderer";
 
-function formatContextOriginLines(
-  source: string | null,
-  renderSource: boolean,
-  replyDestination: ReturnType<typeof formatReplyDestinationForContext> | null,
-  renderReplyDestination: boolean,
-): string {
-  const lines: string[] = [];
-  if (renderSource && source !== null) lines.push(`[From: ${source}]`);
-  if (renderReplyDestination && replyDestination) {
-    lines.push(`[Directed endpoint: ${replyDestination.description}.]`);
-  }
-  return lines.join("\n");
-}
 
 function archivedToolResultMessage(
   host: Process,
@@ -348,6 +335,9 @@ export class ProcessHistory {
   async handleHistorySegmentRead(
     args: ProcHistorySegmentReadArgs,
   ): Promise<ProcHistorySegmentReadResult> {
+    if (args.format !== undefined && args.format !== 2) {
+      return { ok: false, error: "proc.history.segment.read format must be 2" };
+    }
     const segmentId = normalizeOptionalString(args.segmentId);
     if (!segmentId) {
       return {
@@ -386,14 +376,22 @@ export class ProcessHistory {
     const page = archivedMessages.slice(offset, offset + limit);
     const messages = page.map((message) => this.toProcHistoryMessageFromArchive(message));
 
-    return {
+    const result = {
       ok: true,
       pid: this.host.pid,
       segment,
       messages,
       messageCount: archivedMessages.length,
       truncated: offset + messages.length < archivedMessages.length,
-    };
+    } as const;
+    if (args.format !== 2) return result;
+    try {
+      const records = archivedHistoryRecords(archivedMessages, segment.generation)
+        .filter((record) => record.messageId > offset && record.messageId <= offset + limit);
+      return { ...result, format: 2, records };
+    } catch (error) {
+      return { ok: false, error: `Failed to decode typed segment history: ${errorMessageFromUnknown(error)}` };
+    }
   }
 
   toProcHistoryMessageFromArchive(message: ArchivedMessageRecord): ProcHistoryMessage {
@@ -997,7 +995,6 @@ export class ProcessHistory {
       const records = this.host.store.messages.getMessagesForGeneration();
       selected = this.selectCompactionPrefixToPressure({
         records,
-        allMessages: this.host.store.messages.toMessages({ limit: null }),
         protectedIndex: records.length - 1,
         estimatedContextTokens: state.estimatedInputTokens,
         effectiveInputTokens: state.inputTokens,
@@ -1446,29 +1443,17 @@ export class ProcessHistory {
     }
 
     if (policy.overflow === "fail") {
-      const lines = [
-        "Context limit policy stopped this run.",
-        trigger === "provider-overflow"
-          ? "The AI provider reported that the request exceeds its context window."
-          : `Policy: fail at ${Math.round(policy.compactAtPressure * 100)}% context pressure.`,
-      ];
-      if (pressure !== null && Number.isFinite(pressure)) {
-        lines.push(`Current estimate: ${Math.round(pressure * 100)}%.`);
-      }
-      lines.push("Compact the history or reset the process before sending more work.");
-      const message = lines.join("\n");
-      await this.host.run.failWithSystemMessage(runId, "context.policy.fail", message, { trigger, policy, pressure });
+      await this.host.run.failWithHistoryEvent(runId, {
+        reason: "context.policy.fail", trigger, policy, pressure,
+      });
       return "stopped";
     }
 
     const selected = this.selectAutoCompactionPrefix(runId, state, context, policy, trigger);
     if (selected.length === 0) {
-      const message = [
-        "Context pressure reached the compaction boundary, but no completed history prefix can be archived.",
-        `Policy targets ${Math.round(policy.compactToPressure * 100)}% context pressure.`,
-        "Compact manually or reset this process.",
-      ].join("\n");
-      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.empty", message, { trigger, policy, pressure });
+      await this.host.run.failWithHistoryEvent(runId, {
+        reason: "context.auto_compact.empty", trigger, policy, pressure,
+      });
       return "stopped";
     }
 
@@ -1490,11 +1475,9 @@ export class ProcessHistory {
       return "stopped";
     }
     if (!result.ok) {
-      const message =
-        trigger === "provider-overflow"
-          ? `Auto-compaction failed after provider context overflow: ${result.error}`
-          : `Auto-compaction failed before model call: ${result.error}`;
-      await this.host.run.failWithSystemMessage(runId, "context.auto_compact.failed", message, { trigger, policy, pressure, error: result.error });
+      await this.host.run.failWithHistoryEvent(runId, {
+        reason: "context.auto_compact.failed", trigger, policy, pressure, error: result.error,
+      });
       return "stopped";
     }
 
@@ -1546,15 +1529,6 @@ export class ProcessHistory {
       return [];
     }
 
-    const allMessages = this.host.store.messages.toMessages({
-      limit: null,
-      contextEpochId: this.host.runs.active?.contextEpochId,
-      generationContextId: this.host.runs.active?.generationContextId,
-    });
-    if (allMessages.length !== records.length) {
-      throw new Error("Process history and rendered message counts diverged during compaction");
-    }
-
     const estimatedContextTokens = Math.max(1, estimateContextInputTokens(context));
     const inputBudgetTokens = state.inputBudgetTokens;
     const measuredInputTokens = Math.max(1, state.inputTokens);
@@ -1564,7 +1538,10 @@ export class ProcessHistory {
         : measuredInputTokens;
     return this.selectCompactionPrefixToPressure({
       records,
-      allMessages,
+      renderOptions: {
+        contextEpochId: this.host.runs.active?.contextEpochId,
+        generationContextId: this.host.runs.active?.generationContextId,
+      },
       protectedIndex,
       estimatedContextTokens,
       effectiveInputTokens,
@@ -1575,7 +1552,7 @@ export class ProcessHistory {
 
   private selectCompactionPrefixToPressure(input: {
     records: MessageRecord[];
-    allMessages: Message[];
+    renderOptions?: ModelHistoryRenderOptions;
     protectedIndex: number;
     estimatedContextTokens: number;
     effectiveInputTokens: number;
@@ -1584,18 +1561,20 @@ export class ProcessHistory {
   }): MessageRecord[] {
     const {
       records,
-      allMessages,
       protectedIndex,
       targetPressure,
       inputBudgetTokens,
     } = input;
     if (
       records.length <= 1 ||
-      protectedIndex <= 0 ||
-      allMessages.length !== records.length
+      protectedIndex <= 0
     ) {
       return [];
     }
+    // Keep storage coordinates even when a person-only event has no provider message.
+    const allMessages = records.map((record) =>
+      renderModelHistoryGroup(normalizeModelHistoryGroup(record), input.renderOptions),
+    );
 
     const estimatedContextTokens = Math.max(1, input.estimatedContextTokens);
     const effectiveInputTokens = Math.max(1, input.effectiveInputTokens);
@@ -1611,15 +1590,15 @@ export class ProcessHistory {
     }
     const estimateScale = effectiveInputTokens / estimatedContextTokens;
     const summaryTokens = estimateContextMessagesTokens([
-      {
-        role: "user",
-        content: `[GSV EVENT]\n${formatCompactionSummaryMessage({
+      renderModelEvent({
+        kind: "history.compacted", severity: "info", audience: "model",
+        payload: {
+          segmentId: "segment",
           archivedMessages: protectedIndex,
           archivePath: "/home/process/history/compactions/segment.jsonl.gz",
           summary: "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
-        })}`,
-        timestamp: Date.now(),
-      },
+        },
+      }, Date.now()),
     ]);
     const estimateTargetTokens =
       inputBudgetTokens !== null
@@ -1634,7 +1613,9 @@ export class ProcessHistory {
     let high = protectedIndex;
     while (low < high) {
       const candidate = Math.floor((low + high) / 2);
-      const candidateTokens = estimateContextMessagesTokens(allMessages.slice(0, candidate));
+      const candidateTokens = estimateContextMessagesTokens(
+        allMessages.slice(0, candidate).filter((message) => message !== null),
+      );
       if (candidateTokens >= requiredEstimatedRemoval) {
         high = candidate;
       } else {
@@ -1645,7 +1626,7 @@ export class ProcessHistory {
     let requestedCut = low;
     const firstNonSummaryIndex = records
       .slice(0, protectedIndex)
-      .findIndex((message) => !isCompactionSummaryMessage(message));
+      .findIndex((message, index) => allMessages[index] !== null && !isCompactionSummaryMessage(message));
     if (firstNonSummaryIndex < 0) {
       return [];
     }
@@ -1662,7 +1643,7 @@ export class ProcessHistory {
     if (
       selected.length === 0 ||
       selected.length > protectedIndex ||
-      selected.every(isCompactionSummaryMessage)
+      selected.every((message, index) => allMessages[index] === null || isCompactionSummaryMessage(message))
     ) {
       return [];
     }
@@ -1730,11 +1711,8 @@ export class ProcessHistory {
     config: AiConfigResult,
     providerMessage?: string,
   ): Promise<void> {
-    const message = formatProviderContextOverflowMessage(providerMessage, {
-      provider: config.provider,
-      model: config.model,
-    });
-    await this.host.run.failWithSystemMessage(runId, CONTEXT_PROVIDER_OVERFLOW_REASON, message, {
+    await this.host.run.failWithHistoryEvent(runId, {
+      reason: CONTEXT_PROVIDER_OVERFLOW_REASON,
       provider: config.provider, model: config.model, error: providerMessage, trigger: "provider-overflow",
     });
   }
@@ -1745,18 +1723,9 @@ export class ProcessHistory {
     beforePressure: number,
     afterPressure: number,
   ): Promise<void> {
-    const message = [
-      "Auto-compaction could not reduce this process history to its configured context target.",
-      `Pressure: ${Math.round(beforePressure * 100)}% before, ${Math.round(afterPressure * 100)}% after.`,
-      `Policy: compact at ${Math.round(policy.compactAtPressure * 100)}% and target ${Math.round(policy.compactToPressure * 100)}%.`,
-      "Compact more history manually or reset the process.",
-    ].join("\n");
-    await this.host.run.failWithSystemMessage(
-      runId,
-      "context.auto_compact.insufficient",
-      message,
-      { policy, beforePressure, afterPressure },
-    );
+    await this.host.run.failWithHistoryEvent(runId, {
+      reason: "context.auto_compact.insufficient", policy, beforePressure, afterPressure,
+    });
   }
 
   async ensureContextEpoch(
@@ -2168,79 +2137,15 @@ export class ProcessHistory {
     this.host.runs.active = run;
   }
 
-  private async hydrateContextMedia(
-    records: MessageRecord[],
-    messages: Context["messages"],
-  ): Promise<void> {
-    const budget = { remainingBytes: MAX_PROCESS_MEDIA_READ_BYTES };
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index]!;
-      if (!record.media) continue;
-      const content = await this.host.resources.hydrateMediaContent(
-        record.content,
-        record.media,
-        budget,
-      );
-      if (record.role === "user") {
-        messages[index] = {
-          role: "user",
-          content,
-          timestamp: record.createdAt,
-        } satisfies UserMessage;
-      } else if (record.role === "toolResult") {
-        const message = messages[index];
-        if (message?.role === "toolResult") {
-          messages[index] = { ...message, content } satisfies ToolResultMessage;
-        }
-      }
-    }
-  }
-
-  private annotateContextOrigins(records: MessageRecord[], messages: Context["messages"]): void {
-    let previousSource: string | null | undefined;
-    let previousReplyDestinationKey: string | undefined;
-    const seenRunIds = new Set<string>();
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index]!;
-      const ownsDistinctRun = Boolean(record.runId && !seenRunIds.has(record.runId));
-      if (record.runId) seenRunIds.add(record.runId);
-      if (record.role !== "user" && record.role !== "system") continue;
-
-      const origin = parseInteractionOrigin(record.origin);
-      const source = formatInteractionOriginForContext(origin);
-      const shouldRenderSource = source !== null && source !== previousSource;
-      if (record.role === "user" || source !== null) previousSource = source;
-
-      const replyDestination = ownsDistinctRun ? formatReplyDestinationForContext(origin) : null;
-      const shouldRenderReplyDestination =
-        replyDestination !== null && replyDestination.key !== previousReplyDestinationKey;
-      if (replyDestination) previousReplyDestinationKey = replyDestination.key;
-
-      const message = messages[index];
-      if (message?.role !== "user" || (!shouldRenderSource && !shouldRenderReplyDestination)) {
-        continue;
-      }
-      messages[index] = prefixUserMessageContent(message, formatContextOriginLines(
-        source,
-        shouldRenderSource,
-        replyDestination,
-        shouldRenderReplyDestination,
-      ));
-    }
-  }
-
   async buildContextMessages(
     contextEpochId?: string,
     generationContextId?: string,
   ): Promise<Context["messages"]> {
-    const records = this.host.store.messages.getMessages({ limit: null });
-    const messages = this.host.store.messages.toMessages({
-      limit: null,
-      contextEpochId,
-      generationContextId,
-    });
-    await this.hydrateContextMedia(records, messages);
-    this.annotateContextOrigins(records, messages);
-    return orderMessagesForProvider(messages);
+    const groups = this.host.store.messages.getModelHistoryGroups({ limit: null });
+    return renderContextHistory(
+      groups,
+      { contextEpochId, generationContextId },
+      (text, media, budget) => this.host.resources.hydrateMediaContent(text, media, budget),
+    );
   }
 }

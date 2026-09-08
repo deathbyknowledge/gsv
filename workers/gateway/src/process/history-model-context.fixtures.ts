@@ -4,13 +4,10 @@ import type {
 import { procHistoryEventSchema } from "@humansandmachines/gsv/protocol";
 import { formatContextProjectionEvent } from "../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../prompts/context-runway";
-import { formatGenerationFailure } from "./context/formatters";
+import { formatGenerationFailure } from "./history/event-renderer";
 import type { ContextProjection } from "./context/projection";
-import { formatCompactionSummaryMessage } from "./history/helpers";
-import {
-  formatIpcReplyMessage, formatProcessRuntimeEvent, formatResponsibilityTransitionEvent,
-  formatScheduleEventMessage, formatWatchedSignalMessage,
-} from "./internal/events";
+import { formatCompactionSummaryMessage } from "./history/event-renderer";
+import { formatIpcReplyMessage, formatProcessRuntimeEvent, formatResponsibilityTransitionEvent, formatScheduleEventMessage, formatWatchedSignalMessage } from "./history/event-renderer";
 import { RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE } from "./internal/lifecycle";
 
 export const GOLDEN_TIME = 1_700_000_000_000;
@@ -95,7 +92,7 @@ export function goldenEvents(): EventFixture[] {
       text: formatScheduleEventMessage(schedule),
       origin: { kind: "scheduler", scheduleId: schedule.scheduleId, replyTo: GOLDEN_ORIGINS.adapter },
     },
-    { event: { kind: "signal.watched", payload: signal, severity: "info", audience: "model" }, text: formatWatchedSignalMessage(signal.signal, { ...signal, watched: true }) },
+    { event: { kind: "signal.watched", payload: signal, severity: "info", audience: "model" }, text: formatWatchedSignalMessage(signal.signal, signal) },
     {
       event: { kind: "adapter.work.returned", payload: { eventId: "event:returned", workPid: "proc:work" }, severity: "info", audience: "model" },
       text: formatProcessRuntimeEvent({ type: "adapter.work.returned", workPid: "proc:work" }),

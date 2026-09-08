@@ -76,6 +76,9 @@ export const userProcessSignalPayloadSchema = z.object({
   conversationId: z.string().optional(),
   queuedCount: z.number().finite().optional(),
   timestamp: z.number().finite().optional(),
+  historyRevision: z.number().int().nonnegative().optional(),
+  historyGeneration: z.number().int().nonnegative().optional(),
+  historyResetRevision: z.number().int().nonnegative().optional(),
   changes: z.array(z.string()).optional(),
   title: z.string().optional(),
   status: z.string().optional(),
@@ -185,4 +188,3 @@ export function errFrame(id: string, code: number, message: string): ResponseFra
 export function requestAbortError(reason: FrameCancellationReason | undefined): Error {
   return reason instanceof Error ? reason : new Error("Device request cancelled");
 }
-

@@ -85,7 +85,7 @@ describe("typed Process history storage", () => {
         { kind: null, payload_json: null, group_message_id: null },
       ]);
       expect(sql.exec("SELECT * FROM message_queue").toArray()).toEqual(queuedBefore.map((row) => ({ ...row, record_json: null })));
-      expect(listAppliedSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT)).toHaveLength(14);
+      expect(listAppliedSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT)).toHaveLength(15);
       const store = new ProcessStore(sql);
       expect(store.messages.getRecords().map(({ kind, source }) => [kind, source])).toEqual([
         ["note", "legacy"], ["call", "legacy"], ["call", "legacy"],
@@ -237,10 +237,10 @@ describe("typed Process history storage", () => {
     const second = resource("/second.png");
     const media = [{ type: "image", mimeType: "image/png", url: "https://example.test/image.png" }];
     const records = inferHistoryRecords({
-      id: 1, generation: 1, role: "toolResult", toolCallId: "call:1",
+      id: 1, role: "toolResult", toolCallId: "call:1",
       content: JSON.stringify({ __gsvStoredToolResult: 1, output: { content: [first, second, first] }, media }),
       toolCalls: JSON.stringify({ toolName: "Read", isError: false }),
-      media: null, metadata: null, createdAt: 100,
+      media: null,
     });
     expect(records).toEqual([{
       kind: "result",

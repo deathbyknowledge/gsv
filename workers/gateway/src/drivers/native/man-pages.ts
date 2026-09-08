@@ -76,6 +76,34 @@ export function renderManualPage(topic: string): string | null {
         "",
       ].join("\n");
 
+    case "signal":
+      return [
+        "SIGNAL(1)",
+        "",
+        "NAME",
+        "  signal - register or remove a signal watch for this Process",
+        "",
+        "SYNOPSIS",
+        "  signal watch --json JSON",
+        "  signal unwatch --json JSON",
+        "",
+        "OVERVIEW",
+        "  Arguments follow signal.watch and signal.unwatch. A watch names exactly",
+        "  one source processId or targetId. Target watches accept target.status and",
+        "  produce typed target.connection events from Kernel connection facts.",
+        "  Audience defaults to person: a notice without a model run. Choose model",
+        "  or both explicitly when the event should also wake the Process.",
+        "  Watches fire once by default and expire after ttlMs (default one day).",
+        "  Set once:false to retain the watch until expiry or removal. Delivery is",
+        "  best effort. Registration and delivery check the Process's capabilities",
+        "  and access to the source; ordinary user shell requests cannot own watches.",
+        "",
+        "EXAMPLES",
+        "  signal watch --json '{\"signal\":\"target.status\",\"targetId\":\"laptop\",\"key\":\"laptop-status\",\"once\":false}'",
+        "  signal unwatch --json '{\"key\":\"laptop-status\"}'",
+        "",
+      ].join("\n");
+
     case "targets":
     case "devices":
       return [

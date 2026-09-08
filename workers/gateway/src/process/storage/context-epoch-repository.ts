@@ -222,6 +222,7 @@ export class ProcessContextEpochRepository {
   }
 
   deleteContextEpochOwnedMessages(epochId: string): void {
+    this.store.state.invalidateHistoryCursors();
     this.store.sql.exec(
       `DELETE FROM messages
        WHERE COALESCE(group_message_id, id) IN (

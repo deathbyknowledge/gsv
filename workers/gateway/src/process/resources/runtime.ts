@@ -8,10 +8,8 @@ import {
   resourceBlockSchema, type ProcMediaInput, type ResourceBlock, jsonValueSchema, type FileResourceReference,
   type JsonValue,
 } from "@humansandmachines/gsv/protocol";
-import {
-  processMediaPath, processMediaPrefix, storeIncomingProcessMedia, type StoreIncomingProcessMediaOptions,
-  buildImageBlock, describeStoredProcessMedia, parseStoredProcessMedia, type StoredProcessMedia,
-} from "../media";
+import { processMediaPath, processMediaPrefix, storeIncomingProcessMedia, type StoreIncomingProcessMediaOptions, parseStoredProcessMedia, type StoredProcessMedia } from "../media";
+import { buildImageBlock, describeStoredProcessMedia } from "../history/media-renderer";
 import {
   agentArchiveMediaPath, agentArchiveMediaPrefix, isValidAgentArchiveMediaObject,
 } from "../../shared/process-media-path";

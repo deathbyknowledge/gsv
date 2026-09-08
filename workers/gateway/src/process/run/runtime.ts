@@ -40,7 +40,8 @@ import {
   adaptContextMessage, adaptContextTool, adaptGeneratedAssistantMessage, buildAssistantMessageMetadata,
   modelMetadataFromAiConfig, normalizeOptionalString,
 } from "../internal/messages";
-import { formatAiModelStackLabel, formatGenerationFailure } from "../context/formatters";
+import { formatAiModelStackLabel } from "../context/formatters";
+import { formatGenerationFailure } from "../history/event-renderer";
 import {
   nextAiConfigFallback, classifyAssistantTurn, type AssistantTurnClassification,
 } from "../run-tick-policy";
@@ -48,11 +49,8 @@ import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
-import {
-  formatRunControlToolResult, incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt,
-  PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun,
-  withRunControlInstructions,
-} from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
@@ -605,24 +603,17 @@ export class ProcessRun {
     else if (transition) await this.completeRunTransition(transition);
   }
 
-  async failWithSystemMessage(
+  async failWithHistoryEvent(
     runId: string,
-    reason: string,
-    message: string,
-    details?: Omit<ProcHistoryEventPayload<"context.failed">, "reason">,
+    payload: ProcHistoryEventPayload<"context.failed">,
   ): Promise<void> {
-    const detail = details ?? { error: message };
-    await this.host.history.appendSystemMessage(runId, message, {
-      kind: "event",
-      payload: {
-        kind: "context.failed",
-        payload: { reason, ...detail },
-        severity: "error",
-        audience: "both",
-      },
-    });
+    const event = {
+      kind: "context.failed", payload, severity: "error", audience: "both",
+    } as const;
+    const message = renderHistoryEvent(event);
+    await this.host.history.appendSystemMessage(runId, message, { kind: "event", payload: event });
     await this.finishRun(runId, {
-      reason,
+      reason: payload.reason,
       status: "error",
       resultText: null,
       error: message,
@@ -1456,7 +1447,7 @@ export class ProcessRun {
       if (this.host.killed || !active || active.runId !== runId) return;
       const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
       if (!registration) return;
-      const message = `Run-control execution failed: ${error}`;
+      const message = renderToolExecutionError(error, "run-control");
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,

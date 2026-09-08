@@ -2,17 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
-import {
-  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-  DEFAULT_IMAGE_READING_MODEL,
-  deleteProcessMedia,
-  describeStoredProcessMedia,
-  parseStoredProcessMedia,
-  processMediaPath,
-  storeIncomingProcessMedia,
-  type AudioTranscriptionBinding,
-  type ImageReadingBinding,
-} from "./media";
+import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL, DEFAULT_IMAGE_READING_MODEL, deleteProcessMedia, parseStoredProcessMedia, processMediaPath, storeIncomingProcessMedia, type AudioTranscriptionBinding, type ImageReadingBinding } from "./media";
+import { describeStoredProcessMedia } from "./history/media-renderer";
 
 const touchedPids = new Set<string>();
 

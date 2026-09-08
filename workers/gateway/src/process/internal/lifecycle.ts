@@ -47,6 +47,7 @@ export function tombstoneKilledProcessStorage(
 
 export type ArchivedMessageRecord = {
   id?: number;
+  generation?: number;
   runId?: string;
   role: MessageRole;
   content: string;

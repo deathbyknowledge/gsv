@@ -1,7 +1,8 @@
 import * as z from "zod/mini";
 import { adapterSurfaceSchema } from "./adapters";
-import { jsonObjectSchema, jsonValueSchema } from "./json";
+import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "./json";
 import type { ProcHistoryContextPolicy } from "./syscalls/proc";
+import type { EventReplyTarget } from "./syscalls/interaction-origin";
 import type { ResponsibilityRecord, ResponsibilityTransition } from "./syscalls/responsibility";
 
 const nonNegativeIntegerSchema = z.int().check(z.nonnegative());
@@ -187,17 +188,115 @@ export const procHistoryEventPayloadSchemas = {
     error: z.string(),
     prefix: z.optional(z.string()),
   }),
+  "target.connection": z.strictObject({
+    targetId: z.string(),
+    event: z.enum(["connected", "disconnected"]),
+    platform: z.string(),
+    label: z.optional(z.string()),
+    version: z.optional(z.string()),
+    observedAt: z.number(),
+  }),
+} satisfies { [K in keyof ProcHistoryEventPayloadMap]: z.ZodMiniType<ProcHistoryEventPayloadMap[K]> };
+
+export type ProcHistoryContextProjection = {
+  version: 1;
+  runtime: { date: string; timezone: string };
+  targets: { id: string; implements: string[]; label?: string; description?: string; platform?: string }[];
+  mcpServers: string[];
+  skills: { mode: "summary" | "names" | "off"; entries: { id: string; description: string }[] };
 };
 
-export type ProcHistoryEventKind = keyof typeof procHistoryEventPayloadSchemas;
-export type ProcHistoryEventPayload<K extends ProcHistoryEventKind> = z.infer<
-  (typeof procHistoryEventPayloadSchemas)[K]
->;
+export type ProcHistoryIpcResponsePayload = {
+  callId?: string;
+  targetPid?: string;
+  sourceRunId?: string;
+  createdAt?: number;
+  deadlineAt?: number;
+  nextCheckAt?: number;
+  checkInCount?: number;
+  error?: string;
+  response?: JsonValue;
+};
+
+/** Structural wire types keep the generated protocol independent of schema implementation details. */
+export type ProcHistoryEventPayloadMap = {
+  "context.changed": { epochId: string; previous: ProcHistoryContextProjection; current: ProcHistoryContextProjection };
+  "context.runway": {
+    epochId: string;
+    remainingInputTokens: number;
+    runwayBeforeBoundaryTokens: number;
+    policy: ProcHistoryContextPolicy;
+  };
+  "context.failed": {
+    reason: string;
+    trigger?: "preflight" | "provider-overflow";
+    policy?: ProcHistoryContextPolicy;
+    pressure?: number | null;
+    beforePressure?: number;
+    afterPressure?: number;
+    error?: string;
+    provider?: string;
+    model?: string;
+  };
+  "responsibility.revision": { epochId: string; transition: ResponsibilityTransition };
+  "correction.text-only": { attempt: number; limit: number };
+  "correction.exhausted": { attempts: number; limit: number; conversationId?: string; messageId?: string };
+  "generation.failed": { reason: string; error: string; provider?: string; model?: string };
+  "delivery.failed": {
+    phase: "message" | "run-finish";
+    noticeId?: string;
+    runId?: string;
+    error: string;
+    attempts?: number;
+    maxAttempts?: number;
+  };
+  "media.failed": { reason: "media.error" | "media.timeout"; messageId: number; error: string };
+  "schedule.fired": {
+    runId: string;
+    scheduleId: string;
+    scheduleName?: string;
+    message: string;
+    data?: JsonObject;
+    replyTo?: EventReplyTarget;
+    scheduledAtMs?: number | null;
+    firedAtMs: number;
+  };
+  "signal.watched": { signal: string; sourcePid?: string; watch?: { key?: string; state?: JsonValue }; payload?: JsonValue };
+  "ipc.reply": ProcHistoryIpcResponsePayload;
+  "ipc.overdue": ProcHistoryIpcResponsePayload;
+  "ipc.timeout": ProcHistoryIpcResponsePayload;
+  "adapter.work.returned": { eventId: string; workPid: string };
+  "history.compacted": { summary: string; segmentId: string; archivedMessages: number; archivePath: string };
+  "runtime.wake": { source: "process"; reason?: string; pendingEvents?: number };
+  "runtime.failed": { reason: "schedule.error"; error: string; prefix?: string };
+  "target.connection": {
+    targetId: string;
+    event: "connected" | "disconnected";
+    platform: string;
+    label?: string;
+    version?: string;
+    observedAt: number;
+  };
+};
+
+export type ProcHistoryEventKind = keyof ProcHistoryEventPayloadMap;
+export type ProcHistoryEventPayload<K extends ProcHistoryEventKind> = ProcHistoryEventPayloadMap[K];
 
 export const procHistoryEventSeveritySchema = z.enum(["info", "warn", "error"]);
 export const procHistoryEventAudienceSchema = z.enum(["model", "person", "both"]);
-export type ProcHistoryEventSeverity = z.infer<typeof procHistoryEventSeveritySchema>;
-export type ProcHistoryEventAudience = z.infer<typeof procHistoryEventAudienceSchema>;
+export type ProcHistoryEventSeverity = "info" | "warn" | "error";
+export type ProcHistoryEventAudience = "model" | "person" | "both";
+
+/** Authorized target watches can produce only these registered, typed events. */
+export const procHistoryTargetEventRegistry = {
+  "target.status": {
+    kind: "target.connection",
+    payloadSchema: procHistoryEventPayloadSchemas["target.connection"],
+    defaultAudience: "person",
+    allowedAudiences: ["person", "model", "both"],
+    severity: "info",
+  },
+} as const;
 
 function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
   return z.strictObject({
@@ -214,7 +313,7 @@ const eventKinds = Object.keys(procHistoryEventPayloadSchemas) as [
 ];
 export const procHistoryEventKindSchema = z.enum(eventKinds);
 
-export const procHistoryEventSchema = z.discriminatedUnion("kind", [
+export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discriminatedUnion("kind", [
   eventSchema("context.changed"),
   eventSchema("context.runway"),
   eventSchema("context.failed"),
@@ -233,6 +332,7 @@ export const procHistoryEventSchema = z.discriminatedUnion("kind", [
   eventSchema("history.compacted"),
   eventSchema("runtime.wake"),
   eventSchema("runtime.failed"),
+  eventSchema("target.connection"),
   z.strictObject({
     kind: z.literal("legacy"),
     payload: z.strictObject({
@@ -244,4 +344,12 @@ export const procHistoryEventSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-export type ProcHistoryEvent = z.infer<typeof procHistoryEventSchema>;
+export type ProcHistoryEvent = ({
+  [K in ProcHistoryEventKind]: { kind: K; payload: ProcHistoryEventPayload<K> }
+}[ProcHistoryEventKind] | {
+  kind: "legacy";
+  payload: { text: string; recognizedKind?: ProcHistoryEventKind };
+}) & {
+  severity: ProcHistoryEventSeverity;
+  audience: ProcHistoryEventAudience;
+};

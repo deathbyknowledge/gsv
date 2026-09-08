@@ -118,6 +118,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "sched remove <id>",
     "sched run <id> [--force]",
   ]),
+  signal: command("Watch Process or target signals.", "Receive a notice when an accessible laptop or browser target connects or disconnects, or observe another Process.", ["signal", "watch", "notify", "notice", "connection", "laptop", "browser", "events"], [], ["signal watch --json JSON", "signal unwatch --json JSON"]),
   targets: command("Discover connected execution targets.", "Find where work can run, including a laptop, phone, or browser profile.", ["device", "machine", "laptop", "browser", "phone", "hardware", "target"], ["devices"]),
   devices: command("Alias for connected-target discovery.", "Find a connected machine, browser profile, or other execution target.", ["device", "machine", "laptop", "browser", "hardware", "target"], ["targets"]),
   net: command("Make a streamed HTTP request through GSV or another target.", "Fetch a URL or call an HTTP API with explicit request and response control.", ["http", "network", "url", "download", "api", "fetch"]),

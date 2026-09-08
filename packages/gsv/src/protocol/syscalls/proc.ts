@@ -10,6 +10,7 @@ import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
 import { jsonValueSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
+import type { ProcHistoryArchivedRecord, ProcHistoryRecord } from "../history";
 import * as z from "zod/mini";
 
 export type ProcMediaInput = {
@@ -230,7 +231,12 @@ export type ProcIpcCallResult =
 
 export type ProcHistoryArgs = {
   pid?: string;
+  /** Opt into typed records and durable history synchronization. */
+  format?: 2;
+  /** Opaque cursor from a format-2 snapshot or delta; cannot combine with page selectors. */
+  since?: string;
   includeMessages?: boolean;
+  /** Number of logical message groups; format 2 accepts at most 1000. */
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -414,21 +420,44 @@ export type ProcAiConfigSetResult =
     }
   | { ok: false; error: string };
 
+export type ProcHistorySnapshot = {
+  ok: true;
+  pid: string;
+  messages: ProcHistoryMessage[];
+  messageCount: number;
+  truncated?: boolean;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
+  activeRunId?: string | null;
+  pendingHil?: ProcHilRequest | null;
+  context?: ProcContextState | null;
+  contextRevision?: number;
+  historyPolicy?: ProcHistoryContextPolicy;
+};
+
+export type ProcHistoryRecordsResult = ProcHistorySnapshot & {
+  format: 2;
+  /** Complete groups: replace all members of each messageId; member identity is (messageId, index). */
+  records: ProcHistoryRecord[];
+  historyRevision: number;
+  historyGeneration: number;
+  historyResetRevision: number;
+  /** Clear the local history window before installing this tail snapshot. */
+  reset: boolean;
+  /** More changed groups remain; request the next delta with cursor. */
+  hasMore: boolean;
+  /**
+   * Resume synchronization from this cursor. Historical before/after/offset pages and
+   * status-only reads omit it: fetching older history must not advance the head cursor.
+   * Discard a historical page if its generation or reset revision differs from the
+   * current window, then fetch a fresh tail snapshot.
+   */
+  cursor?: string;
+};
+
 export type ProcHistoryResult =
-  | {
-      ok: true;
-      pid: string;
-      messages: ProcHistoryMessage[];
-      messageCount: number;
-      truncated?: boolean;
-      hasMoreBefore?: boolean;
-      hasMoreAfter?: boolean;
-      activeRunId?: string | null;
-      pendingHil?: ProcHilRequest | null;
-      context?: ProcContextState | null;
-      contextRevision?: number;
-      historyPolicy?: ProcHistoryContextPolicy;
-    }
+  | (ProcHistorySnapshot & { format?: undefined })
+  | ProcHistoryRecordsResult
   | { ok: false; error: string };
 
 export type ProcTraceSpanKind =
@@ -585,19 +614,29 @@ export type ProcForkResult =
 export type ProcHistorySegmentReadArgs = {
   pid?: string;
   segmentId: string;
+  format?: 2;
   limit?: number;
   offset?: number;
 };
 
+export type ProcHistorySegmentPage = {
+  ok: true;
+  pid: string;
+  segment: ProcHistorySegment;
+  messages: ProcHistoryMessage[];
+  messageCount: number;
+  truncated?: boolean;
+};
+
+export type ProcHistorySegmentRecordsResult = ProcHistorySegmentPage & {
+  format: 2;
+  /** Complete logical groups with stable coordinates scoped by segment.id. */
+  records: ProcHistoryArchivedRecord[];
+};
+
 export type ProcHistorySegmentReadResult =
-  | {
-      ok: true;
-      pid: string;
-      segment: ProcHistorySegment;
-      messages: ProcHistoryMessage[];
-      messageCount: number;
-      truncated?: boolean;
-    }
+  | (ProcHistorySegmentPage & { format?: undefined })
+  | ProcHistorySegmentRecordsResult
   | { ok: false; error: string };
 
 export type ProcHistorySegmentsArgs = {

@@ -67,6 +67,9 @@ type AmbientProcessChangePayload = {
   changes: string[];
   queuedCount?: number;
   timestamp?: number;
+  historyRevision?: number;
+  historyGeneration?: number;
+  historyResetRevision?: number;
 };
 
 
@@ -80,6 +83,9 @@ function ambientProcessChangeFrame(
   };
   if (frame.payload?.queuedCount !== undefined) payload.queuedCount = frame.payload.queuedCount;
   if (frame.payload?.timestamp !== undefined) payload.timestamp = frame.payload.timestamp;
+  if (frame.payload?.historyRevision !== undefined) payload.historyRevision = frame.payload.historyRevision;
+  if (frame.payload?.historyGeneration !== undefined) payload.historyGeneration = frame.payload.historyGeneration;
+  if (frame.payload?.historyResetRevision !== undefined) payload.historyResetRevision = frame.payload.historyResetRevision;
   return {
     type: "sig",
     signal: "proc.changed",
@@ -332,11 +338,11 @@ async dispatchSignalWatches(
       try {
         await this.invokeProcessSignalWatch(watch, processId, frame);
         if (watch.once) {
-          this.host.signalWatches.deleteHandled(watch.watchId);
+          this.host.signalWatches.deleteHandled(watch.watchId, watch.revision);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.host.signalWatches.markFailed(watch.watchId, message);
+        this.host.signalWatches.markFailed(watch.watchId, message, watch.revision);
         console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
       }
     }

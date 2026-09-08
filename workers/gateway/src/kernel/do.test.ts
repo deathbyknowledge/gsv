@@ -1297,6 +1297,9 @@ describe("Kernel user signal broadcasts", () => {
         changes: ["messages"],
         content: "private model activity",
         messageId: 42,
+        historyRevision: 12,
+        historyGeneration: 2,
+        historyResetRevision: 8,
         queuedCount: 1,
         timestamp: 123,
       },
@@ -1316,6 +1319,9 @@ describe("Kernel user signal broadcasts", () => {
         changes: ["messages"],
         queuedCount: 1,
         timestamp: 123,
+        historyRevision: 12,
+        historyGeneration: 2,
+        historyResetRevision: 8,
       },
     });
   });

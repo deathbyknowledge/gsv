@@ -217,8 +217,8 @@ describe("typed history producers", () => {
       const policy = { overflow: "fail", compactAtPressure: 0.9, compactToPressure: 0.6, updatedAt: 1 };
       process.runs.active = { runId };
       process.sendSignal = vi.fn(async () => {});
-      await process.run.failWithSystemMessage(runId, "context.policy.fail", "Context limit policy stopped this run.", {
-        trigger: "preflight", policy, pressure: 0.95,
+      await process.run.failWithHistoryEvent(runId, {
+        reason: "context.policy.fail", trigger: "preflight", policy, pressure: 0.95,
       });
       const records: ProcHistoryRecord[] = process.store.messages.getRecords();
       expect(records.at(-1)).toMatchObject({
@@ -227,7 +227,12 @@ describe("typed history producers", () => {
           severity: "error", audience: "both",
         },
       });
-      expect(process.store.messages.getMessages()[0].content).toBe("Context limit policy stopped this run.");
+      expect(process.store.messages.getMessages()[0].content).toBe([
+        "Context limit policy stopped this run.",
+        "Policy: fail at 90% context pressure.",
+        "Current estimate: 95%.",
+        "Compact the history or reset the process before sending more work.",
+      ].join("\n"));
     });
   });
 

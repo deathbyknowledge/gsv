@@ -16,6 +16,9 @@ export class ProcessSignalService {
         queuedCount: this.host.store.queue.queueSize(),
         timestamp: Date.now(),
         ...payload,
+        historyRevision: this.host.store.state.getHistoryRevision(),
+        historyGeneration: this.host.store.state.getHistoryGeneration(),
+        historyResetRevision: this.host.store.state.getHistoryResetRevision(),
       });
     } catch (error) {
       console.warn(`[Process] Failed to emit state change for ${this.host.pid}:`, error);
