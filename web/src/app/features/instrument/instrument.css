@@ -6,9 +6,9 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
-  /* the instrument's own faces: Martian Mono for the machine, Bricolage Grotesque for the person and the ship */
+  /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
-  --gsv-font-prose: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
   position: fixed;
   inset: 0;
   background: var(--void);

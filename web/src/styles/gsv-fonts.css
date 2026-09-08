@@ -52,9 +52,16 @@
   font-display: swap;
 }
 @font-face {
-  font-family: "Bricolage Grotesque";
-  src: url("/fonts/BricolageGrotesque-Variable.woff2") format("woff2");
-  font-weight: 400 500;
+  font-family: "Host Grotesk";
+  src: url("/fonts/HostGrotesk-Variable.woff2") format("woff2");
+  font-weight: 300 800;
   font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Host Grotesk";
+  src: url("/fonts/HostGrotesk-Italic-Variable.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
   font-display: swap;
 }
