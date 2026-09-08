@@ -92,6 +92,8 @@ paging, or status-only reads. Cursors are bound to a Process and versioned by th
 implementation. Malformed, wrong-Process, and future cursors fail explicitly.
 
 Historical before/after/offset pages and status-only reads never return a cursor.
+A default oldest-first read also omits the cursor when `hasMoreAfter` is true;
+load a tail snapshot to begin synchronization at the current head.
 A historical page can contain a newer revision without containing intervening
 updates, so it must not advance head synchronization. Compare its generation and
 reset watermark with the active snapshot before merging it; reload the tail if

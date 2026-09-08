@@ -449,6 +449,7 @@ export type ProcHistoryRecordsResult = ProcHistorySnapshot & {
   /**
    * Resume synchronization from this cursor. Historical before/after/offset pages and
    * status-only reads omit it: fetching older history must not advance the head cursor.
+   * Implicit oldest-first reads also omit it while hasMoreAfter is true.
    * Discard a historical page if its generation or reset revision differs from the
    * current window, then fetch a fresh tail snapshot.
    */

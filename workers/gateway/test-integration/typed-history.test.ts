@@ -91,6 +91,21 @@ describe("typed history authenticated wire integration", () => {
           text: "Committed typed reply", conversationId: expect.any(String), conversationMessageId: expect.any(String),
         } });
       expect((await history(runtime, { pid: process.pid, since: nextCursor })).records).toEqual([]);
+      let historical = await history(runtime, { pid: process.pid, limit: 1 });
+      expect(historical.hasMoreAfter).toBe(true);
+      expect(historical.cursor).toBeUndefined();
+      const pagedRecords = [...historical.records];
+      while (historical.hasMoreAfter) {
+        historical = await history(runtime, {
+          pid: process.pid, afterMessageId: historical.messages.at(-1)!.id, limit: 1,
+        });
+        expect(historical.cursor).toBeUndefined();
+        pagedRecords.push(...historical.records);
+      }
+      expect(pagedRecords).toEqual(complete.records);
+      const tail = await history(runtime, { pid: process.pid, tail: true, limit: 1 });
+      expect(tail).toMatchObject({ hasMoreBefore: true, hasMoreAfter: false });
+      expect((await history(runtime, { pid: process.pid, since: cursor(tail) })).records).toEqual([]);
       const conversation = await runtime.client.conversation.forProcess({ pid: process.pid });
       const canonical = await runtime.client.conversation.history({ conversationId: conversation.conversation.id });
       expect(canonical.messages.at(-1)?.text).toBe("Committed typed reply");

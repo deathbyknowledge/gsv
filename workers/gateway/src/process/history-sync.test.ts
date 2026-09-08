@@ -125,6 +125,38 @@ describe("typed Process history synchronization", () => {
     expect(cleared.records).toHaveLength(3);
   });
 
+  it("issues snapshot cursors only when an implicit read reaches the newest group", async () => {
+    const stub = await initProcess("history-sync-incomplete-prefix", ROOT_IDENTITY);
+    const empty = await history(stub, { limit: 2 });
+    expect(cursor(empty)).toBeTruthy();
+    const ids = await runInProcess(stub, (process: Process) => [
+      process.store.messages.appendMessage("user", "One"),
+      process.store.messages.appendMessage("user", "Two"),
+      process.store.messages.appendMessage("user", "Three"),
+    ]);
+
+    for (const args of [{ limit: 2 }, { limit: 2, tail: false }]) {
+      const prefix = await history(stub, args);
+      expect(prefix.messages.map(({ id }) => id)).toEqual(ids.slice(0, 2));
+      expect(prefix).toMatchObject({ hasMoreBefore: false, hasMoreAfter: true, truncated: true });
+      expect(prefix).not.toHaveProperty("cursor");
+    }
+
+    const complete = await history(stub, { limit: 3 });
+    expect(complete.messages.map(({ id }) => id)).toEqual(ids);
+    expect(complete.hasMoreAfter).toBe(false);
+    const tail = await history(stub, { tail: true, limit: 1 });
+    expect(tail.messages.map(({ id }) => id)).toEqual(ids.slice(-1));
+    expect(tail).toMatchObject({ hasMoreBefore: true, hasMoreAfter: false, truncated: true });
+    expect(cursor(tail)).toBe(cursor(complete));
+
+    await runInProcess(stub, (process: Process) => process.store.messages.appendRelatedRecord(ids[0]!, outgoing));
+    const olderChange = await history(stub, { since: cursor(tail), limit: 1 });
+    expect(olderChange.messages.map(({ id }) => id)).toEqual([ids[0]]);
+    expect(olderChange).toMatchObject({ hasMoreAfter: true, hasMore: false });
+    expect((await history(stub, { since: cursor(olderChange) })).records).toEqual([]);
+  });
+
   it("pages revisions without dropping an older parent that changes between delta pages", async () => {
     const stub = await initProcess("history-sync-delta-pages", ROOT_IDENTITY);
     const ids = await runInProcess(stub, (process: Process) => [

@@ -1026,7 +1026,7 @@ export class ProcessController {
     // A historical page can be read at a newer revision without containing the
     // intervening updates. Only snapshots and deltas may advance synchronization.
     const headRead = query.includeMessages && (query.since !== undefined ||
-      (args.offset === undefined && args.beforeMessageId === undefined && args.afterMessageId === undefined));
+      (!hasMoreAfter && args.offset === undefined && args.beforeMessageId === undefined && args.afterMessageId === undefined));
     return headRead ? {
       ...result,
       cursor: historyCursor(pid, generation, delta?.hasMore ? delta.revision! : revision),
