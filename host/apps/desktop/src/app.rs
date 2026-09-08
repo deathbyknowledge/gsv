@@ -2813,8 +2813,8 @@ mod tests {
             session_id: 7,
             history: crate::client::PreparedHistory {
                 generation: 1,
-                snapshot: std::sync::Arc::new(crate::history::normalize_history(
-                    &serde_json::json!({ "messages": [] }),
+                snapshot: std::sync::Arc::new(crate::history::normalize_fixture(
+                    &serde_json::json!({ "records": [] }),
                 )),
             },
         });

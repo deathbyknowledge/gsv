@@ -27,7 +27,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use crate::content::{FileResourceReference, MediaAttachment, MediaKind};
 use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
 #[cfg(test)]
-use crate::history::normalize_history;
+use crate::history::normalize_fixture;
 use crate::history::{
     normalize_conversation_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES,
 };
@@ -3265,6 +3265,7 @@ async fn fetch_history(
                 "proc.history",
                 Some(json!({
                     "pid": pid,
+                    "format": 2,
                     "tail": true,
                     "limit": MAX_FETCHED_HISTORY_MESSAGES,
                 })),
@@ -3274,17 +3275,19 @@ async fn fetch_history(
     )
     .await?;
     let snapshot = tokio::task::spawn_blocking(move || {
-        Arc::new(normalize_conversation_history(
+        let process_history = gateway_client::history::ProcHistory::decode(process_history)
+            .map_err(|error| RequestFailure::rejected(error.to_string()))?;
+        Ok(Arc::new(normalize_conversation_history(
             &conversation_history,
             &process_history,
-        ))
+        )))
     })
     .await
     .map_err(|error| {
         RequestFailure::transport(format!(
             "The history preparation worker stopped unexpectedly: {error}"
         ))
-    })?;
+    })??;
     Ok(PreparedHistory {
         generation,
         snapshot,
@@ -4641,7 +4644,7 @@ mod tests {
     fn prepared_history(generation: u64, payload: Value) -> PreparedHistory {
         PreparedHistory {
             generation,
-            snapshot: Arc::new(normalize_history(&payload)),
+            snapshot: Arc::new(normalize_fixture(&payload)),
         }
     }
 
@@ -4982,7 +4985,7 @@ mod tests {
                             "temporary server failure",
                         ))
                     } else {
-                        Ok(json!({ "messages": [] }))
+                        Ok(json!({ "records": [] }))
                     }
                 }
             },
