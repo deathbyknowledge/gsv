@@ -29,33 +29,16 @@ function writeVersionFile(version) {
   writeFileSync(VERSION_FILE, `${version}\n`);
 }
 
+/**
+ * Every package.json versioned with the repository: the root, each workspace
+ * the root names plainly, and the standalone npm directories. Globbed
+ * workspaces (`packages/*`) publish on their own versions and are left alone.
+ */
 function listPackageJsonFiles() {
-  const files = [
-    "package.json",
-    "extension/package.json",
-    "workers/gateway/package.json",
-    "web/package.json",
-    "workers/ripgit/package.json",
-  ];
-  for (const group of ["workers/adapters"]) {
-    const groupDir = join(ROOT, group);
-    if (!existsSync(groupDir)) {
-      continue;
-    }
-    for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const relativePath = `${group}/${entry.name}/package.json`;
-      try {
-        readFileSync(join(ROOT, relativePath), "utf8");
-        files.push(relativePath);
-      } catch {
-        continue;
-      }
-    }
-  }
-  return files;
+  const root = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const workspaces = (root.workspaces ?? []).filter((entry) => !entry.includes("*"));
+  const dirs = new Set([...workspaces, ...listStandaloneNpmDirs()]);
+  return ["package.json", ...[...dirs].map((dir) => `${dir}/package.json`)];
 }
 
 function listStandaloneNpmDirs() {
