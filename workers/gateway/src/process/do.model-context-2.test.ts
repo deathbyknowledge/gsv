@@ -629,20 +629,16 @@ describe("model context", () => {
         ok: true as const,
         command: { action: "message" as const, text: "", finish: true, emptyMeansYield: true as const },
       };
-      expect(await process.run.executeRunControlAction(runId, "send-yield-1", yieldOnly, [], "")).toMatchObject({
+      expect(await process.run.executeRunControlAction(runId, "send-yield-1", yieldOnly, [])).toMatchObject({
         ok: true,
         action: "yield",
         finish: true,
       });
       const staged = [{ type: "image", mimeType: "image/png", key: "k", path: "p", size: 1 }];
       expect(
-        await process.run.executeRunControlAction(runId, "send-yield-2", yieldOnly, staged, ""),
+        await process.run.executeRunControlAction(runId, "send-yield-2", yieldOnly, staged),
       ).toMatchObject({ ok: true, action: "message", finish: true });
       expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
-      // a bare yield still may not carry meaningful assistant text
-      expect(
-        await process.run.executeRunControlAction(runId, "send-yield-3", yieldOnly, [], "the real reply"),
-      ).toMatchObject({ ok: false, error: "yield cannot accompany non-empty assistant text" });
     });
   });
 
@@ -945,80 +941,42 @@ describe("model context", () => {
     });
   });
 
-  it("rejects assistant text before finishing silently without a canonical message", async () => {
+  it("lets a bare yield end the run whatever the turn narrated, since assistant text is never a reply", async () => {
     const pid = "mech-terminal-silence";
     const runId = "run-terminal-silence";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
-      let generationCalls = 0;
       process.streams.emitProjection = vi.fn(async () => {});
       process.run.scheduleTick = vi.fn(async () => {});
-      process.kernel.dispatchSyscall = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:home", id: "never" }));
       mockGeneration(process, async () => {
-        generationCalls += 1;
-        return terminalTestResponse(generationCalls === 1
-          ? [
-              { type: "text", text: "This reply should be delivered." },
-              yieldAction("text-yield-action"),
-            ]
-          : [
-              { type: "text", text: "" },
-              { type: "thinking", thinking: "No interruption is useful." },
-              yieldAction("yield-action"),
-            ]);
+        return terminalTestResponse([
+          { type: "text", text: "Nothing to tell the person; closing quietly." },
+          yieldAction("text-yield-action"),
+        ]);
       }, async () => {
         return "unused";
       });
       process.store.messages.appendMessage("user", "No reply needed.", { runId });
-      process.runs.active = generationRun(runId, terminalTestConfig(pid), {
-        conversationId: "conv:home",
-        systemPrompt: "Test system prompt.",
-        approvalPolicy: {
-          default: "auto",
-          rules: [{ match: "shell.exec", action: "ask" }],
-        }
-      });
-
-      await process.run.runTick(runId);
-      expect(process.runs.active).toMatchObject({
-        runId,
-        terminalCommandFailures: 1,
-      });
-      expect(process.run.scheduleTick).toHaveBeenCalledOnce();
-      const rejectedYield = process.store.messages
-        .getMessages()
-        .find((message: any) => message.toolCallId === "text-yield-action");
-      expect(rejectedYield).toMatchObject({
-        content: expect.stringContaining("yield cannot accompany non-empty assistant text"),
-      });
-      expect(JSON.parse(rejectedYield.toolCalls)).toMatchObject({ isError: true });
-      expect(emitted.some((entry) => entry.signal === "proc.run.finished")).toBe(false);
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { conversationId: "conv:home" });
 
       await process.run.runTick(runId);
       return {
         emitted,
-        streamCalls: process.streams.emitProjection.mock.calls,
+        commits: process.run.commitRunControlMessage.mock.calls,
         messages: process.store.messages.getMessages(),
-        dispatchCalls: process.kernel.dispatchSyscall.mock.calls,
       };
     });
 
-    expect(result.streamCalls).toEqual([
-      [runId, expect.objectContaining({ id: `draft:${runId}:yield-action` }), "silenced"],
-    ]);
-    expect(
-      result.messages.find((message: any) => message.toolCallId === "yield-action"),
-    ).toMatchObject({ content: "Run yielded" });
-    expect(result.dispatchCalls).toEqual([]);
+    expect(result.commits).toEqual([]);
+    expect(result.messages.find((message: any) => message.toolCallId === "text-yield-action")).toMatchObject({
+      content: "Run yielded",
+    });
+    expect(result.messages.find((message: any) => message.role === "assistant")?.content).toContain("closing quietly");
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
-    ).toMatchObject({
-      status: "ok",
-      reason: "run.yielded",
-      result: { text: null },
-      delivery: { kind: "none" },
-    });
+    ).toMatchObject({ status: "ok", reason: "run.yielded", result: { text: null }, delivery: { kind: "none" } });
   });
 });

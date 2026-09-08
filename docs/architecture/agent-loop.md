@@ -150,8 +150,8 @@ The model response can contain text, thinking blocks, and tool calls:
 - In a human-facing run, the `Send` tool commits one canonical user-visible message and any media
   registered by `message attach`: `text` alone sends and the run continues, allowing multiple
   exactly-once messages from one run; `text` with `yield: true` sends and finishes without another
-  generation; `yield: true` alone finishes without another Message, and is valid only when the same
-  assistant turn contains no meaningful text. A direct Shell call with a literal
+  generation; `yield: true` alone finishes without another Message, whatever the turn narrated as
+  assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
   `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
   command, for people, scripts, and the model alike.
 - Once the Process validates a message command, the originating client receives
