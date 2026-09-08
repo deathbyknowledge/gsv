@@ -35,13 +35,15 @@ export type ProcessRuntimeHarness = {
   close(): Promise<void>;
 };
 
-export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarness> {
+export async function startProcessRuntimeHarness(options: {
+  workersAi?: boolean;
+} = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
   let harness: TestHarness | undefined;
   let client: GSVClient | undefined;
 
   try {
-    harness = createGatewayTestHarness();
+    harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
     const setupClient = new GSVClient();
     await setupClient.requestOnce(webSocketUrl(url), "sys.setup", {

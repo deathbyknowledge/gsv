@@ -12,7 +12,7 @@ describe("model registry metadata", () => {
     expect(model).toMatchObject({ id: modelName, provider: "openai-codex", api: "openai-codex-responses" });
     expect(resolveModelContextWindowFromRegistry("openai-codex", modelName)).toBe(model.contextWindow);
     expect(model.contextWindow).toBeGreaterThan(0);
-    expect(resolveModelThinkingLevel("openai-codex", modelName, "max")).toBe("max");
+    expect(resolveModelThinkingLevel("openai-codex", modelName, "high")).toBe("high");
   });
 
   it("maps Workers AI aliases to the pi-ai Cloudflare Workers AI provider", () => {
