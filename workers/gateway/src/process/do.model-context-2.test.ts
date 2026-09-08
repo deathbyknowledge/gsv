@@ -646,7 +646,7 @@ describe("model context", () => {
       process.streams.complete = vi.fn(async () => {});
       process.kernel.kernelRpc = vi.fn(async (call: string, args: any) => {
         expect(call).toBe("fs.read");
-        expect(args.representation).toBe("resource");
+        expect(args.representation).toBe("reference");
         if (args.path.endsWith("missing.pdf")) return { ok: false, error: "no such file" };
         return {
           ok: true,
@@ -675,8 +675,8 @@ describe("model context", () => {
       }, []);
       expect(sent).toMatchObject({ ok: true, action: "message" });
       expect(process.kernel.kernelRpc.mock.calls.map((call: any[]) => call[1])).toEqual([
-        { target: "laptop", path: "/home/e/report.pdf", representation: "resource" },
-        { path: "/tmp/a.pdf", representation: "resource" },
+        { target: "laptop", path: "/home/e/report.pdf", representation: "reference" },
+        { path: "/tmp/a.pdf", representation: "reference" },
       ]);
       expect(process.resources.handleProcRunAttach.mock.calls[0][0].media).toHaveLength(2);
       expect(process.resources.handleProcRunAttach.mock.calls[0][0].media[0]).toMatchObject({
@@ -697,6 +697,24 @@ describe("model context", () => {
         error: "cannot attach laptop:/home/e/missing.pdf: no such file",
       });
       expect(process.run.commitMessageRunControlAction).toHaveBeenCalledOnce();
+
+      // the person's tool approval rules apply to these reads as they do to a Read
+      const reads = process.kernel.kernelRpc.mock.calls.length;
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "ask", rules: [] } });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-3", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("needs the person's approval") });
+      process.runs.active = generationRun(runId, terminalTestConfig(pid), { approvalPolicy: { default: "deny", rules: [] } });
+      expect(
+        await process.run.executeRunControlAction(runId, "send-attach-4", {
+          ok: true as const,
+          command: { action: "message" as const, text: "x", finish: false, attach: ["/tmp/private.pdf"] },
+        }, []),
+      ).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
+      expect(process.kernel.kernelRpc.mock.calls).toHaveLength(reads);
     });
   });
 

@@ -347,6 +347,9 @@ export async function previewLibraryContent(
       };
     }
 
+    if (source.kind === "file") {
+      return { ok: false, error: `${sourcePath} has no readable content.` };
+    }
     const text = stripReadLineNumbers(source.content);
     return {
       ok: true,

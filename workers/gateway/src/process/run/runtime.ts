@@ -19,7 +19,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
-import type { FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
+import type { FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -165,22 +166,35 @@ export class ProcessRun {
   /**
    * Files a Send names become immutable references through `fs.read` on their
    * place, then are retained and staged the way `message attach` stages them.
-   * The reads are the process's own calls, so the ledger shows them.
+   * The reads are the process's own calls, so the ledger shows them, and they
+   * obey the person's tool approval rules the way a Read does: a file that
+   * would need approval is refused until it has been read once.
    */
   async attachSendFiles(
     runId: string,
     specs: readonly string[],
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const media: ResourceBlock[] = [];
+    const run = this.host.runs.active;
+    const policy = run?.runId === runId && run.approvalPolicy ? run.approvalPolicy : DEFAULT_TOOL_APPROVAL_POLICY;
     for (const spec of specs) {
       const { target, path } = parseAttachPath(spec);
+      const readArgs: FsReadArgs = target === "gsv"
+        ? { path, representation: "reference" }
+        : { target, path, representation: "reference" };
+      const approval = resolveToolApproval(policy, "fs.read", readArgs);
+      if (approval.action === "deny") {
+        return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
+      }
+      if (approval.action === "ask") {
+        return {
+          ok: false,
+          error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
+        };
+      }
       let result: FsReadResult;
       try {
-        result = await this.host.kernel.kernelRpc(
-          "fs.read",
-          target === "gsv" ? { path, representation: "resource" } : { target, path, representation: "resource" },
-          this.runAbortSignal(runId),
-        );
+        result = await this.host.kernel.kernelRpc("fs.read", readArgs, this.runAbortSignal(runId));
       } catch (error) {
         return { ok: false, error: `cannot attach ${spec}: ${errorMessageFromUnknown(error)}` };
       }

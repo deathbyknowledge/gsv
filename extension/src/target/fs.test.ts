@@ -28,6 +28,57 @@ describe("BrowserFsDriver", () => {
     expect(await bodyToBytes(response.body!)).toEqual(bytes);
   });
 
+  it("references any file without its content", async () => {
+    const runtime = {
+      exists: async () => false,
+      getAllPaths: async () => [],
+    } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj\n");
+    await fs.write("/tmp/report.pdf", pdf, "application/pdf");
+    await fs.write("/tmp/notes.md", new TextEncoder().encode("hello\n"), "text/markdown");
+    const driver = new BrowserFsDriver(fs, async () => "chrome-desk");
+
+    const document = await driver.handle("fs.read", { path: "/tmp/report.pdf", representation: "reference" });
+    expect(document.body).toBeUndefined();
+    expect(document.data).toMatchObject({
+      ok: true,
+      kind: "file",
+      contentType: "application/pdf",
+      resource: {
+        type: "file",
+        target: "chrome-desk",
+        path: "/tmp/report.pdf",
+        contentType: "application/pdf",
+        size: pdf.byteLength,
+        revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      },
+    });
+
+    const note = await driver.handle("fs.read", { path: "/tmp/notes.md", representation: "reference" });
+    expect(note.body).toBeUndefined();
+    expect(note.data).toMatchObject({ ok: true, kind: "text", resource: { target: "chrome-desk", size: 6 } });
+    const read = await driver.handle("fs.read", { path: "/tmp/notes.md" });
+    expect(read.body && await bodyToText(read.body)).toBe("hello\n");
+  });
+
+  it("sends a file with its content revision and refuses a stale one", async () => {
+    const runtime = {
+      exists: async () => false,
+      getAllPaths: async () => [],
+    } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    await fs.write("/tmp/report.pdf", new TextEncoder().encode("%PDF-1.4\n"), "application/pdf");
+    const driver = new BrowserFsDriver(fs);
+
+    const stat = await driver.handle("fs.transfer.stat", { path: "/tmp/report.pdf" });
+    const sent = await driver.handle("fs.transfer.send", { path: "/tmp/report.pdf" });
+    expect(sent.data).toMatchObject({ ok: true, revision: expect.stringMatching(/^sha256:/) });
+    expect(stat.data).toMatchObject({ ok: true, revision: (sent.data as { revision: string }).revision });
+    const stale = await driver.handle("fs.transfer.send", { path: "/tmp/report.pdf", revision: "sha256:stale" });
+    expect(stale.data).toMatchObject({ ok: false, error: "Source revision is no longer available: /tmp/report.pdf" });
+  });
+
   it("reads SVG images as text", async () => {
     const runtime = {
       exists: async () => false,

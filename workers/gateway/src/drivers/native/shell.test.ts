@@ -747,7 +747,7 @@ describe("native shell execution", () => {
     expect(read.body && await bodyToText(read.body)).toBe("é");
   });
 
-  it("represents any file as a resource, not only images", async () => {
+  it("references any file without its content, while resource reads stay as they were", async () => {
     const bytes = new TextEncoder().encode("%PDF-1.4\n1 0 obj\n");
     await env.STORAGE.put("tmp/fs-read-report", bytes, {
       httpMetadata: { contentType: "application/pdf" },
@@ -756,16 +756,20 @@ describe("native shell execution", () => {
       httpMetadata: { contentType: "text/plain" },
     });
     const ctx = makeContext();
-    const document = await handleFsRead({ path: "/tmp/fs-read-report", representation: "resource" }, ctx);
+    const document = await handleFsRead({ path: "/tmp/fs-read-report", representation: "reference" }, ctx);
     expect(document.body).toBeUndefined();
     expect(document.data).toMatchObject({
       ok: true,
       kind: "file",
       resource: { type: "file", target: "gsv", path: "/tmp/fs-read-report", contentType: "application/pdf", size: bytes.byteLength },
     });
-    const note = await handleFsRead({ path: "/tmp/fs-read-note", representation: "resource" }, ctx);
+    const note = await handleFsRead({ path: "/tmp/fs-read-note", representation: "reference" }, ctx);
     expect(note.body).toBeUndefined();
     expect(note.data).toMatchObject({ ok: true, kind: "text", resource: { contentType: "text/plain", size: 6 } });
+    // the resource representation the model's Reads ask for is unchanged: a text file is its content
+    const read = await handleFsRead({ path: "/tmp/fs-read-note", representation: "resource" }, ctx);
+    expect(read.body && await bodyToText(read.body)).toBe("hello\n");
+    expect(read.data).not.toHaveProperty("resource");
   });
 
   it("uses stored MIME types for reads and transfer metadata", async () => {

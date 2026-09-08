@@ -162,9 +162,20 @@ impl Tool for ReadTool {
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
         let content_type = content_type_for(&header, &resolved);
 
-        // Any file has a resource representation: the reference a message or a
-        // transfer works from, without reading the content.
-        if args.representation.as_deref() == Some("resource") {
+        // `reference` answers any file with its immutable reference alone, the
+        // thing a message or a transfer works from; `resource` keeps its meaning,
+        // an image by reference and text by content.
+        let reference = || {
+            json!({
+                "type": "file",
+                "target": self.device_id,
+                "path": resolved.display().to_string(),
+                "revision": file_revision(&metadata),
+                "contentType": content_type,
+                "size": size,
+            })
+        };
+        if args.representation.as_deref() == Some("reference") {
             let kind = if content_type.starts_with("image/") && !is_text_content_type(content_type)
             {
                 "image"
@@ -179,17 +190,20 @@ impl Tool for ReadTool {
                 "size": size,
                 "kind": kind,
                 "contentType": content_type,
-                "resource": {
-                    "type": "file",
-                    "target": self.device_id,
-                    "path": resolved.display().to_string(),
-                    "revision": file_revision(&metadata),
-                    "contentType": content_type,
-                    "size": size,
-                },
+                "resource": reference(),
             })));
         }
         if content_type.starts_with("image/") && !is_text_content_type(content_type) {
+            if args.representation.as_deref() == Some("resource") {
+                return Ok(ToolOutput::json(json!({
+                    "ok": true,
+                    "path": resolved.display().to_string(),
+                    "size": size,
+                    "kind": "image",
+                    "contentType": content_type,
+                    "resource": reference(),
+                })));
+            }
             return Ok(ToolOutput::with_body(
                 json!({
                     "ok": true,
@@ -401,7 +415,7 @@ mod tests {
         fs::write(root.join("report.pdf"), &bytes).unwrap();
 
         let result = ReadTool::for_device(root.clone(), "laptop".to_string())
-            .execute(json!({ "path": "report.pdf", "representation": "resource" }))
+            .execute(json!({ "path": "report.pdf", "representation": "reference" }))
             .await
             .unwrap();
 
@@ -418,6 +432,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn references_a_text_file_without_its_content() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("notes.md"), "hello\nworld\n").unwrap();
+
+        let tool = ReadTool::for_device(root.clone(), "laptop".to_string());
+        let referenced = tool
+            .execute(json!({ "path": "notes.md", "representation": "reference" }))
+            .await
+            .unwrap();
+        assert!(referenced.body.is_none());
+        assert_eq!(referenced.data["kind"], "text");
+        assert_eq!(referenced.data["resource"]["contentType"], "text/markdown");
+        assert_eq!(referenced.data["resource"]["size"], 12);
+
+        // the resource representation the model's Reads ask for is unchanged: text is its content
+        let read = tool
+            .execute(json!({ "path": "notes.md", "representation": "resource" }))
+            .await
+            .unwrap();
+        assert!(read.body.is_some());
+        assert!(read.data.get("resource").is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn names_a_mislabelled_file_by_its_bytes_like_a_transfer_does() {
         let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -425,7 +466,7 @@ mod tests {
         fs::write(root.join("report.dat"), &bytes).unwrap();
 
         let result = ReadTool::for_device(root.clone(), "laptop".to_string())
-            .execute(json!({ "path": "report.dat", "representation": "resource" }))
+            .execute(json!({ "path": "report.dat", "representation": "reference" }))
             .await
             .unwrap();
         assert_eq!(result.data["resource"]["contentType"], "application/pdf");

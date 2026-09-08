@@ -6,14 +6,15 @@ export type FsReadArgs = {
   offset?: number;
   limit?: number;
   maxBytes?: number;
-  representation?: "content" | "resource";
+  /** `reference` answers any file with its immutable reference alone; `resource` does so for images and reads text. */
+  representation?: "content" | "resource" | "reference";
 };
 
 export type FsReadResult =
   | {
       ok: true;
       path: string;
-      /** `file` is a file that is neither text nor an image, seen only through its resource representation. */
+      /** `file` is a file that is neither text nor an image, seen only through its reference representation. */
       kind: "text" | "image" | "file";
       contentType: string;
       lines?: number;

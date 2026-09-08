@@ -207,22 +207,28 @@ async function readOpenedFile(
 ): Promise<FsReadResponse> {
   const contentType = opened.contentType ?? inferContentType(opened.path);
   try {
-    // any file has a resource representation: the reference a message or a transfer works from, no content read
-    if (args.representation === "resource") {
+    // `reference` answers any file with its immutable reference alone, the thing a message or a
+    // transfer works from; `resource` keeps its meaning, an image by reference and text by content.
+    const reference: FileResourceReference | null =
+      args.representation === "reference" || args.representation === "resource"
+        ? {
+          type: "file",
+          target: opened.target,
+          path: opened.path,
+          revision: opened.revision ?? "",
+          contentType,
+          size: opened.size,
+        }
+        : null;
+    const isImage = contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType);
+    if (reference && (args.representation === "reference" || isImage)) {
       await opened.body.stream.cancel().catch(() => {});
-      if (!opened.revision) {
+      if (!reference.revision) {
         throw new Error(`Unable to identify file revision: ${opened.path}`);
       }
-      return readResource(opened.path, contentType, opened.size, {
-        type: "file",
-        target: opened.target,
-        path: opened.path,
-        revision: opened.revision,
-        contentType,
-        size: opened.size,
-      });
+      return readResource(opened.path, contentType, opened.size, reference);
     }
-    if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
+    if (isImage) {
       return readImage(opened.path, contentType, opened.body.stream, opened.size);
     }
 
