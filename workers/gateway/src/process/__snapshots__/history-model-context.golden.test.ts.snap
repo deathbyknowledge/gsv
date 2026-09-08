@@ -395,7 +395,7 @@ exports[`immutable model history baseline > preserves exact mixed groups, origin
   },
   {
     "role": "user",
-    "content": "[GSV EVENT]\\nDelegated task from process \`proc:delegated\` finished.\\nTask id: \`call:ipc.reply\`.\\n\\nResult:\\nSynthetic delegated result",
+    "content": "[GSV EVENT]\\nProcess \`proc:delegated\` finished task \`call:ipc.reply\`.\\n\\nResult:\\nSynthetic delegated result",
     "timestamp": 1700000000000
   },
   {

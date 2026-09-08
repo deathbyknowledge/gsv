@@ -9,18 +9,14 @@ import type {
 } from "../../protocol/process-frames";
 import type { WatchedSignalPayload } from "../internal/schemas";
 import {
-  ipcReplyPayloadSchema, nonEmptyStringSchema,
-} from "../internal/schemas";
-import { parseOptionalJsonObject } from "../internal/messages";
-import { parseStoredProcessMedia } from "../media";
-import { describeStoredProcessMedia } from "./media-renderer";
-import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES,
   RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
 } from "../internal/lifecycle";
 import type { RunControlFailureAttempt } from "../run/helpers";
 import type { RunControlResult } from "../internal/contracts";
 import { formatProviderErrorMessage, formatProviderContextOverflowMessage } from "../../inference/errors";
+import { formatIpcReplyMessage } from "../../prompts/ipc-events";
+export { formatIpcReplyMessage } from "../../prompts/ipc-events";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import { formatTargetConnectionEvent } from "../../prompts/target-events";
@@ -180,53 +176,6 @@ export function formatIpcMessage(args: ProcIpcDeliverArgs): string {
         "Your final answer will be returned to the caller automatically.",
       );
     }
-  }
-  return lines.join("\n");
-}
-
-export function formatIpcReplyMessage(
-  signal: string,
-  payload: Parameters<typeof ipcReplyPayloadSchema.parse>[0],
-): string {
-  const record = ipcReplyPayloadSchema.parse(payload);
-  const callId = record.callId ?? "unknown";
-  const targetPid = record.targetPid ?? "unknown";
-  const error = record.error ?? null;
-  const response = record.response;
-  const responseRecord = parseOptionalJsonObject(response);
-  const responseText = nonEmptyStringSchema.safeParse(responseRecord?.text);
-  const responseMedia = parseStoredProcessMedia(
-    JSON.stringify(responseRecord?.media ?? null) ?? null,
-  );
-  const renderedResponse = renderJsonBlock(response);
-  const overdue = signal === "ipc.overdue";
-
-  const lines = [
-    overdue
-      ? `Delegated task to process \`${targetPid}\` is still running.`
-      : signal === "ipc.timeout"
-        ? `Delegated task to process \`${targetPid}\` timed out.`
-        : `Delegated task from process \`${targetPid}\` finished.`,
-  ];
-  if (callId !== "unknown") {
-    lines.push(`Task id: \`${callId}\`.`);
-  }
-  if (error) {
-    lines.push("", "Error:", error);
-  }
-  if (overdue) {
-    lines.push("", "The delegated process was not cancelled and remains responsible for the work.");
-    if (record.nextCheckAt !== undefined) {
-      lines.push(`Next check-in: ${new Date(record.nextCheckAt).toISOString()}.`);
-    }
-  }
-  if (responseText.success) {
-    lines.push("", "Result:", responseText.data);
-  } else if (renderedResponse && responseMedia.length === 0) {
-    lines.push("", "Response:", "```json", renderedResponse, "```");
-  }
-  if (responseMedia.length > 0) {
-    lines.push("", "Attachments:", ...responseMedia.map((item) => `- ${describeStoredProcessMedia(item)}`));
   }
   return lines.join("\n");
 }

@@ -197,7 +197,7 @@ describe("proc.ipc.*", () => {
     });
 
     await waitForStoredMessage(source, (message) =>
-      message.content.includes(`Task id: \`${data.callId}\``),
+      message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
     );
 
     await runInProcess(source, (process) => {
@@ -206,9 +206,9 @@ describe("proc.ipc.*", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("system");
       expect(messages[0].content).toContain(
-        `Delegated task from process \`${targetPid}\` finished.`,
+        `Process \`${targetPid}\` finished task \`${data.callId}\`.`,
       );
-      expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
+      expect(messages[0].content).not.toContain("Task id:");
       expect(messages[0].content).toContain("status is green");
       expect(process.runs.active).toMatchObject({});
       process.runs.active = null;
@@ -259,7 +259,7 @@ describe("proc.ipc.*", () => {
     );
 
     await waitForStoredMessage(source, (message) =>
-      message.content.includes(`Task id: \`${data.callId}\``),
+      message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
     );
 
     await runInProcess(source, (process) => {
@@ -267,7 +267,7 @@ describe("proc.ipc.*", () => {
         .getMessages()
         .find(
           (message: any) =>
-            message.role === "system" && message.content.includes(`Task id: \`${data.callId}\``),
+            message.role === "system" && message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
         );
       expect(reply?.content).toContain("Error:");
       expect(reply?.content).toContain("Target run was aborted: user.superseded");
@@ -360,7 +360,7 @@ describe("proc.ipc.*", () => {
           .some(
             (message: any) =>
               message.role === "system" &&
-              (message.content.includes(`Task id: \`${ipc.callId}\``) ||
+              (message.content.includes(`Process \`${targetPid}\` finished task \`${ipc.callId}\`.`) ||
                 message.content.includes("late delegated result")),
           ),
       ).toBe(false);
@@ -665,7 +665,7 @@ describe("proc.ipc.*", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("system");
       expect(messages[0].content).toContain(
-        `Delegated task from process \`${targetPid}\` finished.`,
+        `Process \`${targetPid}\` finished task \`busy-call\`.`,
       );
       expect(messages[0].content).toContain("busy result");
       expect(messages[0].content).toContain("Attachments:");
@@ -818,8 +818,7 @@ describe("proc.ipc.*", () => {
     });
     await stubGeneration(source, (request) => {
       const input = JSON.stringify(request.context.messages);
-      expect(input).toContain("Delegated task");
-      expect(input).toContain("finished");
+      expect(input).toContain(`Process \`${targetPid}\` finished task \``);
       expect(input).toContain(token);
       return token;
     });
@@ -863,7 +862,7 @@ describe("proc.ipc.*", () => {
           messages.find(
             (message: any) =>
               message.role === "system" &&
-              message.content.includes(`Task id: \`${data.callId}\``),
+              message.content.includes(`Process \`${targetPid}\` finished task \`${data.callId}\`.`),
           ) ?? null
         );
       });

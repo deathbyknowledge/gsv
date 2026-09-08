@@ -17,6 +17,7 @@ import type { StoredProcessMedia } from "./media";
 // Approved wording change on 2026-09-08: context.runway uses concise preservation guidance.
 // Approved wording change on 2026-09-08: responsibility.revision introduces unseen fields and then renders changed values.
 // Approved wording change on 2026-09-08: event markers precede annotations and schedule notices use concise labels.
+// Approved wording change on 2026-09-08: ipc.reply combines the worker process and task ID on one line.
 beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(GOLDEN_TIME); });
 afterEach(() => { vi.restoreAllMocks(); });
 
