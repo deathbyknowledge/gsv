@@ -314,20 +314,18 @@ describe("typed history producers", () => {
     });
   });
 
-  it("keeps the source and pending-event count when a finish queues a wake", async () => {
+  it("starts a durable continuation for pending events without appending another history record", async () => {
     const stub = await initProcess("typed-history-pending-wake", ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {
       const run = { runId: "typed-wake-run", pendingRuntimeEvents: 2 };
       process.runs.active = run;
       process.store.messages.appendMessage("assistant", "done", { runId: run.runId });
-      process.run.commitRunFinishState(run, { reason: "run.yielded", status: "ok", resultText: null });
-      const records: ProcHistoryRecord[] = process.store.messages.getRecords();
-      expect(records.at(-1)).toMatchObject({
-        kind: "event", payload: {
-          kind: "runtime.wake", payload: { source: "process", reason: "pending-events", pendingEvents: 2 },
-          severity: "info", audience: "model",
-        },
-      });
+      const records = process.store.messages.getRecords();
+      const transition = process.run.commitRunFinishState(run, { reason: "run.yielded", status: "ok", resultText: null });
+      expect(transition.next).toMatchObject({ type: "continuation", runId: transition.wakeRunId });
+      expect(process.runs.active?.runId).toBe(transition.wakeRunId);
+      expect(transition.wakeRunId).not.toBe(run.runId);
+      expect(process.store.messages.getRecords()).toEqual(records);
       process.runs.active = null;
     });
   });

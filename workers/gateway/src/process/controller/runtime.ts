@@ -4,13 +4,13 @@ import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
   tombstoneKilledProcessStorage, type ProcessKilledTombstone, HANDLED_IPC_CALLS_KEY, RUNTIME_EVENT_IDS_KEY,
-  RUNTIME_EVENT_TOMBSTONE_LIMIT, RUNTIME_EVENT_WAKE_MESSAGE, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
+  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
   DELIVERY_NOTICE_TOMBSTONE_LIMIT, MAX_CANCELLED_REQUESTS,
 } from "../internal/lifecycle";
 import type { Process } from "../do";
 import {
   parseAssistantMessageMeta, parseMessageMetadata, type EnqueueMessageOptions, type MessageRecord,
-  type PendingHilRecord, type QueuedMessage, ProcessStore, type ToolCallRecord,
+  type PendingHilRecord, type QueuedRun, ProcessStore, type ToolCallRecord,
 } from "../store";
 import type { RunState, ResponsibilityBatchState } from "../run/state";
 import {
@@ -710,7 +710,7 @@ export class ProcessController {
     );
   }
 
-  claimNextQueuedRun(): QueuedMessage | null {
+  claimNextQueuedRun(): QueuedRun | null {
     if (this.host.runs.active) {
       return null;
     }
@@ -718,26 +718,28 @@ export class ProcessController {
     if (!next) {
       return null;
     }
-    this.host.store.messages.appendMessage(next.role, next.message, {
-      generation: next.generation,
-      runId: next.runId,
-      media: next.media ?? undefined,
-      origin: next.origin ?? undefined,
-      queueKind: next.kind,
-      provenance: next.provenance ? jsonObjectSchema.parse(JSON.parse(next.provenance)) : undefined,
-      record: next.record,
-    });
-    const run: RunState = {
-      runId: next.runId,
-      ...conversationRunState(next.kind, next.provenance),
-    };
-    if (next.kind === "ipc.call") run.returnToCaller = true;
+    const run: RunState = { runId: next.runId };
+    if (next.type === "message") {
+      this.host.store.messages.appendMessage(next.role, next.message, {
+        generation: next.generation,
+        runId: next.runId,
+        media: next.media ?? undefined,
+        origin: next.origin ?? undefined,
+        queueKind: next.kind,
+        provenance: next.provenance ? jsonObjectSchema.parse(JSON.parse(next.provenance)) : undefined,
+        record: next.record,
+      });
+      Object.assign(run, conversationRunState(next.kind, next.provenance));
+      if (next.kind === "ipc.call") run.returnToCaller = true;
+    } else {
+      run.continuation = true;
+    }
     this.host.runs.active = run;
     return next;
   }
 
   async promoteNextQueuedRun(
-    claimed: QueuedMessage | null = this.claimNextQueuedRun(),
+    claimed: QueuedRun | null = this.claimNextQueuedRun(),
   ): Promise<string | null> {
     if (!claimed || this.host.runs.active?.runId !== claimed.runId) {
       return null;
@@ -1553,23 +1555,7 @@ export class ProcessController {
         this.host.runs.active = { runId: nextRunId };
       } else if (sourceRunId && sourceRunId !== currentRun.runId) {
         wakeRunId = crypto.randomUUID();
-        this.host.store.queue.enqueue(wakeRunId, RUNTIME_EVENT_WAKE_MESSAGE, {
-          role: "system",
-          kind: "runtime.wake",
-          provenance: JSON.stringify({
-            source: "process",
-            eventType: "runtime.wake",
-          }),
-          record: {
-            kind: "event",
-            payload: {
-              kind: "runtime.wake",
-              payload: { source: "process", reason: signal },
-              severity: "info",
-              audience: "model",
-            },
-          },
-        });
+        this.host.store.queue.enqueueContinuation(wakeRunId);
       } else {
         currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
         this.host.runs.active = currentRun;

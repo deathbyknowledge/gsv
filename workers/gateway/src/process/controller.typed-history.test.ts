@@ -223,7 +223,7 @@ describe("typed controller history producers", () => {
   });
 
   it.each(["ipc.reply", "ipc.overdue", "ipc.timeout"])(
-    "persists %s data and the queued wake independently",
+    "persists %s data and queues a continuation without another history event",
     async (signal) => {
       const stub = await initProcess(`typed-${signal}`, ROOT_IDENTITY);
       await runInProcess(stub, async (process: Process) => {
@@ -240,7 +240,7 @@ describe("typed controller history producers", () => {
         await process.controller.handleIpcSignal(signal, payload);
         expect(process.store.queue.queueSize()).toBe(1);
         process.runs.active = null;
-        process.controller.claimNextQueuedRun();
+        expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "continuation" });
         expect(storedRecords(process)).toEqual([
           {
             kind: "event",
@@ -248,15 +248,6 @@ describe("typed controller history producers", () => {
               kind: signal,
               payload,
               severity: signal === "ipc.timeout" ? "error" : "info",
-              audience: "model",
-            },
-          },
-          {
-            kind: "event",
-            payload: {
-              kind: "runtime.wake",
-              payload: { source: "process", reason: signal },
-              severity: "info",
               audience: "model",
             },
           },

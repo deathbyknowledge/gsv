@@ -2171,7 +2171,10 @@ export class ProcessHistory {
     const groups = this.host.store.messages.getModelHistoryGroups({ limit: null });
     return renderContextHistory(
       groups,
-      { contextEpochId, generationContextId },
+      {
+        contextEpochId, generationContextId,
+        currentRunOrigin: this.host.runs.active?.continuation ? null : undefined,
+      },
       (text, media, budget) => this.host.resources.hydrateMediaContent(text, media, budget),
     );
   }

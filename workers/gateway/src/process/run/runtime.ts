@@ -10,7 +10,7 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, YIELD_CORRECTION_MESSAGE,
   MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
@@ -630,27 +630,7 @@ export class ProcessRun {
 
     const wakeRunId = shouldQueueRuntimeWake ? crypto.randomUUID() : undefined;
     if (wakeRunId) {
-      this.host.store.queue.enqueue(wakeRunId, RUNTIME_EVENT_WAKE_MESSAGE, {
-        role: "system",
-        kind: "runtime.wake",
-        provenance: JSON.stringify({
-          source: "process",
-          eventType: "runtime.wake",
-        }),
-        record: {
-          kind: "event",
-          payload: {
-            kind: "runtime.wake",
-            payload: {
-              source: "process",
-              reason: "pending-events",
-              pendingEvents: run.pendingRuntimeEvents ?? 0,
-            },
-            severity: "info",
-            audience: "model",
-          },
-        },
-      });
+      this.host.store.queue.enqueueContinuation(wakeRunId);
     }
     const next = this.host.controller.claimNextQueuedRun();
 

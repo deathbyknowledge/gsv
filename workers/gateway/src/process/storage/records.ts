@@ -86,6 +86,7 @@ export type MessageProviderMetadata = ProcMessageProviderMetadata;
 export type MessageMetadata = ProcMessageMetadata;
 
 export type QueuedMessage = {
+  type: "message";
   id: number;
   runId: string;
   generation: number;
@@ -97,6 +98,16 @@ export type QueuedMessage = {
   provenance?: string | null;
   record?: ProcHistoryRecordData;
 };
+
+/** Durable work admission that reuses existing history without adding model input. */
+export type QueuedContinuation = {
+  type: "continuation";
+  id: number;
+  runId: string;
+  generation: number;
+};
+
+export type QueuedRun = QueuedMessage | QueuedContinuation;
 
 export type EnqueueMessageOptions = {
   role?: QueuedMessageRole;

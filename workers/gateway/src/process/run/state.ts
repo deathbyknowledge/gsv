@@ -130,6 +130,7 @@ const responsibilityBatchStateSchema = responsibilityBatchSchema.extend({
 
 export const runStateSchema = z.object({
   runId: z.string(),
+  continuation: z.literal(true).optional(),
   returnToCaller: z.boolean().optional(),
   conversationId: z.string().optional(),
   inputMessageId: z.string().optional(),

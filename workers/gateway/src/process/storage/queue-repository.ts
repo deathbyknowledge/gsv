@@ -1,6 +1,6 @@
 import type { ProcessStore } from "../store";
 import { procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
-import { queuedMessageRole, type EnqueueMessageOptions, type QueuedMessage } from "./store-codecs";
+import { queuedMessageRole, type EnqueueMessageOptions, type QueuedRun } from "./store-codecs";
 
 /** Owns FIFO admissions waiting behind the active Process run. */
 export class ProcessQueueRepository {
@@ -32,7 +32,11 @@ export class ProcessQueueRepository {
     );
   }
 
-  dequeue(): QueuedMessage | null {
+  enqueueContinuation(runId: string): void {
+    this.enqueue(runId, "", { role: "system", kind: "runtime.continuation" });
+  }
+
+  dequeue(): QueuedRun | null {
     const row = this.store.first<{
         id: number;
         run_id: string;
@@ -52,11 +56,17 @@ export class ProcessQueueRepository {
           LIMIT 1`,
       );
     if (!row) return null;
+    // Pre-upgrade queued wake messages are the same durable continuation admission.
+    if (row.kind === "runtime.continuation" || row.kind === "runtime.wake") {
+      this.store.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
+      return { type: "continuation", id: row.id, runId: row.run_id, generation: row.generation };
+    }
     const record = row.record_json === null
       ? undefined
       : procHistoryRecordDataSchema.parse(JSON.parse(row.record_json));
     this.store.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
     return {
+      type: "message",
       id: row.id,
       runId: row.run_id,
       generation: row.generation,

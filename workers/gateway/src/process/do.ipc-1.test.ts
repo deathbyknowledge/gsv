@@ -1,7 +1,7 @@
 import { Kernel } from "../kernel/do";
 import type { ResponseOkFrame } from "../protocol/frames";
 import { getKernelPtr } from "../shared/utils";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryRecord, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -608,10 +608,9 @@ describe("proc.ipc.*", () => {
       const queued = drainProcessQueue(process.store);
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
-        role: "system",
-        kind: "runtime.wake",
+        type: "continuation",
       });
-      expect(queued[0].message).toContain("Review the GSV event above");
+      expect(queued[0]).not.toHaveProperty("message");
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.changed",
         expect.objectContaining({ changes: ["queue"] }),
@@ -692,18 +691,11 @@ describe("proc.ipc.*", () => {
       const runtimeMessages = process.store.messages
         .getMessages()
         .filter((message: any) => message.role === "system");
-      expect(runtimeMessages.at(-1)?.content).toContain(
-        "A runtime event arrived while you were busy.",
-      );
-      expect(
-        process.store.messages
-          .getMessages()
-          .some(
-            (message: any) =>
-              message.role === "user" &&
-              message.content.includes("A runtime event arrived while you were busy."),
-          ),
-      ).toBe(false);
+      expect(runtimeMessages).toHaveLength(1);
+      expect(runtimeMessages[0].content).toContain("busy result");
+      expect(process.store.messages.getRecords().some((record: ProcHistoryRecord) =>
+        record.kind === "event" && record.payload.kind === "runtime.wake",
+      )).toBe(false);
       expect(process.store.queue.queueSize()).toBe(0);
       expect(process.runs.active?.runId).not.toBe("active-source-run");
       expect(process.runs.active).toMatchObject({});

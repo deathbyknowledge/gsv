@@ -38,6 +38,8 @@ export type ModelHistoryRenderOptions = {
   contextEpochId?: string;
   /** Only usage confirmed against this exact system-prompt/tool shape is reusable. */
   generationContextId?: string;
+  /** A run without an input record supplies its current origin explicitly; null means the default Process destination. */
+  currentRunOrigin?: InteractionOrigin | null;
 };
 
 export function renderModelHistory(
@@ -73,11 +75,22 @@ export async function renderContextHistory(
       messages[index] = { ...message, content };
     }
   }
-  annotateContextOrigins(visibleGroups, messages);
-  return orderMessagesForProvider(messages);
+  const previousReplyDestinationKey = annotateContextOrigins(visibleGroups, messages);
+  const orderedMessages = orderMessagesForProvider(messages);
+  if (options.currentRunOrigin !== undefined && previousReplyDestinationKey !== undefined) {
+    const destination = formatReplyDestinationForContext(options.currentRunOrigin ?? undefined);
+    if (destination.key !== previousReplyDestinationKey) {
+      orderedMessages.push({
+        role: "user",
+        content: formatContextOriginLines(null, false, destination, true),
+        timestamp: orderedMessages.at(-1)?.timestamp ?? 0,
+      });
+    }
+  }
+  return orderedMessages;
 }
 
-function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: Message[]): void {
+function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: Message[]): string | undefined {
   let previousSource: string | null | undefined;
   let previousReplyDestinationKey: string | undefined;
   const seenRunIds = new Set<string>();
@@ -112,6 +125,7 @@ function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: 
       ? renderModelEvent(primary.payload, group.createdAt, annotations)
       : prefixUserMessageContent(message, annotations);
   }
+  return previousReplyDestinationKey;
 }
 
 export function renderModelHistoryGroup(
