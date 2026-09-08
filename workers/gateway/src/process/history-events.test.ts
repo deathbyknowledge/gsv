@@ -4,7 +4,7 @@ import { procHistoryEventSchema } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import type { InternalRequestFrame } from "../protocol/process-frames";
 import { decodeWireFrameJson } from "../protocol/decode-wire-frame";
-import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { deferred, initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { PROCESS_RESET_AT_KEY } from "./internal/lifecycle";
 
 afterEach(() => vi.restoreAllMocks());
@@ -65,6 +65,68 @@ describe("registered Process events", () => {
       const messages = await process.history.buildContextMessages();
       expect(messages).toHaveLength(1);
       expect(messages[0]?.content).toContain('[GSV EVENT]\nTarget "My laptop" disconnected.');
+    });
+  });
+
+  it.each(["person", "model", "both"] as const)("rejects %s events during reset archival and admits the same event afterward", async (audience) => {
+    const stub = await initProcess(`history-events-reset-archive-${audience}`, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const { promise: archiveBlocked, resolve: releaseArchive } = deferred();
+      const { promise: archiveStarted, resolve: markArchiveStarted } = deferred();
+      const archiveHistoryMessages = process.history.archiveHistoryMessages.bind(process.history);
+      vi.spyOn(process.history, "archiveHistoryMessages").mockImplementation(async (archiveId) => {
+        markArchiveStarted();
+        await archiveBlocked;
+        return await archiveHistoryMessages(archiveId);
+      });
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      process.store.messages.appendMessage("user", "before reset");
+      const originalRecords = process.store.messages.getRecords();
+      const resetting = process.controller.handleProcReset();
+      await archiveStarted;
+      const resetAt = Number(process.store.state.getValue(PROCESS_RESET_AT_KEY));
+      const frame = request(`event:reset-archive:${audience}`, audience);
+      frame.args.event.payload.observedAt = resetAt + 1;
+      try {
+        expect(resetAt).toBeGreaterThan(0);
+        expect(process.lifecyclePhase).toBe("resetting");
+        expect(process.isInitialized()).toBe(false);
+        expect(await process.recvFrame(frame)).toMatchObject({
+          ok: false, error: { code: 409, message: "Process lifecycle is resetting" },
+        });
+        expect(await process.controller.handleReq(frame)).toMatchObject({
+          ok: false, error: { message: "Process no longer exists" },
+        });
+        expect(process.store.messages.getRecords()).toEqual(originalRecords);
+        expect(process.store.state.getValue("eventNoticeReceipts")).toBeNull();
+        expect(process.controller.runtimeEventAdmission(frame.args.eventId)).toBeNull();
+        expect(process.store.queue.queueSize()).toBe(0);
+        expect(process.runs.active).toBeNull();
+        expect(schedule).not.toHaveBeenCalled();
+      } finally {
+        releaseArchive();
+      }
+      const reset = await resetting;
+      expect(reset).toMatchObject({ ok: true, archivedMessages: 1 });
+      if (!reset.ok || !reset.archivedTo) throw new Error("Reset did not archive its original history");
+      expect(await process.history.readArchivedMessageRecords(reset.archivedTo)).toMatchObject([
+        { role: "user", content: "before reset" },
+      ]);
+      expect(process.isInitialized()).toBe(true);
+      expect(process.store.messages.getRecords()).toEqual([]);
+
+      const delivered = await process.recvFrame(frame);
+      expect(delivered).toMatchObject({
+        ok: true, data: { eventId: frame.args.eventId, runId: audience === "person" ? null : frame.args.eventId, queued: false },
+      });
+      expect(await process.recvFrame(frame)).toEqual(delivered);
+      expect(process.store.messages.getRecords()).toMatchObject([
+        { kind: "event", payload: frame.args.event },
+      ]);
+      expect(process.store.queue.queueSize()).toBe(0);
+      expect(schedule).toHaveBeenCalledTimes(audience === "person" ? 0 : 1);
+      expect(process.runs.active?.runId ?? null).toBe(audience === "person" ? null : frame.args.eventId);
+      expect(await process.history.buildContextMessages()).toHaveLength(audience === "person" ? 0 : 1);
     });
   });
 
