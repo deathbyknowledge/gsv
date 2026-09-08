@@ -59,8 +59,9 @@ const historyLegacyMediaSchema: z.ZodMiniType<ProcMediaInput & { description?: s
   path: z.optional(z.string()),
   url: z.optional(z.string()),
   filename: z.optional(z.string()),
-  size: z.optional(nonNegativeNumberSchema),
-  duration: z.optional(nonNegativeNumberSchema),
+  // Match the finite numbers accepted by legacy ingress and stored descriptors.
+  size: z.optional(z.number()),
+  duration: z.optional(z.number()),
   transcription: z.optional(z.string()),
   description: z.optional(z.string()),
   revision: z.optional(z.string()),
@@ -194,7 +195,8 @@ const historyRecordIdentityFields = {
   index: nonNegativeIntegerSchema,
   generation: nonNegativeIntegerSchema,
   runId: z.nullable(z.string()),
-  createdAt: nonNegativeNumberSchema,
+  // Archived history preserves finite timestamps, including dates before 1970.
+  createdAt: z.number(),
   source: z.enum(["typed", "legacy"]),
   metadata: z.optional(procHistoryMessageMetadataSchema),
 };

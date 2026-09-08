@@ -107,6 +107,31 @@ test("notes and calls preserve provider signatures without adding note tags", ()
   }).success, false);
 });
 
+test("history preserves finite legacy media numbers accepted by ingress", () => {
+  for (const value of [-1.5, -0.25, 0, 42.5]) {
+    const media = [{ type: "audio", mimeType: "audio/ogg", size: value, duration: value }];
+    const records = [
+      { kind: "message", payload: { direction: "in", text: "Audio", media, origin: {} } },
+      { kind: "note", payload: { text: "Audio", thinking: [], media } },
+      { kind: "result", payload: { callId: "call:1", tool: "Read", outcome: "completed", output: null, media, resources: [] } },
+    ];
+    for (const record of records) {
+      assert.deepEqual(procHistoryRecordDataSchema.parse(JSON.parse(JSON.stringify(record))), record);
+    }
+  }
+  for (const value of [NaN, Infinity, -Infinity, "-1", null]) {
+    for (const field of ["size", "duration"]) {
+      assert.equal(procHistoryRecordDataSchema.safeParse({
+        kind: "message",
+        payload: {
+          direction: "in", text: "Audio", origin: {},
+          media: [{ type: "audio", mimeType: "audio/ogg", [field]: value }],
+        },
+      }).success, false);
+    }
+  }
+});
+
 test("results retain structured run control output, resources, and typed failures", () => {
   const result = {
     kind: "result",
@@ -238,8 +263,13 @@ test("record identity retains ordering within an original provider message", () 
     payload: { callId: "call:1", tool: "Send", syscall: null, args: { text: "Done" }, target: null, runId: "run:1" },
   };
   assert.deepEqual(procHistoryRecordSchema.parse(record), record);
-  for (const field of ["id", "messageId", "index", "generation", "createdAt"]) {
+  for (const field of ["id", "messageId", "index", "generation"]) {
     assert.equal(procHistoryRecordSchema.safeParse({ ...record, [field]: -1 }).success, false, field);
+  }
+  const preEpoch = { ...record, createdAt: -100.25 };
+  assert.deepEqual(procHistoryRecordSchema.parse(preEpoch), preEpoch);
+  for (const createdAt of [NaN, Infinity, -Infinity, "-1", null]) {
+    assert.equal(procHistoryRecordSchema.safeParse({ ...record, createdAt }).success, false);
   }
   assert.equal(procHistoryRecordSchema.safeParse({ ...record, source: "inferred" }).success, false);
 });
