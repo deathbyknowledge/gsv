@@ -26,7 +26,7 @@ import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
-  errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
+  errorMessageFromUnknown, formatProviderErrorDiagnostic, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
 } from "../../inference/errors";
 import { sendFrameToKernel, cancelProcessRequests } from "../../shared/utils";
 import {
@@ -1231,9 +1231,10 @@ export class ProcessRun {
     if (!fallback) return "none";
     control.fallbackIndex = fallback.nextIndex;
     if (failedResponse) this.recordUnpersistedAssistantUsage(failedResponse, current);
+    const diagnosticReason = formatProviderErrorDiagnostic(reason);
     const fallbackState = await this.beginGenerationFallback({
       runId,
-      reason,
+      reason: diagnosticReason,
       from: current,
       to: fallback.config,
       fallbackIndex: control.fallbackIndex,
@@ -1244,7 +1245,7 @@ export class ProcessRun {
       used: true,
       from: modelMetadataFromAiConfig(current),
       to: modelMetadataFromAiConfig(fallback.config),
-      reason,
+      reason: diagnosticReason,
     };
     control.prepared.activeConfig = fallback.config;
     const run = this.host.mutateActiveRun(runId, (active) => ({

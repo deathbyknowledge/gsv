@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   errorMessageFromUnknown,
+  formatProviderErrorDiagnostic,
   formatProviderErrorMessage,
   formatProviderContextOverflowMessage,
   isProviderContextOverflow,
@@ -8,6 +9,29 @@ import {
   NON_STANDARD_PROVIDER_ERROR,
 } from "./errors";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+
+describe("formatProviderErrorDiagnostic", () => {
+  it("preserves diagnostics through the 4096-character limit", () => {
+    for (const message of ["", "HTTP 403: invalid account", "x".repeat(4096)]) {
+      expect(formatProviderErrorDiagnostic(message)).toBe(message);
+    }
+  });
+
+  it("bounds oversized diagnostics while retaining their category and original length", () => {
+    const message = "Provider validation failed: " + "x".repeat(1_200_000);
+    const diagnostic = formatProviderErrorDiagnostic(message);
+    expect(diagnostic.length).toBeLessThanOrEqual(4096);
+    expect(diagnostic.startsWith("Provider validation failed: ")).toBe(true);
+    expect(diagnostic.endsWith(`[truncated; original length ${message.length} characters]`)).toBe(true);
+  });
+
+  it("does not split a Unicode surrogate pair at the preview boundary", () => {
+    const message = "😀".repeat(10_000);
+    const diagnostic = formatProviderErrorDiagnostic(message);
+    expect(diagnostic.length).toBeLessThanOrEqual(4096);
+    expect(diagnostic.isWellFormed()).toBe(true);
+  });
+});
 
 describe("formatProviderErrorMessage", () => {
   it("adds account guidance for billing and credit failures", () => {

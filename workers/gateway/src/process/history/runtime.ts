@@ -12,8 +12,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { Process } from "../do";
 import {
-  defaultHistoryPolicy, serializeInteractionOrigin, emptyProcessArchive, gunzip, gzipMessageRecords,
-  historyArchiveFilename, parseArchivedMessageRecord, serializeArchivedMessage, buildCompactionSummaryContext,
+  defaultHistoryPolicy, serializeInteractionOrigin, emptyProcessArchive, gunzip, gzipMessageRecords, gzipContextEpochArchive,
+  historyArchiveFilename, parseArchivedMessageRecord, buildCompactionSummaryContext,
   contextBoundaryRemainingTokens, contextRunwayAlertThreshold, isCompactionSummaryMessage, messageSnapshotsMatch,
 } from "./helpers";
 import { formatCompactionSummaryMessage } from "./event-renderer";
@@ -868,7 +868,7 @@ export class ProcessHistory {
       ? [...snapshot.runBoundaries]
       : this.host.store.epochs.listContextEpochRuns(epoch.id);
     if (snapshot?.closingBoundary) runBoundaries.push(snapshot.closingBoundary);
-    const manifest = jsonObjectSchema.parse({
+    const header = jsonObjectSchema.parse({
       schemaVersion: 1,
       installationId: this.host.installationId,
       process: {
@@ -877,31 +877,29 @@ export class ProcessHistory {
         gid: this.host.identity.gid,
         username: this.host.identity.username,
       },
-      epoch: {
-        id: epoch.id,
-        generation: epoch.generation,
-        state: "closed",
-        createdAt: epoch.createdAt,
-        closedAt,
-        closeReason: reason,
-        systemPrompt: epoch.systemPrompt,
-        r12yRevision: epoch.r12yRevision,
-        r12yCount: epoch.r12yCount,
-        observedR12yRevision: epoch.observedR12yRevision,
-        r12yBaseline: epoch.r12yBaseline,
-        r12yTransitions:
-          snapshot?.transitions ?? this.host.store.epochs.listContextEpochTransitions(epoch.id),
-        sourceManifest: epoch.sourceManifest,
-        observedProjection: epoch.observedProjection,
-        processActivity: messages.map((message) =>
-          serializeArchivedMessage(message, mediaRewrites),
-        ),
-        runBoundaries,
-      },
+    });
+    const epochHeader = jsonObjectSchema.parse({
+      id: epoch.id,
+      generation: epoch.generation,
+      state: "closed",
+      createdAt: epoch.createdAt,
+      closedAt,
+      closeReason: reason,
+      systemPrompt: epoch.systemPrompt,
+      r12yRevision: epoch.r12yRevision,
+      r12yCount: epoch.r12yCount,
+      observedR12yRevision: epoch.observedR12yRevision,
+      r12yBaseline: epoch.r12yBaseline,
+      r12yTransitions:
+        snapshot?.transitions ?? this.host.store.epochs.listContextEpochTransitions(epoch.id),
+      sourceManifest: epoch.sourceManifest,
+      observedProjection: epoch.observedProjection,
     });
     const compressed = await raceWithAbort(
       new Response(
-        new Blob([JSON.stringify(manifest)]).stream().pipeThrough(new CompressionStream("gzip")),
+        gzipContextEpochArchive({
+          header, epoch: epochHeader, messages, runBoundaries, signal, mediaRewrites,
+        }),
       ).arrayBuffer(),
       signal,
     );

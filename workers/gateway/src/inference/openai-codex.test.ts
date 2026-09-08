@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 import { createGenerationService } from "./service";
 import {
   completeWithOpenAiCodexFetch,
@@ -44,6 +47,7 @@ function codexTextEvents(text = "ok", modelName = "gpt-5.4-mini"): JsonObject[] 
     },
     {
       type: "response.output_item.added",
+      output_index: 0,
       item: { id: "msg_1", type: "message", role: "assistant", status: "in_progress", content: [] },
     },
     {
@@ -97,8 +101,12 @@ function sseResponse(events: JsonObject[], separator = "\n\n"): Response {
   });
 }
 
+function requestInput(request: JsonObject | undefined): JsonObject[] {
+  return z.array(jsonObjectSchema).parse(request?.input);
+}
+
 describe("OpenAI Codex routed fetch transport", () => {
-  it.each(["gpt-6-astra", "gpt-5.6-sol"])("runs a %s tool turn through model resolution and routed fetch", async (modelName) => {
+  it.each(["gpt-6-astra", "gpt-5.6-sol"])("replays a completed %s tool turn through model resolution and routed fetch", async (modelName) => {
     const requests: JsonObject[] = [];
     const toolCall = {
       id: "fc_read", type: "function_call", call_id: "call_read", name: "Read",
@@ -128,9 +136,9 @@ describe("OpenAI Codex routed fetch transport", () => {
       executor: { kind: "kernel" as const }, provider: "openai-codex", model: modelName,
       apiKey: codexToken(), reasoning: "high", maxTokens: 4096, maxContextBytes: 32768,
     };
-    const context = {
+    const context: Context = {
       systemPrompt: "Inspect a file, then report the result.",
-      messages: [{ role: "user" as const, content: "Inspect example.txt" }],
+      messages: [{ role: "user", content: "Inspect example.txt", timestamp: 0 }],
       tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }],
     };
     const call = await generation.generate({ config, context, sessionAffinityKey: "process:codex" });
@@ -138,19 +146,19 @@ describe("OpenAI Codex routed fetch transport", () => {
     const requestedTool = call.content.find((content) => content.type === "toolCall");
     expect(requestedTool).toMatchObject({ name: "Read", arguments: { path: "/root/example.txt" } });
     if (!requestedTool || requestedTool.type !== "toolCall") throw new Error("Expected a Read tool call");
+    const afterTool: Context = {
+      ...context,
+      messages: [
+        ...context.messages,
+        call,
+        {
+          role: "toolResult", toolCallId: requestedTool.id, toolName: "Read",
+          content: [{ type: "text", text: "File contents" }], isError: false, timestamp: 1,
+        },
+      ],
+    };
     const completed = await generation.generate({
-      config,
-      context: {
-        ...context,
-        messages: [
-          ...context.messages,
-          call,
-          {
-            role: "toolResult", toolCallId: requestedTool.id, toolName: "Read",
-            content: [{ type: "text", text: "File contents" }], isError: false, timestamp: 1,
-          },
-        ],
-      },
+      config, context: afterTool,
       sessionAffinityKey: "process:codex",
     });
     expect(completed.stopReason).toBe("stop");
@@ -164,6 +172,87 @@ describe("OpenAI Codex routed fetch transport", () => {
       expect.objectContaining({ type: "function_call", call_id: "call_read", name: "Read" }),
       expect.objectContaining({ type: "function_call_output", call_id: "call_read", output: "File contents" }),
     ]));
+
+    const followup = await generation.generate({
+      config,
+      context: {
+        ...afterTool,
+        messages: [
+          ...afterTool.messages, completed,
+          { role: "user", content: "Confirm the result briefly.", timestamp: 2 },
+        ],
+      },
+      sessionAffinityKey: "process:codex",
+    });
+    expect(followup.stopReason).toBe("stop");
+    expect(requests).toHaveLength(3);
+    const replay = requestInput(requests[2]).find((item) => item.role === "assistant");
+    expect(replay).toMatchObject({
+      type: "message", id: "msg_1", status: "completed",
+      content: [{ type: "output_text", text: "File inspected." }],
+    });
+    expect(replay).not.toHaveProperty("phase");
+  });
+
+  it("serializes mixed-provider history without losing signatures or JSON values", async () => {
+    const model = codexModel();
+    const requests: JsonObject[] = [];
+    const fetchMock: typeof fetch = async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return sseResponse(codexTextEvents());
+    };
+    const prior = await completeWithOpenAiCodexFetch({
+      model, fetch: fetchMock, options: { apiKey: codexToken() },
+      context: { messages: [{ role: "user", content: "Begin.", timestamp: 0 }] },
+    });
+    expect(prior.stopReason).toBe("stop");
+    const argumentsValue = { path: "/example.txt", offset: 0, follow: false, cursor: null };
+    const output = JSON.stringify({ text: "A quoted \"result\" — λ", count: 0, truncated: false, next: null });
+    const foreign: AssistantMessage = {
+      ...prior, provider: "deepseek", api: "openai-completions", model: "deepseek-chat", stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Checking the file." },
+        { type: "toolCall", id: "call_legacy", name: "Read", arguments: argumentsValue },
+      ],
+    };
+    const reasoning = { type: "reasoning", id: "rs_saved", encrypted_content: "synthetic-ciphertext", summary: [] };
+    const signed: AssistantMessage = {
+      ...prior,
+      content: [
+        { type: "thinking", thinking: "", thinkingSignature: JSON.stringify(reasoning) },
+        { type: "text", text: "File checked.", textSignature: JSON.stringify({ v: 1, id: "msg_saved", phase: "final_answer" }) },
+      ],
+    };
+    const parameters = {
+      type: "object", additionalProperties: false,
+      properties: { offset: { type: "integer", minimum: 0, default: 0 }, cursor: { type: ["string", "null"], default: null } },
+    };
+    const result = await completeWithOpenAiCodexFetch({
+      model, fetch: fetchMock,
+      options: { apiKey: codexToken(), temperature: 0 },
+      context: {
+        messages: [
+          { role: "user", content: "Read the file.", timestamp: 0 }, foreign,
+          { role: "toolResult", toolCallId: "call_legacy", toolName: "Read", content: [{ type: "text", text: output }], isError: false, timestamp: 1 },
+          signed, { role: "user", content: "Continue.", timestamp: 2 },
+        ],
+        tools: [{ name: "Read", description: "Read a file", parameters }],
+      },
+    });
+    expect(result.stopReason).toBe("stop");
+    expect(requests).toHaveLength(2);
+    const request = requests[1]!;
+    const input = requestInput(request);
+    const call = input.find((item) => item.type === "function_call");
+    expect(call).toEqual({ type: "function_call", call_id: "call_legacy", name: "Read", arguments: JSON.stringify(argumentsValue) });
+    expect(input).toContainEqual({ type: "function_call_output", call_id: "call_legacy", output });
+    expect(input).toContainEqual(reasoning);
+    expect(input.find((item) => item.id === "msg_saved")).toMatchObject({ phase: "final_answer", content: [{ type: "output_text", text: "File checked." }] });
+    expect(input.find((item) => item.role === "assistant")).not.toHaveProperty("phase");
+    expect(request).toMatchObject({
+      store: false, temperature: 0,
+      tools: [{ type: "function", name: "Read", description: "Read a file", parameters, strict: null }],
+    });
   });
 
   it("streams Codex SSE through the supplied fetch implementation", async () => {
