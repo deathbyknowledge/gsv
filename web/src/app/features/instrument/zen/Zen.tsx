@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
@@ -529,7 +529,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
 
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready) return;
     for (const moment of moments) if (moment.streaming) streamedMomentsRef.current.add(moment.id);
     const whole = moments.filter((moment) => moment.role === "ship" && moment.text && !moment.streaming).map((moment) => moment.id);
@@ -572,6 +572,8 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
       return next;
     });
   }, [moments, settling, tick]);
+  /* the first ready render happens before the cascade is set; nothing shows in it, so no frame ever holds the transcript unsettled */
+  const cascadeUnset = ready && seenMomentsRef.current === null && !reducedMotion();
   /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
   const settlePrefix = (moment: Moment): number | null => {
     const startedAt = settling.get(moment.id);
@@ -897,8 +899,8 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
             {moments.map((moment, index) => {
               const isLatest = index === moments.length - 1;
               const settleStart = settling.get(moment.id);
-              const pending = settleStart !== undefined && Date.now() < settleStart;
-              const materialising = settleStart !== undefined && !pending;
+              const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
+              const materialising = !cascadeUnset && settleStart !== undefined && !pending;
               if (moment.role === "note") {
                 return (
                   <NoteMoment
