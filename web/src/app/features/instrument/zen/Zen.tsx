@@ -89,6 +89,9 @@ const RESOLVE_FRAME_MS = 60;
 function settleDuration(length: number): number {
   return Math.min(1600, Math.max(700, length * 2.5));
 }
+/** How many of the loaded messages settle on first paint, and how far apart they start. */
+const SETTLE_ON_LOAD = 8;
+const SETTLE_STAGGER_MS = 140;
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -157,9 +160,11 @@ function ActivityLine({
         <span class="tri">{open ? "▾" : "▸"}</span>
         {head}
       </div>
-      <div class="detail">
-        <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
-      </div>
+      {open ? (
+        <div class="detail">
+          <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -216,20 +221,22 @@ function Receipt({ moment, places, open, onToggle }: { moment: Moment; places: r
           {` · ${open ? "close" : "open"}`}
         </span>
       </div>
-      <div class="detail">
-        {worked.map((activity) => (
-          <div key={activity.key} class="place-rail">
-            <div class="ph">on {placeLabel(activity.target, places)}</div>
-            <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
-          </div>
-        ))}
-        {moment.narration ? (
-          <div class="place-rail">
-            <div class="ph">thought it through</div>
-            <div class="machine-rail narration">{moment.narration}</div>
-          </div>
-        ) : null}
-      </div>
+      {open ? (
+        <div class="detail">
+          {worked.map((activity) => (
+            <div key={activity.key} class="place-rail">
+              <div class="ph">on {placeLabel(activity.target, places)}</div>
+              <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+            </div>
+          ))}
+          {moment.narration ? (
+            <div class="place-rail">
+              <div class="ph">thought it through</div>
+              <div class="machine-rail narration">{moment.narration}</div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -509,8 +516,16 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
     for (const moment of moments) if (moment.streaming) streamedMomentsRef.current.add(moment.id);
     const whole = moments.filter((moment) => moment.role === "ship" && moment.text && !moment.streaming).map((moment) => moment.id);
     if (seenMomentsRef.current === null) {
-      // the history as first loaded is not news
+      // the history as first loaded is not news, but it does materialise: the recent messages settle one after another
       seenMomentsRef.current = new Set(whole);
+      if (reducedMotion()) return;
+      const recent = whole.slice(-SETTLE_ON_LOAD);
+      const startedAt = Date.now();
+      setSettling((current) => {
+        const next = new Map(current);
+        recent.forEach((id, index) => next.set(id, startedAt + index * SETTLE_STAGGER_MS));
+        return next;
+      });
       return;
     }
     const seen = seenMomentsRef.current;
@@ -545,7 +560,7 @@ export function Zen({ onFleet, onFirstDay, prefill, onPrefillUsed, pid: pidProp,
     if (startedAt === undefined) return null;
     const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
     if (progress >= 1) return null;
-    return Math.ceil(progress * (moment.text.length + RESOLVE_TAIL));
+    return Math.max(0, Math.ceil(progress * (moment.text.length + RESOLVE_TAIL)));
   };
 
   useEffect(() => {

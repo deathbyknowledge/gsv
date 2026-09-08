@@ -140,8 +140,7 @@
   vertical-align: middle;
   margin-right: 6px;
 }
-.activity .detail { display: none; }
-.activity.is-open .detail { display: block; }
+
 
 /* the receipt under a ship's message: what it did, in words; the working opens beneath */
 .receipt {
@@ -170,8 +169,7 @@
   vertical-align: middle;
   margin-right: 8px;
 }
-.receipt .detail { display: none; margin-top: 8px; }
-.receipt.is-open .detail { display: block; }
+.receipt .detail { margin-top: 8px; }
 .receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
 .receipt .place-rail:first-child .ph { margin-top: 0; }
 
@@ -231,6 +229,7 @@
 }
 .zen-empty .place { color: var(--target); }
 
+.zen-moment .text.is-settling { white-space: pre-wrap; }
 .zen-moment .text .noise {
   color: var(--glyph);
 }
