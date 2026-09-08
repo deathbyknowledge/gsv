@@ -13,6 +13,7 @@ import type { StoredProcessMedia } from "./media";
 
 // Captured against b1ec803751841b597c905b283f6b6882ef103872 before renderer extraction.
 // These snapshots are a compatibility contract; do not regenerate them to accept a refactor.
+// Approved wording change on 2026-09-08: context.changed omits target implements.
 beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(GOLDEN_TIME); });
 afterEach(() => { vi.restoreAllMocks(); });
 
