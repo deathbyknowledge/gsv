@@ -8,28 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const VERSION_FILE = join(ROOT, "VERSION");
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
-const WORKSPACE_MANIFESTS = [
-  "host/apps/cli/Cargo.toml",
-  "host/apps/desktop/Cargo.toml",
-  "host/apps/machine/Cargo.toml",
-  "host/crates/config/Cargo.toml",
-  "host/crates/desktop-protocol/Cargo.toml",
-  "host/crates/gateway-client/Cargo.toml",
-  "host/crates/gesture-protocol/Cargo.toml",
-  "host/helpers/gestures/Cargo.toml",
-  "host/helpers/transcriber/Cargo.toml",
-];
-const WORKSPACE_PACKAGES = [
-  "desktop",
-  "desktop-protocol",
-  "gateway-client",
-  "gesture-protocol",
-  "gestures",
-  "gsv",
-  "host-config",
-  "machine",
-  "transcriber",
-];
+const HOST_WORKSPACE_MANIFEST = "host/Cargo.toml";
 
 function fail(message) {
   throw new Error(message);
@@ -50,33 +29,16 @@ function writeVersionFile(version) {
   writeFileSync(VERSION_FILE, `${version}\n`);
 }
 
+/**
+ * Every package.json versioned with the repository: the root, each workspace
+ * the root names plainly, and the standalone npm directories. Globbed
+ * workspaces (`packages/*`) publish on their own versions and are left alone.
+ */
 function listPackageJsonFiles() {
-  const files = [
-    "package.json",
-    "extension/package.json",
-    "workers/gateway/package.json",
-    "web/package.json",
-    "workers/ripgit/package.json",
-  ];
-  for (const group of ["workers/adapters"]) {
-    const groupDir = join(ROOT, group);
-    if (!existsSync(groupDir)) {
-      continue;
-    }
-    for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const relativePath = `${group}/${entry.name}/package.json`;
-      try {
-        readFileSync(join(ROOT, relativePath), "utf8");
-        files.push(relativePath);
-      } catch {
-        continue;
-      }
-    }
-  }
-  return files;
+  const root = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const workspaces = (root.workspaces ?? []).filter((entry) => !entry.includes("*"));
+  const dirs = new Set([...workspaces, ...listStandaloneNpmDirs()]);
+  return ["package.json", ...[...dirs].map((dir) => `${dir}/package.json`)];
 }
 
 function listStandaloneNpmDirs() {
@@ -103,6 +65,46 @@ function writeJsonFile(relativePath, transform) {
   const value = JSON.parse(readFileSync(absolutePath, "utf8"));
   const next = transform(value);
   writeFileSync(absolutePath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+/**
+ * The crates in the host workspace, read from its `members` globs, as the
+ * package name each declares and the manifest it lives in.
+ */
+function hostWorkspaceMembers() {
+  const manifest = readFileSync(join(ROOT, HOST_WORKSPACE_MANIFEST), "utf8");
+  const membersList = manifest.match(/^members = \[([\s\S]*?)\]/m)?.[1];
+  if (!membersList) {
+    fail(`${HOST_WORKSPACE_MANIFEST} has no workspace members list`);
+  }
+  const manifests = [];
+  for (const [, pattern] of membersList.matchAll(/"([^"]+)"/g)) {
+    if (!pattern.endsWith("/*")) {
+      manifests.push(`host/${pattern}/Cargo.toml`);
+      continue;
+    }
+    const group = pattern.slice(0, -2);
+    for (const entry of readdirSync(join(ROOT, "host", group), { withFileTypes: true })) {
+      const relativePath = `host/${group}/${entry.name}/Cargo.toml`;
+      if (entry.isDirectory() && existsSync(join(ROOT, relativePath))) {
+        manifests.push(relativePath);
+      }
+    }
+  }
+  manifests.sort();
+  return manifests.map((relativePath) => {
+    const packageSection = packageSectionOf(relativePath);
+    const name = packageSection?.match(/^name = "([^"]+)"$/m)?.[1];
+    if (!name) {
+      fail(`${relativePath} has no [package] name`);
+    }
+    return { name, manifest: relativePath };
+  });
+}
+
+function packageSectionOf(relativePath) {
+  const manifest = readFileSync(join(ROOT, relativePath), "utf8");
+  return manifest.match(/\[package\]\n([\s\S]*?)(?=\n\[|$)/)?.[1] ?? null;
 }
 
 function replaceInFile(relativePath, pattern, replacement) {
@@ -215,10 +217,11 @@ function syncSourceVersions(version) {
 }
 
 function syncCargoLocks(version) {
-  for (const packageName of WORKSPACE_PACKAGES) {
+  // a workspace member's lock entry has no `source` line; a registry crate of the same name does
+  for (const { name } of hostWorkspaceMembers()) {
     replaceInFile(
       "host/Cargo.lock",
-      new RegExp(`(name = "${packageName}"\\nversion = ")[^"]+(")`),
+      new RegExp(`(\\[\\[package\\]\\]\\nname = "${name}"\\nversion = ")[^"]+("\\n(?!source = ))`),
       `$1${version}$2`,
     );
   }
@@ -230,9 +233,8 @@ function syncCargoLocks(version) {
 }
 
 function verifyWorkspaceVersionInheritance() {
-  for (const relativePath of WORKSPACE_MANIFESTS) {
-    const manifest = readFileSync(join(ROOT, relativePath), "utf8");
-    const packageSection = manifest.match(/\[package\]\n([\s\S]*?)(?=\n\[|$)/)?.[1];
+  for (const { manifest: relativePath } of hostWorkspaceMembers()) {
+    const packageSection = packageSectionOf(relativePath);
     if (!packageSection || !/^version\.workspace = true$/m.test(packageSection)) {
       fail(`${relativePath} must inherit version.workspace from host/Cargo.toml`);
     }
@@ -261,7 +263,7 @@ function managedFiles() {
     "extension/src/target/network-recorder.ts",
     "workers/ripgit/src/lib.rs",
   ]);
-  for (const manifest of WORKSPACE_MANIFESTS) {
+  for (const { manifest } of hostWorkspaceMembers()) {
     files.add(manifest);
   }
   for (const file of listPackageJsonFiles()) {

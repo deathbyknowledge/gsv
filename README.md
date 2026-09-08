@@ -95,7 +95,7 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 - **Kernel and syscalls** — humans, agents, and the CLI use the same capability-gated primitives for processes, files, shells, networking, repositories, and configuration. The public client exposes those contracts to other clients.
 - **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
-- **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, and CodeMode. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
+- **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
 - **Adapters** — independently deployed Workers translate external services into stable GSV actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
 
 ## Development
