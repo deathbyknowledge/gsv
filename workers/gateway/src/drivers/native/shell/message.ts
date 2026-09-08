@@ -293,11 +293,11 @@ async function showCurrentReplyDestination(
   return completed([
     `current conversation: ${current.label}`,
     `transport: ${current.transport}`,
-    "reply command: message send",
+    "reply: the Send tool, or `message send` as its own direct Shell tool call",
     "attachment command: message attach PATH...",
-    "Issue each as its own direct Shell tool call; omit --to and --also.",
+    "Omit --to and --also when replying here.",
     "A reply commits to this conversation without finishing the run.",
-    "Run `yield` when the work is complete, or compose the final send with `&& yield`.",
+    "Send with yield true when the work is complete; in the Shell, `yield` or `&& yield` after the send.",
     ...(destinationId
       ? [`additional adapter destination: ${destinationId}`]
       : []),
