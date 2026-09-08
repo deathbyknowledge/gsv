@@ -1,3 +1,4 @@
+use crate::content_type::{content_type_for, sniff_header};
 use crate::file_revision::file_revision;
 use crate::tools::{ToolBody, ToolOutput};
 use gateway_client::IncomingBody;
@@ -75,11 +76,17 @@ async fn handle_stat(args: Value, workspace: &Path) -> Result<ToolOutput, String
     let metadata = tokio::fs::metadata(&path)
         .await
         .map_err(|error| format!("Failed to stat '{}': {error}", path.display()))?;
-    let content_type = metadata.is_file().then(|| {
-        mime_guess::from_path(&path)
-            .first()
-            .map(|mime| mime.essence_str().to_string())
-    });
+    let content_type = if metadata.is_file() {
+        let mut file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|error| format!("Failed to open '{}': {error}", path.display()))?;
+        let header = sniff_header(&mut file)
+            .await
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        Some(content_type_for(&header, &path).to_string())
+    } else {
+        None
+    };
 
     Ok(ToolOutput::json(json!({
         "ok": true,
@@ -87,7 +94,7 @@ async fn handle_stat(args: Value, workspace: &Path) -> Result<ToolOutput, String
         "size": metadata.len(),
         "isFile": metadata.is_file(),
         "isDirectory": metadata.is_dir(),
-        "contentType": content_type.flatten(),
+        "contentType": content_type,
         "revision": metadata.is_file().then(|| file_revision(&metadata)),
     })))
 }
@@ -96,7 +103,7 @@ async fn handle_send(args: Value, workspace: &Path) -> Result<ToolOutput, String
     let args: TransferSendArgs =
         serde_json::from_value(args).map_err(|error| format!("Invalid arguments: {error}"))?;
     let path = resolve_path(&args.path, workspace);
-    let file = tokio::fs::File::open(&path)
+    let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|error| format!("Failed to open '{}': {error}", path.display()))?;
     let metadata = file
@@ -118,9 +125,10 @@ async fn handle_send(args: Value, workspace: &Path) -> Result<ToolOutput, String
         ));
     }
 
-    let content_type = mime_guess::from_path(&path)
-        .first()
-        .map(|mime| mime.essence_str().to_string());
+    let header = sniff_header(&mut file)
+        .await
+        .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+    let content_type = content_type_for(&header, &path).to_string();
     let length = metadata.len();
     let source = path.display().to_string();
     Ok(ToolOutput::with_body(
@@ -269,6 +277,31 @@ mod tests {
             receive.content_type.as_deref(),
             Some("application/octet-stream")
         );
+    }
+
+    #[tokio::test]
+    async fn send_and_stat_name_a_file_by_its_bytes() {
+        let workspace = test_workspace("mime");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let bytes = b"%PDF-1.4\n1 0 obj\n".to_vec();
+        tokio::fs::write(workspace.join("report.dat"), &bytes)
+            .await
+            .unwrap();
+
+        let sent = handle_send(json!({ "path": "report.dat" }), &workspace)
+            .await
+            .unwrap();
+        assert_eq!(sent.data["contentType"], "application/pdf");
+        let stat = handle_stat(json!({ "path": "report.dat" }), &workspace)
+            .await
+            .unwrap();
+        assert_eq!(stat.data["contentType"], "application/pdf");
+        assert_eq!(
+            sent.data["contentType"],
+            content_type_for(&bytes, &workspace.join("report.dat"))
+        );
+
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
     }
 
     #[tokio::test]

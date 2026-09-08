@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+mod content_type;
 pub mod control;
 pub mod device;
 mod file_revision;

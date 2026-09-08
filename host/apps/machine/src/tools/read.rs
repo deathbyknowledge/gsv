@@ -1,3 +1,4 @@
+use crate::content_type::{content_type_for, sniff_header};
 use crate::file_revision::file_revision;
 use crate::protocol::ToolDefinition;
 use crate::tools::{Tool, ToolBody, ToolOutput};
@@ -6,9 +7,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-const MIME_SNIFF_BYTES: u64 = 8192;
+use tokio::io::AsyncReadExt;
 
 pub struct ReadTool {
     workspace: PathBuf,
@@ -158,18 +157,10 @@ impl Tool for ReadTool {
         let mut file = tokio::fs::File::open(&resolved)
             .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        let mut header = Vec::new();
-        (&mut file)
-            .take(MIME_SNIFF_BYTES)
-            .read_to_end(&mut header)
+        let header = sniff_header(&mut file)
             .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        file.rewind()
-            .await
-            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-        let content_type = infer::get(&header)
-            .map(|kind| kind.mime_type())
-            .unwrap_or_else(|| infer_content_type(&resolved));
+        let content_type = content_type_for(&header, &resolved);
 
         // Any file has a resource representation: the reference a message or a
         // transfer works from, without reading the content.
@@ -304,45 +295,6 @@ fn select_text_lines(
     })
 }
 
-fn infer_content_type(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("md") => "text/markdown",
-        Some("json" | "map") => "application/json",
-        Some("yaml" | "yml") => "application/yaml",
-        Some("xml") => "application/xml",
-        Some("toml") => "application/toml",
-        Some("js" | "cjs" | "mjs" | "jsx") => "application/javascript",
-        Some("ts" | "tsx") => "application/typescript",
-        Some("html" | "htm") => "text/html",
-        Some("css") => "text/css",
-        Some("txt" | "log") => "text/plain",
-        Some("csv") => "text/csv",
-        Some("sh") => "text/x-shellscript",
-        Some("py") => "text/x-python",
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("wasm") => "application/wasm",
-        Some("data") => "application/octet-stream",
-        Some("mp3") => "audio/mpeg",
-        Some("wav") => "audio/wav",
-        Some("ogg") => "audio/ogg",
-        Some("webm") => "audio/webm",
-        Some("m4a") => "audio/mp4",
-        Some("mp4") => "video/mp4",
-        Some("mov") => "video/quicktime",
-        Some("pdf") => "application/pdf",
-        _ => "text/plain",
-    }
-}
-
 fn is_text_content_type(content_type: &str) -> bool {
     let content_type = content_type
         .split(';')
@@ -461,6 +413,26 @@ mod tests {
         assert!(result.data["resource"]["revision"]
             .as_str()
             .is_some_and(|revision| !revision.is_empty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn names_a_mislabelled_file_by_its_bytes_like_a_transfer_does() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = b"%PDF-1.4\n1 0 obj\n".to_vec();
+        fs::write(root.join("report.dat"), &bytes).unwrap();
+
+        let result = ReadTool::for_device(root.clone(), "laptop".to_string())
+            .execute(json!({ "path": "report.dat", "representation": "resource" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["resource"]["contentType"], "application/pdf");
+        assert_eq!(
+            result.data["resource"]["contentType"],
+            content_type_for(&bytes, &root.join("report.dat"))
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
