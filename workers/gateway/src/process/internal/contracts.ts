@@ -1,7 +1,7 @@
 /** Internal Process contracts primitives. */
 
 import type {
-  AiConfigResult, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
+  AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@earendil-works/pi-ai";
 import type { AssistantTurnClassification } from "../run-tick-policy";
@@ -121,10 +121,7 @@ export type TerminalResponsibilitySnapshot = {
   responsibilityIds: string[];
 };
 
-export type CommittedRunControlMessage = {
-  conversationId: string;
-  id: string;
-};
+export type CommittedRunControlMessage = Pick<ConversationMessage, "conversationId" | "id" | "text" | "media">;
 
 export type StagedResourceWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
   mediaId?: string;

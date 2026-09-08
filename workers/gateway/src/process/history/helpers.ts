@@ -7,7 +7,8 @@ import {
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../../prompts/compaction";
 import type { Context } from "@earendil-works/pi-ai";
 import {
-  type InteractionOrigin, type JsonObject, type ProcHistoryContextPolicy, type ResourceBlock, jsonObjectSchema,
+  type InteractionOrigin, type JsonObject, type ProcHistoryRecordData, type ProcHistoryContextPolicy,
+  type ResourceBlock, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import {
   type MessageRecord, normalizeMessageMetadata, parseAssistantMessageMeta, parseMessageMetadata,
@@ -135,7 +136,7 @@ function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: n
   for (const message of messages) {
     const remaining = maxChars - completeChars - (complete.length > 0 ? 1 : 0);
     if (message.content.length > remaining) break;
-    const line = JSON.stringify(serializeArchivedMessage(message));
+    const line = JSON.stringify(serializeArchivedMessage(message, new Map(), false));
     if (line.length > remaining) break;
     complete.push(line);
     completeChars += line.length + (complete.length > 1 ? 1 : 0);
@@ -177,7 +178,7 @@ function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: n
 function fitCompactionRecord(message: MessageRecord, maxChars: number): string | null {
   if (maxChars <= 0) return null;
   if (message.content.length <= maxChars) {
-    const full = JSON.stringify(serializeArchivedMessage(message));
+    const full = JSON.stringify(serializeArchivedMessage(message, new Map(), false));
     if (full.length <= maxChars) return full;
   }
 
@@ -200,6 +201,7 @@ function fitCompactionRecord(message: MessageRecord, maxChars: number): string |
 export function serializeArchivedMessage(
   message: MessageRecord,
   mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite> = new Map(),
+  includeRecords = true,
 ): JsonObject {
   const origin = parseInteractionOrigin(message.origin);
   const metadata = parseMessageMetadata(message.metadata) ?? undefined;
@@ -216,6 +218,7 @@ export function serializeArchivedMessage(
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return jsonObjectSchema.parse(JSON.parse(JSON.stringify({
+      records: includeRecords ? message.records?.map((record) => rewriteHistoryMedia(record, mediaRewrites)) : undefined,
       id: message.id,
       generation: message.generation,
       run_id: message.runId ?? undefined,
@@ -232,6 +235,7 @@ export function serializeArchivedMessage(
   }
 
   return jsonObjectSchema.parse(JSON.parse(JSON.stringify({
+    records: includeRecords ? message.records?.map((record) => rewriteHistoryMedia(record, mediaRewrites)) : undefined,
     id: message.id,
     generation: message.generation,
     run_id: message.runId ?? undefined,
@@ -244,6 +248,29 @@ export function serializeArchivedMessage(
     metadata,
     ts: message.createdAt,
   })));
+}
+
+function rewriteHistoryMedia(
+  record: ProcHistoryRecordData,
+  rewrites: ReadonlyMap<string, ArchivedMediaRewrite>,
+): ProcHistoryRecordData {
+  if (record.kind !== "message" && record.kind !== "note" && record.kind !== "result") return record;
+  if (!record.payload.media) return record;
+  const media = record.payload.media.map((item) => {
+    if (item.type === "resource") return item;
+    const rewrite = item.key ? rewrites.get(item.key) : undefined;
+    if (rewrite && "missing" in rewrite) {
+      const { key: _key, path: _path, ...metadata } = item;
+      return metadata;
+    }
+    if (rewrite) return { ...item, key: rewrite.key, path: rewrite.path, revision: rewrite.revision };
+    return item;
+  });
+  switch (record.kind) {
+    case "message": return { ...record, payload: { ...record.payload, media } };
+    case "note": return { ...record, payload: { ...record.payload, media } };
+    case "result": return { ...record, payload: { ...record.payload, media } };
+  }
 }
 
 export function parseArchivedMessageRecord(
@@ -273,6 +300,7 @@ export function parseArchivedMessageRecord(
     metadata,
     createdAt: record.ts,
   };
+  if (record.records !== undefined) archived.records = record.records;
   if (record.id !== undefined) archived.id = record.id;
   if (record.run_id !== undefined) archived.runId = record.run_id;
   if (toolCalls.success) archived.toolCalls = toolCalls.data;

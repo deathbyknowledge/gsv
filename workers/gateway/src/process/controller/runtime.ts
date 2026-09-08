@@ -25,7 +25,7 @@ import {
   type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent, type ProcIpcDeliverArgs,
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type InteractionOrigin, type JsonObject,
-  REQUEST_CANCEL_SIGNAL,
+  type ProcHistoryEvent, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
@@ -195,6 +195,8 @@ async function admitQueuedSend(
           runId,
           media: media ?? undefined,
           origin: origin ?? undefined,
+          queueKind: args.interaction ? "conversation.message" : "message",
+          provenance: args.interaction,
         });
         const nextRun: RunState = { runId };
         if (args.interaction) {
@@ -275,6 +277,8 @@ async function admitInterruptingSend(
         runId,
         media: hasMedia ? (stringifyStoredProcessMedia(incomingMedia) ?? undefined) : undefined,
         origin: origin ?? undefined,
+        queueKind: args.interaction ? "conversation.message" : "message",
+        provenance: args.interaction,
       });
       const nextRun: RunState = { runId };
       if (args.interaction) {
@@ -660,7 +664,15 @@ export class ProcessController {
     } catch (error) {
       if (this.host.handleRunStopped(runId)) return false;
       const message = `${prefix}: ${errorMessageFromUnknown(error)}`;
-      await this.appendRuntimeMessage(message, { runId });
+      await this.appendRuntimeMessage(message, {
+        runId,
+        event: {
+          kind: "runtime.failed",
+          payload: { reason: "schedule.error", error: errorMessageFromUnknown(error), prefix },
+          severity: "error",
+          audience: "both",
+        },
+      });
       await this.host.run.finishRun(runId, {
         reason: "schedule.error",
         status: "error",
@@ -692,6 +704,9 @@ export class ProcessController {
       runId: next.runId,
       media: next.media ?? undefined,
       origin: next.origin ?? undefined,
+      queueKind: next.kind,
+      provenance: next.provenance ? jsonObjectSchema.parse(JSON.parse(next.provenance)) : undefined,
+      record: next.record,
     });
     const run: RunState = {
       runId: next.runId,
@@ -855,6 +870,11 @@ export class ProcessController {
     }
     const renderedMessage = formatIpcMessage(deliveredArgs);
     const origin = serializeInteractionOrigin(deliveredArgs.origin);
+    const provenance = jsonObjectSchema.parse({
+      source: "process",
+      eventType: args.call ? "ipc.call" : "ipc.message",
+      delivery: JSON.parse(JSON.stringify(deliveredArgs)),
+    });
     const releaseAdmission = await this.acquireQueuedSendAdmission();
     try {
       if (!this.host.isInitialized()) {
@@ -865,6 +885,7 @@ export class ProcessController {
         if (this.host.runs.active) {
           const enqueueOptions: EnqueueMessageOptions = {
             origin: origin ?? undefined,
+            provenance: JSON.stringify(provenance),
           };
           if (args.call) enqueueOptions.kind = "ipc.call";
           this.host.store.queue.enqueue(runId, renderedMessage, enqueueOptions);
@@ -873,6 +894,8 @@ export class ProcessController {
         this.host.store.messages.appendMessage("user", renderedMessage, {
           runId,
           origin: origin ?? undefined,
+          queueKind: args.call ? "ipc.call" : "message",
+          provenance,
         });
         const nextRun: RunState = { runId };
         if (args.call) {
@@ -1379,11 +1402,15 @@ export class ProcessController {
     return completed.result;
   }
 
-  async appendRuntimeMessage(content: string, opts?: { runId?: string }): Promise<void> {
+  async appendRuntimeMessage(
+    content: string,
+    opts: { runId?: string; event: ProcHistoryEvent },
+  ): Promise<void> {
     const timestamp = Date.now();
     const messageId = this.host.store.messages.appendMessage("system", content, {
       runId: opts?.runId,
       createdAt: timestamp,
+      record: { kind: "event", payload: opts.event },
     });
     const change: JsonObject = {
       messageId,
@@ -1438,6 +1465,25 @@ export class ProcessController {
       }
       const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
         createdAt: timestamp,
+        record: {
+          kind: "event",
+          payload: {
+            kind: signal === "ipc.overdue" ? "ipc.overdue" : signal === "ipc.timeout" ? "ipc.timeout" : "ipc.reply",
+            payload: {
+              callId: payload.callId,
+              targetPid: payload.targetPid,
+              sourceRunId: payload.sourceRunId,
+              createdAt: payload.createdAt,
+              deadlineAt: payload.deadlineAt,
+              nextCheckAt: payload.nextCheckAt,
+              checkInCount: payload.checkInCount,
+              error: payload.error,
+              response: payload.response,
+            },
+            severity: signal === "ipc.timeout" || payload.error ? "error" : "info",
+            audience: "model",
+          },
+        },
       };
       if (nextRunId) {
         messageOptions.runId = nextRunId;
@@ -1459,6 +1505,15 @@ export class ProcessController {
             source: "process",
             eventType: "runtime.wake",
           }),
+          record: {
+            kind: "event",
+            payload: {
+              kind: "runtime.wake",
+              payload: { source: "process", reason: signal },
+              severity: "info",
+              audience: "model",
+            },
+          },
         });
       } else {
         currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
@@ -1521,6 +1576,12 @@ export class ProcessController {
         : await this.handleRuntimeEvent(formatProcessRuntimeEvent(event), event.type, {
             distinctRun: true,
             runId,
+            event: {
+              kind: "adapter.work.returned",
+              payload: { eventId, workPid: event.workPid },
+              severity: "info",
+              audience: "model",
+            },
           });
     if (!admission.ok) {
       throw new Error(admission.error);
@@ -1555,6 +1616,21 @@ export class ProcessController {
           eventId: args.runId,
           eventType: "schedule.event",
         }),
+        event: {
+          kind: "schedule.fired",
+          payload: {
+            runId: args.runId,
+            scheduleId: args.scheduleId,
+            scheduleName: args.scheduleName,
+            message: args.message,
+            data: args.data,
+            replyTo: args.replyTo,
+            scheduledAtMs: args.scheduledAtMs,
+            firedAtMs: args.firedAtMs,
+          },
+          severity: "info",
+          audience: "model",
+        },
       },
     );
     if (!admission.ok) {
@@ -1575,6 +1651,7 @@ export class ProcessController {
       provenance?: string;
       dedupeId?: string;
       responsibilityBatch?: ResponsibilityBatchState;
+      event?: ProcHistoryEvent;
     } = {},
   ): Promise<RuntimeEventAdmission> {
     if (!this.host.isInitialized()) {
@@ -1608,6 +1685,7 @@ export class ProcessController {
           kind: options.kind ?? "runtime.event",
           origin: serializeInteractionOrigin(options.origin) ?? undefined,
           provenance: options.provenance,
+          record: options.event ? { kind: "event", payload: options.event } : undefined,
         });
         return { messageId: -1, wakeRunId };
       }
@@ -1615,6 +1693,11 @@ export class ProcessController {
       if (content !== null) {
         const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
           createdAt: timestamp,
+          record: options.event ? { kind: "event", payload: options.event } : undefined,
+          queueKind: options.kind,
+          provenance: options.provenance
+            ? jsonObjectSchema.parse(JSON.parse(options.provenance))
+            : undefined,
         };
         if (nextRunId) {
           messageOptions.runId = nextRunId;
@@ -1952,6 +2035,19 @@ export class ProcessController {
       await this.handleRuntimeEvent(
         formatWatchedSignalMessage(frame.signal, watchedSignal.data),
         "signal.watch",
+        {
+          event: {
+            kind: "signal.watched",
+            payload: {
+              signal: frame.signal,
+              sourcePid: watchedSignal.data.sourcePid,
+              watch: watchedSignal.data.watch,
+              payload: watchedSignal.data.payload,
+            },
+            severity: "info",
+            audience: "model",
+          },
+        },
       );
       return;
     }
@@ -1985,6 +2081,15 @@ export class ProcessController {
             if (this.host.store.state.getValue(noticeKey)) return null;
             const id = this.host.store.messages.appendMessage("system", message, {
               runId,
+              record: {
+                kind: "event",
+                payload: {
+                  kind: "delivery.failed",
+                  payload: { phase: "message", noticeId, runId, error: message },
+                  severity: "error",
+                  audience: "both",
+                },
+              },
             });
             this.host.store.state.setValue(noticeKey, String(id));
             const noticeIds = abortedRunIdsSchema.parse(

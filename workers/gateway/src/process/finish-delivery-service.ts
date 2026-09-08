@@ -41,7 +41,24 @@ export class ProcessFinishDeliveryService {
         const messageId = this.host.store.messages.appendMessage(
           "system",
           "Run completion signaling stopped after repeated transport failures. The completed activity remains in this process history.",
-          { runId },
+          {
+            runId,
+            record: {
+              kind: "event",
+              payload: {
+                kind: "delivery.failed",
+                payload: {
+                  phase: "run-finish",
+                  runId,
+                  error: errorMessageFromUnknown(error),
+                  attempts,
+                  maxAttempts: MAX_RUN_FINISH_DELIVERY_ATTEMPTS,
+                },
+                severity: "error",
+                audience: "both",
+              },
+            },
+          },
         );
         void this.host.signals.changed(["messages"], { runId, messageId }).catch((cause) => {
           console.warn(

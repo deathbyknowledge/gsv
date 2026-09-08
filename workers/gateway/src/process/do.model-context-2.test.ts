@@ -507,6 +507,7 @@ describe("model context", () => {
     try {
       await runInProcess(stub, async (process) => {
         process.runs.active = { runId };
+        process.store.messages.appendMessage("user", "Send an update.", { runId });
         process.streams.complete = vi.fn(async () => {});
         const committing = process.run.executeRunControlAction(
           runId,
@@ -564,7 +565,7 @@ describe("model context", () => {
       const emitted = captureSignals(process);
       const offered: string[][] = [];
       process.run.scheduleTick = vi.fn(async () => {});
-      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "notice" }));
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "notice", text: "I wrote a reply but did not send it. Ask me again." }));
       mockGeneration(process, async (request: any) => {
         offered.push((request.context?.tools ?? []).map((tool: any) => tool.name));
         return terminalTestResponse([{ type: "text", text: "This is only a draft." }]);
@@ -842,7 +843,7 @@ describe("model context", () => {
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
       process.run.scheduleTick = vi.fn(async () => {});
-      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent" }));
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent", text: "all done" }));
       mockGeneration(process, async () => {
         return terminalTestResponse([
           { type: "toolCall", id: "send-1", name: "Send", arguments: { text: "all done", yield: true } },
@@ -1142,7 +1143,7 @@ describe("model context", () => {
       const emitted = captureSignals(process);
       process.streams.emitProjection = vi.fn(async () => {});
       process.run.scheduleTick = vi.fn(async () => {});
-      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:home", id: "never" }));
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:home", id: "never", text: "" }));
       mockGeneration(process, async () => {
         return terminalTestResponse([
           { type: "text", text: "Nothing to tell the person; closing quietly." },

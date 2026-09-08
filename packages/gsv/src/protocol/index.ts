@@ -38,4 +38,6 @@ export * from "./managed";
 export * from "./managed-inference-stream";
 export * from "./mail";
 export * from "./json";
+export * from "./events";
+export * from "./history";
 export type * from "./wire-frame";

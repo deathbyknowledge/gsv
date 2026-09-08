@@ -16,6 +16,7 @@ import {
 import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
+  type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
@@ -37,7 +38,7 @@ import type { ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
 import {
   adaptContextMessage, adaptContextTool, adaptGeneratedAssistantMessage, buildAssistantMessageMetadata,
-  modelMetadataFromAiConfig,
+  modelMetadataFromAiConfig, normalizeOptionalString,
 } from "../internal/messages";
 import { formatAiModelStackLabel, formatGenerationFailure } from "../context/formatters";
 import {
@@ -55,6 +56,7 @@ import {
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
+import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
 import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../../installation/lifecycle";
 import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
@@ -312,6 +314,18 @@ export class ProcessRun {
         options.actionId,
         request,
       );
+      this.host.store.messages.appendRunRecord(options.runId, {
+        kind: "message",
+        payload: {
+          direction: "out",
+          text: committedMessage.text,
+          media: committedMessage.media ?? [],
+          origin: { kind: "run-control", provenance: { source: "process" } },
+          conversationId: committedMessage.conversationId,
+          conversationMessageId: committedMessage.id,
+          deliveryId: options.actionId,
+        },
+      });
       this.consumeRunOutputMedia(options.runId, options.media);
       this.host.streams.deleteAction(options.runId, options.actionId);
       return {
@@ -504,7 +518,18 @@ export class ProcessRun {
       terminalCorrectionRounds: (current.terminalCorrectionRounds ?? 0) + 1,
     }));
     if (!correctedRun) return;
-    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE);
+    await this.host.history.appendSystemMessage(runId, YIELD_CORRECTION_MESSAGE, {
+      kind: "event",
+      payload: {
+        kind: "correction.text-only",
+        payload: {
+          attempt: correctedRun.terminalCorrectionRounds ?? 1,
+          limit: MAX_TERMINAL_CORRECTION_ROUNDS,
+        },
+        severity: "warn",
+        audience: "model",
+      },
+    });
     if (!this.host.handleRunStopped(runId)) await this.scheduleTick(runId);
   }
 
@@ -522,7 +547,33 @@ export class ProcessRun {
           text: CORRECTION_FAILURE_NOTICE,
           media: [],
         });
-        await this.commitRunControlMessage(runId, actionId, request);
+        const committed = await this.commitRunControlMessage(runId, actionId, request);
+        this.host.store.messages.appendRunRecord(runId, {
+          kind: "message",
+          payload: {
+            direction: "out",
+            text: committed.text,
+            media: committed.media ?? [],
+            origin: { kind: "run-control", provenance: { source: "process" } },
+            conversationId: committed.conversationId,
+            conversationMessageId: committed.id,
+            deliveryId: actionId,
+          },
+        });
+        this.host.store.messages.appendRunRecord(runId, {
+          kind: "event",
+          payload: {
+            kind: "correction.exhausted",
+            payload: {
+              attempts: run.terminalCorrectionRounds ?? 0,
+              limit: MAX_TERMINAL_CORRECTION_ROUNDS,
+              conversationId: committed.conversationId,
+              messageId: committed.id,
+            },
+            severity: "error",
+            audience: "person",
+          },
+        });
       } finally {
         release();
       }
@@ -554,8 +605,22 @@ export class ProcessRun {
     else if (transition) await this.completeRunTransition(transition);
   }
 
-  async failWithSystemMessage(runId: string, reason: string, message: string): Promise<void> {
-    await this.host.history.appendSystemMessage(runId, message);
+  async failWithSystemMessage(
+    runId: string,
+    reason: string,
+    message: string,
+    details?: Omit<ProcHistoryEventPayload<"context.failed">, "reason">,
+  ): Promise<void> {
+    const detail = details ?? { error: message };
+    await this.host.history.appendSystemMessage(runId, message, {
+      kind: "event",
+      payload: {
+        kind: "context.failed",
+        payload: { reason, ...detail },
+        severity: "error",
+        audience: "both",
+      },
+    });
     await this.finishRun(runId, {
       reason,
       status: "error",
@@ -580,6 +645,19 @@ export class ProcessRun {
           source: "process",
           eventType: "runtime.wake",
         }),
+        record: {
+          kind: "event",
+          payload: {
+            kind: "runtime.wake",
+            payload: {
+              source: "process",
+              reason: "pending-events",
+              pendingEvents: run.pendingRuntimeEvents ?? 0,
+            },
+            severity: "info",
+            audience: "model",
+          },
+        },
       });
     }
     const next = this.host.controller.claimNextQueuedRun();
@@ -1265,7 +1343,15 @@ export class ProcessRun {
       model: config.model,
     });
     if (reason === "generation.empty") console.error(`[Process] ${message}`);
-    await this.host.history.appendSystemMessage(runId, displayError);
+    await this.host.history.appendSystemMessage(runId, displayError, {
+      kind: "event",
+      payload: {
+        kind: "generation.failed",
+        payload: { reason, error: message, provider: config.provider, model: config.model },
+        severity: "error",
+        audience: "both",
+      },
+    });
     if (this.host.handleRunStopped(runId)) return null;
     return {
       kind: "finish",
@@ -1340,6 +1426,19 @@ export class ProcessRun {
         !result.ok,
         runId,
         result.ok ? "completed" : "failed",
+        undefined,
+        result.ok
+          ? { output: { action: result.action, finish: result.finish, delivery: result.delivery } }
+          : {
+            output: {
+              action: result.action,
+              finish: false,
+              delivery: result.delivery,
+              failureKind: result.failureKind,
+              attempt,
+            },
+            error: { message: result.error },
+          },
       );
       this.host.store.tools.clearRun(runId);
       return true;
@@ -1366,6 +1465,11 @@ export class ProcessRun {
         true,
         runId,
         "failed",
+        undefined,
+        {
+          output: { failureKind: "execution", finish: false },
+          error: { message: error },
+        },
       );
       this.host.store.tools.clearRun(runId);
     });
@@ -1491,6 +1595,18 @@ export class ProcessRun {
           toolCalls: turn.returnedToolCalls,
         }),
         metadata,
+        records: assistantHistoryRecords({
+          text: turn.text,
+          thinking: turn.thinking,
+          toolCalls: turn.returnedToolCalls,
+          media: outputMedia,
+          runId,
+          runControlCallIds: turn.runControlCalls.map(({ toolCall }) => toolCall.id),
+          resolveTarget: (syscall, args) => {
+            const { target } = this.host.tools.prepareToolArgs(syscall, args).args;
+            return normalizeOptionalString(target) ?? null;
+          },
+        }),
       };
       if (outputMedia.length > 0) {
         options.media = stringifyStoredProcessMedia(outputMedia) ?? undefined;
@@ -1553,6 +1669,14 @@ export class ProcessRun {
         true,
         runId,
         "failed",
+        undefined,
+        {
+          output: null,
+          error: {
+            code: "tool.not-offered",
+            message: `Tool "${toolCall.name}" was not offered for this generation`,
+          },
+        },
       );
     }
     if (invalidRunControl) {
@@ -1571,6 +1695,14 @@ export class ProcessRun {
       true,
       runId,
       "failed",
+      undefined,
+      {
+        output: { failureKind: "command", finish: false },
+        error: {
+          code: "run-control.mixed-actions",
+          message: "message send and yield must be issued separately from other tool actions",
+        },
+      },
     );
   }
 

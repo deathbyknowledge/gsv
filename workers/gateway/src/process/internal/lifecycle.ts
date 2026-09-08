@@ -1,7 +1,7 @@
 /** Internal Process lifecycle primitives. */
 
 import {
-  type InteractionOrigin, type JsonValue, type ProcKillResult, type ProcToolResultOutcome, type ResourceBlock,
+  type InteractionOrigin, type JsonValue, type ProcHistoryRecordData, type ProcKillResult, type ProcToolResultOutcome, type ResourceBlock,
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import type { MessageMetadata, MessageRole } from "../store";
@@ -60,6 +60,7 @@ export type ArchivedMessageRecord = {
   origin?: InteractionOrigin;
   metadata?: MessageMetadata;
   createdAt?: number;
+  records?: ProcHistoryRecordData[];
 };
 
 export type ArchivedMediaRewrite =

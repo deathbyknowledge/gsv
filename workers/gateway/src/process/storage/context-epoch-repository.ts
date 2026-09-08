@@ -1,5 +1,7 @@
 import type { ProcessStore } from "../store";
-import type { JsonObject, ResponsibilityRecord, ResponsibilityTransition } from "@humansandmachines/gsv/protocol";
+import type {
+  JsonObject, ProcHistoryRecordData, ResponsibilityRecord, ResponsibilityTransition,
+} from "@humansandmachines/gsv/protocol";
 import {
   contextEpochFromRow, parseContextEpochJson, type ContextEpochRecord, type ContextEpochRow,
 } from "./store-codecs";
@@ -99,7 +101,18 @@ export class ProcessContextEpochRepository {
     if (transition.revision <= epoch.observedR12yRevision) {
       return epoch.observedR12yRevision;
     }
-    const messageId = this.store.messages.appendMessage("system", content, { runId });
+    const messageId = this.store.messages.appendMessage("system", content, {
+      runId,
+      record: {
+        kind: "event",
+        payload: {
+          kind: "responsibility.revision",
+          payload: { epochId, transition },
+          severity: "info",
+          audience: "model",
+        },
+      },
+    });
     this.store.sql.exec(
       `INSERT INTO context_epoch_transitions (
         epoch_id, revision, transition_json, message_id, created_at
@@ -138,6 +151,7 @@ export class ProcessContextEpochRepository {
     kind: string;
     observedProjection?: JsonObject;
     content: string;
+    record: ProcHistoryRecordData;
     runId: string;
     createdAt: number;
   }): number {
@@ -148,6 +162,7 @@ export class ProcessContextEpochRepository {
     const messageId = this.store.messages.appendMessage("system", input.content, {
       runId: input.runId,
       createdAt: input.createdAt,
+      record: input.record,
     });
     this.store.sql.exec(
       `INSERT INTO context_epoch_message_refs (
@@ -209,7 +224,7 @@ export class ProcessContextEpochRepository {
   deleteContextEpochOwnedMessages(epochId: string): void {
     this.store.sql.exec(
       `DELETE FROM messages
-       WHERE id IN (
+       WHERE COALESCE(group_message_id, id) IN (
          SELECT message_id FROM context_epoch_transitions WHERE epoch_id = ?
          UNION
          SELECT message_id FROM context_epoch_message_refs WHERE epoch_id = ?
