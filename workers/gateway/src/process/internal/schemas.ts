@@ -2,6 +2,7 @@
 
 import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
+import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@earendil-works/pi-ai";
 import { jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -54,6 +55,11 @@ export const SEND_TOOL: Tool = {
         type: "boolean",
         description: "True when all work is complete; the run ends after this call.",
       },
+      attach: {
+        type: "array",
+        items: { type: "string" },
+        description: "Files to send: a path on the cloud home, target:path for a file on a place, or [target]:path when the target id itself has a colon.",
+      },
     },
     additionalProperties: false,
   },
@@ -62,6 +68,7 @@ export const SEND_TOOL: Tool = {
 export const sendToolArgsSchema = z.object({
   text: z.string().optional(),
   yield: z.boolean().optional(),
+  attach: z.array(z.string()).max(MAX_MESSAGE_MEDIA_ITEMS).optional(),
 }).strict();
 
 export const routedFetchOptionsSchema = z.object({

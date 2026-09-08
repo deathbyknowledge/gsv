@@ -5,6 +5,7 @@ import {
   classifyAssistantTurn,
   nextAiConfigFallback,
 } from "./run-tick-policy";
+import { parseAttachPath } from "./run-control-command";
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {
   return {
@@ -102,6 +103,34 @@ describe("run tick policy", () => {
     expect(classifyAssistantTurn(assistant([send("s6", { text: "x" }), read]), ["Read", "Send"]).kind).toBe(
       "invalid-run-control",
     );
+  });
+
+  it("carries the files a Send names, trimmed and once each, and treats a send with files as a message", () => {
+    const parsedOf = (content: AssistantMessage["content"]) =>
+      classifyAssistantTurn(assistant(content), ["Send"]).runControlCalls[0]?.parsed;
+    const withFiles = {
+      type: "toolCall" as const,
+      id: "s7",
+      name: "Send",
+      arguments: { text: "here", attach: [" laptop:/home/e/report.pdf", "/tmp/a.png", "", "/tmp/a.png"] },
+    };
+    expect(parsedOf([withFiles])).toEqual({
+      ok: true,
+      command: { action: "message", text: "here", finish: false, attach: ["laptop:/home/e/report.pdf", "/tmp/a.png"] },
+    });
+    const filesOnly = { type: "toolCall" as const, id: "s8", name: "Send", arguments: { yield: true, attach: ["/tmp/a.png"] } };
+    expect(parsedOf([filesOnly])).toEqual({
+      ok: true,
+      command: { action: "message", text: "", finish: true, attach: ["/tmp/a.png"] },
+    });
+  });
+
+  it("reads where an attached file lives the way cp does", () => {
+    expect(parseAttachPath("/tmp/a.png")).toEqual({ target: "gsv", path: "/tmp/a.png" });
+    expect(parseAttachPath("~/notes/a.md")).toEqual({ target: "gsv", path: "~/notes/a.md" });
+    expect(parseAttachPath("laptop:/home/e/report.pdf")).toEqual({ target: "laptop", path: "/home/e/report.pdf" });
+    expect(parseAttachPath("[desk]:C:\\Users\\e\\report.pdf")).toEqual({ target: "desk", path: "C:\\Users\\e\\report.pdf" });
+    expect(parseAttachPath("[]:/tmp/a.png")).toEqual({ target: "gsv", path: "/tmp/a.png" });
   });
 
   it("skips duplicate fallback stacks without carrying fallback chains", () => {

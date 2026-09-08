@@ -139,6 +139,8 @@ export const runStateSchema = z.object({
   responsibilityBatches: z.array(responsibilityBatchStateSchema).optional(),
   offeredToolNames: z.array(z.string()).optional(),
   terminalCorrectionRounds: z.number().optional(),
+  /** Reads the person approved in this run, as `target\0path`: that approval carries to a Send that attaches the same file. */
+  approvedReads: z.array(z.string()).optional(),
   terminalCommandFailures: z.number().optional(),
   terminalDeliveryFailures: z.number().optional(),
   config: aiConfigResultSchema.optional(),

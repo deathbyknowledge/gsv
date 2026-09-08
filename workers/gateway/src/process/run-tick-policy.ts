@@ -133,9 +133,12 @@ function parseRunControlSendCall(toolCall: ToolCall): RunControlCall | null {
   }
   const text = args.data.text ?? "";
   const finish = args.data.yield === true;
-  const command: RunControlCommand = finish && !text.trim()
-    ? { action: "message", text: "", finish: true, emptyMeansYield: true }
-    : { action: "message", text, finish };
+  const attach = [...new Set((args.data.attach ?? []).map((spec) => spec.trim()).filter((spec) => spec !== ""))];
+  const command: RunControlCommand = attach.length > 0
+    ? { action: "message", text, finish, attach }
+    : finish && !text.trim()
+      ? { action: "message", text: "", finish: true, emptyMeansYield: true }
+      : { action: "message", text, finish };
   return { toolCall, parsed: { ok: true, command } };
 }
 

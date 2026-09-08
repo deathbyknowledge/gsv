@@ -17,7 +17,11 @@ import {
   type ResponsibilityRecord, jsonObjectSchema, type AiConfigResult, type AiTextGenerateConfig,
   type AiTextGenerateOptions, type ProcUsageState, jsonValueSchema, type JsonObject, type ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";
-import type { RunControlCommand, RunControlCommandParseResult } from "../run-control-command";
+import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
+import { mediaTypeFromContentType } from "../history/helpers";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
+import { readPathKey } from "../tools/runtime";
+import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
@@ -77,7 +81,7 @@ export class ProcessRun {
     runId: string,
     actionId: string,
     parsed: RunControlCommandParseResult,
-    media: RunOutputMedia[],
+    stagedMedia: RunOutputMedia[],
   ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
@@ -88,6 +92,39 @@ export class ProcessRun {
         failureKind: "command",
         error: parsed.error,
       };
+    }
+    // a finishing call is admitted by the responsibilities first, before anything it names is staged:
+    // a refused finish then leaves nothing behind for a later Send to carry by accident
+    let responsibilityAdmissionKey: string | undefined;
+    if (parsed.command.action === "yield" || parsed.command.finish) {
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (!responsibilityCheck.ok) {
+        return {
+          ok: false,
+          action: parsed.command.action,
+          text: parsed.command.action === "message" ? parsed.command.text : "",
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: responsibilityCheck.error,
+        };
+      }
+      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
+    }
+    // files the Send names are referenced on their place, retained and staged; a message goes out whole or not at all
+    let media = stagedMedia;
+    if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
+      const attached = await this.attachSendFiles(runId, parsed.command.attach);
+      if (!attached.ok) {
+        return {
+          ok: false,
+          action: "message",
+          text: parsed.command.text,
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: attached.error,
+        };
+      }
+      media = await this.host.resources.promoteRunOutputMedia(runId);
     }
     // a Send with yield and nothing to say is a bare yield, unless staged media makes it a final message.
     // Whatever the turn narrated as assistant text is Process activity, never a reply: it does not hold a yield.
@@ -108,21 +145,6 @@ export class ProcessRun {
         error: "Message requires non-empty text or attached media",
       };
     }
-    let responsibilityAdmissionKey: string | undefined;
-    if (command.action === "yield" || command.finish) {
-      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
-      if (!responsibilityCheck.ok) {
-        return {
-          ok: false,
-          action: command.action,
-          text: command.action === "message" ? command.text : "",
-          delivery: { kind: "none" },
-          failureKind: "command",
-          error: responsibilityCheck.error,
-        };
-      }
-      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
-    }
     if (command.action === "yield") {
       await this.host.streams.silence(runId, actionId);
       return {
@@ -142,6 +164,87 @@ export class ProcessRun {
       media,
       responsibilityAdmissionKey,
     });
+  }
+
+  /**
+   * Files a Send names become immutable references through `fs.read` on their
+   * place, then are retained and staged the way `message attach` stages them.
+   * The reads are the process's own calls, so the ledger shows them, and they
+   * obey the person's tool approval rules the way a Read does: a file that
+   * would need approval is refused until it has been read once.
+   */
+  async attachSendFiles(
+    runId: string,
+    specs: readonly string[],
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const media: ResourceBlock[] = [];
+    const run = this.host.runs.active;
+    // the same policy a Read would face, resolved from the account and the remembered approvals when the run has none yet
+    const policy = run?.runId === runId ? this.host.tools.resolveToolApprovalPolicy(run) : DEFAULT_TOOL_APPROVAL_POLICY;
+    for (const spec of specs) {
+      const { target, path } = parseAttachPath(spec);
+      const readArgs: FsReadArgs = target === "gsv"
+        ? { path, representation: "reference" }
+        : { target, path, representation: "reference" };
+      const approval = resolveToolApproval(policy, "fs.read", readArgs);
+      if (approval.action === "deny") {
+        return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
+      }
+      // the person approved reading this file earlier in the run, once or for good; that approval carries here
+      const approvedRead = (run?.approvedReads ?? []).includes(readPathKey(readArgs) ?? "");
+      if (approval.action === "ask" && !approvedRead) {
+        return {
+          ok: false,
+          error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
+        };
+      }
+      const referenced = await this.referenceFile(runId, spec, readArgs);
+      if (!referenced.ok) return referenced;
+      const ref = referenced.ref;
+      // the place answers for itself and nothing else: a reference naming another place would be retained from
+      // there under this process's authority, so it is refused
+      if (ref.target !== target) {
+        return { ok: false, error: `cannot attach ${spec}: ${target} answered with a reference for ${ref.target}` };
+      }
+      media.push({
+        type: "resource",
+        ref,
+        mediaType: mediaTypeFromContentType(ref.contentType),
+        filename: ref.path.split(/[/\\]/).pop() || "attachment",
+      });
+    }
+    const attached = await this.host.resources.handleProcRunAttach({ runId, media });
+    return attached.ok ? { ok: true } : { ok: false, error: attached.error };
+  }
+
+  /**
+   * The immutable reference for a file, from the place that holds it. A daemon
+   * from before the `reference` representation still answers an image by
+   * reference when asked for the `resource` one, so that is the fallback; for
+   * anything else it has to be updated first.
+   */
+  async referenceFile(
+    runId: string,
+    spec: string,
+    readArgs: FsReadArgs,
+  ): Promise<{ ok: true; ref: FileResourceReference } | { ok: false; error: string }> {
+    const read = async (args: FsReadArgs): Promise<FsReadResult> => {
+      try {
+        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId));
+      } catch (error) {
+        return { ok: false, error: errorMessageFromUnknown(error) };
+      }
+    };
+    let result = await read(readArgs);
+    if (result.ok && "kind" in result && !result.resource && result.kind === "image") {
+      result = await read({ ...readArgs, representation: "resource" });
+    }
+    if (!result.ok) return { ok: false, error: `cannot attach ${spec}: ${result.error}` };
+    if (!("kind" in result)) return { ok: false, error: `cannot attach ${spec}: it is a folder` };
+    if (!result.resource) {
+      return { ok: false, error: `cannot attach ${spec}: the GSV on that place must be updated before it can send this file` };
+    }
+    return { ok: true, ref: result.resource };
   }
 
   async executeMessageRunControlAction(options: {
