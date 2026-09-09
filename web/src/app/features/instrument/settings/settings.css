@@ -1,0 +1,51 @@
+.settings { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.settings-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 12rem minmax(0, 1fr); }
+.settings-sections { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; padding: calc(var(--instrument-header-height) + 2rem) 1.5rem 2rem; border-right: 1px solid var(--border); overflow-y: auto; }
+.settings-sections .active { color: var(--accent); }
+.settings-content { overflow: auto; min-height: 0; padding: calc(var(--instrument-header-height) + 2rem) clamp(1.25rem, 4cqw, 4rem) 5rem; }
+.settings-content:has(> .gsv-loading-state.is-panel) { flex: 1; padding: var(--instrument-header-height) 0 0; }
+.settings-content section { max-width: 54rem; }
+.settings h1, .settings h2 { font: inherit; color: var(--text); margin: 0 0 1.5rem; }
+.settings h1 { font-size: 1.3rem; text-transform: lowercase; }
+.settings h2 { margin-top: 2.5rem; }
+.settings p { line-height: 1.7; }
+.settings-intro { max-width: 65ch; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--gsv-font-prose); font-size: 1rem; }
+.settings-muted, .settings small { color: var(--text-dim); }
+.settings-error { color: var(--error); overflow-wrap: anywhere; }
+.settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.settings label { display: flex; flex-direction: column; align-items: stretch; gap: .65rem; margin-bottom: 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .8rem; }
+.settings input:not([type="checkbox"]), .settings select, .settings textarea { border: 1px solid var(--border); background: var(--void); color: var(--text); padding: .7rem; font: inherit; border-radius: 0; min-width: 0; width: 100%; box-sizing: border-box; }
+.settings input:focus-visible, .settings select:focus-visible, .settings textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.settings button:disabled, .settings select:disabled, .settings input:disabled { opacity: .45; cursor: not-allowed; }
+.settings textarea[readonly] { color: var(--text-dim); }
+.settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
+.settings-form { padding-bottom: 2rem; }
+.settings-check { flex-direction: row !important; align-items: center !important; }
+.settings-list { padding: 0; list-style: none; }
+.settings-list > li { display: flex; flex-direction: column; gap: .7rem; border-top: 1px solid var(--border); padding: 1.25rem 0; font-size: .8rem; overflow-wrap: anywhere; }
+.settings-list strong { font-weight: 500; }
+.settings-list span:not(.settings-actions span) { color: var(--text-dim); }
+.settings-model-stack { list-style: none; margin: 1.5rem 0; padding: 0; }
+.settings-model-stack > li { display: grid; grid-template-columns: 7rem minmax(0, 1fr) auto; align-items: center; gap: 1rem; padding: 1.25rem 0; border-top: 1px solid var(--border); font-size: .8rem; }
+.settings-model-position { color: var(--text-dim); font-size: .7rem; }
+.settings-model-stack > li:first-child .settings-model-position { color: var(--accent); }
+.settings-model-details { display: flex; flex-direction: column; gap: .55rem; overflow-wrap: anywhere; }
+.settings-model-details strong { color: var(--text); font-weight: 500; }
+.settings-model-details > span { color: var(--text-dim); font-size: .75rem; }
+.settings-model-stack .settings-actions { justify-content: flex-end; }
+.settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
+.settings-rules { padding-left: 1.6rem; }
+.settings-rules > li { padding: 1rem 0; border-top: 1px solid var(--border); }
+.settings-rules label { display: inline-flex; width: min(14rem, 100%); margin-right: 1rem; vertical-align: top; }
+.settings-instruction-editor { min-height: 24rem; resize: vertical; line-height: 1.7; tab-size: 2; }
+@container instrument (max-width: 650px) {
+  .settings-body { display: flex; flex-direction: column; }
+  .settings-sections { flex-direction: row; gap: 1rem; padding: calc(var(--instrument-header-height) + 1rem) 1rem 1rem; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .settings-sections button { white-space: nowrap; }
+  .settings-content { padding: 1.5rem 1rem 4rem; }
+  .settings-content:has(> .gsv-loading-state.is-panel) { padding: 0; }
+  .settings-rules label { width: 100%; }
+  .settings-model-stack > li { grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; }
+  .settings-model-position { grid-column: 1 / -1; }
+  .settings-model-details, .settings-model-stack .settings-actions { grid-column: 1 / -1; }
+}

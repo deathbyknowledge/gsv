@@ -1,0 +1,16 @@
+import { useEffect } from "preact/hooks";
+import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+
+export type SettingsSectionProps = {
+  account: ConsoleAccount;
+  active: boolean;
+  onDirty: (dirty: boolean) => void;
+};
+
+export function useSettingsDirty(dirty: boolean, report: (dirty: boolean) => void) {
+  useEffect(() => { report(dirty); }, [dirty, report]);
+}
+
+export function SettingsError({ error }: { error: Error | null }) {
+  return error ? <p class="settings-error" role="alert">{error.message}</p> : null;
+}

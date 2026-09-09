@@ -165,7 +165,7 @@ function reasoningOptionLabel(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
-export function reasoningOptions(inherited: string | undefined): SelectOption[] {
+export function reasoningOptions(inherited: string | undefined): { value: string; label: string }[] {
   const inheritedLabel = inherited?.trim();
   return REASONING_VALUES.map((value) => value
     ? { label: reasoningOptionLabel(value), value }
