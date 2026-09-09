@@ -44,6 +44,17 @@ export function instructionPath(name: string): string {
   return `~/context.d/${name}`;
 }
 
+export function newInstructionName(value: string): string {
+  const stem = value.trim().replace(/\.md$/i, "");
+  if (!stem.trim() || stem === "." || stem === ".." || /[\x00-\x1f\x7f]/.test(stem)) {
+    throw new Error("Give your instruction a file name");
+  }
+  const name = `${stem}.md`;
+  if (name.includes("/") || name.includes("\\")) throw new Error("Use a file name without folders");
+  instructionPath(name);
+  return name;
+}
+
 export function signInUrl(value: string | null): string | null {
   if (!value) return null;
   try {

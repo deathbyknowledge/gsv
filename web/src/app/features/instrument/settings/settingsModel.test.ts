@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
-import { canConfigure, instructionPath, readSettingsPolicy, signInUrl } from "./settingsModel";
+import { canConfigure, instructionPath, newInstructionName, readSettingsPolicy, signInUrl } from "./settingsModel";
 
 const account: ConsoleAccount = { uid: 1001, username: "viewer", displayName: "Viewer", relation: "self", runnable: false, gecos: "", capabilities: ["fs.*", "sys.mcp.list"] };
 
@@ -41,5 +41,14 @@ describe("Settings editing boundaries", () => {
     expect(signInUrl("javascript:alert(1)")).toBeNull();
     expect(signInUrl("data:text/html,example")).toBeNull();
     expect(signInUrl("not a url")).toBeNull();
+  });
+
+  it("creates Markdown names without allowing a folder or an empty name", () => {
+    expect(newInstructionName("  writing style  ")).toBe("writing style.md");
+    expect(newInstructionName("10-preferences.md")).toBe("10-preferences.md");
+    expect(newInstructionName("Préférences.MD")).toBe("Préférences.md");
+    for (const name of ["", " ", ".md", ".", "..", "../other", "/tmp/file.md", "nested/file.md", "a\\b", "a\0b", "a\nb"]) {
+      expect(() => newInstructionName(name)).toThrow();
+    }
   });
 });

@@ -70,6 +70,9 @@
 .settings-rules > li { padding: 1rem 0; border-top: 1px solid var(--border); }
 .settings-rules label { display: inline-flex; width: min(14rem, 100%); margin-right: 1rem; vertical-align: top; }
 .settings-instruction-editor { min-height: 24rem; resize: vertical; line-height: 1.7; tab-size: 2; }
+.settings-instruction-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.5rem; }
+.settings-instruction-heading :is(h1, h2) { margin: 0; }
+.settings-instruction-removal { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 @container instrument (max-width: 650px) {
   .settings-body { display: flex; flex-direction: column; }
   .settings-sections { flex-direction: row; gap: 1rem; padding: calc(var(--instrument-header-height) + 1rem) 1rem 1rem; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
