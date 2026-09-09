@@ -179,6 +179,8 @@
   cursor: pointer;
 }
 .receipt-toggle:hover, .zen .work-link:hover { color: var(--text-hi); }
+.receipt-toggle { color: var(--label); }
+.receipt-toggle .place { color: var(--target); }
 .zen .work-link { text-decoration: underline; text-underline-offset: 3px; }
 .receipt em { font-style: normal; color: var(--path); }
 .receipt .n { color: var(--faint); }
