@@ -47,6 +47,7 @@ export type PromptLineHandle = {
 // The prompt grows from that first line as text wraps, up to a scrollable height.
 export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
@@ -56,11 +57,18 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const measure = useCallback((reveal = false) => {
     const input = inputRef.current;
     const mirror = mirrorRef.current;
-    if (!input || !mirror) return;
+    const field = fieldRef.current;
+    const chip = chipRef.current;
+    if (!input || !mirror || !field || !chip) return;
+    field.style.setProperty("--prompt-indent", `${chip.offsetWidth + 12}px`);
     const style = getComputedStyle(input);
+    const fontSize = parseFloat(style.fontSize);
+    const lineHeight = parseFloat(style.lineHeight);
+    field.style.setProperty("--prompt-font-size", style.fontSize);
     // Form controls can have a different computed font size on narrow screens.
     mirror.style.font = style.font;
     mirror.style.letterSpacing = style.letterSpacing;
+    mirror.style.textIndent = style.textIndent;
     const at = input.selectionStart;
     const marker = document.createElement("span");
     // Keep the suffix in the mirror: word wrapping depends on text after the caret too.
@@ -69,14 +77,17 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     mirror.replaceChildren(document.createTextNode(input.value.slice(0, at)), marker);
     const height = `${mirror.offsetHeight}px`;
     if (input.style.height !== height) input.style.height = height;
+    const lineTop = Math.round(marker.offsetTop / lineHeight) * lineHeight;
     if (reveal && document.activeElement === input && input.selectionStart === input.selectionEnd) {
-      const bottom = marker.offsetTop + parseFloat(style.lineHeight);
-      if (marker.offsetTop < input.scrollTop) input.scrollTop = marker.offsetTop;
+      const bottom = lineTop + lineHeight;
+      if (lineTop < input.scrollTop) input.scrollTop = lineTop;
       else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
     }
+    chip.style.top = `${Math.max(0, (lineHeight - chip.offsetHeight) / 2)}px`;
+    chip.style.transform = `translateY(${-input.scrollTop}px)`;
     const next = {
       x: marker.offsetLeft - input.scrollLeft,
-      y: marker.offsetTop - input.scrollTop,
+      y: lineTop + (lineHeight - fontSize) / 2 - input.scrollTop,
       visible: input.selectionStart === input.selectionEnd,
     };
     setCaret((current) => current.x === next.x && current.y === next.y && current.visible === next.visible ? current : next);
@@ -92,6 +103,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const refresh = () => measure(true);
     const observer = new ResizeObserver(refresh);
     observer.observe(field);
+    if (chipRef.current) observer.observe(chipRef.current);
     document.fonts.addEventListener("loadingdone", refresh);
     return () => {
       observer.disconnect();
@@ -155,18 +167,18 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const chipTitle = command ? `runs on ${place.label} in ${dir}` : place.online ? `on ${place.label}; press to change` : `${place.label} is offline; press to change`;
   return (
     <form class={`prompt-line${command ? " is-command" : ""}${place.online ? "" : " is-offline"}`} onSubmit={submit} autocomplete="off">
-      <button type="button" class="chip" onClick={onPlace} title={chipTitle} aria-label={chipTitle} tabIndex={-1}>
-        {command ? (
-          <span class="dir">{dir}</span>
-        ) : (
-          <>
-            <span class={`dot${place.online ? " is-on" : ""}`} aria-hidden="true" />
-            <span class="label">{place.label}</span>
-            {place.online ? null : <span class="state">offline</span>}
-          </>
-        )}
-      </button>
       <span class="field" ref={fieldRef}>
+        <button ref={chipRef} type="button" class="chip" onClick={onPlace} title={chipTitle} aria-label={chipTitle} tabIndex={-1}>
+          {command ? (
+            <span class="dir">{dir}</span>
+          ) : (
+            <>
+              <span class={`dot${place.online ? " is-on" : ""}`} aria-hidden="true" />
+              <span class="label">{place.label}</span>
+              {place.online ? null : <span class="state">offline</span>}
+            </>
+          )}
+        </button>
         <textarea
           ref={inputRef}
           rows={1}

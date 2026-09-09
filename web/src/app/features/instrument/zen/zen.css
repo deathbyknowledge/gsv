@@ -377,6 +377,8 @@
   position: absolute;
   left: -22px;
   top: 2.2vh;
+  width: 8px;
+  height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
 .zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }

@@ -191,22 +191,20 @@
 
 /* the prompt line: a place chip and the input; typing $ turns the chip into the working directory */
 .prompt-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 12px;
-  row-gap: 8px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
   font-size: 15px;
   line-height: 1.4;
 }
 .prompt-line .chip {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
-  flex: none;
-  max-width: 100%;
+  max-width: calc(100% - 2ch - 12px);
   padding: 2px 8px;
   border: 1px solid var(--border-raised);
   border-radius: 0;
@@ -228,18 +226,19 @@
 .prompt-line.is-command textarea { color: var(--path); }
 .prompt-line .field {
   position: relative;
-  flex: 1;
-  min-width: min(100%, 24ch);
+  display: block;
+  min-width: 0;
   overflow: hidden;
 }
 .prompt-line textarea, .prompt-line .mirror {
   box-sizing: border-box;
   width: 100%;
-  padding: 0 8px 0 0;
+  padding: 0 1ch 0 0;
   font: inherit;
   letter-spacing: 0.02em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  text-indent: var(--prompt-indent, 0px);
 }
 .prompt-line textarea {
   display: block;
@@ -265,8 +264,6 @@
   pointer-events: none;
 }
 .prompt-line .block-caret, .zen-moment.is-focus::before {
-  width: 8px;
-  height: 14px;
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
   animation: instrument-blink 1s steps(1) infinite;
@@ -278,6 +275,9 @@
   position: absolute;
   left: 0;
   top: 0;
+  font-size: var(--prompt-font-size, 1em);
+  width: calc(1ch + 0.02em);
+  height: 1em;
   pointer-events: none;
 }
 .prompt-line textarea:focus {
