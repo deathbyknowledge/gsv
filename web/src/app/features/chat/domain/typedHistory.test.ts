@@ -2,10 +2,56 @@ import { describe, expect, it } from "vitest";
 import { procHistoryRecordSchema, procHistoryArchivedRecordSchema } from "@humansandmachines/gsv/protocol";
 import { mergeTranscriptRows } from "./transcriptMerge";
 import { transcriptRowsFromRecords } from "./typedHistory";
-import { momentsFromConversation, activitiesForRows, receiptTargets } from "../../instrument/zen/zenModel";
+import { momentsFromConversation, activitiesForRows, receiptTargets, placesUsed } from "../../instrument/zen/zenModel";
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
+  it.each(["completed", "failed"] as const)("retains %s CodeMode output without inventing a target", (outcome) => {
+    const code = 'console.log("started"); return 0;';
+    const output = outcome === "completed"
+      ? { status: "completed", result: 0, logs: ["started"] }
+      : { status: "failed", error: "script failed", logs: ["started"] };
+    const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+      runId: "r", callId: "code", tool: "CodeMode", syscall: "codemode.exec", target: null,
+      args: { code, target: "laptop" },
+    } });
+    const result = procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, createdAt: 2, kind: "result", payload: {
+      callId: "code", tool: "CodeMode", outcome, output, media: [], resources: [],
+    } });
+    const running = transcriptRowsFromRecords([call]);
+    const delta = mergeTranscriptRows(running, transcriptRowsFromRecords([result]));
+    const reload = transcriptRowsFromRecords([call, result]);
+    const unlinked = transcriptRowsFromRecords([result]);
+    for (const rows of [delta, reload, unlinked]) {
+      const moment = momentsFromConversation([], rows, null)[0];
+      expect(moment.activities).toEqual([expect.objectContaining({ target: null })]);
+      expect(moment.activities[0].calls[0]).toMatchObject({
+        syscall: "codemode.exec", finished: true, failed: outcome === "failed",
+        output: outcome === "completed" ? "started\n0" : "started\nscript failed",
+        summary: rows === unlinked ? "" : code,
+      });
+      expect(receiptTargets(moment)).toEqual([]);
+      expect(placesUsed(moment)).toBe(0);
+    }
+    expect(activitiesForRows(running, "r", true)[0]).toMatchObject({ target: null, live: true });
+  });
+
+  it("keeps process working separate from a real target named null", () => {
+    const rows = transcriptRowsFromRecords([
+      procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+        runId: "r", callId: "code", tool: "CodeMode", syscall: "codemode.run", target: null, args: { code: "return 1;", target: "null" },
+      } }),
+      procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, kind: "call", payload: {
+        runId: "r", callId: "read", tool: "Read", syscall: "fs.read", target: "null", args: { path: "/x" },
+      } }),
+    ]);
+    const moment = momentsFromConversation([], rows, "r")[0];
+    expect(moment.activities.map((activity) => activity.target)).toEqual([null, "null"]);
+    expect(new Set(moment.activities.map((activity) => activity.key)).size).toBe(2);
+    expect(receiptTargets(moment)).toEqual([{ target: "null", live: true, failed: false }]);
+    expect(placesUsed(moment)).toBe(1);
+  });
+
   it("retains a call's start and a sent message's identity when the result arrives after sending", () => {
     const call = procHistoryRecordSchema.parse({ ...identity, createdAt: 10, kind: "call", payload: {
       runId: "r", callId: "read", tool: "Read", syscall: "fs.read", target: "gsv", args: { path: "/note.md" },

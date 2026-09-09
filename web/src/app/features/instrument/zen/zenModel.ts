@@ -73,7 +73,7 @@ export type ActivityCall = {
 
 export type Activity = {
   key: string;
-  target: string;
+  target: string | null;
   calls: ActivityCall[];
   live: boolean;
   you: boolean;
@@ -174,6 +174,7 @@ function stringField(value: ChatTranscriptValue | undefined, key: string): strin
 /** The target a tool call touched: an explicit `target` argument, else the cloud home. */
 /** The one argument a person wants to see: the command, the path, the URL, or the tool's name. */
 export function argumentThatMatters(syscall: string, args: ChatTranscriptValue | undefined): string {
+  if (syscall === "codemode.exec" || syscall === "codemode.run" || syscall === "CodeMode") return stringField(args, "code") ?? "";
   const input = stringField(args, "input") ?? stringField(args, "command");
   if (input && syscall.startsWith("shell.")) return input;
   const path = stringField(args, "path");
@@ -189,9 +190,17 @@ export function trimOutput(text: string): string {
   return `${clean.slice(0, OUTPUT_LIMIT)}\n… ${clean.length - OUTPUT_LIMIT} more characters`;
 }
 
-const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() });
+const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() })
+  .refine((value) => value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
 const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
+const codeModeResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("completed"), result: z.json(), logs: z.array(z.string()).optional() }),
+  z.object({ status: z.literal("failed"), error: z.string(), logs: z.array(z.string()).optional() }),
+]);
 const fileOperationErrorSchema = z.object({ ok: z.literal(false), error: z.string() });
+const fileWriteResultSchema = z.object({ ok: z.literal(true), path: z.string(), size: z.number().int().nonnegative() });
+const fileEditResultSchema = z.object({ ok: z.literal(true), path: z.string(), replacements: z.number().int().nonnegative() });
+const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
 
@@ -202,7 +211,18 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
     const error = fileOperationErrorSchema.safeParse(output);
     if (error.success) return error.data.error;
   }
-  if (syscall === "shell.exec" || syscall.startsWith("codemode.")) {
+  if (syscall === "codemode.exec" || syscall === "codemode.run") {
+    const code = codeModeResultSchema.safeParse(output);
+    if (code.success) {
+      const logs = code.data.logs?.join("\n") ?? "";
+      const result = code.data.status === "failed" ? code.data.error
+        : code.data.result === null ? ""
+        : isStringValue(code.data.result) && code.data.result !== "" ? code.data.result
+        : JSON.stringify(code.data.result, null, 2);
+      return [logs, result].filter((text) => text !== "").join("\n") || code.data.status;
+    }
+  }
+  if (syscall === "shell.exec") {
     const command = commandResultSchema.safeParse(output);
     if (command.success) return command.data.output;
     const shell = shellResultSchema.safeParse(output);
@@ -213,6 +233,18 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
       const exit = shell.data.exitCode;
       return text.trim() ? text : exit === 0 || exit === null || exit === undefined ? "" : `exit ${exit}`;
     }
+  }
+  if (syscall === "fs.write") {
+    const file = fileWriteResultSchema.safeParse(output);
+    if (file.success) return `wrote ${file.data.size} ${file.data.size === 1 ? "byte" : "bytes"}`;
+  }
+  if (syscall === "fs.edit") {
+    const file = fileEditResultSchema.safeParse(output);
+    if (file.success) return `replaced ${file.data.replacements} ${file.data.replacements === 1 ? "occurrence" : "occurrences"}`;
+  }
+  if (syscall === "fs.delete") {
+    const file = fileDeleteResultSchema.safeParse(output);
+    if (file.success) return "deleted";
   }
   if (syscall === "fs.read") {
     const file = fileResultSchema.safeParse(output);
@@ -233,9 +265,9 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
 /** Some rows carry the result as a JSON string in their text; read it as the result it is.
  * TODO: remove once process history stores tool results structured (typed history records) instead of the model-facing text. */
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
-  const syscall = row.toolSyscall ?? row.toolName ?? "call";
+  const syscall = row.toolSyscall ?? (row.toolName === "CodeMode" ? "codemode.exec" : row.toolName ?? "call");
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
-  const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName ?? syscall);
+  const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
   return {
     callId: row.toolCallId ?? row.id,
     syscall,
@@ -265,7 +297,8 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
   const activities: Activity[] = [];
   for (const row of rows) {
     if (!isToolRow(row) || isMessageSend(row)) continue;
-    const target = row.toolTarget ?? "unknown target";
+    const target = row.toolSyscall === "codemode.exec" || row.toolSyscall === "codemode.run" || (row.toolSyscall == null && row.toolName === "CodeMode")
+      ? null : row.toolTarget ?? "unknown target";
     const call = callFromRow(row);
     const existing = activities.find((activity) => activity.target === target);
     const timestamp = row.timestamp ?? null;
@@ -281,7 +314,7 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
       if (timestamp !== null) existing.endedAt = Math.max(existing.endedAt ?? timestamp, timestamp);
     } else {
       activities.push({
-        key: `${runKey}:${target}`,
+        key: JSON.stringify([runKey, target]),
         target,
         calls: [call],
         live: false,
@@ -447,7 +480,7 @@ export function countLabel(count: number, singular: string, plural = `${singular
 }
 
 export function placesUsed(moment: Moment): number {
-  return new Set(moment.activities.map((activity) => activity.target)).size;
+  return new Set(moment.activities.flatMap((activity) => activity.target === null ? [] : [activity.target])).size;
 }
 
 /* ---------- streaming text resolving out of ramp glyphs ---------- */
@@ -656,7 +689,7 @@ export function momentsFromConversation(
 /* the receipt: what a ship moment did, in plain words, generated from its calls */
 
 export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {
-  return moment.activities.filter((activity) => !activity.you).map((activity) => ({
+  return moment.activities.filter((activity): activity is Activity & { target: string } => !activity.you && activity.target !== null).map((activity) => ({
     target: activity.target,
     live: activity.live,
     failed: activity.calls.some((call) => call.failed),

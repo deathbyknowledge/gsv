@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
-import type { ChatTranscriptRow } from "../../chat/domain/transcript";
+import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
 import { mergeTranscriptRows } from "../../chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../chat/domain/typedHistory";
 import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
@@ -641,6 +641,55 @@ describe("outputText", () => {
     expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
     expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
+  });
+  it("retains fallback for unknown or malformed shell results", () => {
+    expect(outputText("shell.exec", { status: "failed", error: "unrecognized failure" }, "fallback")).toBe("fallback");
+    expect(outputText("shell.exec", { stdout: 3 }, "fallback")).toBe("fallback");
+    expect(outputText("shell.exec", {}, "fallback")).toBe("fallback");
+  });
+  it.each(["codemode.exec", "codemode.run"])("shows %s logs, return values, and failures without treating returned data as a shell envelope", (syscall) => {
+    expect(outputText(syscall, { status: "completed", result: "hello", logs: ["first", "second"] }, "fallback")).toBe("first\nsecond\nhello");
+    expect(outputText(syscall, { status: "completed", result: false }, "fallback")).toBe("false");
+    expect(outputText(syscall, { status: "completed", result: 0 }, "fallback")).toBe("0");
+    expect(outputText(syscall, { status: "completed", result: null }, "fallback")).toBe("completed");
+    expect(outputText(syscall, { status: "completed", result: null, logs: ["logged"] }, "fallback")).toBe("logged");
+    expect(outputText(syscall, { status: "completed", result: "" }, "fallback")).toBe('""');
+    const returned = { stdout: "ordinary field", output: "also ordinary", exitCode: 0, values: [false, 0] };
+    expect(outputText(syscall, { status: "completed", result: returned }, "fallback")).toBe(JSON.stringify(returned, null, 2));
+    const literal = '{"stdout":"literal JSON-looking string"}';
+    expect(outputText(syscall, { status: "completed", result: literal }, "fallback")).toBe(literal);
+    expect(outputText(syscall, { status: "failed", error: "execution failed", logs: ["before failure"] }, "fallback")).toBe("before failure\nexecution failed");
+    expect(outputText(syscall, { status: "failed", error: "execution failed" }, "fallback")).toBe("execution failed");
+  });
+  it.each(["codemode.exec", "codemode.run"])("retains fallback for unknown or malformed %s results", (syscall) => {
+    const outputs: ChatTranscriptValue[] = [
+      {}, { status: "completed" }, { status: "completed", output: "not a CodeMode result" },
+      { status: "completed", result: 1, logs: [false] }, { status: "failed", error: false },
+      { status: "running", result: 1 }, { stdout: "not a CodeMode result" },
+    ];
+    for (const output of outputs) {
+      expect(outputText(syscall, output, "fallback")).toBe("fallback");
+    }
+    const literal = '{"status":"completed","result":1}';
+    expect(outputText(syscall, literal, "fallback")).toBe(literal);
+    expect(outputText("codemode.other", { status: "completed", result: 1 }, "fallback")).toBe("fallback");
+  });
+  it("describes successful filesystem mutations with correct counts", () => {
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 11 }, "fallback")).toBe("wrote 11 bytes");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 1 }, "fallback")).toBe("wrote 1 byte");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 0 }, "fallback")).toBe("wrote 0 bytes");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 1 }, "fallback")).toBe("replaced 1 occurrence");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 2 }, "fallback")).toBe("replaced 2 occurrences");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 0 }, "fallback")).toBe("replaced 0 occurrences");
+    expect(outputText("fs.delete", { ok: true, path: "/note.md" }, "fallback")).toBe("deleted");
+  });
+  it("retains fallback for malformed filesystem mutation results", () => {
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: "11" }, "fallback")).toBe("fallback");
+    expect(outputText("fs.write", { ok: true, size: 11 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: -1 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 1.5 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.edit", { ok: false, path: "/note.md", replacements: 1, error: 1 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.delete", { ok: true }, "fallback")).toBe("fallback");
   });
   it("renders typed output independently of JSON-looking row text", () => {
     const row: ChatTranscriptRow = { id: "t", role: "toolResult", text: "{\"output\":\"misleading prose\"}", toolOutput: { status: "completed", output: "hello\nworld" }, time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input: "echo" } };

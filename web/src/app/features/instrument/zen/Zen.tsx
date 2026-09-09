@@ -102,10 +102,13 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
 }
 
 function railHtml(activity: Activity): string {
-  const where = escapeHtml(activity.target);
+  const where = activity.target === null ? "" : escapeHtml(activity.target);
   return activity.calls
     .map((call) => {
-      const head = `<span class="cmd"><span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
+      const code = call.syscall === "codemode.exec" || call.syscall === "codemode.run" || call.syscall === "CodeMode";
+      const head = code
+        ? `<span class="cmd">CodeMode</span>${call.summary ? `\n${escapeHtml(call.summary)}` : ""}`
+        : `<span class="cmd"><span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
       const body = call.output ? `\n${escapeHtml(call.output)}` : call.finished ? "" : `\n<span class="meta">running…</span>`;
       const failed = call.failed ? `\n<span class="err">failed</span>` : "";
       return `${head}${body}${failed}`;
@@ -126,7 +129,7 @@ function ActivityLine({
   onToggle: () => void;
   onFleet: ZenProps["onFleet"];
 }) {
-  const label = placeLabel(activity.target, places);
+  const label = activity.target === null ? "process working" : placeLabel(activity.target, places);
   const running = activity.calls.find((call) => !call.finished);
   const head = activity.live && running ? (
     <>
@@ -163,7 +166,7 @@ function ActivityLine({
       </div>
       {open ? (
         <div class="detail">
-          <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button>
+          {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
           <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
         </div>
       ) : null}
@@ -186,6 +189,7 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
   const duration = receiptDuration(moment);
   const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
   const worked = moment.activities.filter((activity) => !activity.you);
+  const processWork = worked.filter((activity) => activity.target === null);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   return (
     <div class={`receipt${open ? " is-open" : ""}`}>
@@ -199,7 +203,8 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
               {target.failed ? " · failed" : ""}
             </span>
           ))}
-          {targets.length === 0 ? (moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details") : null}
+          {targets.length === 0 ? (processWork.length > 0 ? (processWork.some((activity) => activity.live) ? "working" : "worked") : moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details") : null}
+          {processWork.some((activity) => activity.calls.some((call) => call.failed)) ? <span class="is-failed"> · work failed</span> : null}
           {moment.attribution?.fallbacks.length ? <span class="is-failed"> · fallback used</span> : null}
           <span class="n"> · {open ? "close" : "open"}</span>
         </button>
@@ -231,9 +236,9 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
           ) : null}
           {worked.map((activity) => (
             <div key={activity.key} class="place-rail">
-              <div class="ph">on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
+              <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
                 <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
-              )}</div>
+              )}</>}</div>
               <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
             </div>
           ))}
