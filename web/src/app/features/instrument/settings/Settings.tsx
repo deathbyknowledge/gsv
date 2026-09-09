@@ -41,7 +41,7 @@ export function Settings({ onZen, onFleet, onMemory, onDirtyChange }: SettingsPr
   const accounts = useQuery({ queryKey: ["accounts", "gsv-console"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
-    <InstrumentHeader status="settings">
+    <InstrumentHeader>
       <button type="button" onClick={onZen}>zen</button>
       <button type="button" onClick={onFleet}><kbd>z</kbd>fleet</button>
       <button type="button" onClick={onMemory}><kbd>m</kbd>memory</button>

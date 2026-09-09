@@ -180,12 +180,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet, onSettings }: Memor
 
   return (
     <main class="memory" aria-label="Memory">
-      <InstrumentHeader status={<>
-          memory ·{" "}
-          <span style={connected ? "color: var(--online)" : "color: var(--error)"}>
-            {connected ? (collections.length === 1 ? "1 collection" : `${collections.length} collections`) : "offline"}
-          </span>
-      </>}>
+      <InstrumentHeader>
         <button type="button" onClick={onZen}>
           <kbd>m</kbd>zen
         </button>

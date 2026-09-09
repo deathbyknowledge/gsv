@@ -131,7 +131,7 @@
   height: var(--instrument-header-height);
   z-index: 3;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   pointer-events: none;
 }
 .instrument-header > * {
@@ -141,7 +141,6 @@
   min-width: 0;
 }
 .instrument-header > .wordmark { justify-self: start; margin-left: -8px; }
-.instrument-header .instrument-heading { justify-self: center; max-width: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
 .instrument-header .keys span { margin-left: 0; }
 .instrument-header [aria-current="page"] { color: var(--text-hi); }
@@ -153,7 +152,6 @@
 @container instrument (max-width: 600px) {
   .distance { --instrument-header-height: 68px; }
   .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
-  .instrument-header .instrument-heading { grid-row: 1; grid-column: 2; justify-self: end; max-width: 100%; }
   .instrument-header .keys { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-width: 100%; overflow-x: auto; white-space: nowrap; }
 }
 .instrument kbd {
@@ -218,7 +216,7 @@
 }
 .prompt-line .chip:hover { border-color: var(--accent); color: var(--text-hi); }
 .prompt-line .chip .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prompt-line .chip .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; }
+.prompt-line .chip .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; flex-shrink: 0; border-radius: 0; box-shadow: none; }
 .prompt-line .chip .dot.is-on { background: var(--online); }
 .prompt-line .chip .state { color: var(--warn); }
 .prompt-line.is-offline .chip { color: var(--warn); border-color: var(--warn); }

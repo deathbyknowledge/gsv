@@ -789,31 +789,15 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
     return parts;
   }, [browse, connected, lastAnswer, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
-  const onlinePlaces = places.filter((place) => place.online);
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.streaming)) ? index : latest, -1);
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
     <main class={`zen${browse !== null ? " is-browse" : ""}`} aria-label="Zen">
-      <InstrumentHeader status={<span>
-          ship ·{" "}
-          <span class={connected ? "is-on" : "is-err"} style={connected ? "color: var(--online)" : "color: var(--error)"}>
-            {pidProp ? (
-              <>
-                helper ·{" "}
-                <button type="button" onClick={onShip}>
-                  back to your ship
-                </button>
-              </>
-            ) : connected ? (
-              `${countLabel(onlinePlaces.length + 1, "place")} reachable`
-            ) : (
-              "offline"
-            )}
-          </span>
-        </span>}>
-        <span aria-current="page">zen</span>
+      <InstrumentHeader>
+        <span aria-current="page">{pidProp ? "helper" : "zen"}</span>
+        {pidProp && <button type="button" onClick={onShip}>back to your Ship</button>}
         <button type="button" onClick={() => onFleet()}>
           <kbd>z</kbd>fleet
         </button>

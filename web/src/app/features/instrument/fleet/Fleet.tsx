@@ -5,7 +5,6 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { useSession } from "../../../services/session/SessionProvider";
 import {
   loadConsoleAccounts,
   loadConsoleProcesses,
@@ -91,7 +90,6 @@ function outcomeWord(outcome: string): string {
 
 export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetProps) {
   const { client, connected } = useGateway();
-  const { snapshot } = useSession();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = typeof initialReference === "object" && initialReference?.kind === "connect" ? initialReference.to : null;
@@ -358,10 +356,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
 
   return (
     <main class="fleet" aria-label="Fleet">
-      <InstrumentHeader status={<>
-          fleet · {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
-          {processes.length} processes
-      </>}>
+      <InstrumentHeader>
         <button type="button" onClick={() => onZen()}>
           <kbd>z</kbd>zen
         </button>
@@ -415,24 +410,6 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
               </tbody>
             </table>
             </div>
-          </section>
-
-          <section class="fleet-block" aria-label="Contacts">
-            <h2>
-              <i /> Contacts
-              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
-              <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
-            </h2>
-            {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
-            {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
-              : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
-              : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
-              : <div class="tablewrap"><table>
-                <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
-                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} class={selected === `contact:${contact.id}` ? "is-sel" : ""} onClick={() => selectRow(`contact:${contact.id}`)}>
-                  <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
-                </tr>)}</tbody>
-              </table></div>}
           </section>
 
           <section class="fleet-block">
@@ -498,6 +475,24 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
               </tbody>
             </table>
             </div>
+          </section>
+
+          <section class="fleet-block" aria-label="Contacts">
+            <h2>
+              <i /> Contacts
+              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
+              <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
+            </h2>
+            {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
+            {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
+              : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
+              : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
+              : <div class="tablewrap"><table>
+                <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
+                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} class={selected === `contact:${contact.id}` ? "is-sel" : ""} onClick={() => selectRow(`contact:${contact.id}`)}>
+                  <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
+                </tr>)}</tbody>
+              </table></div>}
           </section>
 
           <section class="fleet-block">
