@@ -10,7 +10,6 @@ import {
   runConsoleProcessAction,
 } from "../../gsv-console/backend/consoleService";
 import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
-import { loadResponsibilitiesWorkspace } from "../../gsv-console/responsibilities/responsibilitiesService";
 import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
@@ -101,8 +100,8 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
     enabled: connected,
   });
   const responsibilitiesQuery = useQuery({
-    queryKey: ["fleet", "responsibilities"],
-    queryFn: () => loadResponsibilitiesWorkspace(client),
+    queryKey: ["fleet", "responsibilities", "open"],
+    queryFn: () => client.r12y.list({ states: ["open", "active", "waiting"], limit: 500 }),
     enabled: connected,
   });
   const accountsQuery = useQuery({
@@ -305,7 +304,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
 
   const ledgerState = sysLedgerQuery.isPending ? "ledger loading" : "ledger current";
   const responsibilityCount = (pid: string) =>
-    (responsibilitiesQuery.data?.open ?? []).filter(
+    (responsibilitiesQuery.data?.responsibilities ?? []).filter(
       (record) => record.assignee.kind === "process" && record.assignee.processId === pid,
     ).length;
   const costFor = (pid: string) => costToday.get(pid) ?? null;

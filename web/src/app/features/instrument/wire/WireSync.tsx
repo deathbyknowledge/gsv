@@ -2,20 +2,16 @@ import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
-import { ledgerFromSysLines, sysLedgerListResultSchema } from "../fleet/fleetModel";
-import { instrumentProcessAiKey, INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { createLedgerSync } from "./ledgerSync";
 import {
   isProcessSignal,
   ledgerAppendedSignalSchema,
   patchProcesses,
   patchTargets,
-  prependLedger,
   procSignalSchema,
   targetStatusSignalSchema,
-  type LedgerPages,
 } from "./wireModel";
-
-const LEDGER_SYS_KEY = [...INSTRUMENT_LEDGER_KEY, "sys"] as const;
 
 /**
  * The one subscriber to the wire for the instrument's caches. Each signal is
@@ -28,12 +24,14 @@ export function WireSync(): null {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const dropped = useRef(false);
+  const connectedBefore = useRef(connected);
 
   useEffect(() => {
     if (!connected) {
-      dropped.current = true;
+      if (connectedBefore.current) dropped.current = true;
       return;
     }
+    connectedBefore.current = true;
     if (dropped.current) {
       dropped.current = false;
       void queryClient.invalidateQueries();
@@ -41,7 +39,9 @@ export function WireSync(): null {
   }, [connected, queryClient]);
 
   useEffect(() => {
-    return client.onSignal((signal, payload) => {
+    if (!connected) return;
+    const ledger = createLedgerSync(client, queryClient);
+    const unsubscribe = client.onSignal((signal, payload) => {
       if (signal === "target.status") {
         const parsed = targetStatusSignalSchema.safeParse(payload);
         if (!parsed.success) return;
@@ -73,22 +73,13 @@ export function WireSync(): null {
       if (signal === "ledger.appended") {
         const parsed = ledgerAppendedSignalSchema.safeParse(payload);
         if (!parsed.success) return;
-        if (!queryClient.getQueryData<LedgerPages>(LEDGER_SYS_KEY)) return;
-        if (parsed.data.count > INSTRUMENT_LEDGER_PAGE) {
-          // more arrived at once than one page holds: walk the loaded pages again rather than leave a gap
-          void queryClient.invalidateQueries({ queryKey: INSTRUMENT_LEDGER_KEY });
-          return;
-        }
-        void client
-          .call("sys.ledger.list", { limit: parsed.data.count })
-          .then((raw) => {
-            const fresh = ledgerFromSysLines(sysLedgerListResultSchema.parse(raw).lines);
-            queryClient.setQueryData<LedgerPages>(LEDGER_SYS_KEY, (data) => (data ? prependLedger(data, fresh) : data));
-          })
-          .catch(() => undefined);
+        // more arrived at once than one page holds: walk the loaded pages again rather than leave a gap
+        // Catch-up walks the cursor back to the cached head, without rereading older loaded pages.
+        ledger.appended(parsed.data.seq);
       }
     });
-  }, [client, queryClient]);
+    return () => { unsubscribe(); ledger.stop(); };
+  }, [client, connected, queryClient]);
 
   return null;
 }
