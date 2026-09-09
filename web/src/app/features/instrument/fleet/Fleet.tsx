@@ -43,6 +43,9 @@ import {
   ledgerRow,
 } from "./fleetModel";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
+import { LedgerViews, type LedgerInspection } from "./LedgerViews";
+import { LedgerTraceInspector } from "./LedgerTraceInspector";
+import { formatTraceDuration } from "../../gsv-console/runtime/runtimeTrace";
 import { canConfigure } from "../settings/settingsModel";
 import "./fleet.css";
 
@@ -139,6 +142,8 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
 
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [creatingProcess, setCreatingProcess] = useState(false);
+  const [ledgerInspection, setLedgerInspection] = useState<LedgerInspection | null>(null);
+  useEffect(() => setLedgerInspection(null), [initialRow]);
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -164,8 +169,17 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   useEffect(() => {
-    if (selected || openFile) setCreatingProcess(false);
+    if (selected || openFile) {
+      setCreatingProcess(false);
+      setLedgerInspection(null);
+    }
   }, [selected, openFile]);
+  const inspectLedger = (selection: LedgerInspection | null) => {
+    setSelected(null);
+    setOpenFile(null);
+    setCreatingProcess(false);
+    setLedgerInspection(selection);
+  };
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
     return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
@@ -216,14 +230,14 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
-    if (creatingProcess) return;
+    if (creatingProcess || ledgerInspection) return;
     if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
     if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess]);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, ledgerInspection]);
   useEffect(() => {
     if (!selected) return;
     const row = document.querySelector(`[data-row="${selected}"]`);
@@ -237,8 +251,10 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.closest(".fleet-process-form")) return;
+      if (["j", "k", "ArrowDown", "ArrowUp"].includes(event.key) && target instanceof HTMLElement && target.closest(".ledger-toolbar, .ledger-timeline, .ledger-usage, .ledger-failures")) return;
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
@@ -249,6 +265,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         }
         return;
       }
+      if (event.key === "Enter" && target instanceof HTMLElement && target.closest("button, a[href]")) return;
       const rows = visibleRows();
       if (event.metaKey || event.ctrlKey || event.altKey || rows.length === 0) return;
       const index = selected ? rows.indexOf(selected) : 0;
@@ -376,6 +393,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
                 setSelected(null);
                 setOpenFile(null);
                 setCreatingProcess(true);
+                setLedgerInspection(null);
                 inspectorRef.current?.scrollIntoView({ block: "nearest" });
               }}>new process</button> : null}
             </h2>
@@ -433,32 +451,31 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
           </section>
 
           <section class="fleet-block">
-            <h2>
-              <i /> Ledger <span class="count">{ledgerState}</span>
-            </h2>
-            {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
-            <div class="fleet-ledger" role="table">
-              {shownLedger.map((line) => (
-                <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => setSelected(ledgerRow(line.id))}>
-                  <span class="t">{clockTime(line.timestamp)}</span>
-                  <span class="place">{placeLabel(line.place)}</span>
-                  <span class="what">{technical ? line.syscall : line.what}</span>
-                  <span class="m detail" title={line.detail}>{line.detail}</span>
-                  <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
-                    {outcomeWord(line.outcome)}
-                  </span>
-                  <span class="m who">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
-                </div>
-              ))}
-              {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? "reading…" : "nothing has run yet"}</span> : null}
-              {sysLedgerQuery.hasNextPage ? (
-                <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => setSelected(olderRow)}>
-                  <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
-                    {sysLedgerQuery.isFetchingNextPage ? "reading…" : `show ${LEDGER_PAGE} older`}
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <LedgerViews rowStatus={ledgerState} requestedRow={initialRow} processes={processes} processName={processNameFor} placeName={placeLabel} onInspect={inspectLedger}>
+              {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
+              <div class="fleet-ledger" role="table">
+                {shownLedger.map((line) => (
+                  <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => setSelected(ledgerRow(line.id))}>
+                    <span class="t">{clockTime(line.timestamp)}</span>
+                    <span class="place">{placeLabel(line.place)}</span>
+                    <span class="what">{technical ? line.syscall : line.what}</span>
+                    <span class="m detail" title={line.detail}>{line.detail}</span>
+                    <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
+                      {outcomeWord(line.outcome)}
+                    </span>
+                    <span class="m who">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
+                  </div>
+                ))}
+                {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? "reading…" : "nothing has run yet"}</span> : null}
+                {sysLedgerQuery.hasNextPage ? (
+                  <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => setSelected(olderRow)}>
+                    <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
+                      {sysLedgerQuery.isFetchingNextPage ? "reading…" : `show ${LEDGER_PAGE} older`}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </LedgerViews>
           </section>
 
           <section class="fleet-block">
@@ -486,6 +503,10 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         <aside class="fleet-inspector" ref={inspectorRef}>
           {creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
+          ) : ledgerInspection?.kind === "trace" ? (
+            <LedgerTraceInspector key={`${ledgerInspection.run.pid}/${ledgerInspection.span.id}`} selection={ledgerInspection} processName={processNameFor(ledgerInspection.run.pid)} placeName={placeLabel} onZen={onZen} onClose={() => setLedgerInspection(null)} />
+          ) : ledgerInspection?.kind === "line" ? (
+            <LineInspector line={ledgerInspection.line} durationMs={ledgerInspection.line.durationMs} placeLabelFor={placeLabel} processName={processNameFor(ledgerInspection.line.processId)} now={now} technical={technical} onZen={onZen} onClose={() => setLedgerInspection(null)} />
           ) : selectedLine && !openFile ? (
             <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />
           ) : openFile ? (
@@ -886,6 +907,8 @@ function ProcessInspector({ process, model, cost, responsibilities, canEditAi, n
 /** One line of the ledger, in full: everything the row truncated, and the way to the run it belongs to. */
 function LineInspector({
   line,
+  durationMs,
+  onClose,
   placeLabelFor,
   processName,
   now,
@@ -893,6 +916,8 @@ function LineInspector({
   onZen,
 }: {
   line: LedgerLine;
+  durationMs?: number | null;
+  onClose?: () => void;
   placeLabelFor: (placeId: string) => string;
   processName: string;
   now: number;
@@ -911,6 +936,7 @@ function LineInspector({
         <dd class={failed ? "error" : ""}>{outcomeWord(line.outcome)}</dd>
         <dt>By</dt>
         <dd>{processName}</dd>
+        {durationMs !== undefined && durationMs !== null ? <><dt>Duration</dt><dd>{formatTraceDuration(durationMs)}</dd></> : null}
         {technical ? (
           <>
             <dt>Syscall</dt>
@@ -931,6 +957,7 @@ function LineInspector({
         <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(technical && line.args ? line.args : line.detail)}>
           copy
         </button>
+        {onClose ? <button type="button" class="ibtn" onClick={onClose}>close</button> : null}
       </div>
       <p class="note">{technical ? "Raw view. Press t for plain words." : "Press t for the raw syscall and arguments."}</p>
     </div>
