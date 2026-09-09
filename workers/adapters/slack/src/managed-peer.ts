@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { SLACK_TARGET_SYSCALLS, type SlackTargetCall } from "./slack-target";
+import { forwardSlackTargetResponse } from "./slack-target-response";
 import type {
   AdapterTargetDescriptor,
   AdapterTargetRequestFrame,
@@ -170,8 +172,8 @@ type ManagedWorkspaceStub = {
   executeTarget(
     actorId: string,
     expectedGeneration: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>>;
   cancelTarget(
     actorId: string,
     expectedGeneration: string,
@@ -200,8 +202,8 @@ type ManagedWorkspaceClient = Omit<
   executeTarget(
     actorId: string,
     expectedGeneration: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec"> & Disposable>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall> & Disposable>;
   cancelTarget(
     actorId: string,
     expectedGeneration: string,
@@ -365,8 +367,9 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     let state: ManagedSlackPeerState;
     try {
       state = await this.requireCurrentTargetRoute(installationId, routeGeneration);
-    } catch {
-      return [];
+    } catch (error) {
+      if (error instanceof ManagedSlackPeerUnavailableError) return [];
+      throw error;
     }
     using authorization = await this.workspace(state.accountId).getTargetAuthorization(
       state.actorId,
@@ -382,10 +385,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     return [{
       id: SLACK_TARGET_ID,
       label: `Slack — ${authorization.teamName ?? authorization.teamId}`,
-      description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Run `slack --help` for commands.",
+      description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Read `/README.txt` for filesystem paths; run `slack --help` for commands.",
       platform: "slack",
       version: "web-api",
-      implements: ["shell.exec"],
+      implements: [...SLACK_TARGET_SYSCALLS],
     }];
   }
 
@@ -393,8 +396,8 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     installationId: string,
     routeGeneration: string,
     targetId: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">> {
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>> {
     if (targetId !== SLACK_TARGET_ID) {
       return targetError(frame.id, 404, "Slack target is unavailable");
     }
@@ -437,21 +440,30 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         actorId: state.actorId,
         generation: state.workspaceGeneration,
       };
-      using response = await this.workspace(active.workspace.accountId).executeTarget(
+      const response = await this.workspace(active.workspace.accountId).executeTarget(
         active.workspace.actorId,
         active.workspace.generation,
         frame,
       );
-      const detachedResponse = structuredClone(response);
+      let rejection = frame.call === "shell.exec" ? undefined : targetCallCancellation(active, frame.id);
       try {
         const current = await this.requireTargetRoute(installationId, routeGeneration);
         if (current.workspaceGeneration !== state.workspaceGeneration) {
-          return targetError(frame.id, 409, "Slack target authorization changed during execution");
+          rejection = targetError(frame.id, 409, "Slack target authorization changed during execution");
         }
       } catch {
-        return targetError(frame.id, 409, "Slack target route changed during execution");
+        rejection = targetError(frame.id, 409, "Slack target route changed during execution");
       }
-      return detachedResponse;
+      if (frame.call !== "shell.exec") rejection ??= targetCallCancellation(active, frame.id);
+      if (rejection) {
+        try {
+          if (response.ok) await cancelBinaryBody(response.body, "Slack target route changed");
+        } finally {
+          response[Symbol.dispose]();
+        }
+        return rejection;
+      }
+      return forwardSlackTargetResponse(response);
     } finally {
       if (this.targetCalls.get(key) === active) this.targetCalls.delete(key);
     }
@@ -1091,7 +1103,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
 
   private async requireState(): Promise<ManagedSlackPeerState> {
     const state = await this.ctx.storage.get<ManagedSlackPeerState>(STATE_KEY);
-    if (!state) throw new Error("Managed Slack peer is not initialized");
+    if (!state) throw new ManagedSlackPeerUnavailableError("Managed Slack peer is not initialized");
     this.assertObjectIdentity(state);
     return state;
   }
@@ -1104,14 +1116,14 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || admission.accountId !== state.accountId
       || admission.teamId !== state.teamId
     ) {
-      throw new Error("Slack workspace authorization is unavailable");
+      throw new ManagedSlackPeerUnavailableError("Slack workspace authorization is unavailable");
     }
     const refreshed = await this.ctx.storage.transaction(async (txn) => {
       const latest = await txn.get<ManagedSlackPeerState>(STATE_KEY);
-      if (!latest) throw new Error("Managed Slack peer is not initialized");
+      if (!latest) throw new ManagedSlackPeerUnavailableError("Managed Slack peer is not initialized");
       this.assertObjectIdentity(latest);
       if (latest.accountId !== admission.accountId || latest.teamId !== admission.teamId) {
-        throw new Error("Slack workspace authorization changed");
+        throw new ManagedSlackPeerUnavailableError("Slack workspace authorization changed");
       }
       if (
         admission.generation === latest.workspaceGeneration
@@ -1144,7 +1156,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {
-      throw new Error("Slack target route changed");
+      throw new ManagedSlackPeerUnavailableError("Slack target route changed");
     }
     return state;
   }
@@ -1160,7 +1172,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {
-      throw new Error("Slack target route changed");
+      throw new ManagedSlackPeerUnavailableError("Slack target route changed");
     }
     return state;
   }
@@ -1253,14 +1265,14 @@ function targetError(
   id: string,
   code: number,
   message: string,
-): AdapterTargetResponseFrame<"shell.exec"> {
+): AdapterTargetResponseFrame<SlackTargetCall> {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 
 function targetCallCancellation(
   active: ActiveManagedSlackTargetCall,
   id: string,
-): AdapterTargetResponseFrame<"shell.exec"> | undefined {
+): AdapterTargetResponseFrame<SlackTargetCall> | undefined {
   const cancellation = active.cancellation;
   return cancellation ? targetError(id, cancellation.code, cancellation.message) : undefined;
 }
@@ -1320,6 +1332,8 @@ function parseRoute(value: AdapterPairingRoute): AdapterPairingRoute {
     generation: requireOpaque(value?.generation, "generation"),
   };
 }
+
+class ManagedSlackPeerUnavailableError extends Error {}
 
 function requireOpaque(value: string, field: string): string {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(value)) {

@@ -84,8 +84,9 @@ generation and cannot cross to the old or new installation accidentally.
 
 After personal OAuth authorization and pairing, GSV projects that Slack
 workspace as an online target. Discover its opaque target id with `targets list`,
-then select it with the ordinary Shell `target` argument. The target is an
-ephemeral just-bash environment containing a composable `slack` command:
+then select it with the ordinary Read, Search, or Shell `target` argument. The
+target exposes a read-only resource filesystem and an ephemeral just-bash
+environment containing a composable `slack` command:
 
 ```bash
 slack whoami
@@ -96,6 +97,9 @@ printf '%s' 'hello from GSV' | slack messages send --channel C123
 slack reactions add --channel C123 --timestamp 1700000000.000100 --name eyes
 slack users list --json
 slack users info --user U123 --json
+cat /conversations/index.json | jq '.items[] | {id, name, path}'
+cat /conversations/C123/history/recent/transcript.txt
+cat /conversations/C123/threads/1700000000.000100/transcript.txt
 ```
 
 Run `slack --help` inside the target for the exact inventory. Reads use the
@@ -107,6 +111,55 @@ and direct messages. The app can post in public channels without joining;
 reactions and private-channel mutations require it to be explicitly invited.
 A route change, disconnect, reauthorization, timeout, or Process cancellation
 fences late output and cancels the owning provider request.
+
+### Slack filesystem
+
+Read `/README.txt` on the target for discovery. Files are live views of the paired
+user's Slack visibility. Read/Search and shell commands use the same namespace:
+
+| Path | Resource |
+| --- | --- |
+| `/workspace.json` | Workspace and reader identity |
+| `/conversations/index.json` | One inventory page, including channels and DMs, with canonical paths and `nextPath` |
+| `/conversations/<id>/meta.json` | Conversation name, topic, purpose, and visibility metadata |
+| `/conversations/<id>/history/recent/index.json` | One recent history page, messages, paths, and coverage |
+| `/conversations/<id>/history/recent/transcript.txt` | Readable transcript of that page |
+| `/conversations/<id>/messages/<timestamp>.json` | One exact channel message |
+| `/conversations/<id>/threads/<root-timestamp>/index.json` | First thread page, reply paths, and coverage |
+| `/conversations/<id>/threads/<root-timestamp>/transcript.txt` | Readable transcript of that thread page |
+| `/conversations/<id>/threads/<root-timestamp>/messages/<reply-timestamp>.json` | One exact reply |
+| `/users/index.json`, `/users/<id>.json` | User inventory pages and individual user metadata |
+
+History and thread pages request at most 15 messages. Their indexes and transcript
+headers state whether more messages exist and whether Slack limits the available
+history. Follow `nextPath` to another page directory containing `index.json` and
+`transcript.txt`. Inventory continuations point directly to JSON files. Slack
+cursors can expire; restart from the first page when that happens. History pages
+do not expand threads automatically; use each message's `threadPath` for replies.
+
+Directory listings for `/conversations` and `/users` enumerate up to eight inventory
+pages of 200 entries each. If enumeration cannot finish, they fail with directions
+to the paginated index instead of returning an incomplete listing. Message, thread,
+and continuation collections use their indexes for discovery. IDs and timestamps
+remain canonical even when human-readable names or message contents change.
+
+Search accepts a file or a finite history page directory, for example
+`/conversations/C123/history/recent`, with a literal query and optional `*`, `**`,
+or `?` include glob. To search a thread's first page, select its `transcript.txt`.
+Results contain readable file paths and line numbers, with an explicit truncation
+flag after 200 matches. Broader collection searches fail with scope guidance.
+
+Read supports line offsets, line limits, and byte limits. Resources are loaded
+on demand and cached only within the invocation; this is a live view, not an
+immutable export. File-reference reads and attachment downloads are unavailable.
+Each invocation permits at most 32 provider reads, files up to 4 MiB, and 16 MiB
+of rendered file content.
+
+The shell accepts resource directories as `cwd`. `/tmp` is writable scratch space
+for one execution, so `cat ... > /tmp/thread.txt` can feed ordinary shell tools.
+Posting and reacting remain explicit `slack` commands; writing or deleting a
+resource path fails without changing Slack. The target advertises `fs.read`,
+`fs.search`, and `shell.exec` only.
 
 The target is distinct from messaging. `message destinations` discovers
 authorized conversation delivery surfaces and `message send` commits a

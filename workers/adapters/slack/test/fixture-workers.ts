@@ -87,7 +87,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
           });
         }
         if (mode === "managed" && method === "conversations.list") {
-          if (body.cursor === "wait-for-cancel") {
+          if (body.cursor === "wait-for-cancel" || body.cursor === "wait-for-fs-cancel") {
             await new Promise((resolve, reject) => {
               const timer = setTimeout(resolve, 5_000);
               const abort = () => {

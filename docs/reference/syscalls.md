@@ -1561,7 +1561,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
   };
 
   "ai.text.generate": {
@@ -1573,7 +1573,9 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-and the skill index. `ai.text.generate` runs one model turn through the
+and the skill index. An omitted `targets` or `skillIndex` means that catalog
+could not be refreshed; Process retains its last observed projection. An empty
+array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
 `AiTextGenerationReasoning` are the message and reasoning records in
 `packages/gsv/src/protocol/syscalls/ai.ts`.

@@ -39,6 +39,11 @@
   ],
   "services": [
     {
+      "binding": "TARGET_ADAPTER",
+      "service": "gsv-managed-slack-test",
+      "entrypoint": "ManagedSlackChannel"
+    },
+    {
       "binding": "GATEWAY",
       "service": "managed-slack-gateway-test",
       "entrypoint": "AdapterGatewayEntrypoint",

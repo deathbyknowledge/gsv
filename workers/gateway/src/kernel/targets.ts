@@ -8,7 +8,7 @@ import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
 import {
-  listVisibleAdapterTargets,
+  discoverVisibleAdapterTargets,
   type AdapterTargetRoute,
 } from "./adapter-targets";
 
@@ -36,6 +36,11 @@ export type TargetListOptions = {
   includeOffline?: boolean;
 };
 
+export type TargetDiscovery = {
+  targets: TargetDescriptor[];
+  complete: boolean;
+};
+
 type TargetMetadataPatch = {
   label?: string;
   description?: string;
@@ -60,8 +65,18 @@ export async function listAllVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor[]> {
-  const adapterTargets = await listVisibleAdapterTargets(ctx, options);
-  return [...listVisibleTargets(ctx, options), ...adapterTargets];
+  return (await discoverVisibleTargets(ctx, options)).targets;
+}
+
+export async function discoverVisibleTargets(
+  ctx: KernelContext,
+  options: TargetListOptions = {},
+): Promise<TargetDiscovery> {
+  const discovery = await discoverVisibleAdapterTargets(ctx, options);
+  return {
+    targets: [...listVisibleTargets(ctx, options), ...discovery.targets],
+    complete: discovery.complete,
+  };
 }
 
 export function getVisibleTarget(
@@ -88,7 +103,7 @@ export async function resolveVisibleTarget(
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor | null> {
   return getVisibleTarget(ctx, targetId, options)
-    ?? (await listVisibleAdapterTargets(ctx, options)).find(
+    ?? (await discoverVisibleAdapterTargets(ctx, options)).targets.find(
       (target) => target.targetId === targetId,
     )
     ?? null;

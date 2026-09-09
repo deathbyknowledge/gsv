@@ -2189,21 +2189,21 @@ export class ProcessRun {
     state: RunTickContextState,
   ): Promise<ContextEpochRecord | null> {
     const contextSnapshot = await this.host.settings.resolveAiContext(this.runAbortSignal(runId));
+    const fallbackProjection =
+      parseContextProjection(this.host.store.epochs.getLiveContextEpoch()?.observedProjection) ??
+      createContextProjection(contextSnapshotFromRun(state.run, state.activeConfig));
+    const currentProjection = createContextProjection(
+      contextSnapshot,
+      new Date(),
+      fallbackProjection,
+    );
     const projectedRun = this.host.mutateActiveRun(runId, (current) => ({
       ...current,
-      devices: contextSnapshot.targets,
+      devices: currentProjection.targets,
       mcpServers: contextSnapshot.mcpServers,
     }));
     if (!projectedRun) return null;
     state.run = projectedRun;
-    const fallbackProjection =
-      parseContextProjection(this.host.store.epochs.getLiveContextEpoch()?.observedProjection) ??
-      createContextProjection(contextSnapshotFromRun(projectedRun, state.activeConfig));
-    const currentProjection = createContextProjection(
-      contextSnapshot,
-      new Date(),
-      fallbackProjection.skills,
-    );
     const epoch = await this.host.history.ensureContextEpoch(
       runId,
       projectedRun,

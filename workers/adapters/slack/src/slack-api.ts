@@ -142,6 +142,17 @@ export type SlackUserSummary = {
 export type SlackPage<T> = {
   items: T[];
   nextCursor?: string;
+  hasMore?: boolean;
+  isLimited?: boolean;
+};
+
+export type SlackMessagePageInput = {
+  channel: string;
+  limit: number;
+  cursor?: string;
+  oldest?: string;
+  latest?: string;
+  inclusive?: boolean;
 };
 
 export type SlackUpdateMessageInput = {
@@ -319,7 +330,7 @@ export async function getSlackConversation(
 
 export async function getSlackConversationHistory(
   userToken: string,
-  input: { channel: string; limit: number; cursor?: string },
+  input: SlackMessagePageInput,
   slackFetch: SlackFetch = fetch,
 ): Promise<SlackPage<SlackMessageSummary>> {
   return await getSlackMessagesPage(
@@ -332,7 +343,7 @@ export async function getSlackConversationHistory(
 
 export async function getSlackConversationReplies(
   userToken: string,
-  input: { channel: string; timestamp: string; limit: number; cursor?: string },
+  input: SlackMessagePageInput & { timestamp: string },
   slackFetch: SlackFetch = fetch,
 ): Promise<SlackPage<SlackMessageSummary>> {
   return await getSlackMessagesPage(
@@ -784,30 +795,33 @@ export function requireSlackId(value: string | undefined, label: string): string
 async function getSlackMessagesPage(
   method: "conversations.history" | "conversations.replies",
   userToken: string,
-  input: {
-    channel: string;
-    timestamp?: string;
-    limit: number;
-    cursor?: string;
-  },
+  input: SlackMessagePageInput & { timestamp?: string },
   slackFetch: SlackFetch,
 ): Promise<SlackPage<SlackMessageSummary>> {
   const payload = {
     channel: requireSlackId(input.channel, "Slack channel"),
     limit: requireBoundedInteger(input.limit, "Slack message limit", 1, 100),
     ts: input.timestamp ? requireSlackTimestamp(input.timestamp) : undefined,
+    oldest: input.oldest ? requireSlackTimestamp(input.oldest) : undefined,
+    latest: input.latest ? requireSlackTimestamp(input.latest) : undefined,
+    inclusive: input.inclusive,
     cursor: input.cursor
       ? requireText(input.cursor, "Slack cursor", 2_048)
       : undefined,
   } satisfies SlackApiPayload;
   const result = await callSlackApi<{
     messages?: SlackMessageApiObject[];
+    has_more?: boolean;
+    is_limited?: boolean;
     response_metadata?: { next_cursor?: string };
   }>(method, userToken, payload, slackFetch);
-  return page(
+  const messages = page(
     (result.messages ?? []).map(parseSlackMessage),
     result.response_metadata?.next_cursor,
   );
+  if (result.has_more === true) messages.hasMore = true;
+  if (result.is_limited === true) messages.isLimited = true;
+  return messages;
 }
 
 function parseSlackConversation(value: SlackConversationApiObject): SlackConversationSummary {

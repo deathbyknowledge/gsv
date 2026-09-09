@@ -106,7 +106,7 @@ import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
-import { listAllVisibleTargets, targetToAiTarget } from "./targets";
+import { discoverVisibleTargets, listAllVisibleTargets, targetToAiTarget } from "./targets";
 import {
   isSameAiModelCredentialScope,
   layerAiModelStacks,
@@ -214,8 +214,8 @@ export async function handleAiContext(
     && hasCapability(principalOf(ctx)?.calls ?? [], "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
 
+  const targetDiscovery = await discoverVisibleTargets(ctx);
   const result: AiContextResult = {
-    targets: (await listAllVisibleTargets(ctx)).map(targetToAiTarget),
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
@@ -223,6 +223,7 @@ export async function handleAiContext(
     },
     skillIndexMode,
   };
+  if (targetDiscovery.complete) result.targets = targetDiscovery.targets.map(targetToAiTarget);
   if (skillIndex !== undefined) result.skillIndex = skillIndex;
   return result;
 }

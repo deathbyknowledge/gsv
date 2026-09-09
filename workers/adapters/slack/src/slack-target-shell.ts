@@ -1,6 +1,7 @@
 import {
   Bash,
   InMemoryFs,
+  MountableFs,
   defineCommand,
   type BashExecResult,
   type ByteString,
@@ -29,9 +30,12 @@ import {
   type SlackUserSummary,
 } from "./slack-api";
 import { renderSlackActorAttribution } from "./slack-delivery";
+import { SlackTargetFileSystem } from "./slack-target-fs";
+import { SlackShellFileSystem } from "./slack-target-fs-adapter";
 
-type SlackTargetShellInput = {
+export type SlackTargetShellInput = {
   args: ShellExecArgs;
+  fs?: SlackTargetFileSystem;
   userToken: string;
   botToken: string;
   actorId: string;
@@ -95,13 +99,14 @@ export async function executeSlackTargetShell(
   if (input.args.background) {
     return failed("Slack shell background execution is not supported");
   }
-  if (input.args.cwd && input.args.cwd !== "/") {
-    return failed("Slack target cwd must be /");
-  }
   if (!input.args.input.trim()) return failed("input must not be empty");
 
+  const fs = new MountableFs({
+    base: new SlackShellFileSystem(input.fs ?? new SlackTargetFileSystem(input)),
+    mounts: [{ mountPoint: "/tmp", filesystem: new InMemoryFs() }],
+  });
   const bash = new Bash({
-    fs: new InMemoryFs(),
+    fs,
     cwd: "/",
     env: {
       HOME: "/",
@@ -127,8 +132,10 @@ export async function executeSlackTargetShell(
   });
 
   try {
+    const cwd = fs.resolvePath("/", input.args.cwd ?? "/");
+    if (cwd !== "/" && !(await fs.stat(cwd)).isDirectory) return failed(`Not a directory: ${cwd}`);
     const result = await bash.exec(input.args.input, {
-      cwd: "/",
+      cwd,
       signal: input.signal,
     });
     if (input.signal.aborted) return failed(abortMessage(input.signal));
@@ -534,6 +541,8 @@ function slackUsage(): string {
     "The app can post to public channels without joining.",
     "Invite GSV before reacting or mutating private channels.",
     "Use --json for scripts and pipelines.",
+    "Read /README.txt for conversation, history, thread, and user filesystem paths.",
+    "Slack resources are read-only; /tmp is scratch space for this execution.",
     "Posting here is external tool activity; `message send` remains canonical GSV delivery.",
     "",
   ].join("\n");
