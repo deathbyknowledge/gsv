@@ -25,7 +25,7 @@ import {
   ManagedTelegramOnboardingFlow,
   type ManagedTelegramDependencies,
 } from "../../gsv-console/messengers/ManagedTelegramOnboardingFlow";
-import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { INSTRUMENT_CONTACTS_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {
   derivePlaces,
   joinNames,
@@ -43,8 +43,6 @@ const OS_CHOICES: readonly { id: ComputerOs; label: string }[] = [
   { id: "windows", label: "Windows" },
   { id: "linux", label: "Linux" },
 ];
-
-const contactsQueryKey = ["instrument", "contacts"] as const;
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -189,7 +187,7 @@ function BrowserPanel({ release }: { release: string }) {
   );
 }
 
-function PersonPanel({ onInvited }: { onInvited: () => void }) {
+function PersonPanel() {
   const { client } = useGateway();
   const [code, setCode] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -201,7 +199,7 @@ function PersonPanel({ onInvited }: { onInvited: () => void }) {
     setError("");
     void mutateContactsWorkspace(client, { kind: "invite.create" })
       .then((result) => {
-        if (result.kind === "invite.created") { setCode(result.invite.code); onInvited(); }
+        if (result.kind === "invite.created") setCode(result.invite.code);
       })
       .catch((cause: Error) => setError(cause.message))
       .finally(() => setPending(false));
@@ -241,13 +239,11 @@ export function FirstDay() {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected });
-  const [awaitingPerson, setAwaitingPerson] = useState(false);
   const identityLinks = useConsoleIdentityLinks();
   const contacts = useQuery({
-    queryKey: contactsQueryKey,
+    queryKey: INSTRUMENT_CONTACTS_KEY,
     enabled: connected,
     queryFn: async () => (await client.contact.list({ includeRevoked: true })).contacts,
-    refetchInterval: awaitingPerson ? 5_000 : false,
   });
   const [telegramPaired, setTelegramPaired] = useState(false);
   const [open, setOpen] = useState<PlaceId | null | undefined>(undefined);
@@ -266,8 +262,6 @@ export function FirstDay() {
   useEffect(() => {
     if (open === undefined && !targets.isPending && !identityLinks.isPending && !contacts.isPending) setOpen(nextToConnect(rows));
   }, [open, rows, targets.isPending, identityLinks.isPending, contacts.isPending]);
-
-  useEffect(() => { if (rows.some((row) => row.id === "person" && row.lit)) setAwaitingPerson(false); }, [rows]);
 
   const release = snapshot.server?.release ?? "dev";
   const username = snapshot.username || "root";
@@ -316,7 +310,7 @@ export function FirstDay() {
                     ) : isOpen && row.id === "browser" ? (
                       <BrowserPanel release={release} />
                     ) : isOpen && row.id === "person" ? (
-                      <PersonPanel onInvited={() => setAwaitingPerson(true)} />
+                      <PersonPanel />
                     ) : null}
                   </div>
                 </div>

@@ -38,6 +38,8 @@ describe("user-facing signal policy", () => {
       "adapter.status",
       "mcp.changed",
       "ledger.changed",
+      "contact.changed",
+      "contact.invite.changed",
     ]));
     expect(USER_CONNECTION_SIGNALS).not.toContain("ledger.appended");
   });

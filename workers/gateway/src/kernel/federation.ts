@@ -278,6 +278,7 @@ export async function handleContactInviteCreate(
     token,
     expiresAtMs,
   });
+  ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
   return { inviteId: invite.inviteId, code, expiresAtMs };
 }
 
@@ -303,7 +304,9 @@ export function handleContactInviteCancel(
   const now = Date.now();
   const inviteId = args.inviteId.trim();
   if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
+  const previous = ctx.federation.invite(inviteId);
   const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
+  if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
   return { invite: contactInviteSummary(invite, now) };
 }
 
@@ -419,6 +422,7 @@ export async function handleContactInviteAccept(
     localDocument.shipId,
     remoteDocument.shipId,
   );
+  let contactChanged = false;
   const activate = () => ctx.federation.transaction(() => {
     const currentAttempt = ctx.federation.pairingAttempt(tokenHash);
     if (!currentAttempt) throw new Error("Contact pairing attempt not found");
@@ -465,12 +469,14 @@ export async function handleContactInviteAccept(
       generation: accepted.generation,
       threadId: accepted.threadId,
     });
+    contactChanged = true;
     return activated;
   });
   const contact = await ctx.coordinateFederationContact(
     `pairing:${ownerUid}:${accepted.document.shipId}:${accepted.subject.id}`,
     activate,
   );
+  if (contactChanged) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   await ensureContactConversation(contact, ctx);
   await ctx.reconcileResponsibilityWake(ownerUid);
   return {
@@ -499,6 +505,7 @@ export function handleContactAliasSet(
     : boundedText(args.alias.trim(), "Contact alias", MAX_CONTACT_DISPLAY_NAME_BYTES, false);
   const updated = ctx.federation.setAlias(contact.id, ownerUid, alias);
   ctx.conversations.setTitle(updated.conversationId, contactDisplayName(updated));
+  if (contact.localAlias !== updated.localAlias) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return { contact: contactSummary(updated) };
 }
 
@@ -552,6 +559,7 @@ export async function handleContactRevoke(
       });
       revokeFederationContact(current, revokedAtMs, ctx);
     });
+    ctx.broadcastToUserUid(ownerUid, "contact.changed");
     await ctx.scheduleFederationDelivery(deliveryId, Date.now(), true);
     await ctx.reconcileResponsibilityWake(ownerUid);
     return { contact: contactSummary(ctx.federation.get(current.id)!) };
@@ -1319,6 +1327,7 @@ async function acceptRemoteInvite(
     ...proposedUnsigned,
     signature: await ctx.federationIdentity.sign(jsonValue(proposedUnsigned)),
   };
+  let contactChanged = false;
   const claim = () => ctx.federation.transaction(() => {
     const currentInvite = ctx.federation.inviteByTokenHash(tokenHash);
     if (!currentInvite) throw new PublicFederationError(404, "Contact invite not found");
@@ -1401,6 +1410,7 @@ async function acceptRemoteInvite(
     })) {
       throw new PublicFederationError(409, "Contact invite was already consumed");
     }
+    contactChanged = true;
     return {
       contact: activated,
       response: proposedResponse,
@@ -1410,6 +1420,10 @@ async function acceptRemoteInvite(
     `pairing:${invite.ownerUid}:${input.document.shipId}:${remoteSubject.id}`,
     claim,
   );
+  if (contactChanged) {
+    ctx.broadcastToUserUid(invite.ownerUid, "contact.changed");
+    ctx.broadcastToUserUid(invite.ownerUid, "contact.invite.changed");
+  }
   await ensureContactConversation(acceptance.contact, ctx);
   await ctx.reconcileResponsibilityWake(acceptance.contact.ownerUid);
   if (!isCurrentFederationContact(
@@ -1670,6 +1684,7 @@ async function commitInboundDelivery(
           receivedAtMs,
         );
       });
+      if (contact.state !== "revoked") ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
       createFederationResponsibility({
         ownerUid: contact.ownerUid,
         title: `Review contact change ${contact.id}`,

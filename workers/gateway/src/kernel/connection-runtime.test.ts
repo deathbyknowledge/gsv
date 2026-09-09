@@ -70,6 +70,38 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
   });
 });
 
+describe("ConnectionRuntime contact notifications", () => {
+  it.each([
+    ["contact.changed", "contact.list"],
+    ["contact.invite.changed", "contact.invite.list"],
+  ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {
+    const socket = (uid = 1000, calls = [call], signals = [signal], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({
+      step, protocol: 4,
+      peer: { ...MACHINE_PEER, principal: { kind, account: { ...MACHINE_PEER.principal.account, uid } }, grant: { calls, signals, implements: [] } },
+    });
+    const owner = socket();
+    const wildcard = socket(1000, ["contact.*"]);
+    const rejected = [socket(1001), socket(0, ["*"]), socket(1000, []), socket(1000, ["*"], []), socket(1000, ["*"], [signal], "machine"), socket(1000, ["*"], [signal], "human", "superseded")];
+    const { runtime } = runtimeWith([owner, wildcard, ...rejected]);
+    runtime.rehydrateConnections();
+    runtime.broadcastToUserUid(1000, signal);
+    for (const recipient of [owner, wildcard]) expect(recipient.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: "sig", signal }));
+    for (const recipient of rejected) expect(recipient.send).not.toHaveBeenCalled();
+  });
+
+  it("does not fail a saved mutation or other readers when one socket fails", () => {
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" }, grant: { calls: ["*"], signals: ["contact.changed"], implements: [] } };
+    const failed = fakeSocket({ step: "connected", protocol: 4, peer });
+    const healthy = fakeSocket({ step: "connected", protocol: 4, peer });
+    failed.send.mockImplementation(() => { throw new Error("closed"); });
+    const { runtime } = runtimeWith([failed, healthy]);
+    runtime.rehydrateConnections();
+    runtime.broadcastToUserUid(1000, "contact.changed");
+    expect(failed.close).toHaveBeenCalledWith(1011, "Contact feed interrupted");
+    expect(healthy.send).toHaveBeenCalledOnce();
+  });
+});
+
 describe("ConnectionRuntime.broadcastLedgerChanges", () => {
   it("requires a connected human reader, the signal grant, and the owning uid or root", () => {
     const socket = (uid: number, calls = ["sys.ledger.list"], signals = ["ledger.changed"], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({

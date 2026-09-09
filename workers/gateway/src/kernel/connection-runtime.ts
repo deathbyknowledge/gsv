@@ -288,14 +288,25 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       payload,
     };
     const json = JSON.stringify(frame);
+    const contactRead = signal === "contact.changed" ? "contact.list"
+      : signal === "contact.invite.changed" ? "contact.invite.list" : null;
 
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
       if (!peer || peer.principal.kind !== "human") continue;
       if (!peer.grant.signals.includes(signal)) continue;
+      // Contact notifications reveal private activity even without a payload.
+      if (contactRead && (state.step !== "connected" || !hasCapability(peer.grant.calls, contactRead))) continue;
       if (peer.principal.account.uid === uid) {
-        conn.send(json);
+        if (!contactRead) conn.send(json);
+        else {
+          try {
+            conn.send(json);
+          } catch {
+            conn.close(1011, "Contact feed interrupted");
+          }
+        }
       }
     }
   }

@@ -1,14 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "./ConnectPlace";
-
-const CONTACTS_KEY = ["instrument", "contacts"] as const;
-const INVITES_KEY = ["instrument", "contact-invites"] as const;
+import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
 
 export function useFleetContacts(account: ConsoleAccount | undefined) {
   const { client, connected } = useGateway();
@@ -32,31 +30,33 @@ export function AddContact({ account, onClose, onAdded }: {
   const invites = useQuery({
     queryKey: INVITES_KEY,
     enabled: allowed("contact.invite.list"),
-    queryFn: async () => {
-      const result = await client.contact.invite.list({ includeTerminal: true });
-      if (issued && result.invites.some((invite) => invite.inviteId === issued.inviteId && invite.state === "accepted")) {
-        await cache.invalidateQueries({ queryKey: CONTACTS_KEY });
-      }
-      return result.invites;
-    },
-    refetchInterval: (query) => issued && query.state.data?.find((invite) => invite.inviteId === issued.inviteId)?.state === "pending" ? 5_000 : false,
+    queryFn: async () => (await client.contact.invite.list({ includeTerminal: true })).invites,
   });
-  const currentInvite = invites.data?.find((invite) => invite.inviteId === issued?.inviteId);
+  const [now, setNow] = useState(Date.now());
+  const deadline = Math.min(...(invites.data ?? []).filter((invite) => invite.state === "pending" && invite.expiresAtMs > now).map((invite) => invite.expiresAtMs));
+  useEffect(() => {
+    if (!Number.isFinite(deadline)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, deadline - Date.now()));
+    return () => clearTimeout(timer);
+  }, [deadline]);
+  const displayedInvites = invites.data?.map((invite) => invite.state === "pending" && invite.expiresAtMs <= Math.max(now, Date.now())
+    ? { ...invite, state: "expired" as const } : invite);
+  const currentInvite = displayedInvites?.find((invite) => invite.inviteId === issued?.inviteId);
   const create = useMutation({
     mutationFn: () => client.contact.invite.create({}),
-    onSuccess: async (invite) => { setIssued(invite); await cache.invalidateQueries({ queryKey: INVITES_KEY }); },
+    onSuccess: (invite) => { setIssued(invite); },
   });
   const accept = useMutation({
     mutationFn: (value: string) => client.contact.invite.accept({ code: value }),
-    onSuccess: async ({ contact }) => { setCode(""); await cache.invalidateQueries({ queryKey: CONTACTS_KEY }); onAdded(contact.id); },
+    onSuccess: async ({ contact }) => { setCode(""); await cache.invalidateQueries({ queryKey: CONTACTS_KEY }, { cancelRefetch: false }); onAdded(contact.id); },
   });
   const cancel = useMutation({
     mutationFn: (inviteId: string) => client.contact.invite.cancel({ inviteId }),
-    onSuccess: async (_, inviteId) => { if (issued?.inviteId === inviteId) setIssued(null); await cache.invalidateQueries({ queryKey: INVITES_KEY }); },
+    onSuccess: (_, inviteId) => { if (issued?.inviteId === inviteId) setIssued(null); },
   });
   const pending = create.isPending || accept.isPending || cancel.isPending;
   const error = create.error ?? accept.error ?? cancel.error ?? invites.error;
-  const pendingInvites = invites.data?.filter((invite) => invite.state === "pending" && invite.inviteId !== issued?.inviteId) ?? [];
+  const pendingInvites = displayedInvites?.filter((invite) => invite.state === "pending" && invite.inviteId !== issued?.inviteId) ?? [];
 
   return <section class="fleet-connection" aria-label="Add a contact">
     <h3>Add a contact</h3>
@@ -95,18 +95,18 @@ export function AddContact({ account, onClose, onAdded }: {
 
 export function ContactInspector({ contact, account }: { contact: ContactSummary; account: ConsoleAccount | undefined }) {
   const { client, connected } = useGateway();
-  const cache = useQueryClient();
-  const [alias, setAlias] = useState(contact.localAlias ?? "");
+  const [aliasDraft, setAliasDraft] = useState<string | null>(null);
+  const alias = aliasDraft ?? contact.localAlias ?? "";
   const [confirm, setConfirm] = useState(false);
   const allowed = (syscall: string) => connected && contact.state === "active" && !!account
     && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, syscall);
   const save = useMutation({
     mutationFn: (value: string) => client.contact.alias.set({ contactId: contact.id, alias: value || null }),
-    onSuccess: async () => { await cache.invalidateQueries({ queryKey: CONTACTS_KEY }); },
+    onSuccess: () => { setAliasDraft(null); },
   });
   const revoke = useMutation({
     mutationFn: () => client.contact.revoke({ contactId: contact.id }),
-    onSuccess: async () => { setConfirm(false); await cache.invalidateQueries({ queryKey: CONTACTS_KEY }); },
+    onSuccess: () => { setConfirm(false); },
   });
   const pending = save.isPending || revoke.isPending;
   const error = save.error ?? revoke.error;
@@ -116,7 +116,7 @@ export function ContactInspector({ contact, account }: { contact: ContactSummary
     <div class="sub">contact · {contact.state}</div>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
     <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); if (allowed("contact.alias.set") && !pending) save.mutate(alias.trim()); }}>
-      <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAlias(event.currentTarget.value)} /></label>
+      <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
       <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
     </form>
     {contact.state === "active" && <div class="fleet-place-form">

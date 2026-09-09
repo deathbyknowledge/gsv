@@ -421,7 +421,6 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
             <h2>
               <i /> Contacts
               <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
-              <button type="button" class="fleet-heading-action is-icon" aria-label="Refresh contacts" title="Refresh contacts" disabled={!connected || !viewer || !canConfigure(viewer, "contact.list") || contactsQuery.isFetching} onClick={() => void contactsQuery.refetch()}><span aria-hidden="true">↻</span></button>
               <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
             </h2>
             {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}

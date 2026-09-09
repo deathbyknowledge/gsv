@@ -3,7 +3,8 @@ import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
-import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { refreshContactQuery } from "./contactSync";
 import { createLedgerSync } from "./ledgerSync";
 import {
   isProcessSignal,
@@ -20,6 +21,7 @@ import {
  * lines appended to the ledger. A signal about something the cache has not
  * seen fetches that one list again; nothing refetches on a signal otherwise.
  * A reconnect after a drop is the only moment everything is fetched again.
+ * Payload-free contact notifications use selective list invalidation below.
  */
 export function WireSync(): null {
   const { client, connected } = useGateway();
@@ -43,6 +45,11 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      // Contacts carry invalidations, so invitation codes and private records stay out of signals.
+      if (signal === "contact.changed" || signal === "contact.invite.changed") {
+        void refreshContactQuery(queryClient, signal === "contact.changed" ? INSTRUMENT_CONTACTS_KEY : INSTRUMENT_CONTACT_INVITES_KEY);
+        return;
+      }
       if (signal === "mcp.changed") {
         void queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey });
         return;
