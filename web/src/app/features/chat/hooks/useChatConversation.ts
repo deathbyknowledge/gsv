@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery, useQueryClient } from "@tanstack/preact-query";
 import type {
+  ConversationMessage,
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -58,7 +60,7 @@ const messageSchema = z.object({
     z.object({ kind: z.literal("process"), pid: z.string(), uid: z.number() }),
   ]),
   text: z.string(),
-  media: z.array(mediaInputSchema).optional(),
+  media: z.array(z.union([resourceBlockSchema, mediaInputSchema])).optional(),
   origin: originSchema,
   processId: z.string().optional(),
   runId: z.string().optional(),
@@ -241,6 +243,12 @@ export function useChatConversationRuntime(
     }));
   }, []);
 
+  const acceptMessage = useCallback((message: ConversationMessage) => {
+    setRuntime((current) => current.conversation?.id === message.conversationId
+      ? { ...current, rows: upsertRow(current.rows, conversationMessageRow(message)) }
+      : current);
+  }, []);
+
   const loadOlder = useCallback(async () => {
     const current = runtimeRef.current;
     const oldestSequence = current.rows.reduce<number | null>((oldest, row) => {
@@ -290,11 +298,13 @@ export function useChatConversationRuntime(
   return useMemo(() => ({
     ...visibleRuntime,
     appendOptimistic,
+    acceptMessage,
     historyLoading: conversationQuery.isLoading || historyQuery.isLoading,
     historyError: conversationQuery.error ?? historyQuery.error,
     loadOlder,
   }), [
     appendOptimistic,
+    acceptMessage,
     conversationQuery.error,
     conversationQuery.isLoading,
     historyQuery.error,

@@ -4,6 +4,8 @@ import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
+import { LoadingState } from "../../../components/ui/Spinner";
+import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../chat/domain/processes";
 import {
   decideChatHil,
   listChatProcesses,
@@ -25,6 +27,8 @@ import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { ZenText } from "./ZenText";
+import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
+import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
   activityDuration,
   answerAttribution,
@@ -65,6 +69,7 @@ export type ZenProps = {
   pid?: string | null;
   /** Back to the ship's own conversation. */
   onShip?: () => void;
+  onDraftChange?: (dirty: boolean) => void;
 };
 
 type StatusTone = "" | "is-on" | "is-live" | "is-warn" | "is-err";
@@ -270,7 +275,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
+export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip, onDraftChange }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -282,6 +287,28 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   const runtime = processRuntime.runtime;
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
+  const [draftText, setDraftText] = useState("");
+  const [sending, setSending] = useState<"uploading" | "sending" | null>(null);
+  const pendingSend = useRef<{ intent: ZenSendIntent; controller: AbortController } | null>(null);
+  const retryIntent = useRef<ZenSendIntent | null>(null);
+  const mounted = useRef(true);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const dirty = draftText !== "" || attachments.length > 0 || sending !== null;
+  useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
+  useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; pendingSend.current?.controller.abort(new Error("Upload cancelled")); };
+  }, []);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const [localRuns, setLocalRuns] = useState<LocalRun[]>([]);
   const [openActivities, setOpenActivities] = useState<ReadonlySet<string>>(() => new Set());
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
@@ -297,6 +324,7 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
   const onPromptInput = useCallback((value: string) => {
+    setDraftText(value);
     const match = value.match(/^@(\S*)$/);
     setPickerQuery(match ? match[1] : null);
     setPickerIndex(0);
@@ -540,7 +568,7 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   }, [moments, tick]);
 
   const latest = moments[moments.length - 1];
-  const lastAnswer = [...moments].reverse().find((moment) => moment.role === "ship" && moment.text.trim() && !moment.streaming && !moment.thinking);
+  const lastAnswer = [...moments].reverse().find((moment) => moment.role === "ship" && (moment.text.trim() || moment.media?.length) && !moment.streaming && !moment.thinking);
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
 
   const toggleActivity = useCallback((key: string) => {
@@ -553,20 +581,48 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   }, []);
 
   /* the prompt */
+  const addFiles = useCallback((files: File[]) => {
+    const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
+    setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
+    setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
+    promptRef.current?.focus();
+  }, []);
   const say = useCallback(
     async (text: string) => {
+      if (pendingSend.current) return false;
       if (!pid) {
         setNote("Your ship is still starting.");
-        return;
+        return false;
       }
-      conversation.appendOptimistic(text);
+      const intent = zenSendIntent(retryIntent.current, pid, text, attachments);
+      retryIntent.current = intent;
+      const pending = { intent, controller: new AbortController() };
+      pendingSend.current = pending;
+      setSending(attachments.length > 0 ? "uploading" : "sending");
       try {
-        await sendChatMessage(client, { pid, message: text });
+        const result = await sendChatMessage(client, {
+          pid, conversationId: conversation.conversation?.id, message: text,
+          media: [...intent.media], idempotencyKey: intent.idempotencyKey,
+        }, {
+          signal: pending.controller.signal,
+          onUploaded: () => { if (mounted.current) setSending("sending"); },
+        });
+        if (mounted.current) {
+          conversation.acceptMessage(result.message);
+          setAttachments((current) => current.filter((file) => !intent.media.some((sent) => sent.id === file.id)));
+          retryIntent.current = null;
+          setNote(null);
+        }
+        return true;
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The message did not go through.");
+        if (mounted.current) setNote(error instanceof Error ? error.message : "The message did not go through.");
+        return false;
+      } finally {
+        if (pendingSend.current === pending) pendingSend.current = null;
+        if (mounted.current) setSending(null);
       }
     },
-    [client, conversation, pid],
+    [attachments, client, conversation, pid],
   );
 
   const runDirectly = useCallback(
@@ -596,24 +652,26 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
 
   const onSubmit = useCallback(
     (raw: string) => {
+      if (pendingSend.current) return false;
       setNote(null);
-      setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
+      if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return;
+      if (!intent) return attachments.length > 0 ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
         else setNote(`No place called ${intent.name}.`);
-        return;
+        return true;
       }
       if (intent.kind === "run") {
+        if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
         void runDirectly(intent.command);
-        return;
+        return true;
       }
-      void say(intent.text);
+      return say(intent.text);
     },
-    [places, runDirectly, say],
+    [attachments.length, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -790,11 +848,20 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   }, [browse, connected, lastAnswer, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.streaming)) ? index : latest, -1);
+    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
-    <main class={`zen${browse !== null ? " is-browse" : ""}`} aria-label="Zen">
+    <main class={`zen${browse !== null ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
+      onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
+      onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
+      onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (files.length === 0) return;
+        event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false); addFiles(files);
+      }}>
+      {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
       <InstrumentHeader>
         <span aria-current="page">{pidProp ? "helper" : "zen"}</span>
         {pidProp && <button type="button" onClick={onShip}>back to your Ship</button>}
@@ -848,8 +915,8 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
                 );
               }
               return (
-                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
-                  {moment.role === "human" || moment.text || moment.streaming ? <div class="who">
+                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
+                  {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
                     {moment.role === "human" ? who : "ship"}
                   </div> : null}
                   {moment.activities
@@ -884,6 +951,9 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
                       <span class="zen-caret blink" />
                     </div>
                   ) : null}
+                  {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} onReady={() => {
+                    if (browseRef.current === null && momentsRef.current) momentsRef.current.scrollTop = momentsRef.current.scrollHeight;
+                  }} />)}
                   {isLatest && pendingHil ? (
                     <div class="zen-approval">
                       <div class="q">
@@ -928,7 +998,7 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
               {currentPlace.label} is offline · view place
             </button>
           ) : null}
-          {note ? <span class="is-err">{note}</span> : null}
+          {note ? <span class="is-err" role="alert">{note}</span> : null}
         </div>
         <div>
           {pickerQuery !== null && pickerPlaces.length > 0 ? (
@@ -954,6 +1024,11 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
             </div>
           ) : null}
 
+          {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
+            {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
+              disabled={pendingSend.current?.intent.media.some((file) => file.id === attachment.id)}
+              onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
+          </ul>}
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}
@@ -971,9 +1046,21 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
             }
             disabled={!connected || !pid}
             onSubmit={onSubmit}
+            allowEmpty={attachments.length > 0}
+            onFiles={addFiles}
             onHistory={onHistory}
             autoFocus
           />
+          <div class="zen-compose-actions">
+            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
+              addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
+            }} />
+            <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
+            {sending ? <>
+              <LoadingState>{sending === "uploading" ? "uploading…" : "sending…"}</LoadingState>
+              {sending === "uploading" && <button type="button" onClick={() => pendingSend.current?.controller.abort(new Error("Upload cancelled. Your draft is still here."))}>cancel upload</button>}
+            </> : attachments.length > 0 && <button type="button" disabled={!connected || !pid} onClick={() => promptRef.current?.submit()}>send</button>}
+          </div>
         </div>
       </div>
     </main>

@@ -1,7 +1,9 @@
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type {
   ConversationHistoryResult,
   ConversationSummary,
+  ConversationMessage,
 } from "@humansandmachines/gsv/protocol";
 import { act } from "preact/test-utils";
 import { describe, expect, it, vi } from "vitest";
@@ -146,5 +148,37 @@ describe("chat conversation pagination", () => {
       queryClient.clear();
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("live conversation attachments", () => {
+  it("keeps resource blocks on committed signals and reconciles the sender receipt once", async () => {
+    vi.stubGlobal("document", {});
+    const summary = conversation("conv:media", "proc:media");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createTestRoot("Live conversation media");
+    const observed: ObservedHook = {};
+    let listener: Parameters<GSVClient["onSignal"]>[0] | undefined;
+    const message: ConversationMessage = {
+      id: "message:media", conversationId: summary.id, sequence: 1, author: { kind: "user", uid: 1000 },
+      text: "", createdAt: 1, origin: { kind: "client", clientId: "web" },
+      media: [{ type: "resource", mediaType: "image", filename: "image.png", ref: { type: "file", target: "gsv", path: "/home/test/image.png", revision: "content-one", contentType: "image/png", size: 3 } }],
+    };
+    const gateway: ChatConversationRuntimeGateway = {
+      client: {
+        conversation: { forProcess: async () => ({ conversation: summary }), history: async () => ({ conversation: summary, messages: [], hasMore: false }) },
+        onSignal: (next) => { listener = next; return () => { listener = undefined; }; },
+      }, connected: true,
+    };
+    function Harness() { observed.current = useChatConversationRuntime({ processId: summary.handlerPid }, gateway); return null; }
+    try {
+      await root.render(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+      await vi.waitFor(() => { expect(observed.current?.loaded).toBe(true); expect(listener).toBeDefined(); });
+      await act(() => { listener?.("message.committed", { message, directed: true }); });
+      await vi.waitFor(() => expect(observed.current?.rows[0]?.media).toEqual(message.media));
+      await act(() => { observed.current?.acceptMessage(message); });
+      expect(observed.current?.rows).toHaveLength(1);
+      expect(observed.current?.rows[0].delivery).toBe("directed");
+    } finally { await root.unmount(); queryClient.clear(); vi.unstubAllGlobals(); }
   });
 });

@@ -2,21 +2,18 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../../../components/ui/Icon";
 import {
   chatMediaDescription,
-  chatMediaConversationId,
   chatMediaDuration,
   chatMediaFilename,
-  chatMediaKey,
   chatMediaKind,
   chatMediaMimeType,
-  chatMediaResource,
   chatMediaSize,
-  chatMediaSource,
   chatMediaTranscription,
   formatChatMediaDuration,
   formatChatMediaSize,
+  parseChatMedia,
 } from "../domain/media";
 import { Hint } from "../../../components/ui/Tooltip";
-import { useChatProcessMedia, useChatResource } from "../hooks";
+import { useChatMediaSource } from "../hooks/useChatMediaSource";
 
 type ChatMediaAttachmentProps = {
   media: unknown;
@@ -128,29 +125,7 @@ function AudioPlayer({
 }
 
 export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentProps) {
-  const key = chatMediaKey(media);
-  const conversationId = chatMediaConversationId(media);
-  const inlineSource = chatMediaSource(media);
-  const resource = chatMediaResource(media);
-  const mediaQuery = useChatProcessMedia({
-    args: conversationId
-      ? { conversationId, key }
-      : { key, ...(processId ? { pid: processId } : undefined) },
-    enabled: !resource && !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
-  });
-  const resourceQuery = useChatResource({ ref: resource, enabled: Boolean(resource) });
-  const [storedSource, setStoredSource] = useState("");
-  const storedBlob = resourceQuery.data?.blob ?? mediaQuery.data?.blob;
-  useEffect(() => {
-    if (!storedBlob) {
-      setStoredSource("");
-      return undefined;
-    }
-    const source = URL.createObjectURL(storedBlob);
-    setStoredSource(source);
-    return () => URL.revokeObjectURL(source);
-  }, [storedBlob]);
-  const source = inlineSource || chatMediaSource(media, storedSource);
+  const { source, error, retry } = useChatMediaSource(parseChatMedia(media), processId);
   const kind = chatMediaKind(media);
   const filename = chatMediaFilename(media);
   const mimeType = chatMediaMimeType(media);
@@ -161,12 +136,12 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const description = chatMediaDescription(media);
   const meta = [mimeType, size, durationLabel].filter(Boolean).join(" · ");
 
-  if (mediaQuery.isError || resourceQuery.isError) {
+  if (error) {
     return (
       <div class="gsv-chat-media is-error">
         <Icon name={mediaIconName(kind)} family="doticons" size={15} />
         <span>{mediaLabel(kind)} failed to load</span>
-        <button type="button" onClick={() => void (resource ? resourceQuery.refetch() : mediaQuery.refetch())}>RETRY</button>
+        <button type="button" onClick={() => void retry()}>RETRY</button>
       </div>
     );
   }

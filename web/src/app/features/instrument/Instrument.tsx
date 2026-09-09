@@ -69,6 +69,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const [zenDirty, setZenDirty] = useState(false);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
   const [scale, setScale] = useState<Scale>(() => storedScale());
@@ -95,7 +96,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         return;
       }
       if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return;
+      if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
       setSettingsDirty(false);
+      setZenDirty(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
@@ -115,7 +118,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         );
       }, MOVE_MS);
     },
-    [distance, settingsDirty],
+    [distance, settingsDirty, zenDirty],
   );
 
   useEffect(() => {
@@ -206,10 +209,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onMemory={(page) => {
+          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onMemory={(page) => {
             if (page) setSelectedMemoryPage(page);
             move("memory");
-          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
+          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => {
+            if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
+          }} />
         ) : distance === "memory" ? (
           <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onSettings={() => move("settings")} onAsk={(page, prompt) => {
             setSelectedMemoryPage(page);

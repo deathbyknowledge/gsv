@@ -126,7 +126,9 @@ export async function spawnChatProcess(
 export async function sendChatMessage(
   client: ChatGsvClient,
   draft: ChatSendDraft,
+  options: { signal?: AbortSignal; onUploaded?: () => void } = {},
 ): Promise<ConversationSendResult> {
+  options.signal?.throwIfAborted();
   const uploads = draft.media ?? [];
   if (uploads.some(({ body }) => body.size > MAX_CHAT_PROCESS_MEDIA_BYTES)) {
     throw new Error("Chat attachments cannot exceed 25 MiB");
@@ -135,15 +137,17 @@ export async function sendChatMessage(
   if (!pid) throw new Error("Chat requires a process");
   const conversationId = draft.conversationId?.trim()
     || (await client.conversation.forProcess({ pid })).conversation.id;
+  const idempotencyKey = draft.idempotencyKey ?? randomId();
 
   return withStagedResources(client, uploads, async (media) => {
+    options.onUploaded?.();
     return await client.conversation.send({
       conversationId,
       text: draft.message,
       ...(media.length > 0 ? { media } : undefined),
-      idempotencyKey: randomId(),
+      idempotencyKey,
     });
-  });
+  }, idempotencyKey, options.signal);
 }
 
 export async function getChatConversation(

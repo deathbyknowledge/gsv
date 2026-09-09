@@ -16,7 +16,9 @@ export type PromptLineProps = {
   dir: string;
   placeholder: string;
   disabled?: boolean;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
+  allowEmpty?: boolean;
+  onFiles?: (files: File[]) => void;
   /** Called when the chip is pressed, to change the place. */
   onPlace?: () => void;
   /** Called on ArrowUp / ArrowDown with the input empty, for history browsing. */
@@ -35,6 +37,7 @@ export type PromptLineHandle = {
   setValue(value: string): void;
   focus(): void;
   blur(): void;
+  submit(): void;
 };
 
 /**
@@ -45,12 +48,14 @@ export type PromptLineHandle = {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
+  const revision = useRef(0);
+  const submitting = useRef(false);
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
   const [focused, setFocused] = useState(false);
   const [caret, setCaret] = useState({ x: 0, y: 0, visible: true });
@@ -112,6 +117,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   }, [measure]);
   const read = (): string => inputRef.current?.value ?? "";
   const changed = (): void => {
+    revision.current++;
     const value = read();
     setCommand(value.startsWith("$"));
     onInput?.(value);
@@ -126,19 +132,26 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     },
     focus: () => inputRef.current?.focus(),
     blur: () => inputRef.current?.blur(),
+    submit: () => { void send(); },
   }));
-  const send = () => {
+  const send = async () => {
     const input = inputRef.current;
-    if (!input || disabled) return;
+    if (!input || disabled || submitting.current) return;
     const text = input.value.trim();
-    if (!text) return;
-    input.value = "";
-    changed();
-    onSubmit(text);
+    if (!text && !allowEmpty) return;
+    const sentRevision = revision.current;
+    submitting.current = true;
+    try {
+      const accepted = await onSubmit(text);
+      if (accepted !== false && inputRef.current === input && revision.current === sentRevision) {
+        input.value = "";
+        changed();
+      }
+    } finally { submitting.current = false; }
   };
   const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
     event.preventDefault();
-    send();
+    void send();
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const input = inputRef.current;
@@ -146,7 +159,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     if (onKeyIntercept?.(event, input.value)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      send();
+      void send();
       return;
     }
     if (event.key === "Escape") {
@@ -192,6 +205,10 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           onSelect={() => measure(true)}
           onScroll={() => measure()}
           onInput={changed}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData?.files ?? []);
+            if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); }
+          }}
           onFocus={() => {
             setFocused(true);
             measure(true);

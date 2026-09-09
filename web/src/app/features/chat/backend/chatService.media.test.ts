@@ -414,3 +414,47 @@ describe("chat process media", () => {
     });
   });
 });
+
+describe("attachment send retries and cancellation", () => {
+  it("reuses the draft identity and upload paths after an ambiguous send failure", async () => {
+    const request = vi.fn(async (call: string, args: { path: string }) => ({ data: call === "fs.transfer.receive"
+      ? { ok: true, path: args.path, bytesWritten: 3 }
+      : call === "fs.transfer.stat"
+        ? { ok: true, path: args.path, size: 3, isFile: true, isDirectory: false, contentType: "text/plain", revision: "same-bytes" }
+        : { ok: true, path: args.path } }));
+    const send = vi.fn().mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ message: {}, handlerPid: "proc:test", runId: "run:1" });
+    const client = clientFixture({ request, conversation: { send } });
+    const draft = { pid: "proc:test", conversationId: "conv:test", message: "Read this", idempotencyKey: "same-draft", media: [{ type: "document" as const, filename: "notes.txt", mimeType: "text/plain", body: new Blob(["abc"]) }] };
+    await expect(sendChatMessage(client, draft)).rejects.toThrow("Response lost");
+    await sendChatMessage(client, draft);
+    expect(send.mock.calls[0][0]).toEqual(send.mock.calls[1][0]);
+    expect(send.mock.calls[0][0].idempotencyKey).toBe("same-draft");
+    expect(request.mock.calls.filter(([call]) => call === "fs.transfer.receive").map(([, args]) => args.path)).toEqual([
+      "~/.gsv/uploads/same-draft/0-notes.txt", "~/.gsv/uploads/same-draft/0-notes.txt",
+    ]);
+  });
+
+  it("propagates upload cancellation, cleans staged files and never sends the message", async () => {
+    const controller = new AbortController();
+    const request = vi.fn(async (call: string, args: { path: string }, options?: { signal?: AbortSignal; body?: { stream: ReadableStream<Uint8Array> } }) => {
+      if (call === "fs.transfer.receive") {
+        expect(options?.signal).toBe(controller.signal);
+        await options?.body?.stream.cancel();
+        controller.abort(new Error("Cancelled upload"));
+        return { data: { ok: true, path: args.path, bytesWritten: 1 } };
+      }
+      if (call === "fs.transfer.stat") options?.signal?.throwIfAborted();
+      return { data: { ok: true, path: args.path } };
+    });
+    const send = vi.fn();
+    const uploaded = vi.fn();
+    const client = clientFixture({ request, conversation: { send } });
+    await expect(sendChatMessage(client, {
+      pid: "proc:test", conversationId: "conv:test", message: "", idempotencyKey: "cancel-draft",
+      media: [{ type: "document", mimeType: "text/plain", filename: "notes.txt", body: new Blob(["x"]) }],
+    }, { signal: controller.signal, onUploaded: uploaded })).rejects.toThrow("Cancelled upload");
+    expect(send).not.toHaveBeenCalled();
+    expect(uploaded).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledWith("fs.delete", { path: "~/.gsv/uploads/cancel-draft/0-notes.txt" });
+  });
+});

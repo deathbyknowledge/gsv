@@ -884,3 +884,16 @@ describe("receipt", () => {
     ]);
   });
 });
+
+describe("conversation attachments", () => {
+  it("retains both human and Ship media without requiring accompanying text", () => {
+    const media = [{ type: "resource", ref: { type: "file", target: "gsv", path: "/image.png", revision: "one", contentType: "image/png", size: 3 }, mediaType: "image", filename: "image.png" }];
+    const moments = momentsFromConversation([
+      row({ id: "human-media", role: "user", text: "", media, timestamp: 100 }),
+      row({ id: "ship-media", role: "assistant", text: "", media, runId: "r1", timestamp: 200 }),
+    ], [], null);
+    expect(moments).toHaveLength(2);
+    expect(moments.map((moment) => moment.media)).toEqual([media, media]);
+    expect(answerAttribution(moments[1], [{ runId: "r1", timestamp: 150, metadata: { provider: { provider: "test", model: "image-model" } } }], 200)?.model).toBe("image-model");
+  });
+});

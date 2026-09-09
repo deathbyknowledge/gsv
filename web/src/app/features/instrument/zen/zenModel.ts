@@ -88,6 +88,7 @@ export type Moment = {
   role: "human" | "ship" | "note";
   event?: ChatTranscriptRow["event"];
   text: string;
+  media?: ChatTranscriptRow["media"];
   streaming: boolean;
   thinking: boolean;
   runId: string | null;
@@ -127,11 +128,11 @@ export type AnswerAttribution = {
 
 /** Attribute a committed answer to its generation, never to the process's current model setting. */
 export function answerAttribution(
-  moment: Pick<Moment, "role" | "text" | "runId" | "timestamp" | "streaming">,
+  moment: Pick<Moment, "role" | "text" | "media" | "runId" | "timestamp" | "streaming">,
   history: readonly AnswerHistoryEntry[],
   historyThrough: number,
 ): AnswerAttribution | null {
-  if (moment.role !== "ship" || !moment.text.trim() || moment.streaming || !moment.runId || moment.timestamp === null) return null;
+  if (moment.role !== "ship" || (!moment.text.trim() && !moment.media?.length) || moment.streaming || !moment.runId || moment.timestamp === null) return null;
   // Delivery can arrive before the refreshed Process history; an older generation is not evidence for that reply.
   if (historyThrough < moment.timestamp) return null;
   const cutoff = moment.timestamp;
@@ -546,7 +547,7 @@ export const RESOLVE_TAIL = 22;
 
 export type ResolvedChar = { char: string; noise: string | null };
 export type ResolvedText = { head: string; tail: ResolvedChar[] };
-const glyphSegmenter = typeof Intl.Segmenter === "undefined" ? null : new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const glyphSegmenter = Intl.Segmenter === undefined ? null : new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * Split streaming text into a settled head and a tail whose newest characters are still glyph noise.
@@ -653,6 +654,7 @@ export function momentsFromConversation(
       id: row.id,
       role: row.role === "user" ? "human" : "ship",
       text: row.text,
+      media: row.media,
       streaming: row.streaming === true,
       thinking: false,
       runId: row.runId ?? null,

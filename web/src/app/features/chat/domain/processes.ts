@@ -74,6 +74,8 @@ export type ChatSendDraft = {
   conversationId?: string;
   message: string;
   media?: ChatMediaUpload[];
+  /** Reuse for retries of the same draft, including its staged attachment paths. */
+  idempotencyKey?: string;
 };
 
 export type ChatMediaUpload = {
