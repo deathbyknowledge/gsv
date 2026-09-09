@@ -17,7 +17,7 @@ import { listLibraryCollections } from "../../gsv-console/library/libraryService
 import { libraryTitleFromPath } from "../../gsv-console/library/libraryModel";
 import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
-import type { FleetRow } from "../Instrument";
+import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -54,8 +54,9 @@ import "./zen.css";
 
 export type ZenProps = {
   onMemory?: (page?: MemoryPageRef) => void;
+  onSettings: () => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
-  onFleet: (row?: FleetRow) => void;
+  onFleet: (reference?: FleetReference) => void;
   /** Open the first day: the places manifest with empty rows. */
   onFirstDay: () => void;
   /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
@@ -270,7 +271,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
+export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -685,6 +686,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
       if (typing && event.key === "Escape") {
@@ -700,6 +702,11 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
         return;
       }
       if (typing) return;
+      if (event.key === "n") {
+        event.preventDefault();
+        onFirstDay();
+        return;
+      }
       const focused = browse !== null ? moments[browse] : latest;
       if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
         event.preventDefault();
@@ -723,13 +730,13 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
         focusPrompt();
         return;
       }
-      if (event.key.length === 1 && !["z", "n", "j", "k", "o", "l", "x", "?"].includes(event.key)) {
+      if (event.key.length === 1 && !["z", "n", "m", ",", "j", "k", "o", "l", "x", "?"].includes(event.key)) {
         focusPrompt();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, focusPrompt, latest, moments, pendingHil, toggleActivity]);
+  }, [browse, decide, focusPrompt, latest, moments, onFirstDay, pendingHil, toggleActivity]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -822,6 +829,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
           </button>
         ) : null}
         <button type="button" onClick={onFirstDay}><kbd>n</kbd>first day</button>
+        <button type="button" onClick={onSettings}><kbd>,</kbd>settings</button>
         <span><kbd>?</kbd>keys</span>
       </InstrumentHeader>
 
@@ -911,7 +919,11 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                   ) : null}
                   {isLatest && pendingHil ? (
                     <div class="zen-approval">
-                      <div class="q">approval · {placeLabel(pendingHil.target, places)}</div>
+                      <div class="q">
+                        <button type="button" onClick={() => {
+                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                        }} title="Inspect this approval in Fleet">approval · {placeLabel(pendingHil.target, places)}</button>
+                      </div>
                       <div class="machine-rail">
                         <span class="cmd">
                           <span class="who">{who}</span>@<span class="where">{pendingHil.target}</span> $ {pendingHil.syscall}{" "}
@@ -944,6 +956,11 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
               {part.text}
             </span>
           ))}
+          {connected && !currentPlace.online ? (
+            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+              {currentPlace.label} is offline · view place
+            </button>
+          ) : null}
           {note ? <span class="is-err">{note}</span> : null}
         </div>
         <div>

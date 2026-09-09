@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { AsciiPlanetVariant } from "../../../components/ui/AsciiPlanet";
 import type { ChatTranscriptValue } from "../../chat/domain/transcript";
 import type { ConsoleProcess, ConsoleProcessState, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
@@ -7,6 +8,22 @@ import type { FleetRow } from "../Instrument";
 /** The cloud home is a place too; the target list does not carry it, so Fleet adds it. */
 export const CLOUD_TARGET_ID = "gsv";
 export const CLOUD_TARGET_LABEL = "your cloud home";
+
+export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
+export type FleetReference = FleetRow | FleetApprovalReference;
+
+export function isApprovalReference(reference: FleetReference | null): reference is FleetApprovalReference {
+  return reference !== null && typeof reference === "object";
+}
+
+export function fleetReferenceRow(reference: FleetReference | null): FleetRow | null {
+  return isApprovalReference(reference) ? processRow(reference.pid) : reference;
+}
+
+/** A link must never authorize a different request that subsequently occupies the same process. */
+export function referencedApproval(pending: ProcHilRequest | null | undefined, pid: string, requestId?: string): ProcHilRequest | null {
+  return pending?.pid === pid && (requestId === undefined || pending.requestId === requestId) ? pending : null;
+}
 
 export type PlaceKind = "machine" | "cloud" | "browser" | "contact" | "unknown";
 
@@ -19,7 +36,16 @@ export type Place = {
   platform: string;
   version: string;
   description: string;
+  ownerUid: number | null;
 };
+
+type PlaceActions = { pair: boolean; forget: boolean };
+
+export function placeActions(place: Place, uid: number | null): PlaceActions {
+  const supported = place.kind === "machine" || place.kind === "browser";
+  const owner = uid !== null && uid === place.ownerUid;
+  return { pair: supported && owner && !place.online, forget: supported && uid !== null && (owner || uid === 0) };
+}
 
 export type LedgerLine = {
   id: string;
@@ -48,6 +74,7 @@ export function placeFromTarget(target: ConsoleTarget): Place {
     platform: target.platform,
     version: target.version,
     description: target.description,
+    ownerUid: target.ownerUid,
   };
 }
 
@@ -61,6 +88,7 @@ export function cloudPlace(): Place {
     platform: "cloudflare",
     version: "",
     description: "The gateway's own filesystem, memory, and inference.",
+    ownerUid: null,
   };
 }
 

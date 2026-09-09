@@ -6,7 +6,7 @@ import { Instrument } from "./features/instrument/Instrument";
 
 const DESIGN_SYSTEM_PATHS = new Set(["/design", "/design.html", "/design-system"]);
 const TEMPLATE_PREVIEW_PREFIX = "/design/preview/";
-const INSTRUMENT_PATHS = new Set(["/zen", "/fleet", "/first-day", "/memory"]);
+const INSTRUMENT_PATHS = new Set(["/zen", "/fleet", "/first-day", "/memory", "/zen/settings"]);
 
 export function App() {
   const { pathname } = window.location;

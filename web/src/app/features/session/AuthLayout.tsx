@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { useColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
 import "../../../styles/gsv-fonts.css";
 import "./session-theme.css";
@@ -22,9 +23,10 @@ export interface AuthLayoutProps {
  *  (.gsv-auth-theme), the chosen background behind, and a right-aligned content
  *  slot for the panel. Used by Login and the Setup/Register wizard. */
 export function AuthLayout({ background = "galaxy", visible = true, surfaceClass, children }: AuthLayoutProps) {
+  const { theme } = useColorTheme();
   return (
-    <div class={`gsv-auth-theme gsv-auth-surface${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>
-      {visible && background !== "none" ? <AuthBackground variant={background} /> : null}
+    <div class={`gsv-auth-theme gsv-auth-surface${theme === "light" ? " is-light" : ""}${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>
+      {visible && background !== "none" ? <AuthBackground variant={background} palette={theme} /> : null}
       <div class="gsv-auth-content">{children}</div>
     </div>
   );

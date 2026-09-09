@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useColorTheme } from "../../components/ui/useColorTheme";
 import { GlyphStars } from "../session/backgrounds/GlyphStars";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
@@ -6,12 +7,14 @@ import { Zen } from "./zen/Zen";
 import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
+import { Settings } from "./settings/Settings";
+import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
-export type Distance = "zen" | "firstday" | "fleet" | "memory";
+export type Distance = "zen" | "firstday" | "fleet" | "memory" | "settings";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
 export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
@@ -21,15 +24,15 @@ const DISTANCE_TO_PATH = {
   firstday: "/first-day",
   fleet: "/fleet",
   memory: "/memory",
+  settings: "/zen/settings",
 } satisfies Record<Distance, string>;
 
-const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet", "memory"];
+const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet", "memory", "settings"];
 
 function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
 }
 
-const THEME_KEY = "gsv.instrument.theme";
 const SCALE_KEY = "gsv.instrument.scale";
 const SCALES = [1, 1.5, 2] as const;
 type Scale = (typeof SCALES)[number];
@@ -42,22 +45,7 @@ function storedScale(): Scale {
     return 1;
   }
 }
-type Theme = "light" | "dark";
-
-function storedTheme(): Theme | null {
-  try {
-    const value = window.localStorage.getItem(THEME_KEY);
-    return value === "light" || value === "dark" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function systemTheme(): Theme {
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
-const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022, memory: 0.010 } satisfies Record<Distance, number>;
+const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022, memory: 0.010, settings: 0.010 } satisfies Record<Distance, number>;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -76,19 +64,12 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
-  const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
+  const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
+  const [settingsDirty, setSettingsDirty] = useState(false);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
-  const [theme, setTheme] = useState<Theme>(() => storedTheme() ?? systemTheme());
-  useEffect(() => {
-    if (storedTheme()) return undefined;
-    const query = window.matchMedia?.("(prefers-color-scheme: light)");
-    if (!query) return undefined;
-    const follow = () => setTheme(systemTheme());
-    query.addEventListener("change", follow);
-    return () => query.removeEventListener("change", follow);
-  }, []);
+  const { theme, toggleTheme } = useColorTheme();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
   const cycleScale = useCallback(() => {
@@ -102,28 +83,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       return next;
     });
   }, []);
-  const toggleTheme = useCallback(() => {
-    setTheme((current) => {
-      const next: Theme = current === "light" ? "dark" : "light";
-      try {
-        window.localStorage.setItem(THEME_KEY, next);
-      } catch {
-        // a private window or blocked storage: the choice lasts for this page only
-      }
-      return next;
-    });
-  }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
   const moving = useRef(false);
 
   const move = useCallback(
-    (to: Distance, row: FleetRow | null = null) => {
+    (to: Distance, reference: FleetReference | null = null) => {
       if (moving.current || to === distance) {
-        if (row) setFleetRow(row);
+        if (reference) setFleetReference(reference);
         return;
       }
-      setFleetRow(row);
+      if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return;
+      setSettingsDirty(false);
+      setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
         setDistance(to);
@@ -142,7 +114,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         );
       }, MOVE_MS);
     },
-    [distance],
+    [distance, settingsDirty],
   );
 
   useEffect(() => {
@@ -150,19 +122,23 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       const target = event.target;
       const typing =
         target instanceof HTMLElement &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+      if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "z") {
         event.preventDefault();
         move(distance === "fleet" ? "zen" : "fleet");
       }
-      if (event.key === "n" && distance !== "fleet") {
+      if (event.key === "n" && distance !== "fleet" && distance !== "zen") {
         event.preventDefault();
         move(distance === "firstday" ? "zen" : "firstday");
       }
       if (event.key === "m") {
         event.preventDefault();
         move(distance === "memory" ? "zen" : "memory");
+      }
+      if (event.key === ",") {
+        event.preventDefault();
+        move(distance === "settings" ? "zen" : "settings");
       }
       if (event.key === "l") {
         event.preventDefault();
@@ -202,6 +178,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <dt>z</dt><dd>zen and fleet</dd>
             <dt>n</dt><dd>first day</dd>
             <dt>m</dt><dd>memory</dd>
+            <dt>,</dt><dd>settings</dd>
             <dt>l</dt><dd>light and dark</dd>
             <dt>x</dt><dd>type size</dd>
             <dt>esc</dt><dd>leave the prompt</dd>
@@ -232,23 +209,26 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} onMemory={(page) => {
+          <Zen onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onFirstDay={() => move("firstday")} onMemory={(page) => {
             if (page) setSelectedMemoryPage(page);
             move("memory");
           }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
         ) : distance === "firstday" ? (
           <FirstDay onZen={() => move("zen")} />
         ) : distance === "memory" ? (
-          <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onAsk={(page, prompt) => {
+          <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onSettings={() => move("settings")} onAsk={(page, prompt) => {
             setSelectedMemoryPage(page);
             setZenPid(null);
             setZenPrefill(prompt);
             move("zen");
           }} />
+        ) : distance === "settings" ? (
+          <Settings onZen={() => move("zen")} onFleet={() => move("fleet")} onMemory={() => move("memory")} onDirtyChange={setSettingsDirty} />
         ) : (
           <Fleet
             onMemory={() => move("memory")}
-            initialRow={fleetRow}
+            onSettings={() => move("settings")}
+            initialReference={fleetReference}
             onZen={(prefill, pid) => {
               if (prefill) setZenPrefill(prefill);
               setZenPid(pid ?? null);

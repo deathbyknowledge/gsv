@@ -205,8 +205,8 @@
 .work-call { min-width: 0; }
 .work-heading {
   color: var(--text);
-  font-family: var(--gsv-font-prose);
-  font-size: 13px;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
   line-height: 1.5;
   letter-spacing: 0;
   overflow-wrap: anywhere;

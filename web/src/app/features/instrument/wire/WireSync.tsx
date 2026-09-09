@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { createLedgerSync } from "./ledgerSync";
 import {
@@ -42,6 +43,10 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "mcp.changed") {
+        void queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey });
+        return;
+      }
       if (signal === "target.status") {
         const parsed = targetStatusSignalSchema.safeParse(payload);
         if (!parsed.success) return;

@@ -131,13 +131,13 @@ export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: Glyp
       return;
     }
 
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const initialSize = gridSize(root);
     let grid = buildGrid(initialSize.cols, initialSize.rows, density);
     let raf = 0;
     let lastFrame = 0;
     let start = performance.now();
-    const frameMs = reduced ? Infinity : 1000 / 24;
+    const frameMs = 1000 / 24;
 
     const draw = (elapsed: number) => {
       pre.textContent = renderGrid(grid, elapsed);
@@ -160,18 +160,23 @@ export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: Glyp
       }
       raf = window.requestAnimationFrame(loop);
     };
+    const followMotion = () => {
+      window.cancelAnimationFrame(raf);
+      if (motion?.matches) draw(0);
+      else raf = window.requestAnimationFrame(loop);
+    };
 
     const observer = globalThis.ResizeObserver ? new ResizeObserver(resize) : null;
     observer?.observe(root);
     resize();
     draw(0);
 
-    if (!reduced) {
-      raf = window.requestAnimationFrame(loop);
-    }
+    motion?.addEventListener("change", followMotion);
+    followMotion();
 
     return () => {
       observer?.disconnect();
+      motion?.removeEventListener("change", followMotion);
       if (raf) {
         window.cancelAnimationFrame(raf);
       }

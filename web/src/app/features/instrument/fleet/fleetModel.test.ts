@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import {
   CLOUD_TARGET_ID,
@@ -18,7 +19,43 @@ import {
   ledgerFromSysLines,
   visibleProcesses,
   reconcileFleetSelection,
+  fleetReferenceRow,
+  referencedApproval,
+  placeActions,
+  placeFromTarget,
+  cloudPlace,
 } from "./fleetModel";
+
+describe("Fleet references and supported place actions", () => {
+  it("preserves exact process and request identities without rewriting colon-containing pids", () => {
+    const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
+    expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");
+    expect(reconcileFleetSelection(fleetReferenceRow(reference), fleetReferenceRow(reference), ["proc:another"])).toBe("proc:proc:child:123");
+    expect(fleetReferenceRow("target:browser:profile")).toBe("target:browser:profile");
+    expect(fleetReferenceRow(null)).toBeNull();
+  });
+
+  it("never substitutes a later approval or a request from another process", () => {
+    const pending: ProcHilRequest = { pid: "proc:child", requestId: "request:2", runId: "run:1", callId: "call:1", toolName: "Shell", syscall: "shell.exec", target: "laptop", args: { input: "echo hello" }, createdAt: 1 };
+    expect(referencedApproval(pending, pending.pid, "request:1")).toBeNull();
+    expect(referencedApproval(pending, "proc:other", pending.requestId)).toBeNull();
+    expect(referencedApproval(null, pending.pid, pending.requestId)).toBeNull();
+    expect(referencedApproval(pending, pending.pid, pending.requestId)).toBe(pending);
+    expect(referencedApproval(pending, pending.pid)).toBe(pending);
+  });
+
+  it("offers offline pairing only to the owner and forgetting to the owner or root", () => {
+    const machine = placeFromTarget(target({ online: false }));
+    expect(placeActions(machine, 1000)).toEqual({ pair: true, forget: true });
+    expect(placeActions(machine, null)).toEqual({ pair: false, forget: false });
+    expect(placeActions(machine, 1001)).toEqual({ pair: false, forget: false });
+    expect(placeActions(machine, 0)).toEqual({ pair: false, forget: true });
+    expect(placeActions({ ...machine, online: true }, 1000)).toEqual({ pair: false, forget: true });
+    expect(placeActions({ ...machine, kind: "browser" }, 1000)).toEqual({ pair: true, forget: true });
+    expect(placeActions({ ...machine, kind: "unknown" }, 1000)).toEqual({ pair: false, forget: false });
+    expect(placeActions(cloudPlace(), 0)).toEqual({ pair: false, forget: false });
+  });
+});
 
 function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
   return {

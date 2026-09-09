@@ -153,8 +153,8 @@
 @container instrument (max-width: 600px) {
   .distance { --instrument-header-height: 68px; }
   .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
-  .instrument-header .instrument-heading { grid-row: 2; grid-column: 1 / -1; justify-self: center; max-width: 100%; }
-  .instrument-header .keys { grid-row: 1; grid-column: 2; }
+  .instrument-header .instrument-heading { grid-row: 1; grid-column: 2; justify-self: end; max-width: 100%; }
+  .instrument-header .keys { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-width: 100%; overflow-x: auto; white-space: nowrap; }
 }
 .instrument kbd {
   font: inherit;
@@ -420,7 +420,7 @@
   .instrument-top { padding: 0 18px; }
   .instrument-top:not(.instrument-header) .keys { display: none; }
   .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: 45vh; }
+  .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: calc(45vh / var(--type-scale)); }
   .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .t { display: none; }
   .zen-bottom { padding: 0 18px 14px; }

@@ -21,6 +21,7 @@ export type MemoryProps = {
   onAsk: (page: MemoryPageRef, prompt: string) => void;
   onZen: () => void;
   onFleet: () => void;
+  onSettings: () => void;
 };
 
 /**
@@ -30,7 +31,7 @@ export type MemoryProps = {
  * voices write here. Each read is one ask: the list from the tree, a page
  * when opened, a search in the gateway.
  */
-export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
+export function Memory({ initialPage, onAsk, onZen, onFleet, onSettings }: MemoryProps) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
@@ -58,7 +59,8 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
     queryFn: () => listLibraryCollections(client),
     enabled: connected,
   });
-  const collections = useMemo(() => collectionsQuery.data ?? [], [collectionsQuery.data]);
+  const collections = useMemo(() => [...(collectionsQuery.data ?? [])]
+    .sort((left, right) => Number(right.id === "personal") - Number(left.id === "personal")), [collectionsQuery.data]);
   const collection = useMemo(
     () => db !== null
       ? collections.find((entry) => entry.id === db) ?? null
@@ -191,6 +193,9 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
           <kbd>z</kbd>fleet
         </button>
         <span aria-current="page">memory</span>
+        <button type="button" onClick={onSettings}>
+          <kbd>,</kbd>settings
+        </button>
         <span>
           <kbd>?</kbd>keys
         </span>

@@ -1,8 +1,8 @@
+import { LoadingState } from "../../../components/ui/Spinner";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { decideChatHil, getChatHistory } from "../../chat/backend/chatService";
 import {
   loadConsoleAccounts,
   loadConsoleProcesses,
@@ -40,17 +40,23 @@ import {
   type Place,
   shortPid,
   ledgerRow,
+  fleetReferenceRow,
+  isApprovalReference,
+  type FleetReference,
 } from "./fleetModel";
+import { PlaceActions } from "./PlaceActions";
+import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
 import { canConfigure } from "../settings/settingsModel";
 import "./fleet.css";
 
 export type FleetProps = {
   /** The row to land on, when Zen sent us here from a reference. */
-  initialRow: FleetRow | null;
+  initialReference: FleetReference | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
   onZen: (prefill?: string, pid?: string) => void;
   onMemory: () => void;
+  onSettings: () => void;
 };
 
 const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
@@ -80,10 +86,12 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
+export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const now = useNow();
+  const initialRow = fleetReferenceRow(initialReference);
+  const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
 
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
@@ -138,6 +146,11 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
 
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [creatingProcess, setCreatingProcess] = useState(false);
+  useEffect(() => {
+    setSelected(initialRow);
+    setOpenFile(null);
+    setCreatingProcess(false);
+  }, [initialRow, approvalReference?.requestId]);
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -225,7 +238,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess]);
   useEffect(() => {
     if (!selected) return;
-    const row = document.querySelector(`[data-row="${selected}"]`);
+    const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
     // ledger rows are display: contents and have no box of their own; their first cell does
     row?.scrollIntoView({ block: "nearest" });
   }, [selected, places, shownProcesses]);
@@ -236,11 +249,12 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.closest(".fleet-process-form")) return;
       const typing =
         target instanceof HTMLElement &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
       if (typing) {
         if (event.key === "Escape" && target === cmdInputRef.current) {
           event.preventDefault();
@@ -248,6 +262,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         }
         return;
       }
+      if (event.key === "Enter" && target instanceof HTMLElement && target.closest("button, a[href]")) return;
       const rows = visibleRows();
       if (event.metaKey || event.ctrlKey || event.altKey || rows.length === 0) return;
       const index = selected ? rows.indexOf(selected) : 0;
@@ -323,6 +338,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         <button type="button" onClick={onMemory}>
           memory
         </button>
+        <button type="button" onClick={onSettings}>settings</button>
         <span><kbd>?</kbd>keys</span>
       </InstrumentHeader>
 
@@ -449,11 +465,11 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
                   <span class="m who">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
                 </div>
               ))}
-              {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? "reading…" : "nothing has run yet"}</span> : null}
+              {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? <LoadingState>reading…</LoadingState> : "nothing has run yet"}</span> : null}
               {sysLedgerQuery.hasNextPage ? (
                 <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => setSelected(olderRow)}>
                   <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
-                    {sysLedgerQuery.isFetchingNextPage ? "reading…" : `show ${LEDGER_PAGE} older`}
+                    {sysLedgerQuery.isFetchingNextPage ? <LoadingState>reading…</LoadingState> : `show ${LEDGER_PAGE} older`}
                   </button>
                 </div>
               ) : null}
@@ -491,7 +507,10 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
             <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} />
           ) : selectedPlace ? (
             <PlaceInspector
+              key={selectedPlace.id}
               place={selectedPlace}
+              uid={accountsQuery.data?.find((account) => account.relation === "self")?.uid ?? null}
+              focusPair={selected === initialRow}
               runsToday={runsToday.get(selectedPlace.id) ?? 0}
               now={now}
               onRun={openCmd}
@@ -500,7 +519,9 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
             />
           ) : selectedProcess ? (
             <ProcessInspector
+              key={selectedProcess.pid}
               process={selectedProcess}
+              requestedApprovalId={approvalReference?.pid === selectedProcess.pid ? approvalReference.requestId : undefined}
               model={modelFor(selectedProcess.pid)}
               cost={costFor(selectedProcess.pid)}
               responsibilities={responsibilityCount(selectedProcess.pid)}
@@ -515,7 +536,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
               <h3>{requestedKind === "process" ? "Process" : "Place"}</h3>
               <div class="sub">{selected?.slice(selected.indexOf(":") + 1)}</div>
               {!connected || requestedQuery.isPending || requestedQuery.isFetching ? (
-                <p class="note" role="status">{connected ? `Loading ${requestedKind}…` : "Connecting…"}</p>
+                <p class="note"><LoadingState>{connected ? `Loading ${requestedKind}…` : "Connecting…"}</LoadingState></p>
               ) : requestedQuery.isError ? (
                 <p class="error" role="alert">Could not load this {requestedKind}: {requestedQuery.error.message}</p>
               ) : (
@@ -548,7 +569,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         <span>
           <kbd>z</kbd>zen
         </span>
-        {runCommand.isPending ? <span class="is-live">running…</span> : null}
+        {runCommand.isPending ? <span class="is-live"><LoadingState>running…</LoadingState></span> : null}
         {runCommand.error ? <span style="color: var(--error)">{String(runCommand.error)}</span> : null}
         <span class="right">
           {clockTime(now)} · {ledgerState}
@@ -620,7 +641,7 @@ function DirNode({
       </div>
       {open ? (
         <ul>
-          {listing.isPending ? <li class="m">reading…</li> : null}
+          {listing.isPending ? <li class="m">{enabled ? <LoadingState>reading…</LoadingState> : "offline"}</li> : null}
           {error ? <li class="m">{error}</li> : null}
           {entries.slice(0, 60).map((entry) =>
             entry.kind === "directory" ? (
@@ -695,7 +716,7 @@ function FileInspector({
         <dd>{payload && payload.ok && "lines" in payload && payload.lines !== null ? payload.lines : "—"}</dd>
       </dl>
       <div class="file-preview">
-        {read.isPending ? <p class="note">reading…</p> : null}
+        {read.isPending ? <p class="note"><LoadingState>reading…</LoadingState></p> : null}
         {error ? <p class="error">{error}</p> : null}
         {linkedEntries ? (
           <>
@@ -725,6 +746,8 @@ function FileInspector({
 
 type PlaceInspectorProps = {
   place: Place;
+  uid: number | null;
+  focusPair: boolean;
   runsToday: number;
   now: number;
   onRun: () => void;
@@ -732,13 +755,14 @@ type PlaceInspectorProps = {
   onZen: () => void;
 };
 
-function PlaceInspector({ place, runsToday, now, onRun, onBrowse, onZen }: PlaceInspectorProps) {
+function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse, onZen }: PlaceInspectorProps) {
   return (
     <div>
       <h3>{place.label}</h3>
       <div class="sub">
         {place.kind} · {placeStateLabel(place)}
       </div>
+      <div class="full-id">{place.id}</div>
       <dl class="fleet-kv">
         <dt>Runtime</dt>
         <dd>{place.platform || "—"}</dd>
@@ -765,12 +789,8 @@ function PlaceInspector({ place, runsToday, now, onRun, onBrowse, onZen }: Place
         <button type="button" class="ibtn" onClick={() => onZen()}>
           talk about it
         </button>
-        {place.kind === "machine" ? (
-          <button type="button" class="ibtn is-danger" disabled title="Disconnecting lives in the console for now.">
-            disconnect
-          </button>
-        ) : null}
       </div>
+      <PlaceActions place={place} uid={uid} focusPair={focusPair} />
       <p class="note">
         Everything the ship can do here, you can do from this panel. A command runs with no model in the loop and lands in the ledger like any other run.
       </p>
@@ -780,6 +800,7 @@ function PlaceInspector({ place, runsToday, now, onRun, onBrowse, onZen }: Place
 
 type ProcessInspectorProps = {
   process: ConsoleProcess;
+  requestedApprovalId?: string;
   model: string | null;
   cost: number | null;
   responsibilities: number;
@@ -790,7 +811,7 @@ type ProcessInspectorProps = {
   placeLabelFor: (placeId: string) => string;
 };
 
-function ProcessInspector({ process, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
+function ProcessInspector({ process, requestedApprovalId, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
   const { client } = useGateway();
   const queryClient = useQueryClient();
   const invalidate = () => {
@@ -801,20 +822,7 @@ function ProcessInspector({ process, model, cost, responsibilities, canEditAi, n
     mutationFn: () => runConsoleProcessAction(client, { pid: process.pid, action: "abort" }),
     onSuccess: invalidate,
   });
-  const pending = useQuery({
-    queryKey: ["fleet", "pending-hil", process.pid],
-    queryFn: async () => (await getChatHistory(client, { pid: process.pid, limit: 1, tail: true })).pendingHil,
-    enabled: process.state === "waiting_hil",
-  });
-  const decide = useMutation({
-    mutationFn: (decision: "approve" | "deny") => {
-      const request = pending.data;
-      if (!request) throw new Error("The approval request is no longer pending.");
-      return decideChatHil(client, { pid: process.pid, requestId: request.requestId, decision });
-    },
-    onSuccess: invalidate,
-  });
-  const error = stop.error ?? decide.error;
+  const error = stop.error;
 
   return (
     <div>
@@ -842,21 +850,11 @@ function ProcessInspector({ process, model, cost, responsibilities, canEditAi, n
           {process.username} · {process.cwd}
         </dd>
       </dl>
+      {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"} pid={process.pid} requestId={requestedApprovalId} /> : null}
       <div class="fleet-actions">
-        {process.state === "waiting_hil" ? (
-          <>
-            <button type="button" class="ibtn is-primary" onClick={() => decide.mutate("approve")} disabled={!pending.data || decide.isPending}>
-              approve
-            </button>
-            <button type="button" class="ibtn is-danger" onClick={() => decide.mutate("deny")} disabled={!pending.data || decide.isPending}>
-              deny
-            </button>
-          </>
-        ) : (
           <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
             open conversation
           </button>
-        )}
         <button type="button" class="ibtn" onClick={() => stop.mutate()} disabled={process.state !== "running" || stop.isPending}>
           stop
         </button>
@@ -874,9 +872,6 @@ function ProcessInspector({ process, model, cost, responsibilities, canEditAi, n
           ))}
         </div>
       ) : null}
-      {process.state === "waiting_hil" && pending.data ? <p class="note">
-        {`The process is held on ${pending.data.syscall} on ${pending.data.target}. Approving runs exactly what it asked for, nothing else.`}
-      </p> : null}
     </div>
   );
 }
