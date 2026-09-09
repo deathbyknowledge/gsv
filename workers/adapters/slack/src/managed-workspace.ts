@@ -315,8 +315,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     };
     try {
       authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
-    } catch {
-      return { available: false };
+    } catch (error) {
+      if (error instanceof SlackTargetAuthorizationUnavailableError) return { available: false };
+      throw error;
     }
     return {
       available: true,
@@ -579,7 +580,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       || !state.botToken
       || missingRequiredScopes(normalizedScopes(state.scope)).length > 0
     ) {
-      throw new Error("Slack workspace route changed");
+      throw new SlackTargetAuthorizationUnavailableError("Slack workspace route changed");
     }
     this.assertObjectName(state.accountId);
     return state;
@@ -609,7 +610,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       || missingScopes(normalizedScopes(credential.scope), TARGET_USER_SCOPES).length > 0
       || missingScopes(normalizedScopes(workspace.scope), TARGET_BOT_SCOPES).length > 0
     ) {
-      throw new Error("Slack target authorization is unavailable");
+      throw new SlackTargetAuthorizationUnavailableError("Slack target authorization is unavailable");
     }
     requireSlackToken(credential.token, "Slack user token", "xoxp-");
     return { workspace, credential };
@@ -688,6 +689,8 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       : fetch;
   }
 }
+
+class SlackTargetAuthorizationUnavailableError extends Error {}
 
 function accountIdFromObjectName(name: string | undefined): string {
   if (!name?.startsWith("workspace:")) throw new Error("Slack workspace identity unavailable");

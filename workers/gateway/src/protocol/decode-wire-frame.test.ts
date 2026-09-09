@@ -6,6 +6,16 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it.each([{}, { targets: [] }])("preserves unavailable versus empty target catalogs over the wire: %j", (targets) => {
+    const response = {
+      type: "res" as const,
+      id: "context-targets",
+      ok: true as const,
+      data: { ...targets, mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" },
+    };
+    expect(decodeWireResponse("ai.context", response)).toEqual(response);
+  });
+
   it("decodes a syscall request with its call-specific argument contract", () => {
     expect(decodeWireFrameJson(JSON.stringify({
       type: "req",

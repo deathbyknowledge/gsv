@@ -27,7 +27,8 @@ export type AiToolsResult = {
 export type AiContextArgs = Record<string, never>;
 
 export type AiContextResult = {
-  targets: AiToolsTarget[];
+  /** Omitted when discovery is incomplete; retain the last observed target projection. */
+  targets?: AiToolsTarget[];
   mcpServers: string[];
   systemContextFiles?: ContextFile[];
   system: {

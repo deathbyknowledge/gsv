@@ -6,10 +6,10 @@ import type {
   AdapterServiceBinding,
 } from "./adapter-service";
 import {
-  listVisibleAdapterTargets,
+  discoverVisibleAdapterTargets,
   requestAdapterTarget,
 } from "./adapter-targets";
-import { listAllVisibleTargets } from "./targets";
+import { discoverVisibleTargets, listAllVisibleTargets, resolveVisibleTarget } from "./targets";
 
 function rpcResult<T extends object>(value: T): T & Disposable {
   Object.defineProperty(value, Symbol.dispose, { value: vi.fn() });
@@ -115,7 +115,9 @@ describe("adapter-backed targets", () => {
     const service = makeService();
     const ctx = makeContext(service);
 
-    const targets = await listVisibleAdapterTargets(ctx);
+    const { targets, complete } = await discoverVisibleAdapterTargets(ctx);
+
+    expect(complete).toBe(true);
 
     expect(targets).toHaveLength(1);
     expect(targets[0]).toMatchObject({
@@ -162,7 +164,7 @@ describe("adapter-backed targets", () => {
       adapterTargetExecute: vi.fn(async () => owned),
     });
     const ctx = makeContext(service);
-    const [target] = await listVisibleAdapterTargets(ctx);
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
     expect(target?.implements).toEqual(["fs.read", "fs.search"]);
     const response = await requestAdapterTarget({
       type: "req", id: "slack-read", call: "fs.read", args: { path: owned.data.path },
@@ -198,7 +200,7 @@ describe("adapter-backed targets", () => {
       })),
     });
 
-    await expect(listVisibleAdapterTargets(makeContext(service))).resolves.toEqual([]);
+    await expect(discoverVisibleAdapterTargets(makeContext(service))).resolves.toEqual({ targets: [], complete: true });
     expect(service.adapterTargetList).not.toHaveBeenCalled();
   });
 
@@ -250,11 +252,12 @@ describe("adapter-backed targets", () => {
     } as KernelContext["targets"];
 
     try {
-      const discovery = listAllVisibleTargets(ctx);
+      const discovery = discoverVisibleTargets(ctx);
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(discovery).resolves.toEqual([
-        expect.objectContaining({ targetId: "laptop", label: "Laptop", online: true }),
-      ]);
+      await expect(discovery).resolves.toEqual({
+        complete: false,
+        targets: [expect.objectContaining({ targetId: "laptop", label: "Laptop", online: true })],
+      });
       resolveDescriptor(descriptor);
       await Promise.all(deferred);
       expect(descriptor[Symbol.dispose]).toHaveBeenCalledOnce();
@@ -263,10 +266,107 @@ describe("adapter-backed targets", () => {
     }
   });
 
+  it.each(["adapterDescribe", "adapterTargetList"] as const)(
+    "marks a failed %s as incomplete, then accepts recovery and confirmed absence",
+    async (method) => {
+      const service = makeService();
+      const ctx = makeContext(service);
+      const initial = await discoverVisibleAdapterTargets(ctx);
+      const call = vi.spyOn(service, method).mockRejectedValueOnce(new Error("RPC disconnected"));
+      try {
+        await expect(discoverVisibleAdapterTargets(ctx)).resolves.toEqual({ targets: [], complete: false });
+        await expect(discoverVisibleAdapterTargets(ctx)).resolves.toEqual(initial);
+        vi.mocked(service.adapterTargetList!).mockResolvedValueOnce(rpcResult([]));
+        await expect(discoverVisibleAdapterTargets(ctx)).resolves.toEqual({ targets: [], complete: true });
+      } finally {
+        call.mockRestore();
+      }
+    },
+  );
+
+  it("disposes a timed-out target list without publishing its late result", async () => {
+    vi.useFakeTimers();
+    const service = makeService();
+    const deferred: Promise<unknown>[] = [];
+    const ctx = makeContext(service, { deferred });
+    const descriptors = await service.adapterTargetList!(
+      { installationId: ctx.installationId },
+      { accountId: "workspace-hash", actorId: "UALICE01" },
+    );
+    let resolveList!: (value: typeof descriptors) => void;
+    const pending = new Promise<typeof descriptors>((resolve) => { resolveList = resolve; });
+    vi.mocked(service.adapterTargetList!).mockReturnValueOnce(pending);
+    try {
+      const discovery = discoverVisibleAdapterTargets(ctx);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(discovery).resolves.toEqual({ targets: [], complete: false });
+      resolveList(descriptors);
+      await Promise.all(deferred);
+      expect(descriptors[Symbol.dispose]).toHaveBeenCalledOnce();
+      expect((await discoverVisibleAdapterTargets(ctx)).targets).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats malformed target descriptors as unavailable and disposes the response", async () => {
+    const malformed = rpcResult([{
+      id: "workspace",
+      label: "Slack",
+      description: "Slack workspace",
+      platform: "slack",
+      version: "web-api",
+      implements: [""],
+    }]);
+    const service = makeService({ adapterTargetList: vi.fn(async () => malformed) });
+    await expect(discoverVisibleAdapterTargets(makeContext(service)))
+      .resolves.toEqual({ targets: [], complete: false });
+    expect(malformed[Symbol.dispose]).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a known disconnect without consulting a failing provider", async () => {
+    const service = makeService({ adapterDescribe: vi.fn(async () => { throw new Error("offline"); }) });
+    const ctx = makeContext(service);
+    vi.mocked(ctx.adapters.status.get).mockReturnValue(null);
+    await expect(discoverVisibleAdapterTargets(ctx)).resolves.toEqual({ targets: [], complete: true });
+    expect(service.adapterDescribe).not.toHaveBeenCalled();
+  });
+
+  it("keeps successful actor discoveries available while marking a partial catalog incomplete", async () => {
+    const service = makeService();
+    const ctx = makeContext(service);
+    const [link] = ctx.adapters.identityLinks.list(1000);
+    vi.mocked(ctx.adapters.identityLinks.list).mockReturnValue([
+      link!, { ...link!, actorId: "UBOB001" },
+    ]);
+    vi.mocked(service.adapterTargetList!).mockRejectedValueOnce(new Error("Alice's peer unavailable"));
+    const discovery = await discoverVisibleAdapterTargets(ctx);
+    expect(discovery.complete).toBe(false);
+    expect(discovery.targets).toHaveLength(1);
+    expect(discovery.targets[0].route).toMatchObject({ kind: "adapter", actorId: "UBOB001" });
+    expect(service.adapterDescribe).toHaveBeenCalledOnce();
+  });
+
+  it("does not route using the last successful discovery after a provider failure or unlink", async () => {
+    const service = makeService();
+    const ctx = makeContext(service);
+    // SAFETY: this fixture has no machine targets; routing must consult the adapter.
+    ctx.targets = {
+      canAccess: vi.fn(() => false),
+      listForUser: vi.fn(() => []),
+    } as KernelContext["targets"];
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
+    vi.mocked(service.adapterTargetList!).mockRejectedValueOnce(new Error("RPC disconnected"));
+    await expect(resolveVisibleTarget(ctx, target!.targetId)).resolves.toBeNull();
+    vi.mocked(ctx.adapters.identityLinks.list).mockReturnValue([]);
+    await expect(listAllVisibleTargets(ctx)).resolves.toEqual([]);
+    expect(service.adapterTargetExecute).not.toHaveBeenCalled();
+  });
+
   it("routes a syscall through the adapter and preserves the response envelope", async () => {
     const service = makeService();
     const ctx = makeContext(service);
-    const [target] = await listVisibleAdapterTargets(ctx);
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
 
     const response = await requestAdapterTarget({
       type: "req",
@@ -316,7 +416,7 @@ describe("adapter-backed targets", () => {
         .mockResolvedValueOnce(cancelled),
     });
     const ctx = makeContext(service);
-    const [target] = await listVisibleAdapterTargets(ctx);
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
 
     const completeResponse = await requestAdapterTarget({
       type: "req",
@@ -355,7 +455,7 @@ describe("adapter-backed targets", () => {
     const controller = new AbortController();
     const deferred: Promise<unknown>[] = [];
     const ctx = makeContext(service, { signal: controller.signal, deferred });
-    const [target] = await listVisibleAdapterTargets(ctx);
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
     const responsePromise = requestAdapterTarget({
       type: "req",
       id: "request-cancel",
@@ -388,7 +488,7 @@ describe("adapter-backed targets", () => {
     });
     const deferred: Promise<unknown>[] = [];
     const ctx = makeContext(service, { deferred });
-    const [target] = await listVisibleAdapterTargets(ctx);
+    const { targets: [target] } = await discoverVisibleAdapterTargets(ctx);
 
     const response = await requestAdapterTarget({
       type: "req",

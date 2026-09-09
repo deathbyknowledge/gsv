@@ -132,6 +132,16 @@ though the provider records the installed app as their technical author.
 
 ## Target discovery and lifecycle
 
+Adapter discovery distinguishes an authoritative empty list from a failed,
+timed-out, or malformed response. If any adapter refresh is incomplete, the
+Kernel omits `targets` from `ai.context` and Process retains the entire last
+observed target catalog until a complete snapshot is available. This prevents
+transient discovery failures from producing removal and addition events.
+Ordinary target listing and syscall routing continue to use freshly discovered
+targets and current authorization; the retained Process projection grants no
+access. Adapters return an empty list for confirmed absence or revoked access
+and propagate infrastructure failures.
+
 Targets should describe their environment and effective implementations so a
 process can discover where work belongs without loading provider-specific tools
 into its fixed interface. Registration or connection never grants authority by

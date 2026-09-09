@@ -367,8 +367,9 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     let state: ManagedSlackPeerState;
     try {
       state = await this.requireCurrentTargetRoute(installationId, routeGeneration);
-    } catch {
-      return [];
+    } catch (error) {
+      if (error instanceof ManagedSlackPeerUnavailableError) return [];
+      throw error;
     }
     using authorization = await this.workspace(state.accountId).getTargetAuthorization(
       state.actorId,
@@ -1102,7 +1103,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
 
   private async requireState(): Promise<ManagedSlackPeerState> {
     const state = await this.ctx.storage.get<ManagedSlackPeerState>(STATE_KEY);
-    if (!state) throw new Error("Managed Slack peer is not initialized");
+    if (!state) throw new ManagedSlackPeerUnavailableError("Managed Slack peer is not initialized");
     this.assertObjectIdentity(state);
     return state;
   }
@@ -1115,14 +1116,14 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || admission.accountId !== state.accountId
       || admission.teamId !== state.teamId
     ) {
-      throw new Error("Slack workspace authorization is unavailable");
+      throw new ManagedSlackPeerUnavailableError("Slack workspace authorization is unavailable");
     }
     const refreshed = await this.ctx.storage.transaction(async (txn) => {
       const latest = await txn.get<ManagedSlackPeerState>(STATE_KEY);
-      if (!latest) throw new Error("Managed Slack peer is not initialized");
+      if (!latest) throw new ManagedSlackPeerUnavailableError("Managed Slack peer is not initialized");
       this.assertObjectIdentity(latest);
       if (latest.accountId !== admission.accountId || latest.teamId !== admission.teamId) {
-        throw new Error("Slack workspace authorization changed");
+        throw new ManagedSlackPeerUnavailableError("Slack workspace authorization changed");
       }
       if (
         admission.generation === latest.workspaceGeneration
@@ -1155,7 +1156,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {
-      throw new Error("Slack target route changed");
+      throw new ManagedSlackPeerUnavailableError("Slack target route changed");
     }
     return state;
   }
@@ -1171,7 +1172,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {
-      throw new Error("Slack target route changed");
+      throw new ManagedSlackPeerUnavailableError("Slack target route changed");
     }
     return state;
   }
@@ -1331,6 +1332,8 @@ function parseRoute(value: AdapterPairingRoute): AdapterPairingRoute {
     generation: requireOpaque(value?.generation, "generation"),
   };
 }
+
+class ManagedSlackPeerUnavailableError extends Error {}
 
 function requireOpaque(value: string, field: string): string {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(value)) {

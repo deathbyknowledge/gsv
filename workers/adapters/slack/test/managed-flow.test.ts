@@ -4,6 +4,7 @@ import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import { workspaceAccountId } from "../src/slack-api";
 import type { ManagedSlackPeer } from "../src/managed-peer";
 import type { ManagedSlackPeerState } from "../src/managed-peer-state";
+import type { ManagedSlackWorkspace, ManagedSlackWorkspaceState } from "../src/managed-workspace";
 import {
   managedSlackPeerObjectName,
   managedSlackWorkspaceObjectName,
@@ -751,6 +752,56 @@ describe("managed Slack clean-instance flow", () => {
     });
     if (!next.ok || !next.body) throw new Error("Expected the next read to succeed");
     expect(await new Response(next.body.stream).json()).toMatchObject({ id: "TWORK123", reader: "UALICE01" });
+  });
+
+  it("propagates transient discovery failures and recovers without changing the peer route", async () => {
+    const accountId = await installWorkspace();
+    const alice = await pairActor({
+      actorId: "UALICE01",
+      eventId: "EvDISCOVERY01",
+      ts: "1700000000.000101",
+      installationId: "installation-alice",
+      operationId: "pair-alice",
+    });
+    const peers = namespaceBinding(env.MANAGED_SLACK_PEER);
+    const peer = managedPeerObject(peers.get(
+      peers.idFromName(managedSlackPeerObjectName(accountId, "UALICE01")),
+    ));
+    const workspaces = namespaceBinding(env.MANAGED_SLACK_WORKSPACE);
+    // SAFETY: the workspace stub uses the canonical name in MANAGED_SLACK_WORKSPACE.
+    const workspace = workspaces.get(
+      workspaces.idFromName(managedSlackWorkspaceObjectName(accountId)),
+    ) as DurableObjectStub<ManagedSlackWorkspace>;
+
+    using initial = await peer.listTargets("installation-alice", alice.generation);
+    expect(initial).toHaveLength(1);
+    await runInDurableObject(peer, async (instance, state) => {
+      const read = vi.spyOn(state.storage, "get").mockRejectedValueOnce(new Error("peer storage unavailable"));
+      try {
+        await expect(instance.listTargets("installation-alice", alice.generation))
+          .rejects.toThrow("peer storage unavailable");
+      } finally {
+        read.mockRestore();
+      }
+    });
+
+    await runInDurableObject(workspace, async (instance, state) => {
+      const installed = await state.storage.get<ManagedSlackWorkspaceState>("managed_slack_workspace:v1:state");
+      const read = vi.spyOn(state.storage, "get").mockRejectedValueOnce(new Error("workspace storage unavailable"));
+      try {
+        await expect(instance.getTargetAuthorization("UALICE01", installed!.generation))
+          .rejects.toThrow("workspace storage unavailable");
+      } finally {
+        read.mockRestore();
+      }
+      await expect(instance.getTargetAuthorization("UALICE01", "superseded-generation"))
+        .resolves.toEqual({ available: false });
+    });
+
+    using recovered = await peer.listTargets("installation-alice", alice.generation);
+    expect(recovered).toEqual(initial);
+    using superseded = await peer.listTargets("installation-alice", "superseded-route");
+    expect(superseded).toEqual([]);
   });
 
   it("exposes an authorized and cancellable Slack target", async () => {
