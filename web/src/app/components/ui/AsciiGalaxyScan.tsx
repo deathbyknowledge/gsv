@@ -1,6 +1,6 @@
-import type { JSX } from "preact";
-import { useEffect, useMemo, useRef } from "preact/hooks";
-import "./AsciiGalaxyScan.css";
+import { useMemo } from "preact/hooks";
+import { AsciiAnimation, type AsciiAnimationFrame, type AsciiAnimationScene } from "./AsciiAnimation";
+import type { ColorTheme } from "./useColorTheme";
 
 export type AsciiGalaxyScanProps = {
   text?: string;
@@ -18,6 +18,7 @@ export type AsciiGalaxyScanProps = {
   particleCount?: number;
   frameRate?: number;
   fontSize?: number;
+  palette?: ColorTheme;
 };
 
 type Point = {
@@ -69,7 +70,6 @@ const T_SETTLE_END = T_FORM + T_SETTLE;
 const T_DANCE = T_SETTLE_END + 0.6;
 export const GALAXY_SCAN_FINAL_SECONDS = 11.4 + T_SETTLE;
 const TARGET_SCALE = 0.6;
-const FOREGROUND_GLOW = "0 0 5px rgba(140,120,235,.55),0 0 14px rgba(110,95,209,.28)";
 
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -105,7 +105,7 @@ export async function waitForGalaxyScanFonts(): Promise<void> {
     return Promise.resolve();
   }
 
-  await Promise.all([
+  await Promise.allSettled([
     fontSet.load('48px "Departure Mono"'),
     fontSet.ready,
   ]);
@@ -184,7 +184,7 @@ export class AsciiGalaxyScanRenderer {
     this.initialized = true;
   }
 
-  renderStars(starEl: HTMLPreElement, elapsed: number): void {
+  starFrame(elapsed: number): string {
     const { cols, rows } = this.config;
     this.starBuffer.fill(" ");
 
@@ -212,24 +212,30 @@ export class AsciiGalaxyScanRenderer {
       output += `${y ? "\n" : ""}${line}`;
     }
 
-    starEl.textContent = output;
+    return output;
+  }
+
+  renderStars(starEl: HTMLPreElement, elapsed: number): void {
+    starEl.textContent = this.starFrame(elapsed);
+  }
+
+  frame(elapsed: number, allowGlitch: boolean): AsciiAnimationFrame {
+    const rows = this.buildFrameRows(elapsed);
+    const effect = allowGlitch && elapsed > GALAXY_SCAN_FINAL_SECONDS - 0.6 ? this.applyGlitch(rows, elapsed) : {};
+    return { foreground: rows.join("\n"), ...effect };
   }
 
   renderFrame(preEl: HTMLPreElement, elapsed: number, allowGlitch: boolean): void {
-    const rows = this.buildFrameRows(elapsed);
-
-    if (allowGlitch && elapsed > GALAXY_SCAN_FINAL_SECONDS - 0.6) {
-      this.applyGlitch(rows, elapsed, preEl);
-    } else {
-      this.resetForeground(preEl);
-    }
-
-    preEl.textContent = rows.join("\n");
+    const frame = this.frame(elapsed, allowGlitch);
+    preEl.textContent = frame.foreground;
+    preEl.style.transform = frame.transform ?? "none";
+    preEl.style.opacity = frame.opacity ?? "1";
+    preEl.style.textShadow = frame.glitch ? "var(--ascii-glitch-glow)" : "var(--ascii-foreground-glow)";
   }
 
   resetForeground(preEl: HTMLPreElement): void {
     preEl.style.transform = "none";
-    preEl.style.textShadow = FOREGROUND_GLOW;
+    preEl.style.textShadow = "var(--ascii-foreground-glow)";
     preEl.style.opacity = "1";
   }
 
@@ -463,13 +469,12 @@ export class AsciiGalaxyScanRenderer {
     };
   }
 
-  private applyGlitch(frameRows: string[], elapsed: number, preEl: HTMLPreElement): void {
+  private applyGlitch(frameRows: string[], elapsed: number): Pick<AsciiAnimationFrame, "glitch" | "transform" | "opacity"> {
     const random = makeRandom(Math.floor(elapsed * 1000) >>> 0);
     const burst = elapsed % 3.2 < 0.08;
 
     if (!burst) {
-      this.resetForeground(preEl);
-      return;
+      return {};
     }
 
     const slices = 1 + Math.floor(random() * 2);
@@ -497,9 +502,11 @@ export class AsciiGalaxyScanRenderer {
       frameRows[row] = cells.join("");
     }
 
-    preEl.style.transform = `translateX(${((random() - 0.5) * 2.6).toFixed(1)}px)`;
-    preEl.style.textShadow = "1px 0 0 rgba(255,90,160,.3),-1px 0 0 rgba(90,200,255,.28),0 0 9px rgba(140,120,235,.55)";
-    preEl.style.opacity = (0.9 + random() * 0.1).toFixed(2);
+    return {
+      glitch: true,
+      transform: `translateX(${((random() - 0.5) * 2.6).toFixed(1)}px)`,
+      opacity: (0.9 + random() * 0.1).toFixed(2),
+    };
   }
 
   private buildNebula(): string {
@@ -534,174 +541,23 @@ export class AsciiGalaxyScanRenderer {
   }
 }
 
-function classNames(...parts: readonly (false | null | string | undefined)[]): string {
-  return parts.filter(Boolean).join(" ");
-}
-
 export function AsciiGalaxyScan({
-  text = "GSV",
-  animate = true,
-  showNebula = true,
-  showStars = true,
-  showTexture = false,
-  showReplay = false,
-  pauseWhenOffscreen = true,
-  respectReducedMotion = true,
-  className,
-  label,
-  cols = 200,
-  rows = 72,
-  particleCount = 3500,
-  frameRate = 30,
-  fontSize = 8,
+  text = "GSV", showNebula = true, showStars = true, cols = 200, rows = 72,
+  particleCount = 3500, frameRate = 30, label, ...presentation
 }: AsciiGalaxyScanProps) {
-  const config = useMemo<GalaxyScanConfig>(
-    () => ({
-      text,
-      cols,
-      rows,
-      particleCount,
-      frameRate,
-    }),
-    [cols, frameRate, particleCount, rows, text],
-  );
-  const renderer = useMemo(() => new AsciiGalaxyScanRenderer(config), [config]);
-  const nebulaRef = useRef<HTMLPreElement>(null);
-  const starRef = useRef<HTMLPreElement>(null);
-  const foregroundRef = useRef<HTMLPreElement>(null);
-  const replayRef = useRef<HTMLButtonElement>(null);
-  const accessibleLabel = label ?? `${text} ASCII galaxy scan`;
-  const rootStyle: JSX.CSSProperties & {
-    "--gsv-ascii-galaxy-font-size": string;
-  } = {
-    "--gsv-ascii-galaxy-font-size": `${fontSize}px`,
-  };
-
-  useEffect(() => {
-    const nebulaEl = nebulaRef.current;
-    const starEl = starRef.current;
-    const foregroundEl = foregroundRef.current;
-    const replayEl = replayRef.current;
-
-    if (!foregroundEl) {
-      return;
-    }
-
-    let cancelled = false;
-    let raf = 0;
-    let visible = true;
-    let lastFrame = 0;
-    let startedAt = performance.now();
-    let replayShown = false;
-    const frameMs = 1000 / Math.max(1, frameRate);
-    const shouldAnimate = animate && !(respectReducedMotion && shouldReduceGalaxyScanMotion());
-
-    const hideReplay = () => {
-      replayShown = false;
-      if (replayEl) {
-        replayEl.style.opacity = "0";
-      }
-    };
-
-    const replay = () => {
-      startedAt = performance.now();
-      lastFrame = 0;
-      hideReplay();
-      renderer.resetForeground(foregroundEl);
-      renderer.renderFrame(foregroundEl, 0, false);
-      if (showStars && starEl) {
-        renderer.renderStars(starEl, 0);
-      }
-    };
-
-    const loop = (now: number) => {
-      if (cancelled) {
-        return;
-      }
-
-      if (visible && now - lastFrame >= frameMs) {
-        lastFrame = now;
-        const elapsed = (now - startedAt) / 1000;
-
-        if (showStars && starEl) {
-          renderer.renderStars(starEl, elapsed);
-        }
-        renderer.renderFrame(foregroundEl, elapsed, true);
-
-        if (showReplay && replayEl && !replayShown && elapsed > GALAXY_SCAN_FINAL_SECONDS + 1.5) {
-          replayShown = true;
-          replayEl.style.opacity = "1";
-        }
-      }
-
-      raf = window.requestAnimationFrame(loop);
-    };
-
-    let observer: IntersectionObserver | null = null;
-    if (pauseWhenOffscreen && foregroundEl.parentElement && "IntersectionObserver" in window) {
-      observer = new IntersectionObserver((entries) => {
-        visible = entries.some((entry) => entry.isIntersecting);
-      });
-      observer.observe(foregroundEl.parentElement);
-    }
-
-    replayEl?.addEventListener("click", replay);
-
-    void waitForGalaxyScanFonts().then(() => {
-      if (cancelled) {
-        return;
-      }
-
+  const renderer = useMemo(() => new AsciiGalaxyScanRenderer({ text, cols, rows, particleCount, frameRate }),
+    [cols, frameRate, particleCount, rows, text]);
+  const scene = useMemo<AsciiAnimationScene>(() => ({
+    stillAt: GALAXY_SCAN_FINAL_SECONDS,
+    prepare: async () => {
+      await waitForGalaxyScanFonts();
       renderer.init();
-
-      if (nebulaEl) {
-        nebulaEl.textContent = showNebula ? renderer.nebulaText : "";
-      }
-      if (showStars && starEl) {
-        renderer.renderStars(starEl, 0);
-      } else if (starEl) {
-        starEl.textContent = "";
-      }
-
-      if (!shouldAnimate) {
-        renderer.renderFrame(foregroundEl, GALAXY_SCAN_FINAL_SECONDS, false);
-        if (showReplay && replayEl) {
-          replayEl.style.opacity = "1";
-        }
-        return;
-      }
-
-      startedAt = performance.now();
-      raf = window.requestAnimationFrame(loop);
-    });
-
-    return () => {
-      cancelled = true;
-      replayEl?.removeEventListener("click", replay);
-      observer?.disconnect();
-      if (raf) {
-        window.cancelAnimationFrame(raf);
-      }
-    };
-  }, [animate, frameRate, pauseWhenOffscreen, renderer, respectReducedMotion, showNebula, showReplay, showStars]);
-
-  return (
-    <div class={classNames("gsv-ascii-galaxy", className)} role="img" aria-label={accessibleLabel} style={rootStyle}>
-      <pre ref={nebulaRef} class="gsv-ascii-galaxy-pre gsv-ascii-galaxy-nebula" aria-hidden="true" />
-      <pre ref={starRef} class="gsv-ascii-galaxy-pre gsv-ascii-galaxy-stars" aria-hidden="true" />
-      <pre ref={foregroundRef} class="gsv-ascii-galaxy-pre gsv-ascii-galaxy-foreground" aria-hidden="true" />
-      {showTexture ? (
-        <>
-          <div class="gsv-ascii-galaxy-texture gsv-ascii-galaxy-scanlines" aria-hidden="true" />
-          <div class="gsv-ascii-galaxy-texture gsv-ascii-galaxy-vignette" aria-hidden="true" />
-        </>
-      ) : null}
-      {showReplay ? (
-        <button ref={replayRef} type="button" class="gsv-ascii-galaxy-replay gsv-label" aria-label={`Replay ${text} ASCII galaxy scan`}>
-          <span class="gsv-ascii-galaxy-replay-icon" aria-hidden="true">↻</span>
-          Replay
-        </button>
-      ) : null}
-    </div>
-  );
+    },
+    frame: (seconds, motion) => ({
+      ...renderer.frame(seconds, motion),
+      stars: showStars ? renderer.starFrame(seconds) : undefined,
+      nebula: showNebula ? renderer.nebulaText : undefined,
+    }),
+  }), [renderer, showNebula, showStars]);
+  return <AsciiAnimation {...presentation} scene={scene} frameRate={frameRate} label={label ?? `${text} ASCII galaxy scan`} />;
 }

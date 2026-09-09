@@ -176,6 +176,7 @@
 }
 .memory-empty .place { color: var(--target); }
 .memory-empty { padding-top: calc(var(--instrument-header-height) + 8vh); }
+.memory-loading { width: 100%; height: 100%; max-width: none; padding: 0; }
 
 @container instrument (max-width: 720px) {
   .memory-body { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }

@@ -1,5 +1,18 @@
 .gsv-ascii-galaxy {
   --gsv-ascii-galaxy-font-size: 8px;
+  --ascii-background: #07060f;
+  --ascii-nebula: #272350;
+  --ascii-stars: #5d5798;
+  --ascii-foreground: #8071dd;
+  --ascii-star-glow: 0 0 4px rgba(128, 113, 221, 0.4);
+  --ascii-foreground-glow: 0 0 5px rgba(140, 120, 235, 0.55), 0 0 14px rgba(110, 95, 209, 0.28);
+  --ascii-glitch-glow: 1px 0 0 rgba(255, 90, 160, 0.3), -1px 0 0 rgba(90, 200, 255, 0.28), 0 0 9px rgba(140, 120, 235, 0.55);
+  --ascii-replay-color: #cbc7ff;
+  --ascii-replay-background: rgba(20, 16, 40, 0.55);
+  --ascii-replay-border: rgba(140, 120, 235, 0.45);
+  --ascii-replay-hover-color: #f4f2ff;
+  --ascii-replay-hover-background: rgba(40, 34, 72, 0.7);
+  --ascii-replay-hover-border: rgba(180, 168, 255, 0.85);
 
   position: relative;
   width: 100%;
@@ -8,9 +21,9 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--line-soft, #8071dd) 64%, transparent);
   border-radius: 3px;
-  background: #07060f;
+  background: var(--ascii-background);
   box-shadow: 0 1px 0 rgba(150, 134, 240, 0.05) inset;
-  color: #8071dd;
+  color: var(--ascii-foreground);
   isolation: isolate;
 }
 
@@ -33,20 +46,19 @@
 }
 
 .gsv-ascii-galaxy-nebula {
-  color: #272350;
+  color: var(--ascii-nebula);
 }
 
 .gsv-ascii-galaxy-stars {
-  color: #5d5798;
-  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+  color: var(--ascii-stars);
+  text-shadow: var(--ascii-star-glow);
 }
 
 .gsv-ascii-galaxy-foreground {
-  color: #8071dd;
-  text-shadow:
-    0 0 5px rgba(140, 120, 235, 0.55),
-    0 0 14px rgba(110, 95, 209, 0.28);
+  color: var(--ascii-foreground);
+  text-shadow: var(--ascii-foreground-glow);
 }
+.gsv-ascii-galaxy-foreground.is-glitch { text-shadow: var(--ascii-glitch-glow); }
 
 .gsv-ascii-galaxy-texture {
   position: absolute;
@@ -83,17 +95,17 @@
   gap: 8px;
   min-height: 32px;
   padding: 8px 15px;
-  border: 1px solid rgba(140, 120, 235, 0.45);
+  border: 1px solid var(--ascii-replay-border);
   border-radius: 2px;
   opacity: 0;
-  color: #cbc7ff;
-  background: rgba(20, 16, 40, 0.55);
+  color: var(--ascii-replay-color);
+  background: var(--ascii-replay-background);
   backdrop-filter: blur(3px);
   /* size from .gsv-label (13px); mono fallback stack + .22em tracking kept */
   font-family: var(--gsv-font-mono), ui-monospace, monospace;
   letter-spacing: 0.22em;
   line-height: 1;
-  text-shadow: 0 0 8px rgba(140, 120, 235, 0.5);
+  text-shadow: var(--ascii-replay-glow, 0 0 8px rgba(140, 120, 235, 0.5));
   text-transform: uppercase;
   transition:
     opacity 0.5s ease,
@@ -104,12 +116,33 @@
 
 .gsv-ascii-galaxy-replay:hover,
 .gsv-ascii-galaxy-replay:focus-visible {
-  border-color: rgba(180, 168, 255, 0.85);
-  color: #f4f2ff;
-  background: rgba(40, 34, 72, 0.7);
+  border-color: var(--ascii-replay-hover-border);
+  color: var(--ascii-replay-hover-color);
+  background: var(--ascii-replay-hover-background);
 }
+.gsv-ascii-galaxy-replay[hidden] { display: none; }
 
 .gsv-ascii-galaxy-replay-icon {
   font-size: 13px;
   line-height: 1;
 }
+
+.gsv-ascii-galaxy[data-ascii-palette="light"] {
+  --ascii-background: #f4f3fb;
+  --ascii-nebula: #e2def3;
+  --ascii-stars: #a7a0ce;
+  --ascii-foreground: #6b5fd6;
+  --ascii-star-glow: none;
+  --ascii-foreground-glow: none;
+  --ascii-glitch-glow: none;
+  --ascii-replay-glow: none;
+  --ascii-replay-color: #4a4677;
+  --ascii-replay-background: rgba(255, 255, 255, 0.8);
+  --ascii-replay-border: #c4bee3;
+  --ascii-replay-hover-color: #4a43a0;
+  --ascii-replay-hover-background: #edeaf8;
+  --ascii-replay-hover-border: #5a52a8;
+  border-color: #d8d4ec;
+  box-shadow: none;
+}
+.gsv-ascii-galaxy[data-ascii-palette="light"] .gsv-ascii-galaxy-texture { display: none; }

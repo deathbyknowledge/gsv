@@ -1,3 +1,4 @@
+import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -248,7 +249,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">
-                  {searchQuery.isLoading ? "searching" : searchQuery.isError ? "Search failed" : pages.length === 0 ? "nothing matches" : `${pages.length} ${pages.length === 1 ? "match" : "matches"}`}
+                  {searchQuery.isLoading ? <LoadingState>searching</LoadingState> : searchQuery.isError ? "Search failed" : pages.length === 0 ? "nothing matches" : `${pages.length} ${pages.length === 1 ? "match" : "matches"}`}
                 </div>
               ) : null}
               {asked && searchQuery.isError ? <div class="ph" role="alert">{searchQuery.error.message}</div> : null}
@@ -283,7 +284,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
                     {editing ? (
                       <>
                         <button type="button" class="ibtn is-primary" disabled={save.isPending || !connected || !writable} onClick={() => saveEdit()}>
-                          {save.isPending ? "saving" : "save"}
+                          {save.isPending ? <LoadingState>saving</LoadingState> : "save"}
                         </button>
                         <button type="button" class="ibtn" onClick={() => setEditor(null)}>
                           cancel
@@ -315,7 +316,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
                 )}
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (
-              <div class="memory-none" role="status">Loading memory…</div>
+              <div class="memory-none memory-loading"><LoadingState variant="panel">Loading memory…</LoadingState></div>
             ) : (
               <div class="memory-none" role={pageQuery.isError || pagesQuery.isError || (db !== null && !collection) ? "alert" : undefined}>
                 {pageQuery.error?.message || pagesQuery.error?.message ||
