@@ -20,10 +20,10 @@ import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
-import { renderMarkdownHtml } from "../shared/markdown";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { ActivityWorking } from "./ActivityWorking";
+import { ZenText } from "./ZenText";
 import {
   activityDuration,
   answerAttribution,
@@ -40,14 +40,12 @@ import {
   placeLabel,
   placesUsed,
   resolvePlace,
-  resolveTail,
   trimOutput,
   noteSummary,
   receiptDuration,
   receiptTargets,
   receiptSteps,
   CLOUD_PLACE_ID,
-  RESOLVE_TAIL,
   type Activity,
   type Moment,
   type Place,
@@ -88,11 +86,11 @@ const HISTORY_LIMIT = 400;
 const RESOLVE_FRAME_MS = 60;
 /** How long a message that arrived whole takes to settle out of glyph noise: brisk for a line, longer for a page, never a wait. */
 function settleDuration(length: number): number {
-  return Math.min(1600, Math.max(700, length * 2.5));
+  return Math.min(320, Math.max(200, length * 0.4));
 }
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
 const SETTLE_ON_LOAD = 12;
-const SETTLE_STAGGER_MS = 140;
+const SETTLE_STAGGER_MS = 6;
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -238,26 +236,6 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
         </div>
       ) : null}
     </div>
-  );
-}
-
-function StreamingText({ text, tick }: { text: string; tick: number }) {
-  void tick;
-  if (reducedMotion()) return <>{text}</>;
-  const resolved = resolveTail(text, Math.random);
-  return (
-    <>
-      {resolved.head}
-      {resolved.tail.map((entry, index) =>
-        entry.noise ? (
-          <span class="noise" key={index}>
-            {entry.noise}
-          </span>
-        ) : (
-          entry.char
-        ),
-      )}
-    </>
   );
 }
 
@@ -547,12 +525,12 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   /* the first ready render happens before the cascade is set; nothing shows in it, so no frame ever holds the transcript unsettled */
   const cascadeUnset = ready && seenMomentsRef.current === null && !reducedMotion();
   /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
-  const settlePrefix = (moment: Moment): number | null => {
+  const settleProgress = (moment: Moment): number | null => {
     const startedAt = settling.get(moment.id);
     if (startedAt === undefined) return null;
     const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
     if (progress >= 1) return null;
-    return Math.max(0, Math.ceil(progress * (moment.text.length + RESOLVE_TAIL)));
+    return Math.max(0, progress);
   };
 
   useEffect(() => {
@@ -923,26 +901,9 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                     />
                   ) : null}
                   {moment.role === "human" ? (
-                    settlePrefix(moment) !== null ? (
-                      <div class="text is-settling">
-                        <span class="ghost" aria-hidden="true">{moment.text}</span>
-                        <span class="live"><StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} /></span>
-                      </div>
-                    ) : (
-                      <div class="text">{moment.text}</div>
-                    )
-                  ) : moment.streaming ? (
-                    <div class="text">
-                      <StreamingText text={moment.text} tick={tick} />
-                      <span class="zen-caret blink" />
-                    </div>
-                  ) : settlePrefix(moment) !== null ? (
-                    <div class="text is-settling">
-                      <span class="ghost" aria-hidden="true">{moment.text}</span>
-                      <span class="live"><StreamingText text={moment.text.slice(0, settlePrefix(moment) ?? 0)} tick={tick} /></span>
-                    </div>
+                    <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
                   ) : moment.text ? (
-                    <div class="text" onClick={onTextClick} dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(linkPlaceReferences(moment.text, places)) }} />
+                    <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
                   ) : moment.thinking ? (
                     <div class="text">
                       <span class="zen-caret blink" />

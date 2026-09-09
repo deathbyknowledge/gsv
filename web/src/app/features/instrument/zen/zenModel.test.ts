@@ -415,6 +415,14 @@ describe("resolveTail", () => {
     const result = resolveTail("a b c d e f", () => 0, 6);
     expect(result.tail.filter((entry) => entry.char === " ").every((entry) => entry.noise === null)).toBe(true);
   });
+  it("keeps emoji and combining marks together and preserves all whitespace", () => {
+    const text = "head 👩🏽‍💻 cafe\u0301\t\n";
+    const result = resolveTail(text, () => 0, 5);
+    expect(result.head + result.tail.map((entry) => entry.char).join("")).toBe(text);
+    expect(result.tail.some((entry) => entry.char === "e\u0301")).toBe(true);
+    expect(result.tail.filter((entry) => /^\s+$/u.test(entry.char)).every((entry) => entry.noise === null)).toBe(true);
+    expect(resolveTail("x👩🏽‍💻", () => 0, 1).tail[0].char).toBe("👩🏽‍💻");
+  });
 });
 
 describe("formatting", () => {

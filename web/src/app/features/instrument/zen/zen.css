@@ -289,23 +289,21 @@
 .zen-empty .place { color: var(--target); }
 
 /* materialising: a moment before its turn holds its room unseen; at its turn the labels and receipt flicker in and the text settles over a ghost of itself */
+/* The ghost is now the final rendered text: a paint-only mask preserves its exact layout. */
 .zen-moment.is-pending { visibility: hidden; }
 .zen-moment.is-materialising .who,
 .zen-moment.is-materialising .receipt,
 .zen-moment.is-materialising .note-line,
-.zen-moment.is-materialising .activity { animation: zen-materialise 360ms steps(6) both; }
+.zen-moment.is-materialising .activity { animation: zen-materialise 200ms steps(6) both; }
 @keyframes zen-materialise { from { opacity: 0; } to { opacity: 1; } }
-.zen-moment .text.is-settling { position: relative; white-space: pre-wrap; }
-.zen-moment .text.is-settling .ghost { visibility: hidden; }
-.zen-moment .text.is-settling .live { position: absolute; inset: 0; }
+.zen-resolving-text { position: relative; }
+.zen-glyphs { position: absolute; left: 0; pointer-events: none; color: var(--glyph); }
+::highlight(gsv-zen-glyphs) { color: transparent; text-shadow: none; }
 @media (prefers-reduced-motion: reduce) {
   .zen-moment.is-materialising .who,
   .zen-moment.is-materialising .receipt,
   .zen-moment.is-materialising .note-line,
   .zen-moment.is-materialising .activity { animation: none; }
-}
-.zen-moment .text .noise {
-  color: var(--glyph);
 }
 .zen-moment .text p {
   margin: 0 0 0.6em;

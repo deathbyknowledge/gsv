@@ -546,26 +546,28 @@ export const RESOLVE_TAIL = 22;
 
 export type ResolvedChar = { char: string; noise: string | null };
 export type ResolvedText = { head: string; tail: ResolvedChar[] };
+const glyphSegmenter = typeof Intl.Segmenter === "undefined" ? null : new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * Split streaming text into a settled head and a tail whose newest characters are still glyph noise.
  * `random` is injected so the effect is testable.
  */
 export function resolveTail(text: string, random: () => number, tail = RESOLVE_TAIL): ResolvedText {
-  const cut = Math.max(0, text.length - tail);
-  const rest = text.slice(cut);
+  const glyphs = glyphSegmenter ? Array.from(glyphSegmenter.segment(text), (part) => part.segment) : Array.from(text);
+  const cut = Math.max(0, glyphs.length - tail);
+  const rest = glyphs.slice(cut);
   const chars: ResolvedChar[] = [];
   for (let index = 0; index < rest.length; index += 1) {
     const char = rest[index];
     const age = (rest.length - index) / rest.length;
     const chance = age * age * 0.85;
-    const noisy = char !== " " && char !== "\n" && random() < chance;
+    const noisy = !/^\s+$/u.test(char) && random() < chance;
     chars.push({
       char,
       noise: noisy ? RESOLVE_GLYPHS[Math.floor(random() * RESOLVE_GLYPHS.length)] : null,
     });
   }
-  return { head: text.slice(0, cut), tail: chars };
+  return { head: glyphs.slice(0, cut).join(""), tail: chars };
 }
 
 /* ---------- references to places inside ship text ---------- */
