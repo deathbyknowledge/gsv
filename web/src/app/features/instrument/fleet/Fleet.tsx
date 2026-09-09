@@ -377,8 +377,9 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
         <div ref={manifestRef} class="fleet-manifest">
           <section class="fleet-block">
             <h2>
-              <i /> Places <span class="count">{places.length}</span>
+              <i /> Places
               <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.token.create")} onClick={() => connect("place")}>connect</button>
+              <span class="count">{places.length}</span>
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
             <div class="tablewrap">
@@ -418,9 +419,10 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
 
           <section class="fleet-block" aria-label="Contacts">
             <h2>
-              <i /> Contacts <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
+              <i /> Contacts
               <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
               <button type="button" class="fleet-heading-action is-icon" aria-label="Refresh contacts" title="Refresh contacts" disabled={!connected || !viewer || !canConfigure(viewer, "contact.list") || contactsQuery.isFetching} onClick={() => void contactsQuery.refetch()}><span aria-hidden="true">↻</span></button>
+              <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
             </h2>
             {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
             {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
@@ -436,7 +438,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
 
           <section class="fleet-block">
             <h2>
-              <i /> Processes <span class="count">{processes.length}</span>
+              <i /> Processes
               {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="fleet-heading-action" disabled={!connected} onClick={() => {
                 setSelected(null);
                 setOpenFile(null);
@@ -444,6 +446,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                 setCreatingProcess(true);
                 inspectorRef.current?.scrollIntoView({ block: "nearest" });
               }}>new process</button> : null}
+              <span class="count">{processes.length}</span>
             </h2>
             {processesQuery.error ? <p class="error">Could not list processes: {String(processesQuery.error)}</p> : null}
             <div class="tablewrap">
@@ -509,7 +512,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                   <span class="t">{clockTime(line.timestamp)}</span>
                   <span class="place">{placeLabel(line.place)}</span>
                   <span class="what">{technical ? line.syscall : line.what}</span>
-                  <span class="m detail" title={line.detail}>{line.detail}</span>
+                  <span class="m detail" title={line.detail}>{line.detail || "-"}</span>
                   <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
                     {outcomeWord(line.outcome)}
                   </span>
