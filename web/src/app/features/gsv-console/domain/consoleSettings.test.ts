@@ -206,8 +206,10 @@ describe("console settings domain", () => {
     expect(modelProfilesFromListing(listing, [], 42).map((profile) => profile.id)).toEqual(["b", "a", "gsv-included"]);
     const ordered = { ...listing, modelOrder: ["gsv-included", "b", "a"], preferredModelId: null };
     expect(modelProfilesFromListing(ordered, [], 42).map((profile) => profile.id)).toEqual(["gsv-included", "b", "a"]);
-    expect(writableModelProfiles(ordered, [], 42).map((profile) => profile.id)).toEqual(["a", "b"]);
-    expect(writableModelProfiles(listing, [], 42).map((profile) => profile.id)).toEqual(["a", "b"]);
+    const config = [{ key: modelProfilesConfigKey(42), value: serializeModelProfiles(modelProfilesFromListing(listing, [], 42).filter((profile) => profile.source === "personal").reverse()), redacted: false }];
+    expect(writableModelProfiles(ordered, config, 42).map((profile) => profile.id)).toEqual(["a", "b"]);
+    expect(writableModelProfiles(listing, config, 42).map((profile) => profile.id)).toEqual(["a", "b"]);
+    expect(writableModelProfiles(listing, [], 42)).toEqual([]);
     expect(writableModelProfiles(listing, [], 0)).toEqual([]);
   });
 

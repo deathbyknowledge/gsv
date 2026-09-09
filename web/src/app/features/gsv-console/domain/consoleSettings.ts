@@ -513,7 +513,22 @@ export function writableModelProfiles(
     return [];
   }
   const editable = editableModelSource(validUid.data);
-  return storedModelProfiles(listing, config, uid).filter((profile) => profile.source === editable);
+  const stored = configEntryForKey(config, modelProfilesConfigKey(validUid.data));
+  if (!stored?.value) return [];
+  // The effective listing can hide entries in this layer; the saved layer owns every definition we must preserve.
+  let value: unknown;
+  try {
+    value = JSON.parse(stored.value);
+  } catch {
+    throw new Error("Your saved model definitions could not be read.");
+  }
+  const payload = z.object({ version: z.literal(1), models: z.array(z.unknown()) }).safeParse(value);
+  if (stored.redacted || !payload.success) throw new Error("Your saved model definitions could not be read.");
+  return payload.data.models.map((entry) => {
+    const profile = normalizeCanonicalModel(entry, editable);
+    if (!profile) throw new Error("Your saved model definitions could not be read.");
+    return hydrateModelProfileSecrets(config, modelProfilesConfigKey(validUid.data), profile);
+  });
 }
 
 function storedModelProfiles(

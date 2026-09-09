@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { AddModel } from "./AddModel";
+import { ModelEditor } from "./ModelEditor";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../components/ui/AgentEditor";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -7,7 +7,8 @@ import { aiProviderDisplayLabel } from "../../../domain/aiProviders";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleModels, saveConsoleConfig, saveConsoleConfigEntries } from "../../gsv-console/backend/consoleService";
 import { inheritedReasoningForAccount } from "../../gsv-console/domain/consoleAgentBehavior";
-import { editableModelSource } from "../../gsv-console/domain/consoleSettings";
+import { editableModelSource, modelProfilesFromListing, type ConsoleModelProfile } from "../../gsv-console/domain/consoleSettings";
+import { modelProfileChangeWrites } from "./modelProfiles";
 import { configuredModelOrder, modelOrderWrites, moveModel, moveModelTo, orderedModels, useModelFirst, type ModelStackDraft } from "./modelStack";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
@@ -19,7 +20,9 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const models = useQuery({ queryKey: SETTINGS_MODELS_KEY, queryFn: () => loadConsoleModels(client), enabled: connected && active });
   const [orderDraft, setOrderDraft] = useState<ModelStackDraft | null>(null);
   const [reasoningDraft, setReasoningDraft] = useState<string | null>(null);
-  const [addingModel, setAddingModel] = useState(false);
+  const [modelEditor, setModelEditor] = useState<{ profile?: ConsoleModelProfile } | null>(null);
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [removingModel, setRemovingModel] = useState<string | null>(null);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const drag = useRef<{ id: string; x: number; y: number; moved: boolean; to: number | null } | null>(null);
@@ -35,7 +38,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const originalReasoning = config.data?.find((entry) => entry.key === reasoningKey)?.value ?? "";
   const reasoning = reasoningDraft ?? originalReasoning;
   const effortOptions = reasoningOptions(inheritedReasoningForAccount(config.data ?? [], account.uid, account.uid));
-  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty, onDirty);
 
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
@@ -53,21 +55,32 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     mutationFn: (value: string) => saveConsoleConfig(client, { key: reasoningKey, value }),
     onSuccess: async () => { await refresh(); setReasoningDraft(null); setSaved("reasoning"); },
   });
-  const saving = saveOrder.isPending || saveReasoning.isPending;
+  const removeModel = useMutation({
+    mutationFn: async (profile: ConsoleModelProfile) => {
+      const [latestConfig, latestModels] = await Promise.all([loadConsoleConfig(client), loadConsoleModels(client)]);
+      await saveConsoleConfigEntries(client, { entries: modelProfileChangeWrites(latestModels, latestConfig, account.uid, profile, { kind: "remove" }) });
+    },
+    onSuccess: async () => { await refresh(); setRemovingModel(null); setExpandedModel(null); setSaved("model-removed"); },
+    onError: async () => { await refresh(); },
+  });
+  const saving = saveOrder.isPending || saveReasoning.isPending || removeModel.isPending;
+  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || saving, onDirty);
   const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); saveOrder.reset(); };
 
   return <section aria-labelledby="settings-preferences-title">
     <h1 id="settings-preferences-title">Preferences</h1>
     <p class="settings-intro">Defaults for {account.displayName || account.username}. Agents without their own overrides inherit their owner’s defaults.</p>
-    <SettingsError error={config.error ?? models.error ?? saveOrder.error ?? saveReasoning.error} />
+    <SettingsError error={config.error ?? models.error ?? saveOrder.error ?? saveReasoning.error ?? removeModel.error} />
     {connected && (config.isPending || models.isPending) && <LoadingState variant="panel">Loading preferences…</LoadingState>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">Your account can view these preferences but cannot change them.</p>}
-    {addingModel && models.data && config.data ? <AddModel account={account} config={config.data} models={models.data} active={active} onDirty={setModelDraftDirty} onCancel={() => {
-      if (!modelDraftDirty || window.confirm("Discard this unsaved model?")) { setModelDraftDirty(false); setAddingModel(false); }
-    }} onAdded={() => { setModelDraftDirty(false); setAddingModel(false); setSaved("model-added"); }} /> : <>
-    <div class="settings-model-heading"><h2>Model order</h2><button class="ibtn" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setAddingModel(true); }}>add model</button></div>
-    {orderDirty && <p class="settings-muted">Save or discard your order changes before adding a model.</p>}
+    {modelEditor && models.data && config.data ? <ModelEditor key={modelEditor.profile?.id ?? "new"} account={account} config={config.data} models={models.data} profile={modelEditor.profile} active={active} onDirty={setModelDraftDirty} onCancel={() => {
+      if (!modelDraftDirty || window.confirm("Discard these unsaved model changes?")) { setModelDraftDirty(false); setModelEditor(null); }
+    }} onSaved={() => { setModelDraftDirty(false); setModelEditor(null); setSaved(modelEditor.profile ? "model-updated" : "model-added"); }} /> : <>
+    <div class="settings-model-heading"><h2>Model order</h2><button class="ibtn" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setModelEditor({}); }}>add model</button></div>
+    {orderDirty && <p class="settings-muted">Save or discard your order changes before adding, editing or removing a model.</p>}
     {saved === "model-added" && <p role="status">Model added to your stack.</p>}
+    {saved === "model-updated" && <p role="status">Model updated.</p>}
+    {saved === "model-removed" && <p role="status">Model removed from your stack.</p>}
     <p class="settings-muted">The first model is tried first. If it cannot complete the reply, the next model takes over.</p>
     <form class="settings-form" aria-label="Model order" onSubmit={(event) => {
       event.preventDefault();
@@ -75,9 +88,11 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     }}>
       <ol class="settings-model-stack" aria-label="Model fallback order">{rows.map((model, index) => {
         const own = model.source === editableModelSource(account.uid);
+        const profile = models.data && modelProfilesFromListing(models.data, [], account.uid).find((entry) => entry.id === model.id);
+        const expanded = expandedModel === model.id;
         const draggable = rows.length > 1 && stackEditable && !saving;
         return <li key={model.id} data-model-id={model.id} class={`${draggable ? "is-draggable" : ""}${dragging === model.id ? " is-dragging" : ""}${dropTarget === model.id ? " is-drop-target" : ""}`} onPointerDown={(event) => {
-          if (!draggable || event.button !== 0 || (event.target as Element).closest("button, a, input")) return;
+          if (!draggable || event.button !== 0 || (event.target as Element).closest("button, a, input, .settings-model-inspector")) return;
           drag.current = { id: model.id, x: event.clientX, y: event.clientY, moved: false, to: null };
           event.currentTarget.setPointerCapture(event.pointerId);
         }} onPointerMove={(event) => {
@@ -106,6 +121,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
             <strong>{model.name}</strong>
             <span>{aiProviderDisplayLabel(model.provider)} / {model.model}</span>
             <small>{own ? account.uid === 0 ? "Installation model" : "Your model" : model.source === "base" ? "Included model" : "Shared model"}</small>
+            <button class="settings-text-action settings-model-disclosure" type="button" aria-expanded={expanded} aria-controls={`model-details-${model.id}`} aria-label={`Details for ${model.name}`} disabled={saving} onClick={() => { setExpandedModel(expanded ? null : model.id); setRemovingModel(null); removeModel.reset(); }}>{expanded ? "close details" : "details"}</button>
           </div>
           <div class="settings-actions">
             {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, model.id)); }}>use first</button>}
@@ -114,6 +130,24 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
               <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || index === rows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, 1)); }}>↓</button>
             </>}
           </div>
+          {expanded && <div class="settings-model-inspector" id={`model-details-${model.id}`}>
+            <dl>
+              <div><dt>Connect through</dt><dd>{!model.transportTarget || model.transportTarget === "gsv" ? "Your cloud home" : model.transportTarget}</dd></div>
+              {model.baseUrl && <div><dt>Endpoint</dt><dd>{model.baseUrl}</dd></div>}
+              {model.maxTokens && <div><dt>Maximum output</dt><dd>{model.maxTokens.toLocaleString()} tokens</dd></div>}
+              {model.contextWindowTokens && <div><dt>Context window</dt><dd>{model.contextWindowTokens.toLocaleString()} tokens</dd></div>}
+            </dl>
+            {own && profile ? removingModel === model.id ? <div role="group" aria-label={`Remove ${model.name}`}>
+              <p>Remove {model.name} from your stack? Its saved API key will also be removed.</p>
+              <div class="settings-actions">
+                <button class="settings-text-action settings-danger" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => removeModel.mutate(profile)}>{removeModel.isPending ? <LoadingState>removing…</LoadingState> : "remove model"}</button>
+                <button class="settings-text-action" type="button" disabled={saving} onClick={() => { setRemovingModel(null); removeModel.reset(); }}>cancel</button>
+              </div>
+            </div> : <div class="settings-actions">
+              <button class="settings-text-action" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setModelEditor({ profile }); }}>edit</button>
+              <button class="settings-text-action settings-danger" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => setRemovingModel(model.id)}>remove</button>
+            </div> : <p class="settings-muted">{model.source === "base" ? "Included with your installation." : "Shared by your installation."} You can change its place in your stack; its definition is managed by the installation.</p>}
+          </div>}
         </li>;
       })}</ol>
       {models.data?.models.length === 0 && <p>No models are available.</p>}
@@ -126,7 +160,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       </div>
     </form>
     </>}
-    {!addingModel && <form class="settings-form" aria-label="Reasoning effort" onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
+    {!modelEditor && <form class="settings-form" aria-label="Reasoning effort" onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
       <label>Reasoning effort<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); saveReasoning.reset(); }}>
         {reasoning && !effortOptions.some((option) => option.value === reasoning) && <option value={reasoning}>{reasoning} (unavailable)</option>}
         {effortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}

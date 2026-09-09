@@ -42,6 +42,14 @@
 .settings-model-stack > li.is-draggable:hover .settings-model-grip { color: var(--accent); }
 .settings-model-stack > li.is-drop-target { border-color: var(--accent); background: var(--wash); }
 .settings-model-editor { padding: 0 0 2rem; }
+.settings-model-disclosure { align-self: flex-start; }
+.settings-model-inspector { grid-column: 2 / -1; cursor: auto; user-select: text; touch-action: pan-y; font-size: .75rem; }
+.settings-model-inspector dl { margin: 0 0 1rem; }
+.settings-model-inspector dl > div { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-block: .6rem; }
+.settings-model-inspector dt { min-width: 10rem; color: var(--text-dim); }
+.settings-model-inspector dd { margin: 0; overflow-wrap: anywhere; }
+.settings-model-inspector .settings-actions { justify-content: flex-start; }
+.settings .settings-danger { color: var(--error); }
 .settings-add-model { max-width: 34rem; padding-top: 1.5rem; }
 .settings-add-model label { gap: .5rem; }
 .settings-add-model label small { font-size: .7rem; }
@@ -72,4 +80,5 @@
   .settings-model-stack > li { grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; }
   .settings-model-position { grid-column: 1 / -1; }
   .settings-model-details, .settings-model-stack .settings-actions { grid-column: 1 / -1; }
+  .settings-model-inspector { grid-column: 1 / -1; }
 }
