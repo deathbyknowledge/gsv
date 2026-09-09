@@ -92,6 +92,22 @@
 }
 .memory-rail .page:hover { background: var(--hover); }
 .memory-rail .page.is-sel { color: var(--text-hi); border-left-color: var(--accent); background: var(--selected); }
+.memory-folder > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 16px;
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: none;
+}
+.memory-folder > summary::-webkit-details-marker { display: none; }
+.memory-folder > summary:hover { background: var(--hover); }
+.memory-folder > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.memory-folder .tri { width: 1ch; flex: none; color: var(--faint); }
+.memory-folder.has-current > summary { color: var(--accent); }
+.memory-folder-pages { margin-left: 16px; border-left: 1px solid var(--border); }
+.memory-rail .page .page-path { color: var(--faint); font-size: 10px; overflow-wrap: anywhere; }
 .memory-rail .page .snippet {
   font-family: var(--gsv-font-prose);
   font-size: 12.5px;

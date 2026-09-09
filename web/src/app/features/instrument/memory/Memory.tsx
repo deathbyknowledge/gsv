@@ -12,6 +12,8 @@ import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
 import { refreshSavedMemoryPage } from "./memoryQueries";
 import { MemoryArticle } from "./MemoryArticle";
 import { memoryLinkFromUrl, type MemoryLink } from "./memoryLinks";
+import { MemoryPageTree } from "./MemoryPageTree";
+import { buildMemoryTree, memoryTreePages } from "./memoryTree";
 import "./memory.css";
 
 export type MemoryProps = {
@@ -77,6 +79,8 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
     enabled: connected && collection !== null && asked !== "",
   });
   const pages = useMemo(() => (asked ? (searchQuery.data?.entries ?? []) : (pagesQuery.data ?? [])), [asked, pagesQuery.data, searchQuery.data]);
+  const pageTree = useMemo(() => buildMemoryTree(pagesQuery.data ?? [], selectedDb), [pagesQuery.data, selectedDb]);
+  const orderedPages = useMemo(() => asked ? pages : memoryTreePages(pageTree), [asked, pages, pageTree]);
   /* the first page of a collection opens by itself; a page the person picked stays */
   const currentPath = path ?? pagesQuery.data?.[0]?.path ?? null;
   const pageQuery = useQuery({
@@ -126,6 +130,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
   /* keys: j k walk the pages, enter opens, / searches, e edits, esc leaves the editor or the search */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
       if (event.key === "Escape") {
@@ -141,14 +146,14 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
         return;
       }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      const at = pages.findIndex((entry) => entry.path === note?.path);
+      const at = orderedPages.findIndex((entry) => entry.path === note?.path);
       if (event.key === "j" || event.key === "ArrowDown") {
         event.preventDefault();
-        const next = pages[Math.min(pages.length - 1, at + 1)];
+        const next = orderedPages[Math.min(orderedPages.length - 1, at + 1)];
         if (next) open(next);
       } else if (event.key === "k" || event.key === "ArrowUp") {
         event.preventDefault();
-        const next = pages[Math.max(0, at - 1)];
+        const next = orderedPages[Math.max(0, at - 1)];
         if (next) open(next);
       } else if (event.key === "/") {
         event.preventDefault();
@@ -160,7 +165,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [beginEdit, editing, note?.path, open, pages]);
+  }, [beginEdit, editing, note?.path, open, orderedPages]);
 
   const onEditorKey = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -258,7 +263,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
                 ) : null}
               </form>
             </div>
-            <div class="pages" role="listbox" aria-label={asked ? "Matches" : "Pages"}>
+            <nav class="pages" aria-label={asked ? "Matches" : "Pages"}>
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">
@@ -267,20 +272,21 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
               ) : null}
               {asked && searchQuery.isError ? <div class="ph" role="alert">{searchQuery.error.message}</div> : null}
               {asked && searchQuery.data?.truncated ? <div class="ph">More matches exist. Narrow your search.</div> : null}
-              {pages.map((entry) => (
+              <MemoryPageTree nodes={pageTree} db={selectedDb} selectedPath={note?.path ?? null} hidden={Boolean(asked)} onOpen={open} />
+              {asked ? pages.map((entry) => (
                 <button
                   type="button"
-                  role="option"
                   key={entry.path}
-                  aria-selected={entry.path === note?.path}
+                  aria-current={entry.path === note?.path ? "page" : undefined}
                   class={`page${entry.path === note?.path ? " is-sel" : ""}`}
                   onClick={() => open(entry)}
                 >
                   <span class="title">{entry.title || entry.path}</span>
+                  <span class="page-path">{libraryPathInDb(entry.path, selectedDb)}</span>
                   {entry.snippet ? <span class="snippet">{entry.snippet}</span> : null}
                 </button>
-              ))}
-            </div>
+              )) : null}
+            </nav>
           </aside>
 
           <section class={`memory-page${editing ? " is-editing" : ""}`}>
