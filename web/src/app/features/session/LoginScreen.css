@@ -22,10 +22,8 @@
     padding: 22px 18px 24px;
   }
 }
-.gsv-login-section {
-  display: block;
-  color: var(--text-title);
-  margin-bottom: 20px;
+.gsv-login-panel .gsv-section-header-title {
+  font-weight: 600;
 }
 .gsv-login-fields {
   display: flex;

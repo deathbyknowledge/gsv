@@ -52,8 +52,6 @@ export function LoginScreen({
           <SectionHeader title="WELCOME BACK" titleSize="title" divider />
 
           <div class="gsv-login-body">
-            <span class="gsv-section gsv-login-section">SIGN IN</span>
-
             {loading ? (
               <LoginSkeleton />
             ) : (
