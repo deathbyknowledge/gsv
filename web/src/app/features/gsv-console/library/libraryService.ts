@@ -1,5 +1,6 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { z } from "zod";
+import { lexer } from "marked";
 import type {
   RepoApplyOp,
   RepoReadResult,
@@ -156,6 +157,9 @@ export async function saveLibraryPage(
   const path = normalizeDbScopedLibraryPath(input.path, db);
   if (!path) {
     throw new Error("page path is required");
+  }
+  if (!path.startsWith(`${db}/`)) {
+    throw new Error("This page does not belong to the selected collection.");
   }
   const collection = await requireCollection(client, db);
   const localPath = libraryPathInDb(path, db);
@@ -365,7 +369,7 @@ export async function previewLibraryContent(
   }
 }
 
-async function listLibraryCollections(client: LibraryClient): Promise<LibraryCollection[]> {
+export async function listLibraryCollections(client: LibraryClient): Promise<LibraryCollection[]> {
   const result = await client.call("repo.list", {});
   const parsed = z.object({
     repos: z.array(z.object({
@@ -552,8 +556,7 @@ async function readRepoPath(client: LibraryClient, repo: string, path: string): 
       size: result.size,
     };
   } catch (error) {
-    const message = formatError(error).toLowerCase();
-    if (message.includes("not found") || message.includes("enoent")) {
+    if (formatError(error).startsWith("Path not found:")) {
       return { kind: "missing" };
     }
     throw error;
@@ -578,7 +581,14 @@ async function indexUpdateOp(
     return null;
   }
   const existing = await readRepoPath(client, collection.repo, "index.md");
-  const current = existing.kind === "file" ? existing.content ?? "" : renderLibraryIndex(collection.title, undefined, []);
+  let current: string;
+  if (existing.kind === "missing") {
+    current = renderLibraryIndex(collection.title, undefined, []);
+  } else if (existing.kind === "file" && !existing.isBinary && existing.content !== null) {
+    current = existing.content;
+  } else {
+    throw new Error("The collection overview is not a readable text file.");
+  }
   const updated = mergeLibraryIndexPage(current, pageEntry);
   return updated === current ? null : { type: "put", path: "index.md", content: updated };
 }
@@ -595,28 +605,61 @@ function renderLibraryIndex(title: string, description: string | undefined, page
 }
 
 function mergeLibraryIndexPage(markdown: string, pageEntry: string): string {
-  const normalized = markdown.replace(/\r\n/g, "\n");
-  const lines = normalized.split("\n");
-  const title = lines.find((line) => line.startsWith("# "))?.slice(2).trim() || "Library";
-  const headerIndex = lines.findIndex((line) => line.trim() === "## Pages");
-  const description = headerIndex > 1 ? trimEmptyLines(lines.slice(1, headerIndex)).join("\n") : undefined;
-  const pages = lines
-    .slice(headerIndex >= 0 ? headerIndex + 1 : 0)
-    .map((line) => line.match(/^\s*-\s+(.*)$/)?.[1] ?? "")
-    .filter((line) => line && line !== "_No pages yet._");
-  return renderLibraryIndex(title, description, [...pages, pageEntry]);
+  const pageLine = `- ${pageEntry}`;
+  const lines = libraryIndexTextLines(markdown);
+  if (lines.some((line) => line.text.trim() === pageLine)) {
+    return markdown;
+  }
+  const newline = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const heading = lines.find((line) => /^## Pages[ \t]*$/.test(line.text));
+  if (!heading) {
+    const separator = markdown ? (markdown.endsWith(newline) ? newline : newline + newline) : "";
+    return `${markdown}${separator}## Pages${newline}${newline}${pageLine}${newline}`;
+  }
+
+  const start = heading.end;
+  const nextHeading = lines.find((line) => line.start >= start && /^#{1,2}(?:[ \t]|$)/.test(line.text));
+  const end = nextHeading?.start ?? markdown.length;
+  const placeholder = lines.find((line) => line.start >= start && line.start < end && /^- _No pages yet\._[ \t]*$/.test(line.text));
+  if (placeholder) {
+    return markdown.slice(0, placeholder.start) + pageLine + markdown.slice(placeholder.start + placeholder.text.length);
+  }
+  const before = markdown.slice(0, end);
+  const after = markdown.slice(end);
+  return `${before}${before.endsWith(newline) ? "" : newline}${pageLine}${newline}${after ? newline : ""}${after}`;
+}
+
+function libraryIndexTextLines(markdown: string): Array<{ text: string; start: number; end: number }> {
+  const lines = [...markdown.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)]
+    .filter((match) => match[0] !== "")
+    .map((match) => ({ text: match[0].replace(/\r?\n$|\r$/, ""), start: match.index, end: match.index + match[0].length }));
+  const frontmatterEnd = lines[0]?.text === "---"
+    ? lines.findIndex((line, index) => index > 0 && line.text === "---")
+    : -1;
+  const bodyStart = frontmatterEnd >= 0 ? lines[frontmatterEnd].end : 0;
+  const examples: Array<{ start: number; end: number }> = [];
+  let tokenOffset = 0;
+  for (const token of lexer(markdown.slice(bodyStart))) {
+    const end = tokenOffset + token.raw.length;
+    if (token.type === "code" || token.type === "html") {
+      examples.push({ start: tokenOffset, end });
+    }
+    tokenOffset = end;
+  }
+  // Keep source offsets so index edits never reconstruct authored Markdown.
+  // The lexer normalizes every line ending to one character but retains tabs.
+  let normalizedOffset = 0;
+  return lines.filter((line, index) => {
+    if (index <= frontmatterEnd) return false;
+    const start = normalizedOffset;
+    normalizedOffset += line.text.length + (line.end > line.start + line.text.length ? 1 : 0);
+    return !examples.some((block) => start >= block.start && start < block.end);
+  });
 }
 
 function pageEntryForLocalPath(path: string): string | null {
   const normalized = normalizeLibraryPath(path);
   return normalized.startsWith("pages/") && normalized !== "pages/.dir" ? normalized : null;
-}
-
-function trimEmptyLines(lines: string[]): string[] {
-  const copy = [...lines];
-  while (copy.length > 0 && !copy[0].trim()) copy.shift();
-  while (copy.length > 0 && !copy[copy.length - 1].trim()) copy.pop();
-  return copy;
 }
 
 function joinPath(left: string, right: string): string {
