@@ -1,4 +1,8 @@
 /* Login panel — the surface/content layout now lives in AuthLayout.css. */
+.gsv-auth-surface-login {
+  --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
+  --gsv-font-prose: var(--gsv-font-mono);
+}
 
 /* Card panel — a surface clearly lighter than --void; full-bleed header/footer. */
 .gsv-login-panel {
@@ -28,11 +32,24 @@
   flex-direction: column;
   gap: 18px;
 }
+/* Historical placement of the removed token control: */
 /* "Use token instead" — directly under the password field, aligned right. */
-.gsv-login-tokenlink {
+.gsv-login-credit {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--node-bg);
+  color: var(--text-dim);
+  letter-spacing: .1em;
+  line-height: 1.6;
+  text-align: center;
 }
+.gsv-login-credit a { color: var(--accent); text-underline-offset: 3px; }
+.gsv-login-credit a:hover { color: var(--accent-bright); }
+.gsv-login-credit a:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .gsv-login-submit {
   margin-top: 8px;
 }
