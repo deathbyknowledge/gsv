@@ -16,7 +16,6 @@ import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
-import { InstrumentHeader } from "../shared/InstrumentHeader";
 import {
   CLOUD_TARGET_ID,
   clockTime,
@@ -57,8 +56,6 @@ export type FleetProps = {
   initialReference: FleetReference | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
   onZen: (prefill?: string, pid?: string) => void;
-  onMemory: () => void;
-  onSettings: () => void;
 };
 
 const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
@@ -88,7 +85,7 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetProps) {
+export function Fleet({ initialReference, onZen }: FleetProps) {
   const { client, connected } = useGateway();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
@@ -356,18 +353,6 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
 
   return (
     <main class="fleet" aria-label="Fleet">
-      <InstrumentHeader>
-        <button type="button" onClick={() => onZen()}>
-          <kbd>z</kbd>zen
-        </button>
-        <span aria-current="page">fleet</span>
-        <button type="button" onClick={onMemory}>
-          memory
-        </button>
-        <button type="button" onClick={onSettings}>settings</button>
-        <span><kbd>?</kbd>keys</span>
-      </InstrumentHeader>
-
       <div class="fleet-body">
         <div ref={manifestRef} class="fleet-manifest">
           <section class="fleet-block">

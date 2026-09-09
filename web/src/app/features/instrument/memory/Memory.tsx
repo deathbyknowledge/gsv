@@ -6,7 +6,6 @@ import { listLibraryCollections, saveLibraryPage } from "../../gsv-console/libra
 import { libraryPathInDb } from "../../gsv-console/library/libraryModel";
 import type { MemoryPageRef } from "../shared/navigation";
 import type { LibrarySavePageInput, LibraryEntry } from "../../gsv-console/library/libraryTypes";
-import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { INSTRUMENT_MEMORY_KEY as MEMORY_KEY } from "../wire/queryKeys";
 import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
 import { refreshSavedMemoryPage } from "./memoryQueries";
@@ -19,9 +18,6 @@ import "./memory.css";
 export type MemoryProps = {
   initialPage?: MemoryPageRef | null;
   onAsk: (page: MemoryPageRef, prompt: string) => void;
-  onZen: () => void;
-  onFleet: () => void;
-  onSettings: () => void;
 };
 
 /**
@@ -31,7 +27,7 @@ export type MemoryProps = {
  * voices write here. Each read is one ask: the list from the tree, a page
  * when opened, a search in the gateway.
  */
-export function Memory({ initialPage, onAsk, onZen, onFleet, onSettings }: MemoryProps) {
+export function Memory({ initialPage, onAsk }: MemoryProps) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
@@ -180,22 +176,6 @@ export function Memory({ initialPage, onAsk, onZen, onFleet, onSettings }: Memor
 
   return (
     <main class="memory" aria-label="Memory">
-      <InstrumentHeader>
-        <button type="button" onClick={onZen}>
-          <kbd>m</kbd>zen
-        </button>
-        <button type="button" onClick={onFleet}>
-          <kbd>z</kbd>fleet
-        </button>
-        <span aria-current="page">memory</span>
-        <button type="button" onClick={onSettings}>
-          <kbd>,</kbd>settings
-        </button>
-        <span>
-          <kbd>?</kbd>keys
-        </span>
-      </InstrumentHeader>
-
       {collectionsQuery.isError ? (
         <div class="memory-empty" role="alert">{collectionsQuery.error.message}</div>
       ) : empty ? (

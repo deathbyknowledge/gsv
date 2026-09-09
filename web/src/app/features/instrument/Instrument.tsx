@@ -10,6 +10,7 @@ import { Settings } from "./settings/Settings";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
+import { InstrumentHeader } from "./shared/InstrumentHeader";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -43,7 +44,7 @@ function storedScale(): Scale {
     return 1;
   }
 }
-const STAR_DENSITY = { zen: 0.013, fleet: 0.022, memory: 0.010, settings: 0.010 } satisfies Record<Distance, number>;
+const STAR_DENSITY = 0.013;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -165,15 +166,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
 
   return (
     <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
-      <div class={`instrument-field${distance === "fleet" ? " is-fleet" : ""}`}>
-        <GlyphStars density={STAR_DENSITY[distance]} />
+      <div class="instrument-field">
+        <GlyphStars density={STAR_DENSITY} />
       </div>
       <div class="instrument-scan" aria-hidden="true" />
       <WireSync />
       <div class="instrument-vignette" aria-hidden="true" />
       <div class="instrument-scaled">
+      <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
+        onShip={() => {
+          if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
+        }} help={help} onHelp={() => setHelp((open) => !open)} />
       {help ? (
-        <aside class="instrument-help" aria-label="Keys">
+        <aside id="instrument-help" class="instrument-help" aria-label="Keys">
           <h4>Everywhere</h4>
           <dl>
             <dt>z</dt><dd>zen and fleet</dd>
@@ -209,25 +214,21 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onMemory={(page) => {
+          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page) setSelectedMemoryPage(page);
             move("memory");
-          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => {
-            if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-          }} />
+          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
         ) : distance === "memory" ? (
-          <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onSettings={() => move("settings")} onAsk={(page, prompt) => {
+          <Memory initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
             setSelectedMemoryPage(page);
             setZenPid(null);
             setZenPrefill(prompt);
             move("zen");
           }} />
         ) : distance === "settings" ? (
-          <Settings onZen={() => move("zen")} onFleet={() => move("fleet")} onMemory={() => move("memory")} onDirtyChange={setSettingsDirty} />
+          <Settings onDirtyChange={setSettingsDirty} />
         ) : (
           <Fleet
-            onMemory={() => move("memory")}
-            onSettings={() => move("settings")}
             initialReference={fleetReference}
             onZen={(prefill, pid) => {
               if (prefill) setZenPrefill(prefill);

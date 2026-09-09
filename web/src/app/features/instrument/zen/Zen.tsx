@@ -23,7 +23,6 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
-import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { ZenText } from "./ZenText";
@@ -35,7 +34,6 @@ import {
   answerHistorySnapshot,
   countLabel,
   defaultPlace,
-  formatSeconds,
   isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
@@ -43,7 +41,6 @@ import {
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
   placeLabel,
-  placesUsed,
   resolvePlace,
   trimOutput,
   noteSummary,
@@ -59,7 +56,6 @@ import "./zen.css";
 
 export type ZenProps = {
   onMemory?: (page?: MemoryPageRef) => void;
-  onSettings: () => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (reference?: FleetReference) => void;
   /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
@@ -67,14 +63,8 @@ export type ZenProps = {
   onPrefillUsed?: () => void;
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
-  /** Back to the ship's own conversation. */
-  onShip?: () => void;
   onDraftChange?: (dirty: boolean) => void;
 };
-
-type StatusTone = "" | "is-on" | "is-live" | "is-warn" | "is-err";
-type StatusPart = { tone: StatusTone; text: string };
-const part = (tone: StatusTone, text: string): StatusPart => ({ tone, text });
 
 type LocalRun = {
   id: string;
@@ -275,7 +265,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -379,8 +369,6 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   const browseRef = useRef<number | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
-  const [lastRun, setLastRun] = useState<{ startedAt: number; endedAt: number | null } | null>(null);
-  const [now, setNow] = useState(() => Date.now());
   const [tick, setTick] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const momentsRef = useRef<HTMLDivElement>(null);
@@ -436,17 +424,6 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   }, [processRuntime.history.error]);
 
   /* the run clock and the resolve animation */
-  const thinking = runtime.activeRunId !== null;
-  useEffect(() => {
-    if (thinking) {
-      setLastRun({ startedAt: Date.now(), endedAt: null });
-      const interval = window.setInterval(() => setNow(Date.now()), 100);
-      return () => window.clearInterval(interval);
-    }
-    setLastRun((current) => (current && current.endedAt === null ? { ...current, endedAt: Date.now() } : current));
-    return undefined;
-  }, [thinking]);
-
   const streaming = runtime.rows.some((row) => row.streaming);
   /* a message that arrives whole settles out of noise on arrival; a streamed one already did, character by character */
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
@@ -568,7 +545,6 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   }, [moments, tick]);
 
   const latest = moments[moments.length - 1];
-  const lastAnswer = [...moments].reverse().find((moment) => moment.role === "ship" && (moment.text.trim() || moment.media?.length) && !moment.streaming && !moment.thinking);
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
 
   const toggleActivity = useCallback((key: string) => {
@@ -804,48 +780,7 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
   );
 
   /* the status line */
-  const status = useMemo<StatusPart[]>(() => {
-    if (browse !== null) {
-      return [part("is-live", "browse"), part("", `${browse + 1} of ${moments.length}`), part("", "j k move"), part("", "o show the run"), part("", "esc or type to return")];
-    }
-    if (!connected) return [part("is-err", "not connected")];
-    if (!pid) return [part("", "starting your ship")];
-    if (thinking) {
-      const elapsed = lastRun ? now - lastRun.startedAt : 0;
-      return [
-        part("is-live", "thinking"),
-        part("", formatSeconds(elapsed)),
-        part("", runtime.context?.model ? `attempting ${runtime.context.model}` : ""),
-        part("", `${placeLabel(where ?? "gsv", places)} ready`),
-      ].filter((entry) => entry.text);
-    }
-    if (pendingHil) {
-      return [
-        part("is-warn", "waiting for your approval"),
-        part("", `${pendingHil.syscall} on ${placeLabel(pendingHil.target, places)}`),
-        part("", "nothing has run"),
-      ];
-    }
-    const lastLocal = localRuns[localRuns.length - 1];
-    if (latest && lastLocal && latest.id === lastLocal.id) {
-      return [
-        part(lastLocal.failed ? "is-err" : "is-on", `${lastLocal.failed ? "failed" : "ran"} on ${placeLabel(lastLocal.target, places)}`),
-        part("", formatSeconds(lastLocal.endedAt - lastLocal.startedAt)),
-        part("", "no model in the loop"),
-      ];
-    }
-    const parts: StatusPart[] = [];
-    if (lastAnswer?.attribution?.model) parts.push(part("is-on", `answered by ${lastAnswer.attribution.model}`));
-    const fallback = lastAnswer?.attribution?.fallbacks.at(-1);
-    if (fallback) parts.push(part("is-warn", `fallback from ${fallback.from}`));
-    if (lastRun && lastRun.endedAt !== null) parts.push(part("", formatSeconds(lastRun.endedAt - lastRun.startedAt)));
-    const usage = runtime.context?.usage;
-    if (usage?.cost) parts.push(part("", `$${usage.cost.total.toFixed(2)} so far`));
-    else if (usage?.totalTokens) parts.push(part("", `${usage.totalTokens.toLocaleString()} tokens so far`));
-    if (latest && latest.role === "ship") parts.push(part("", `${countLabel(placesUsed(latest), "place")} used`));
-    if (parts.length === 0) parts.push(part("", "nothing yet"));
-    return parts;
-  }, [browse, connected, lastAnswer, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
+  const showFeedback = !connected || !currentPlace.online || note !== null;
 
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
@@ -862,20 +797,6 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false); addFiles(files);
       }}>
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
-      <InstrumentHeader>
-        <span aria-current="page">{pidProp ? "helper" : "zen"}</span>
-        {pidProp && <button type="button" onClick={onShip}>back to your Ship</button>}
-        <button type="button" onClick={() => onFleet()}>
-          <kbd>z</kbd>fleet
-        </button>
-        {onMemory ? (
-          <button type="button" onClick={() => onMemory()}>
-            <kbd>m</kbd>memory
-          </button>
-        ) : null}
-        <button type="button" onClick={onSettings}><kbd>,</kbd>settings</button>
-        <span><kbd>?</kbd>keys</span>
-      </InstrumentHeader>
 
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
@@ -987,19 +908,15 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
       </div>
 
       <div class="zen-bottom">
-        <div class="instrument-status">
-          {status.map((part, index) => (
-            <span key={index} class={part.tone}>
-              {part.text}
-            </span>
-          ))}
+        {showFeedback && <div class="zen-feedback">
+          {!connected && <span role="status">Not connected</span>}
           {connected && !currentPlace.online ? (
             <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
               {currentPlace.label} is offline · view place
             </button>
           ) : null}
           {note ? <span class="is-err" role="alert">{note}</span> : null}
-        </div>
+        </div>}
         <div>
           {pickerQuery !== null && pickerPlaces.length > 0 ? (
             <div class="zen-picker" role="listbox" aria-label="Places">

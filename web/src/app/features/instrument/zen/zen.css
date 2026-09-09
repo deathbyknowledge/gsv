@@ -272,6 +272,16 @@
 .zen-bottom {
   padding: 0 56px 22px;
 }
+.zen-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding-bottom: 10px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.zen-feedback .is-warn { color: var(--update); }
+.zen-feedback .is-err { color: var(--error); }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }

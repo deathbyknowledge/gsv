@@ -1,5 +1,4 @@
 import { LoadingState } from "../../../components/ui/Spinner";
-import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { useQuery } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -12,16 +11,13 @@ import { Integrations } from "./Integrations";
 import "./settings.css";
 
 export type SettingsProps = {
-  onZen: () => void;
-  onFleet: () => void;
-  onMemory: () => void;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
 const SECTIONS = ["preferences", "permissions", "instructions", "integrations"] as const;
 type Section = typeof SECTIONS[number];
 
-export function Settings({ onZen, onFleet, onMemory, onDirtyChange }: SettingsProps) {
+export function Settings({ onDirtyChange }: SettingsProps) {
   const { client, connected } = useGateway();
   const [section, setSection] = useState<Section>("preferences");
   const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, integrations: false });
@@ -41,12 +37,6 @@ export function Settings({ onZen, onFleet, onMemory, onDirtyChange }: SettingsPr
   const accounts = useQuery({ queryKey: ["accounts", "gsv-console"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
-    <InstrumentHeader>
-      <button type="button" onClick={onZen}>zen</button>
-      <button type="button" onClick={onFleet}><kbd>z</kbd>fleet</button>
-      <button type="button" onClick={onMemory}><kbd>m</kbd>memory</button>
-      <span aria-current="page">settings</span>
-    </InstrumentHeader>
     <div class="settings-body">
       <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.map((entry) => <button class={`ibtn${section === entry ? " active" : ""}`} aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content">

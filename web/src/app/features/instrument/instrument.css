@@ -44,10 +44,6 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  transition: opacity var(--dur-settle) ease;
-}
-.instrument-field.is-fleet {
-  opacity: 0.45;
 }
 /* the star field sizes its grid from its host, so the host must fill the field (the auth screen does the same) */
 .instrument-field .gsv-glyph-stars {
@@ -122,9 +118,6 @@
 @media (max-width: 720px) {
   .instrument-top { padding: 0 18px; }
 }
-.instrument-top .keys span {
-  margin-left: 14px;
-}
 .instrument-header {
   position: absolute;
   inset: 0 0 auto;
@@ -140,9 +133,10 @@
   padding: 4px 8px;
   min-width: 0;
 }
-.instrument-header > .wordmark { justify-self: start; margin-left: -8px; }
+.instrument-header .instrument-identity { display: flex; align-items: center; gap: 24px; justify-self: start; margin-left: -8px; }
+.instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-helper button { color: var(--accent); }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
-.instrument-header .keys span { margin-left: 0; }
 .instrument-header [aria-current="page"] { color: var(--text-hi); }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
@@ -150,8 +144,9 @@
   .instrument-header .keys kbd { display: none; }
 }
 @container instrument (max-width: 600px) {
-  .distance { --instrument-header-height: 68px; }
+  .distance, .instrument-header, .instrument-help { --instrument-header-height: 68px; }
   .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
+  .instrument-header .instrument-identity { grid-column: 1 / -1; max-width: 100%; gap: 16px; }
   .instrument-header .keys { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-width: 100%; overflow-x: auto; white-space: nowrap; }
 }
 .instrument kbd {
@@ -171,21 +166,6 @@
   text-shadow: 1px 0 0 rgba(255, 90, 160, 0.3), -1px 0 0 rgba(90, 200, 255, 0.28), 0 0 9px rgba(140, 120, 235, 0.55);
   transform: translateX(0.6px);
 }
-.instrument-status {
-  display: flex;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  min-height: 26px;
-  padding: 0 0 10px 2px;
-}
-.instrument-status .is-on { color: var(--online); }
-.instrument-status .is-live { color: var(--live); }
-.instrument-status .is-warn { color: var(--update); }
-.instrument-status .is-err { color: var(--error); }
 
 /* the prompt line: a place chip and the input; typing $ turns the chip into the working directory */
 .prompt-line {
@@ -409,14 +389,12 @@
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
 @container instrument (max-width: 1280px) {
-  .instrument-top .keys span:nth-child(n + 4) { display: none; }
   .fleet-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .fleet-ledger { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .who { display: none; }
 }
 @container instrument (max-width: 900px) {
   .instrument-top { padding: 0 18px; }
-  .instrument-top:not(.instrument-header) .keys { display: none; }
   .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
   .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: calc(45vh / var(--type-scale)); }
   .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }
@@ -428,7 +406,7 @@
 .instrument-help {
   position: absolute;
   right: 56px;
-  top: 52px;
+  top: calc(var(--instrument-header-height) + 8px);
   z-index: 5;
   background: var(--panel);
   border: 1px solid var(--border-raised);
