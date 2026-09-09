@@ -20,9 +20,10 @@ import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
-import { renderMarkdownHtml, escapeHtml } from "../shared/markdown";
+import { renderMarkdownHtml } from "../shared/markdown";
 import { PromptLine, type PromptPlace } from "../shared/PromptLine";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
+import { ActivityWorking } from "./ActivityWorking";
 import {
   activityDuration,
   answerAttribution,
@@ -101,21 +102,6 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
 }
 
-function railHtml(activity: Activity): string {
-  const where = activity.target === null ? "" : escapeHtml(activity.target);
-  return activity.calls
-    .map((call) => {
-      const code = call.syscall === "codemode.exec" || call.syscall === "codemode.run" || call.syscall === "CodeMode";
-      const head = code
-        ? `<span class="cmd">CodeMode</span>${call.summary ? `\n${escapeHtml(call.summary)}` : ""}`
-        : `<span class="cmd"><span class="where">${where}</span> <span class="dir">~</span> $ ${call.syscall === "shell.exec" ? escapeHtml(call.summary) : `${escapeHtml(call.syscall)} ${escapeHtml(call.summary)}`}</span>`;
-      const body = call.output ? `\n${escapeHtml(call.output)}` : call.finished ? "" : `\n<span class="meta">running…</span>`;
-      const failed = call.failed ? `\n<span class="err">failed</span>` : "";
-      return `${head}${body}${failed}`;
-    })
-    .join("\n\n");
-}
-
 function ActivityLine({
   activity,
   places,
@@ -167,7 +153,7 @@ function ActivityLine({
       {open ? (
         <div class="detail">
           {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
-          <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+          <ActivityWorking activity={activity} />
         </div>
       ) : null}
     </div>
@@ -239,7 +225,7 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
               <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
                 <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
               )}</>}</div>
-              <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
+              <ActivityWorking activity={activity} />
             </div>
           ))}
           {moment.narration ? (

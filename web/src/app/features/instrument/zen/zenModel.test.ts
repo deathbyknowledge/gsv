@@ -240,6 +240,112 @@ describe("activitiesForRows", () => {
   });
 });
 
+describe("filesystem operation presentation", () => {
+  const present = (syscall: string, output: ChatTranscriptValue, overrides: Partial<ChatTranscriptRow> = {}) => activitiesForRows([row({
+    id: "operation", role: "toolResult", toolCallId: "operation", toolSyscall: syscall, toolTarget: "gsv",
+    toolArgs: { path: "/tmp/requested.txt" }, toolOutput: output, toolOutcome: "completed", status: "done", text: "original diagnostic",
+    ...overrides,
+  })], "run", false)[0].calls[0];
+
+  it("moves verified mutation confirmations into the heading using returned paths and counts", () => {
+    const cases: [string, ChatTranscriptValue, { label: string; subject: string; detail?: string }][] = [
+      ["fs.write", { ok: true, path: "/tmp/resolved.txt", size: 11 }, { label: "wrote", subject: "/tmp/resolved.txt", detail: "11 bytes" }],
+      ["fs.write", { ok: true, path: "/tmp/empty.txt", size: 0 }, { label: "wrote", subject: "/tmp/empty.txt", detail: "0 bytes" }],
+      ["fs.write", { ok: true, path: "/tmp/one.txt", size: 1 }, { label: "wrote", subject: "/tmp/one.txt", detail: "1 byte" }],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: 1 }, { label: "edited", subject: "/tmp/resolved.txt", detail: "1 replacement" }],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: 2 }, { label: "edited", subject: "/tmp/resolved.txt", detail: "2 replacements" }],
+      ["fs.delete", { ok: true, path: "/tmp/resolved.txt" }, { label: "deleted", subject: "/tmp/resolved.txt" }],
+    ];
+    for (const [syscall, output, operation] of cases) {
+      const call = present(syscall, output);
+      expect(call).toMatchObject({ operation, finished: true, failed: false, output: "" });
+      expect(outputText(syscall, output, "fallback")).not.toBe("");
+    }
+  });
+
+  it.each(["failed", "denied", "cancelled"] as const)("keeps %s operations neutral and retains the diagnostic body", (outcome) => {
+    for (const [syscall, label] of [["fs.write", "write"], ["fs.edit", "edit"], ["fs.delete", "delete"]]) {
+      expect(present(syscall, { ok: false, error: "permission denied" }, { toolOutcome: outcome })).toMatchObject({
+        operation: { label, subject: "/tmp/requested.txt" }, failed: true, output: "permission denied",
+      });
+    }
+  });
+
+  it("does not turn contradictory or unknown outcomes into successful headings or hide their result", () => {
+    const output = { ok: true, path: "/tmp/resolved.txt", size: 11 };
+    for (const overrides of [
+      { toolOutcome: undefined }, { toolOutcome: "failed" as const }, { isError: true }, { status: "error" as const },
+    ]) {
+      const call = present("fs.write", output, { ...overrides, text: "" });
+      expect(call.operation).toEqual({ label: "write", subject: "/tmp/requested.txt" });
+      expect(call.output).toBe(JSON.stringify(output, null, 2));
+    }
+  });
+
+  it("keeps the authoritative typed failure message when its output has a success shape", () => {
+    const result = present("fs.write", { ok: true, path: "/tmp/resolved.txt", size: 11 }, {
+      toolOutcome: "failed", text: "The returned result could not be retained.",
+    });
+    expect(result).toMatchObject({ operation: { label: "write", subject: "/tmp/requested.txt" }, failed: true,
+      output: "The returned result could not be retained.",
+    });
+  });
+
+  it("retains malformed mutation data instead of inferring success from the stored prose", () => {
+    const malformed: [string, ChatTranscriptValue, string][] = [
+      ["fs.write", { ok: true, path: "/tmp/resolved.txt", size: "11" }, "write"],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: -1 }, "edit"],
+      ["fs.delete", { ok: true }, "delete"],
+    ];
+    for (const [syscall, output, label] of malformed) {
+      expect(present(syscall, output, { text: "wrote 11 bytes" })).toMatchObject({
+        operation: { label, subject: "/tmp/requested.txt" }, output: "wrote 11 bytes",
+      });
+    }
+  });
+
+  it("describes running and planned operations without claiming completion", () => {
+    const output = { ok: true, path: "/tmp/resolved.txt", size: 11 };
+    const running = present("fs.write", output, { role: "tool", status: "running", toolOutcome: undefined });
+    expect(running).toMatchObject({ operation: { label: "writing", subject: "/tmp/requested.txt" }, finished: false, output: "" });
+    const planned = present("fs.delete", null, { role: "tool", status: "planning", toolOutcome: undefined });
+    expect(planned.operation).toEqual({ label: "delete", subject: "/tmp/requested.txt" });
+  });
+
+  it("keeps file content in the body and search query/path separate from matching results", () => {
+    const read = present("fs.read", { ok: true, path: "/tmp/requested.txt", kind: "text", content: "line one\nline two" });
+    expect(read.operation).toEqual({ label: "read", subject: "/tmp/requested.txt" });
+    expect(read.output).toBe("line one\nline two");
+    const search = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
+      toolArgs: { query: "needle", path: "/tmp", include: "*.txt" },
+    });
+    expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp" });
+    expect(search.output).toBe("/tmp/hit.txt");
+    const noScope = present("fs.search", { ok: true, matches: [], count: 0 }, { toolArgs: { query: "needle" } });
+    expect(noScope.operation).toEqual({ label: "searched", subject: "needle" });
+    const unknown = present("fs.search", { matches: [] }, { toolArgs: { query: "needle", path: "/tmp" } });
+    expect(unknown.operation?.label).toBe("search");
+    const failed = present("fs.search", { ok: false, error: "search rejected" }, { toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed" });
+    expect(failed).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search rejected", failed: true });
+  });
+
+  it("does not invent search terms or filesystem operations from tool text", () => {
+    const search = present("fs.search", { matches: [] }, { toolArgs: { q: "not query", path: "/tmp" }, text: "searched secret in /elsewhere" });
+    expect(search.operation).toEqual({ label: "search", subject: "in /tmp" });
+    expect(present("shell.exec", { stdout: "ok", exitCode: 0 }, { toolArgs: { input: "cat file", path: "/tmp" } }).operation).toBeUndefined();
+    expect(present("codemode.exec", { status: "completed", result: 1 }, { toolArgs: { code: "return 1;", path: "/tmp" } }).operation).toBeUndefined();
+  });
+
+  it("preserves the original search subject when the final result arrives without arguments", () => {
+    const calls = activitiesForRows([
+      row({ id: "search", role: "tool", status: "running", toolCallId: "search", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { query: "needle", path: "/tmp" } }),
+      row({ id: "result", role: "toolResult", status: "done", toolCallId: "search", toolSyscall: "fs.search", toolTarget: "gsv", toolOutcome: "completed", toolOutput: { ok: true, matches: [], count: 0 } }),
+    ], "run", false)[0].calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].operation).toEqual({ label: "searched", subject: "needle in /tmp" });
+  });
+});
+
 describe("momentsFromRows", () => {
   it("retains originating process identities on messages, working moments, and events", () => {
     const moments = momentsFromRows([

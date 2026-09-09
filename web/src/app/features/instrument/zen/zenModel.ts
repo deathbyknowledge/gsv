@@ -67,6 +67,7 @@ export type ActivityCall = {
   output: string;
   finished: boolean;
   failed: boolean;
+  operation?: { label: string; subject: string; detail?: string };
   /** The original structured Read path, before display shortening. */
   filePath?: string;
 };
@@ -203,6 +204,30 @@ const fileEditResultSchema = z.object({ ok: z.literal(true), path: z.string(), r
 const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
+const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative() });
+const filesystemOperationVerbs = new Map([
+  ["fs.read", ["read", "reading", "read"]],
+  ["fs.write", ["write", "writing", "wrote"]],
+  ["fs.edit", ["edit", "editing", "edited"]],
+  ["fs.delete", ["delete", "deleting", "deleted"]],
+  ["fs.search", ["search", "searching", "searched"]],
+]);
+
+function mutationConfirmation(syscall: string, output: ChatTranscriptValue | undefined): { path: string; detail?: string } | null {
+  if (syscall === "fs.write") {
+    const result = fileWriteResultSchema.safeParse(output);
+    return result.success ? { path: result.data.path, detail: countLabel(result.data.size, "byte") } : null;
+  }
+  if (syscall === "fs.edit") {
+    const result = fileEditResultSchema.safeParse(output);
+    return result.success ? { path: result.data.path, detail: countLabel(result.data.replacements, "replacement") } : null;
+  }
+  if (syscall === "fs.delete") {
+    const result = fileDeleteResultSchema.safeParse(output);
+    return result.success ? { path: result.data.path } : null;
+  }
+  return null;
+}
 
 /** The tool result as a person would read it: stdout and stderr for a command, content or names for files, never the transport JSON. */
 export function outputText(syscall: string, output: ChatTranscriptValue | undefined, fallback: string): string {
@@ -268,7 +293,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? (row.toolName === "CodeMode" ? "codemode.exec" : row.toolName ?? "call");
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
   const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
-  return {
+  const call: ActivityCall = {
     callId: row.toolCallId ?? row.id,
     syscall,
     summary,
@@ -277,6 +302,27 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     finished,
     failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
   };
+  const verb = filesystemOperationVerbs.get(syscall);
+  if (!verb) return call;
+  const completed = finished && !call.failed && row.toolOutcome === "completed";
+  const path = stringField(row.toolArgs, "path") ?? "";
+  call.operation = { label: !finished && !call.failed && row.status === "running" ? verb[1] : verb[0], subject: path };
+  if (syscall === "fs.search") {
+    const query = stringField(row.toolArgs, "query") ?? "";
+    call.operation.subject = [query, path ? `in ${path}` : ""].filter(Boolean).join(" ");
+    if (completed && fileSearchResultSchema.safeParse(row.toolOutput).success) call.operation.label = verb[2];
+  } else if (syscall !== "fs.read") {
+    const result = mutationConfirmation(syscall, row.toolOutput);
+    if (completed && result) {
+      call.operation.label = verb[2];
+      call.operation.subject = result.path;
+      if (result.detail) call.operation.detail = result.detail;
+      call.output = "";
+    } else if (finished && result) {
+      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+    }
+  }
+  return call;
 }
 
 function isToolRow(row: ChatTranscriptRow): boolean {
@@ -307,6 +353,9 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
       const index = existing.calls.findIndex((candidate) => candidate.callId === call.callId);
       if (index >= 0) {
         if (call.syscall === "fs.read" && row.toolArgs === undefined) call.filePath ??= existing.calls[index].filePath;
+        if (call.operation && !call.operation.subject && row.toolArgs === undefined) {
+          call.operation.subject = existing.calls[index].operation?.subject ?? "";
+        }
         existing.calls[index] = call;
       }
       else existing.calls.push(call);

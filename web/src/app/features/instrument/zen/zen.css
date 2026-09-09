@@ -199,6 +199,37 @@
 .receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
 .receipt .place-rail:first-child .ph { margin-top: 0; }
 
+.work-calls { margin: 8px 0; display: grid; gap: 14px; }
+.work-call { min-width: 0; }
+.work-heading {
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.work-heading .work-subject { font-family: var(--gsv-font-mono); font-size: 12px; color: var(--path); white-space: pre-wrap; }
+.work-detail, .work-state { color: var(--text-dim); }
+.work-call.is-failed .work-state, .work-call.is-failed .work-output { color: var(--error); }
+.work-command, .work-source, .work-output {
+  margin: 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--label);
+}
+.work-command, .work-source { color: var(--text-hi); }
+.work-source code { font: inherit; }
+.work-shell { border-left: 2px solid var(--border); padding-left: 12px; }
+.shell-prompt { color: var(--accent); }
+.work-operation .work-output { margin-top: 4px; }
+.work-code .work-source { margin-top: 6px; border-left: 2px solid var(--border); padding-left: 12px; }
+.work-code .work-output { padding-left: 12px; }
+.work-output-label { margin: 8px 0 4px; font-size: 10px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; }
+
 /* approvals: a boxed question with keys, as the TUI does it */
 .zen-approval {
   margin: 16px 0 4px;
