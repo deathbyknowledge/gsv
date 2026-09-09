@@ -21,7 +21,7 @@ import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { renderMarkdownHtml } from "../shared/markdown";
-import { PromptLine, type PromptPlace } from "../shared/PromptLine";
+import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { ActivityWorking } from "./ActivityWorking";
 import {
@@ -326,14 +326,13 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   const pickPlace = useCallback((id: string) => {
     setWhere(id);
     setPickerQuery(null);
-    const input = promptRef.current?.querySelector("input");
-    if (input) input.value = "";
+    promptRef.current?.setValue("");
   }, []);
   /* the chip opens the same picker that typing "@" does */
   const openPicker = useCallback(() => {
-    const input = promptRef.current?.querySelector("input");
+    const input = promptRef.current;
     if (!input) return;
-    input.value = "@";
+    input.setValue("@");
     input.focus();
     setPickerQuery("");
     setPickerIndex(0);
@@ -379,7 +378,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   const [tick, setTick] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const momentsRef = useRef<HTMLDivElement>(null);
-  const promptRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<PromptLineHandle>(null);
 
   /* the personal process, spawned if the account has none yet */
   useEffect(() => {
@@ -644,8 +643,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
       if (inputHistory.length === 0) return;
       const nextIndex = historyIndex === null ? (direction === -1 ? inputHistory.length - 1 : null) : Math.min(inputHistory.length - 1, Math.max(0, historyIndex + direction));
       setHistoryIndex(nextIndex);
-      const input = promptRef.current?.querySelector("input");
-      if (input) input.value = nextIndex === null ? "" : inputHistory[nextIndex];
+      promptRef.current?.setValue(nextIndex === null ? "" : inputHistory[nextIndex]);
     },
     [historyIndex, inputHistory],
   );
@@ -665,21 +663,20 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
 
   /* an approval takes the keys: the prompt lets go so y and n reach the decision */
   useEffect(() => {
-    if (pendingHil) promptRef.current?.querySelector("input")?.blur();
+    if (pendingHil) promptRef.current?.blur();
   }, [pendingHil]);
 
   useEffect(() => {
     if (!prefill || !connected || !pid) return;
-    const input = promptRef.current?.querySelector("input");
+    const input = promptRef.current;
     if (!input || input.disabled) return;
-    input.value = prefill;
+    input.setValue(prefill);
     input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
     onPrefillUsed?.();
   }, [prefill, onPrefillUsed, connected, pid]);
 
   const focusPrompt = useCallback(() => {
-    promptRef.current?.querySelector("input")?.focus();
+    promptRef.current?.focus();
   }, []);
   const onPromptFocus = useCallback(
     (focused: boolean) => {
@@ -988,7 +985,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
           ))}
           {note ? <span class="is-err">{note}</span> : null}
         </div>
-        <div ref={promptRef}>
+        <div>
           {pickerQuery !== null && pickerPlaces.length > 0 ? (
             <div class="zen-picker" role="listbox" aria-label="Places">
               {pickerPlaces.map((place, index) => (
@@ -1013,6 +1010,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
           ) : null}
 
           <PromptLine
+            ref={promptRef}
             onFocusChange={onPromptFocus}
             onInput={onPromptInput}
             onKeyIntercept={onPromptKey}

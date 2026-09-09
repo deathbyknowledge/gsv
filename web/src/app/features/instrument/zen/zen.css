@@ -377,16 +377,10 @@
   position: absolute;
   left: -22px;
   top: 2.2vh;
-  width: 8px;
-  height: 1.1em;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-  animation: instrument-blink 1s steps(1) infinite;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
 .zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .zen.is-browse .prompt-line { opacity: 0.55; }
-@media (prefers-reduced-motion: reduce) { .zen-moment.is-focus::before { animation: none; } }
 
 /* the ship's own narration, folded: it is not a message */
 .activity.is-thoughts .line { color: var(--text-dim); }

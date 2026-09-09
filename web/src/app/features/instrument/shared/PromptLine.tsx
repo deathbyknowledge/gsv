@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { forwardRef } from "preact/compat";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
 export type PromptPlace = {
@@ -29,6 +30,13 @@ export type PromptLineProps = {
   onKeyIntercept?: (event: KeyboardEvent, value: string) => boolean;
 };
 
+export type PromptLineHandle = {
+  disabled: boolean;
+  setValue(value: string): void;
+  focus(): void;
+  blur(): void;
+};
+
 /**
  * One line: a place chip and an input. Plain words go to the ship. Text that
  * starts with `$` runs on the place directly, and while it does the chip shows
@@ -36,54 +44,99 @@ export type PromptLineProps = {
  * feedback; the `$` the person typed is the sigil. An offline place says so in
  * the chip and keeps taking words.
  */
-export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }: PromptLineProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+// The prompt grows from that first line as text wraps, up to a scrollable height.
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = useRef<HTMLSpanElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
   const [focused, setFocused] = useState(false);
-  const [caretX, setCaretX] = useState(0);
-  useEffect(() => {
+  const [caret, setCaret] = useState({ x: 0, y: 0, visible: true });
+  const measure = useCallback((reveal = false) => {
+    const input = inputRef.current;
+    const mirror = mirrorRef.current;
+    if (!input || !mirror) return;
+    const style = getComputedStyle(input);
+    // Form controls can have a different computed font size on narrow screens.
+    mirror.style.font = style.font;
+    mirror.style.letterSpacing = style.letterSpacing;
+    const at = input.selectionStart;
+    const marker = document.createElement("span");
+    // Keep the suffix in the mirror: word wrapping depends on text after the caret too.
+    marker.textContent = input.value.slice(at) || "\u200b";
+    mirror.style.width = `${input.clientWidth}px`;
+    mirror.replaceChildren(document.createTextNode(input.value.slice(0, at)), marker);
+    const height = `${mirror.offsetHeight}px`;
+    if (input.style.height !== height) input.style.height = height;
+    if (reveal && document.activeElement === input && input.selectionStart === input.selectionEnd) {
+      const bottom = marker.offsetTop + parseFloat(style.lineHeight);
+      if (marker.offsetTop < input.scrollTop) input.scrollTop = marker.offsetTop;
+      else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
+    }
+    const next = {
+      x: marker.offsetLeft - input.scrollLeft,
+      y: marker.offsetTop - input.scrollTop,
+      visible: input.selectionStart === input.selectionEnd,
+    };
+    setCaret((current) => current.x === next.x && current.y === next.y && current.visible === next.visible ? current : next);
+  }, []);
+  useLayoutEffect(() => {
+    measure(true);
     const input = inputRef.current;
     if (input && document.activeElement === input) setFocused(true);
-  }, []);
+  }, [measure, disabled]);
   useEffect(() => {
-    if (!focused) return undefined;
-    let frame = 0;
-    const measure = (): void => {
-      const input = inputRef.current;
-      const mirror = mirrorRef.current;
-      if (input && mirror) {
-        const at = input.selectionStart ?? input.value.length;
-        mirror.textContent = input.value.slice(0, at);
-        const x = mirror.getBoundingClientRect().width - input.scrollLeft;
-        setCaretX((current) => (Math.abs(current - x) < 0.5 ? current : x));
-      }
-      frame = requestAnimationFrame(measure);
+    const field = fieldRef.current;
+    if (!field) return;
+    const refresh = () => measure(true);
+    const observer = new ResizeObserver(refresh);
+    observer.observe(field);
+    document.fonts.addEventListener("loadingdone", refresh);
+    return () => {
+      observer.disconnect();
+      document.fonts.removeEventListener("loadingdone", refresh);
     };
-    frame = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(frame);
-  }, [focused]);
+  }, [measure]);
   const read = (): string => inputRef.current?.value ?? "";
   const changed = (): void => {
     const value = read();
     setCommand(value.startsWith("$"));
     onInput?.(value);
+    measure(true);
   };
-  const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  useImperativeHandle(ref, () => ({
+    disabled: Boolean(disabled),
+    setValue(value) {
+      if (!inputRef.current) return;
+      inputRef.current.value = value;
+      changed();
+    },
+    focus: () => inputRef.current?.focus(),
+    blur: () => inputRef.current?.blur(),
+  }));
+  const send = () => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || disabled) return;
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
     changed();
     onSubmit(text);
   };
+  const submit = (event: JSX.TargetedEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    send();
+  };
   const onKeyDown = (event: KeyboardEvent) => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || event.isComposing) return;
     if (onKeyIntercept?.(event, input.value)) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      send();
+      return;
+    }
     if (event.key === "Escape") {
       // Escape leaves the prompt, the way the TUI drops into browse mode; shortcuts work from there.
       event.preventDefault();
@@ -113,18 +166,23 @@ export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlac
           </>
         )}
       </button>
-      <span class="field">
-        <input
+      <span class="field" ref={fieldRef}>
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           placeholder={placeholder}
           aria-label="Prompt"
           spellcheck={false}
           disabled={disabled}
           onKeyDown={onKeyDown}
+          onKeyUp={() => measure(true)}
+          onClick={() => measure(true)}
+          onSelect={() => measure(true)}
+          onScroll={() => measure()}
           onInput={changed}
           onFocus={() => {
             setFocused(true);
+            measure(true);
             onFocusChange?.(true);
           }}
           onBlur={() => {
@@ -134,8 +192,8 @@ export function PromptLine({ place, dir, placeholder, disabled, onSubmit, onPlac
           autoFocus={autoFocus}
         />
         <span class="mirror" ref={mirrorRef} aria-hidden="true" />
-        {focused && !disabled ? <span class="block-caret blink" style={{ transform: `translateX(${caretX}px)` }} aria-hidden="true" /> : null}
+        {focused && !disabled && caret.visible ? <span class="block-caret" style={{ transform: `translate(${caret.x}px, ${caret.y}px)` }} aria-hidden="true" /> : null}
       </span>
     </form>
   );
-}
+});

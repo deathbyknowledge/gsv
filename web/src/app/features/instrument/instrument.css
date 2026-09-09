@@ -192,8 +192,10 @@
 /* the prompt line: a place chip and the input; typing $ turns the chip into the working directory */
 .prompt-line {
   display: flex;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 12px;
+  row-gap: 8px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
   font-size: 15px;
@@ -204,6 +206,7 @@
   align-items: baseline;
   gap: 7px;
   flex: none;
+  max-width: 100%;
   padding: 2px 8px;
   border: 1px solid var(--border-raised);
   border-radius: 0;
@@ -216,29 +219,41 @@
   cursor: pointer;
 }
 .prompt-line .chip:hover { border-color: var(--accent); color: var(--text-hi); }
+.prompt-line .chip .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prompt-line .chip .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; }
 .prompt-line .chip .dot.is-on { background: var(--online); }
 .prompt-line .chip .state { color: var(--warn); }
 .prompt-line.is-offline .chip { color: var(--warn); border-color: var(--warn); }
 .prompt-line.is-command .chip { color: var(--path); text-transform: none; letter-spacing: 0.02em; font-size: 12px; }
-.prompt-line.is-command input { color: var(--path); }
+.prompt-line.is-command textarea { color: var(--path); }
 .prompt-line .field {
   position: relative;
   flex: 1;
-  display: flex;
-  min-width: 120px;
+  min-width: min(100%, 24ch);
+  overflow: hidden;
 }
-.prompt-line input {
-  flex: 1;
+.prompt-line textarea, .prompt-line .mirror {
+  box-sizing: border-box;
   width: 100%;
+  padding: 0 8px 0 0;
+  font: inherit;
+  letter-spacing: 0.02em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.prompt-line textarea {
+  display: block;
   min-width: 0;
-  padding: 0;
+  min-height: 1.4em;
+  max-height: min(168px, calc(30vh / var(--type-scale)));
+  margin: 0;
+  resize: none;
+  overflow-y: auto;
+  scrollbar-width: none;
   background: transparent;
   border: 0;
   outline: 0;
   color: var(--text-hi);
-  font: inherit;
-  letter-spacing: 0.02em;
   caret-color: transparent;
 }
 /* the mirror measures the text before the caret; the block is the same cursor the transcript shows */
@@ -247,27 +262,28 @@
   left: 0;
   top: 0;
   visibility: hidden;
-  white-space: pre;
-  font: inherit;
-  letter-spacing: 0.02em;
   pointer-events: none;
+}
+.prompt-line .block-caret, .zen-moment.is-focus::before {
+  width: 8px;
+  height: 14px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: instrument-blink 1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt-line .block-caret, .zen-moment.is-focus::before { animation: none; }
 }
 .prompt-line .block-caret {
   position: absolute;
   left: 0;
-  top: 50%;
-  width: 0.55em;
-  height: 1em;
-  margin-top: -0.5em;
-  background: var(--text-hi);
-  mix-blend-mode: difference;
-  box-shadow: 0 0 8px var(--accent);
+  top: 0;
   pointer-events: none;
 }
-.prompt-line input:focus {
+.prompt-line textarea:focus {
   text-shadow: var(--glow-focus);
 }
-.prompt-line input::placeholder {
+.prompt-line textarea::placeholder {
   color: #565199;
   letter-spacing: 0.06em;
 }
@@ -383,6 +399,7 @@
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .zen-caret,
+.instrument.is-light .prompt-line .block-caret,
 .instrument.is-light .zen-timeline i.is-here,
 .instrument.is-light .zen-timeline i.is-focus,
 .instrument.is-light .zen-moment.is-focus::before,
@@ -390,7 +407,7 @@
 .instrument.is-light .fleet .dot,
 .instrument.is-light .fleet-block h2 i { box-shadow: none; }
 .instrument.is-light .zen-approval { box-shadow: none; }
-.instrument.is-light .prompt-line input::placeholder { color: var(--faint); }
+.instrument.is-light .prompt-line textarea::placeholder { color: var(--faint); }
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
 @container instrument (max-width: 1280px) {
