@@ -54,8 +54,8 @@ commands inspect and control the Kernel schedule records:
 ```bash
 proc self
 proc list
-proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
-proc delegate [--as ACCOUNT] [--label LABEL] [--check-after 10m] [--responsibility ID] <task>
+proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--] [prompt]
+proc delegate [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--check-after 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--metadata-json json] <message>
@@ -129,6 +129,15 @@ call and run references. `--check-after` sets a 10-minute supervision cadence by
 default. Each check-in reports that work is still running and renews the result
 route without cancelling the child. The legacy `--timeout` spelling is accepted as
 an alias for `--check-after`; it is not a delegation deadline.
+
+Both commands accept `--model MODEL_ID` and `--effort LEVEL` (`--reasoning` is an
+alias). These are process-local preferences stored before the first task starts.
+The model ID names an entry in the owning human's stack and puts it first without
+disabling fallbacks. Effort is `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
+Omitted preferences inherit agent/account defaults; a child's process-local
+preferences are independent of its parent's. JSON spawn accepts the equivalent
+`"ai": { "modelId": "quick", "reasoning": "high" }` object.
+
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
@@ -312,7 +321,7 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 
 ```bash
 gsv proc list [--uid UID]
-gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
+gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE --pid PID
 gsv proc history --pid PID [--limit N] [--offset N]
 gsv proc reset --pid PID
@@ -323,6 +332,9 @@ Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
 `send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
 lists and requires root when viewing another user.
+
+Spawn's `--model` and `--effort` flags have the same semantics as the native
+commands above; the settings apply before the optional initial prompt starts.
 
 ## Desktop Commands
 

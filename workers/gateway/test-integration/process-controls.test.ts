@@ -22,6 +22,39 @@ type HilCase = {
 };
 
 describe("gateway process controls integration", () => {
+  it("uses spawn-time model and effort for its first task and applies later edits to the next run", async () => {
+    await withRuntime(async (runtime) => {
+      const parent = await runtime.spawn("model catalog setup");
+      await runtime.configureAi(parent.pid);
+      const held = runtime.ai.hold({ kind: "message", text: "first task complete" });
+      const child = await runtime.spawn("configured first task", {
+        parentPid: parent.pid,
+        runAs: "process-runtime-agent",
+        ai: { modelId: "integration-model", reasoning: "high" },
+        prompt: "Complete the first task with the initial settings.",
+      });
+      await held.started;
+      await runtime.client.proc.observe({ pid: child.pid });
+      expect(runtime.ai.requests[0]).toMatchObject({ model: "integration-model", usesFixtureCredential: true });
+      expect(await runtime.client.proc.ai.config.get({ pid: child.pid })).toMatchObject({
+        ok: true, config: { modelId: "integration-model", reasoning: "high" },
+      });
+      const updated = await runtime.client.proc.ai.config.set({ pid: child.pid, reasoning: "low" });
+      expect(updated).toMatchObject({ ok: true });
+      held.release();
+      await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
+        signal === "proc.run.finished" && payload.pid === child.pid), "spawned first task to finish");
+      expect((await processHistory(runtime, child.pid)).context).toMatchObject({ model: "integration-model", reasoning: "high" });
+
+      runtime.ai.enqueue({ kind: "message", text: "second task complete" });
+      const sent = await runtime.client.proc.send({ pid: child.pid, message: "Complete a second task." });
+      if (!sent.ok) throw new Error(sent.error);
+      await waitForFinished(runtime, sent.runId);
+      expect((await processHistory(runtime, child.pid)).context).toMatchObject({ model: "integration-model", reasoning: "low" });
+      expect(await runtime.client.proc.ai.config.get({ pid: parent.pid })).toMatchObject({ config: { reasoning: "off" } });
+    });
+  });
+
   it("executes a deterministic Read tool call before the final response", async () => {
     await withRuntime(async (runtime) => {
       const path = "/tmp/process-integration-read.txt";

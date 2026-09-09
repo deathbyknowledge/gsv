@@ -107,6 +107,14 @@ Other processes may run as the same personal agent account, but they are work
 with independent histories and never become the personal process by recency or
 label. `proc.list` reports the distinction explicitly.
 
+`proc.spawn.ai` optionally selects the new process's first-choice model and
+reasoning effort. The Kernel validates the model against the owning human's
+catalog before registering the process, then Process stores these preferences
+with its identity in one transaction before admitting the initial task. Omitted
+fields inherit agent/account settings; process-local settings are not copied
+from a parent. Later `proc.ai.config.set` changes apply to the next run. Choosing
+a model retains the owner's normal fallback stack.
+
 The personal agent's account home contains its role, voice, and durable memory.
 Unresolved work lives in the Kernel responsibility ledger and is projected into
 one immutable Process context epoch as a baseline plus ordered transitions. Each

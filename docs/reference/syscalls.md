@@ -924,7 +924,7 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string } };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
@@ -1045,9 +1045,13 @@ type ProcessSyscalls = {
 };
 ```
 
-`proc.ai.config.get` and `proc.ai.config.set` read and pin the model a process
-runs with. `modelId` names an entry in the owning human's layered model stack;
-`clear: true` returns the process to the account's preferred model.
+`proc.ai.config.get` and `proc.ai.config.set` read and update process-local model
+and reasoning preferences for the next run. `modelId` names an entry in the owning
+human's layered model stack and puts it first; ordinary fallbacks still apply.
+`clear: true` returns both preferences to the agent/account defaults. The optional
+`proc.spawn.ai` object uses the same preferences, validated by the Kernel and
+stored with the Process identity before an initial prompt can start. Omitting
+`ai` inherits account defaults and does not copy a parent's process-local choices.
 
 `proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden

@@ -1722,9 +1722,10 @@ describe("proc native command", () => {
   it("routes spawn through the native proc command surface", async () => {
     const spawn = vi.fn();
     const result = await handleShellExec(
-      { input: "proc spawn --non-interactive --cwd ~/src --label build" },
+      { input: "proc spawn --non-interactive --cwd ~/src --label build --model quick --effort high" },
       makeContext({
         capabilities: ["proc.spawn"],
+        config: { "users/1000/ai/models": JSON.stringify({ version: 1, models: [{ id: "quick", name: "Quick", provider: "openai", model: "gpt-4o-mini" }] }) },
         procs: {
           get() {
             return {
@@ -1749,6 +1750,9 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("label=\"build\"");
     expect(result.stdout).toContain("cwd=\"/home/sam/src\"");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, expect.any(String), expect.objectContaining({
+      call: "proc.setidentity", args: expect.objectContaining({ ai: { modelId: "quick", reasoning: "high" } }),
+    }));
     expect(spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ cwd: "/home/sam/src" }),
@@ -1799,11 +1803,14 @@ describe("proc native command", () => {
     );
 
     const jsonResult = await handleShellExec(
-      { input: `proc spawn --json '{"label":"json-child"}'` },
+      { input: `proc spawn --json '{"label":"json-child","ai":{"reasoning":"low"}}'` },
       ctx,
     );
     expect(jsonResult.ok).toBe(true);
     expect(spawn).toHaveBeenCalledTimes(2);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, expect.any(String), expect.objectContaining({
+      call: "proc.setidentity", args: expect.objectContaining({ ai: { reasoning: "low" } }),
+    }));
     expect(spawn).toHaveBeenLastCalledWith(
       expect.stringMatching(/^proc:/),
       expect.anything(),
@@ -1977,6 +1984,7 @@ describe("proc native command", () => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       const req = frame;
       if (req.call === "proc.setidentity") {
+        expect(req.args.ai).toEqual({ reasoning: "high" });
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
       if (req.call === "proc.ipc.deliver") {
@@ -2005,7 +2013,7 @@ describe("proc native command", () => {
     });
 
     const result = await handleShellExec(
-      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
+      { input: "proc delegate --label planning --effort high --timeout 10m write a migration plan" },
       makeContext({
         capabilities: ["proc.spawn", "proc.ipc.call"],
         procs: {

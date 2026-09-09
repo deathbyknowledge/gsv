@@ -3,6 +3,16 @@ import { z } from "zod";
 
 export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfig";
 
+export function processAiConfigInputError(input: { modelId?: string | null; reasoning?: string | null }): string | null {
+  if (input.modelId?.trim() && !normalizeProcessAiModelId(input.modelId)) {
+    return "modelId must be a stable model id";
+  }
+  if (input.reasoning?.trim() && !normalizeProcessAiReasoning(input.reasoning)) {
+    return "reasoning must be off, minimal, low, medium, high, or xhigh";
+  }
+  return null;
+}
+
 const positiveTimestampSchema = z.number().finite().positive();
 const storedProcessAiConfigSchema = z.object({
   version: z.literal(2),

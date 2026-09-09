@@ -3,6 +3,7 @@ import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type {
   AiModelEntry,
   JsonObject,
+  ProcSpawnArgs,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
@@ -27,7 +28,7 @@ export type ProcessRuntimeHarness = {
   harness: TestHarness;
   client: GSVClient;
   signals: RunSignal[];
-  spawn(label: string): Promise<Extract<ProcSpawnResult, { ok: true }>>;
+  spawn(label: string, args?: Omit<ProcSpawnArgs, "label">): Promise<Extract<ProcSpawnResult, { ok: true }>>;
   configureAi(pid: string): Promise<void>;
   connectMachine(peerId: string): Promise<GSVClient>;
   waitFor(
@@ -99,10 +100,11 @@ export async function startProcessRuntimeHarness(options: {
     harness: connectedHarness,
     client: connectedClient,
     signals,
-    spawn: async (label) => {
+    spawn: async (label, args = {}) => {
       const spawned = await connectedClient.proc.spawn({
         label,
         interactive: true,
+        ...args,
       });
       if (!spawned.ok) throw new Error(spawned.error);
       spawnedPids.add(spawned.pid);

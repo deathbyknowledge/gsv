@@ -36,6 +36,8 @@ pub(crate) async fn run_proc(
         }
         ProcAction::Spawn {
             run_as,
+            model,
+            effort,
             label,
             prompt,
             parent_pid,
@@ -52,6 +54,16 @@ pub(crate) async fn run_proc(
             }
             if let Some(parent_pid) = parent_pid {
                 args["parentPid"] = json!(parent_pid);
+            }
+            if model.is_some() || effort.is_some() {
+                let mut ai = json!({});
+                if let Some(model) = model {
+                    ai["modelId"] = json!(model);
+                }
+                if let Some(effort) = effort {
+                    ai["reasoning"] = json!(effort);
+                }
+                args["ai"] = ai;
             }
             let payload = client.request_ok("proc.spawn", Some(args)).await?;
             match serde_json::from_value::<ProcSpawnPayload>(payload.clone()) {

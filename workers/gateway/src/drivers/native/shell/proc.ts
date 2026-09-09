@@ -20,6 +20,7 @@ import type {
   JsonObject,
   ProcHistoryOverflowPolicy,
   ProcSpawnArgs,
+  ProcAiOptions,
   ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
@@ -39,6 +40,7 @@ const procSpawnArgsSchema = z.strictObject({
   prompt: z.string().optional(),
   parentPid: z.string().optional(),
   cwd: z.string().optional(),
+  ai: z.strictObject({ modelId: z.string().optional(), reasoning: z.string().optional() }).optional(),
 });
 
 type ProcHistoryOk = Extract<ResultOf<"proc.history">, { ok: true }>;
@@ -99,6 +101,7 @@ type ParsedProcDelegate = {
   checkInMs?: number;
   responsibilityId?: string;
   message: string;
+  ai?: ProcAiOptions;
 };
 type DelegatedResponsibilityRollback = {
   original: ResponsibilityRecord;
@@ -256,6 +259,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (parsed.runAs) spawnArgs.runAs = parsed.runAs;
       if (parsed.parentPid) spawnArgs.parentPid = parsed.parentPid;
       if (parsed.cwd) spawnArgs.cwd = parsed.cwd;
+      if (parsed.ai) spawnArgs.ai = parsed.ai;
       const spawned = await handleProcSpawn(spawnArgs, ctx);
       if (!spawned.ok) {
         return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
@@ -610,6 +614,7 @@ async function delegateFailureResult(
 }
 
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
+  const ai: ProcAiOptions = {};
   let runAs: string | undefined;
   let label: string | undefined;
   let prompt: string | undefined;
@@ -639,6 +644,14 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     }
     if (current === "--profile") {
       throw new Error("--profile is no longer supported; use --as ACCOUNT");
+    }
+    if (current === "--model") {
+      ai.modelId = requireShellOptionValue(args[++index], current);
+      continue;
+    }
+    if (current === "--effort" || current === "--reasoning") {
+      ai.reasoning = requireShellOptionValue(args[++index], current);
+      continue;
     }
     if (current === "--non-interactive" || current === "--background") {
       interactive = false;
@@ -673,6 +686,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   const parsed: ProcSpawnArgs = {};
+  if (ai.modelId !== undefined || ai.reasoning !== undefined) parsed.ai = ai;
   if (runAs) parsed.runAs = runAs;
   if (label) parsed.label = label;
   if (finalPrompt) parsed.prompt = finalPrompt;
@@ -1136,6 +1150,7 @@ function parseProcMessageCommand(
 }
 
 function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedProcDelegate {
+  const ai: ProcAiOptions = {};
   let runAs: string | undefined;
   let label: string | undefined;
   let parentPid: string | undefined = ctx.processId;
@@ -1146,6 +1161,14 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
+    if (current === "--model") {
+      ai.modelId = requireShellOptionValue(args[++index], current);
+      continue;
+    }
+    if (current === "--effort" || current === "--reasoning") {
+      ai.reasoning = requireShellOptionValue(args[++index], current);
+      continue;
+    }
     if (current === "--as" || current === "--run-as") {
       index += 1;
       runAs = requireShellOptionValue(args[index], current);
@@ -1189,6 +1212,7 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
   const parsed: ParsedProcDelegate = {
     message,
   };
+  if (ai.modelId !== undefined || ai.reasoning !== undefined) parsed.ai = ai;
   if (runAs) parsed.runAs = runAs;
   if (label) parsed.label = label;
   if (parentPid) parsed.parentPid = parentPid;
@@ -1270,11 +1294,11 @@ function procUsage(): string {
     "  proc self",
     "  proc list",
     "  proc agents [--json]",
-    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
+    "  proc spawn [--as ACCOUNT] [--model MODEL_ID] [--effort LEVEL] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
     "  proc spawn --json JSON",
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",
-    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--check-after 10m] [--responsibility ID] <task>",
+    "  proc delegate [--as ACCOUNT] [--model MODEL_ID] [--effort LEVEL] [--label LABEL] [--parent PID] [--cwd PATH] [--check-after 10m] [--responsibility ID] <task>",
     "  proc segments [--pid PID]",
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--compact-to N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",

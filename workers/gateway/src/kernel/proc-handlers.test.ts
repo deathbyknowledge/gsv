@@ -115,6 +115,49 @@ describe("proc handlers", () => {
     } as ResponseFrame));
   });
 
+  it.each(["personal", "shared", "workers-ai-kimi-k2-6"])("initializes the owner's %s model before admitting a spawn prompt", async (modelId) => {
+    const entries = new Map([
+      ["users/1000/ai/models", JSON.stringify({ version: 1, models: [{ id: "personal", name: "Personal", provider: "openai", model: "gpt-4.1" }] })],
+      ["config/ai/models", JSON.stringify({ version: 1, models: [{ id: "shared", name: "Shared", provider: "openai", model: "gpt-4.1-mini" }] })],
+    ]);
+    // SAFETY: this focused context supplies the spawn, owner catalog, and route dependencies under test.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
+      procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000 })), spawn: vi.fn() },
+      runRoutes: { inheritProcessApprovalRoute: vi.fn() },
+      config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
+      env: {},
+    } as KernelContext;
+    const result = await handleProcSpawn({ ai: { modelId: ` ${modelId.toUpperCase()} `, reasoning: " HIGH " }, prompt: "Start with these settings." }, ctx);
+    expect(result.ok).toBe(true);
+    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity", "proc.send"]);
+    expect(sendFrameToProcessMock.mock.calls[0][2].args).toMatchObject({
+      identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
+    });
+    expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
+  });
+
+  it.each([
+    { modelId: "unknown" }, { modelId: "provider/model" }, { reasoning: "unlimited" },
+  ])("rejects invalid initial AI settings before registering a process: %j", async (ai) => {
+    // SAFETY: invalid settings must be rejected before any Process creation or delivery.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
+      procs: { get: vi.fn(() => SPAWN_PARENT), spawn: vi.fn() },
+      config: { getExplicit: vi.fn(() => null) },
+      env: {},
+    } as KernelContext;
+    expect(await handleProcSpawn({ ai, prompt: "Must not run." }, ctx)).toMatchObject({ ok: false });
+    expect(ctx.procs.spawn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("cleans up pending IPC call when delivery returns an error response", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",

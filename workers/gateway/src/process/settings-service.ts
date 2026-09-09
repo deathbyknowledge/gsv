@@ -5,8 +5,7 @@ import type {
 import type { ArgsOf, ResultOf } from "../syscalls";
 import {
   createProcessAiConfig,
-  normalizeProcessAiModelId,
-  normalizeProcessAiReasoning,
+  processAiConfigInputError,
 } from "./ai-config";
 import { processIdentitySchema } from "./internal/schemas";
 import type { Process } from "./do";
@@ -53,20 +52,29 @@ export class ProcessSettingsService {
   }
 
   initialize(args: ArgsOf<"proc.setidentity">): ResultOf<"proc.setidentity"> {
-    this.host.store.state.setValue("identity", JSON.stringify(args.identity));
-    if (args.interactive !== undefined) {
-      this.host.store.state.setValue("interactive", args.interactive ? "1" : "0");
-    }
-    const initialTitle = optionalString(args.title);
-    if (initialTitle) {
-      this.host.store.state.setValue("taskTitle", initialTitle);
-    }
-    if (args.autoTitle === true && !initialTitle) {
-      this.host.store.state.setValue(AUTO_TASK_TITLE_KEY, "1");
-    } else {
-      this.host.store.state.deleteValue(AUTO_TASK_TITLE_KEY);
-    }
-    return { ok: true };
+    const error = args.ai && processAiConfigInputError(args.ai);
+    if (error) throw new Error(error);
+    return this.host.ctx.storage.transactionSync(() => {
+      if (args.ai) {
+        const config = createProcessAiConfig(args.ai);
+        if (config) this.host.store.state.setAiConfig(config);
+        else this.host.store.state.clearAiConfig();
+      }
+      this.host.store.state.setValue("identity", JSON.stringify(args.identity));
+      if (args.interactive !== undefined) {
+        this.host.store.state.setValue("interactive", args.interactive ? "1" : "0");
+      }
+      const initialTitle = optionalString(args.title);
+      if (initialTitle) {
+        this.host.store.state.setValue("taskTitle", initialTitle);
+      }
+      if (args.autoTitle === true && !initialTitle) {
+        this.host.store.state.setValue(AUTO_TASK_TITLE_KEY, "1");
+      } else {
+        this.host.store.state.deleteValue(AUTO_TASK_TITLE_KEY);
+      }
+      return { ok: true };
+    });
   }
 
   getAiConfig(_args: ProcAiConfigGetArgs): ProcAiConfigGetResult {
@@ -82,25 +90,8 @@ export class ProcessSettingsService {
     if ("clear" in args) {
       config = null;
     } else {
-      if (
-        args.modelId !== undefined &&
-        args.modelId !== null &&
-        args.modelId.trim() &&
-        !normalizeProcessAiModelId(args.modelId)
-      ) {
-        return { ok: false, error: "modelId must be a stable model id" };
-      }
-      if (
-        args.reasoning !== undefined &&
-        args.reasoning !== null &&
-        args.reasoning.trim() &&
-        !normalizeProcessAiReasoning(args.reasoning)
-      ) {
-        return {
-          ok: false,
-          error: "reasoning must be off, minimal, low, medium, high, or xhigh",
-        };
-      }
+      const error = processAiConfigInputError(args);
+      if (error) return { ok: false, error };
       const current = this.host.store.state.getAiConfig();
       config = createProcessAiConfig({
         modelId: args.modelId === undefined ? current?.modelId : args.modelId,

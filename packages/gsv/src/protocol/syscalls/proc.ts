@@ -31,6 +31,13 @@ export type ProcMediaInput = {
 /** Legacy stored media descriptors remain readable while new messages use resources. */
 export type MessageAttachment = ResourceBlock | ProcMediaInput;
 
+export type ProcAiOptions = {
+  /** Stable id in the owning human's model stack; ordinary fallbacks still apply. */
+  modelId?: string;
+  /** Process reasoning preference: off, minimal, low, medium, high, or xhigh. */
+  reasoning?: string;
+};
+
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
@@ -45,6 +52,8 @@ export type ProcSpawnArgs = {
   prompt?: string;
   parentPid?: string;
   cwd?: string;
+  /** Initial process overrides, installed before its first task. Omitted fields inherit account defaults. */
+  ai?: ProcAiOptions;
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 
@@ -751,6 +760,8 @@ export type ProcSetIdentityArgs = {
   title?: string;
   /** Generate a label from the first admitted message. */
   autoTitle?: boolean;
+  /** Kernel-validated initial process preferences. */
+  ai?: ProcAiOptions;
 };
 
 export type ProcSetIdentityResult = { ok: true };

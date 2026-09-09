@@ -456,6 +456,14 @@ pub(crate) enum ProcAction {
         #[arg(long = "as", visible_alias = "run-as")]
         run_as: Option<String>,
 
+        /// First-choice model ID from the owning human's stack (fallbacks still apply)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Reasoning effort: off, minimal, low, medium, high, or xhigh
+        #[arg(long, visible_alias = "reasoning", value_parser = ["off", "minimal", "low", "medium", "high", "xhigh"])]
+        effort: Option<String>,
+
         /// Optional process label
         #[arg(long)]
         label: Option<String>,
@@ -575,6 +583,20 @@ pub(crate) enum LocalConfigAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_accepts_initial_model_and_effort() {
+        let cli = Cli::try_parse_from([
+            "gsv", "proc", "spawn", "--model", "quick", "--effort", "high", "--prompt", "do work",
+        ])
+        .expect("spawn options parse");
+        assert!(
+            matches!(cli.command, Commands::Proc { action: ProcAction::Spawn {
+            model: Some(model), effort: Some(effort), prompt: Some(prompt), ..
+        }} if model == "quick" && effort == "high" && prompt == "do work")
+        );
+        assert!(Cli::try_parse_from(["gsv", "proc", "spawn", "--effort", "unlimited"]).is_err());
+    }
 
     #[test]
     fn desktop_without_a_subcommand_means_activate() {

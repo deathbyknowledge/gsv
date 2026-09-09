@@ -8,6 +8,7 @@
 
 import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
 import { resolveEffectiveAiModelStack } from "./ai";
+import { createProcessAiConfig, processAiConfigInputError } from "../process/ai-config";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { principalOf, requirePrincipal } from "./context";
@@ -127,6 +128,16 @@ export async function handleProcSpawn(
   // caller's personal agent. A delegated child inherits this identity unless
   // a specialized agent is selected explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  const aiError = args.ai && processAiConfigInputError(args.ai);
+  if (aiError) return { ok: false, error: aiError };
+  const ai = args.ai ? createProcessAiConfig(args.ai) : null;
+  if (ai?.modelId) {
+    try {
+      ai.modelId = validatedProcessModelId(ctx, ownerUid, ai.modelId);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
     parentRunsAsCaller ||
@@ -183,6 +194,11 @@ export async function handleProcSpawn(
       autoTitle: label === undefined,
     };
     if (label) identityArgs.title = label;
+    if (ai) {
+      identityArgs.ai = {};
+      if (ai.modelId) identityArgs.ai.modelId = ai.modelId;
+      if (ai.reasoning) identityArgs.ai.reasoning = ai.reasoning;
+    }
     const response = await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: requestId,
@@ -878,6 +894,13 @@ function withValidatedProcAiConfig(
   if (!modelId) {
     return frame;
   }
+  return {
+    ...frame,
+    args: { ...args, modelId: validatedProcessModelId(ctx, ownerUid, modelId) },
+  };
+}
+
+function validatedProcessModelId(ctx: KernelContext, ownerUid: number, modelId: string): string {
   // Validate against the same layered stack generation and ai.models use, so
   // shared and base models are as selectable for a process as personal ones.
   const storedModel = resolveEffectiveAiModelStack(ctx, ownerUid)
@@ -886,13 +909,7 @@ function withValidatedProcAiConfig(
     throw new Error(`AI model not found: ${modelId}`);
   }
 
-  return {
-    ...frame,
-    args: {
-      ...args,
-      modelId: storedModel.id,
-    },
-  };
+  return storedModel.id;
 }
 
 function normalizeText(value: string | undefined): string {
