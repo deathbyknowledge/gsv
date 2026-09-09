@@ -145,6 +145,40 @@ describe("adapter-backed targets", () => {
     );
   });
 
+  it("routes filesystem capabilities and file bodies through an adapter target", async () => {
+    const bytes = new TextEncoder().encode("Slack thread transcript\n");
+    const owned = rpcResult({
+      type: "res" as const,
+      id: "slack-read",
+      ok: true as const,
+      data: { ok: true as const, kind: "text" as const, path: "/conversations/C123/history/recent/transcript.txt", contentType: "text/plain", size: bytes.byteLength },
+      body: bodyFromBytes(bytes),
+    });
+    const service = makeService({
+      adapterTargetList: vi.fn(async () => rpcResult([{
+        id: "workspace", label: "Slack", description: "Slack resources", platform: "slack", version: "web-api",
+        implements: ["fs.read", "fs.search"],
+      }])),
+      adapterTargetExecute: vi.fn(async () => owned),
+    });
+    const ctx = makeContext(service);
+    const [target] = await listVisibleAdapterTargets(ctx);
+    expect(target?.implements).toEqual(["fs.read", "fs.search"]);
+    const response = await requestAdapterTarget({
+      type: "req", id: "slack-read", call: "fs.read", args: { path: owned.data.path },
+    }, target!, Date.now() + 120_000, ctx);
+    expect(service.adapterTargetExecute).toHaveBeenCalledWith(
+      { installationId: "installation-1" },
+      { accountId: "workspace-hash", actorId: "UALICE01", routeGeneration: "route-generation" },
+      "workspace",
+      expect.objectContaining({ call: "fs.read", args: { path: owned.data.path } }),
+    );
+    if (!response.ok || !response.body) throw new Error("Expected a Slack file body");
+    expect(owned[Symbol.dispose]).not.toHaveBeenCalled();
+    expect(await bodyToBytes(response.body)).toEqual(bytes);
+    expect(owned[Symbol.dispose]).toHaveBeenCalledOnce();
+  });
+
   it("requires the adapter descriptor to opt into targets", async () => {
     const service = makeService({
       adapterDescribe: vi.fn(async () => rpcResult({

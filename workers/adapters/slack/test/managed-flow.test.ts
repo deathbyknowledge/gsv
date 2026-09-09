@@ -8,7 +8,8 @@ import {
   managedSlackPeerObjectName,
   managedSlackWorkspaceObjectName,
 } from "../src/managed-identity";
-import { managedSlackTargetRequestSchema } from "../src/managed";
+import { managedSlackTargetRequestSchema, type ManagedSlackChannel } from "../src/managed";
+import type { SlackTargetRequest, SlackTargetResponse } from "../src/slack-target";
 import { signedSlackRequest } from "./slack-request";
 
 type SlackApiCall = {
@@ -164,21 +165,8 @@ type PeerStub = {
     installationId: string,
     routeGeneration: string,
     targetId: string,
-    frame: {
-      type: "req";
-      id: string;
-      call: "shell.exec";
-      args: { input: string; timeout?: number };
-      runId?: string;
-      deadlineAt: number;
-    },
-  ): Promise<{
-    type: "res";
-    id: string;
-    ok: boolean;
-    data?: { status: string; output: string; exitCode?: number };
-    error?: { code: number; message: string };
-  }>;
+    frame: SlackTargetRequest,
+  ): Promise<SlackTargetResponse>;
   cancelTarget(
     installationId: string,
     routeGeneration: string,
@@ -208,6 +196,10 @@ type WorkspaceStub = {
 
 type ManagedPeerRaceHarness = Pick<ManagedSlackPeer, "disconnect" | "executeTarget"> & {
   requireCurrentTargetRoute(
+    installationId: string,
+    routeGeneration: string,
+  ): Promise<ManagedSlackPeerState>;
+  requireTargetRoute(
     installationId: string,
     routeGeneration: string,
   ): Promise<ManagedSlackPeerState>;
@@ -535,7 +527,11 @@ async function sendApproval(
 }
 
 describe("managed Slack clean-instance flow", () => {
-  it("fences a target call while its route admission is in flight", async () => {
+  it.each([
+    { call: "shell.exec", stage: "admission" },
+    { call: "fs.read", stage: "admission" },
+    { call: "fs.read", stage: "response" },
+  ] as const)("fences $call when relink interrupts $stage", async ({ call, stage }) => {
     const teamId = "TRACE123";
     const actorId = "URACE001";
     const accountId = await workspaceAccountId(teamId);
@@ -583,7 +579,9 @@ describe("managed Slack clean-instance flow", () => {
 
     const result = await runInDurableObject(peer, async (instance) => {
       const harness = managedPeerRaceHarness(instance);
-      const original = harness.requireCurrentTargetRoute;
+      const method = stage === "admission" ? "requireCurrentTargetRoute" : "requireTargetRoute";
+      const original = harness[method];
+      let routeChecks = 0;
       let releaseAdmission!: () => void;
       const admissionReleased = new Promise<void>((resolve) => {
         releaseAdmission = resolve;
@@ -592,10 +590,13 @@ describe("managed Slack clean-instance flow", () => {
       const routeWasAdmitted = new Promise<void>((resolve) => {
         routeAdmitted = resolve;
       });
-      harness.requireCurrentTargetRoute = async (installationId, routeGeneration) => {
+      harness[method] = async (installationId, routeGeneration) => {
         const state = await original.call(instance, installationId, routeGeneration);
-        routeAdmitted();
-        await admissionReleased;
+        routeChecks += 1;
+        if (stage === "admission" || routeChecks === 2) {
+          routeAdmitted();
+          await admissionReleased;
+        }
         return state;
       };
       try {
@@ -603,10 +604,14 @@ describe("managed Slack clean-instance flow", () => {
           route.installationId,
           route.generation,
           "workspace",
-          targetFrame(
+          call === "shell.exec" ? targetFrame(
             "target-route-race",
             "slack messages send --channel CRACE001 --message 'stale route mutation'",
-          ),
+          ) : {
+            type: "req", id: "target-route-race", call: "fs.read",
+            args: { path: "/workspace.json" },
+            deadlineAt: Date.now() + 120_000,
+          },
         );
         await routeWasAdmitted;
         await harness.disconnect({
@@ -622,7 +627,7 @@ describe("managed Slack clean-instance flow", () => {
         return await execution;
       } finally {
         releaseAdmission();
-        harness.requireCurrentTargetRoute = original;
+        harness[method] = original;
       }
     });
 
@@ -666,6 +671,88 @@ describe("managed Slack clean-instance flow", () => {
     expect(target).toEqual({ available: false });
   });
 
+  it("reads and searches Slack resources through the full adapter RPC path", async () => {
+    const accountId = await installWorkspace();
+    const alice = await pairActor({
+      actorId: "UALICE01", eventId: "EvALICE001", ts: "1700000000.000100",
+      installationId: "installation-alice", operationId: "pair-alice",
+    });
+    // SAFETY: wrangler.managed.test.jsonc binds this service to ManagedSlackChannel.
+    const adapter = env.TARGET_ADAPTER as Service<ManagedSlackChannel>;
+    const installation = { installationId: "installation-alice" };
+    const identity = { accountId, actorId: "UALICE01", routeGeneration: alice.generation };
+    const path = "/conversations/CGENERAL1/history/recent/transcript.txt";
+    const readFrame: SlackTargetRequest = {
+      type: "req", id: "fs-read", call: "fs.read", args: { path }, deadlineAt: Date.now() + 120_000,
+    };
+    using read = await adapter.adapterTargetExecute(installation, identity, "workspace", readFrame);
+    expect(read).toMatchObject({ ok: true, data: { ok: true, path, kind: "text" } });
+    if (!read.ok || !read.body) throw new Error("Expected a Slack file body");
+    expect(await new Response(read.body.stream).text()).toContain("Hello from Slack");
+
+    using search = await adapter.adapterTargetExecute(installation, identity, "workspace", {
+      type: "req", id: "fs-search", call: "fs.search",
+      args: { path: "/conversations/CGENERAL1/history/recent", query: "Hello from Slack", include: "*.txt" },
+      deadlineAt: Date.now() + 120_000,
+    });
+    expect(search).toMatchObject({ ok: true, data: { ok: true, count: 1, matches: [{ path, content: "Hello from Slack" }] } });
+
+    using shell = await adapter.adapterTargetExecute(installation, identity, "workspace", {
+      type: "req", id: "fs-shell", call: "shell.exec",
+      args: { cwd: "/conversations/CGENERAL1/history/recent", input: "cat transcript.txt | grep -F 'Hello from Slack'" },
+      deadlineAt: Date.now() + 120_000,
+    });
+    expect(shell).toMatchObject({ ok: true, data: { status: "completed", output: "Hello from Slack\n" } });
+
+    using denied = await adapter.adapterTargetExecute(installation, identity, "workspace", {
+      ...readFrame, id: "fs-denied", args: { path: "/conversations/CBOTONLY1/meta.json" },
+    });
+    expect(denied).toMatchObject({ ok: true, data: { ok: false } });
+    using stale = await adapter.adapterTargetExecute(installation, { ...identity, routeGeneration: "old-route" }, "workspace", readFrame);
+    expect(stale).toMatchObject({ ok: false, error: { code: 403 } });
+    using write = await adapter.adapterTargetExecute(installation, identity, "workspace", {
+      type: "req", id: "fs-write", call: "fs.write", args: { path, content: "overwrite" }, deadlineAt: Date.now() + 120_000,
+    });
+    expect(write).toMatchObject({ ok: false, error: { code: 400 } });
+
+    using unused = await adapter.adapterTargetExecute(installation, identity, "workspace", { ...readFrame, id: "fs-unused" });
+    if (!unused.ok || !unused.body) throw new Error("Expected a cancellable Slack file body");
+    await unused.body.stream.cancel("reader closed");
+    const providerReads = (await slackApiCalls()).filter((call) => call.method.startsWith("conversations.") && call.method !== "conversations.open");
+    expect(providerReads.every((call) => call.body.authorization === "Bearer xoxp-managed-alice-user-token")).toBe(true);
+  });
+
+  it("cancels an active filesystem request through the adapter and admits the next read", async () => {
+    const accountId = await installWorkspace();
+    const alice = await pairActor({
+      actorId: "UALICE01", eventId: "EvALICE001", ts: "1700000000.000100",
+      installationId: "installation-alice", operationId: "pair-alice",
+    });
+    // SAFETY: wrangler.managed.test.jsonc binds this service to ManagedSlackChannel.
+    const adapter = env.TARGET_ADAPTER as Service<ManagedSlackChannel>;
+    const installation = { installationId: "installation-alice" };
+    const identity = { accountId, actorId: "UALICE01", routeGeneration: alice.generation };
+    const cursor = btoa("wait-for-fs-cancel").replace(/=+$/, "");
+    const pending = adapter.adapterTargetExecute(installation, identity, "workspace", {
+      type: "req", id: "fs-cancel", call: "fs.read",
+      args: { path: `/conversations/pages/${cursor}.json` }, deadlineAt: Date.now() + 120_000,
+    });
+    await vi.waitFor(async () => {
+      expect(await slackApiCalls()).toContainEqual(expect.objectContaining({
+        method: "conversations.list", body: expect.objectContaining({ cursor: "wait-for-fs-cancel" }),
+      }));
+    });
+    using cancellation = await adapter.adapterTargetCancel(installation, identity, "workspace", "fs-cancel");
+    expect(cancellation).toEqual({ cancelled: true });
+    using cancelled = await pending;
+    expect(cancelled).toMatchObject({ ok: false, error: { code: 499 } });
+    using next = await adapter.adapterTargetExecute(installation, identity, "workspace", {
+      type: "req", id: "fs-after-cancel", call: "fs.read", args: { path: "/workspace.json" }, deadlineAt: Date.now() + 120_000,
+    });
+    if (!next.ok || !next.body) throw new Error("Expected the next read to succeed");
+    expect(await new Response(next.body.stream).json()).toMatchObject({ id: "TWORK123", reader: "UALICE01" });
+  });
+
   it("exposes an authorized and cancellable Slack target", async () => {
     const accountId = await installWorkspace();
     const alice = await pairActor({
@@ -681,9 +768,9 @@ describe("managed Slack clean-instance flow", () => {
       expect.objectContaining({
         id: "workspace",
         label: "Slack — Acme",
-        description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Run `slack --help` for commands.",
+        description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Read `/README.txt` for filesystem paths; run `slack --help` for commands.",
         platform: "slack",
-        implements: ["shell.exec"],
+        implements: ["shell.exec", "fs.read", "fs.search"],
       }),
     ]);
     const targetListFrame = targetFrame(
@@ -1200,7 +1287,7 @@ describe("managed Slack clean-instance flow", () => {
       relinked.generation,
     );
     expect(targetsAfterReinstall).toEqual([
-      expect.objectContaining({ id: "workspace", implements: ["shell.exec"] }),
+      expect.objectContaining({ id: "workspace", implements: ["shell.exec", "fs.read", "fs.search"] }),
     ]);
     using identityAfterReinstall = await peer.executeTarget(
       "installation-alice",

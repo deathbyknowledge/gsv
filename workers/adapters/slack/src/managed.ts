@@ -48,7 +48,10 @@ import {
   requireWorkspaceAccountId,
 } from "./managed-identity";
 import { requireSlackId } from "./slack-api";
-import { z } from "zod";
+import { managedSlackTargetRequestSchema, type SlackTargetCall } from "./slack-target";
+import { forwardSlackTargetResponse } from "./slack-target-response";
+
+export { managedSlackTargetRequestSchema } from "./slack-target";
 
 export { ManagedSlackWorkspace } from "./managed-workspace";
 export { ManagedSlackPeer } from "./managed-peer";
@@ -76,8 +79,8 @@ type ManagedSlackPeerStub = {
     installationId: string,
     routeGeneration: string,
     targetId: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>>;
   cancelTarget(
     installationId: string,
     routeGeneration: string,
@@ -98,8 +101,8 @@ type ManagedSlackPeerClient = Omit<
     installationId: string,
     routeGeneration: string,
     targetId: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec"> & Disposable>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall> & Disposable>;
   cancelTarget(
     installationId: string,
     routeGeneration: string,
@@ -133,22 +136,6 @@ type ParsedTargetIdentity = {
   actorId: string;
   routeGeneration: string;
 };
-const shellExecArgsSchema = z.object({
-  input: z.string().min(1).max(1024 * 1024),
-  cwd: z.string().max(4_096).optional(),
-  sessionId: z.string().min(1).max(512).optional(),
-  timeout: z.number().finite().int().positive().max(120_000).optional(),
-  background: z.boolean().optional(),
-  yieldMs: z.number().finite().int().nonnegative().max(120_000).optional(),
-}).strict();
-export const managedSlackTargetRequestSchema = z.object({
-  type: z.literal("req"),
-  id: z.string().min(1).max(512),
-  call: z.literal("shell.exec"),
-  args: shellExecArgsSchema,
-  runId: z.string().min(1).max(512).optional(),
-  deadlineAt: z.number().finite(),
-}).strict();
 
 export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "slack";
@@ -318,15 +305,16 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     } catch {
       return targetError(frame.id, 403);
     }
+    // Historical note from the original shell-only target; the schema now also validates fs.*.
     // SAFETY: the managed Slack target exposes only shell.exec, whose complete
     // request envelope and arguments were validated above.
-    using response = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).executeTarget(
+    const response = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).executeTarget(
       parsedInstallation.installationId,
       parsedIdentity.routeGeneration,
       targetId,
-      parsed.data as AdapterTargetRequestFrame<"shell.exec">,
+      parsed.data,
     );
-    return structuredClone(response);
+    return forwardSlackTargetResponse(response);
   }
 
   async adapterTargetCancel(
@@ -415,7 +403,7 @@ function requireRequestId(value: string): string {
   return normalized;
 }
 
-function targetError(id: string, code: number): AdapterTargetResponseFrame<"shell.exec"> {
+function targetError(id: string, code: number): AdapterTargetResponseFrame<SlackTargetCall> {
   return {
     type: "res",
     id,

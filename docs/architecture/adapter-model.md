@@ -36,9 +36,12 @@ An adapter's messaging projection is not automatically an execution target.
 Most bundled adapters do not appear in the `targets` shell inventory or the
 model's available-target list because they do not implement targetable syscalls.
 Managed Slack is the first adapter-backed exception: after personal OAuth and
-pairing it advertises a `shell.exec` target containing the provider-owned
-`slack` CLI. The `sys.target.*` API and Machines console remain
-hardware-oriented and do not administer service-backed targets.
+pairing it advertises a target with read-only `fs.read` and `fs.search`, plus
+`shell.exec` containing the provider-owned `slack` CLI. The shell and filesystem
+syscalls share live conversation, message, thread, and user resources, with
+explicit pagination and bounded search scopes. The `sys.target.*` API and
+Machines console remain hardware-oriented and do not administer service-backed
+targets.
 
 Messaging has its own two deliberate views:
 

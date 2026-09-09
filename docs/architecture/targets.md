@@ -72,8 +72,12 @@ GSV currently projects these environments:
   browser-specific commands even though the browser is not an operating-system
   machine.
 - Managed Slack projects a personally authorized workspace as a service-backed
-  `shell.exec` target. Its ephemeral just-bash environment exposes a composable
-  `slack` CLI for conversations, threads, messages, reactions, and users. The
+  target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
+  filesystem exposes conversations, exact messages, bounded history and thread
+  pages, and users. The same resources back its ephemeral just-bash environment,
+  with execution-local `/tmp` scratch space and a composable `slack` CLI for
+  provider actions. Search matches literal content in an explicitly selected
+  file or finite history page; indexes expose pagination and coverage. The
   paired user's OAuth token supplies read visibility; mutations use the
   installed GSV app identity, and the adapter retains both credentials and
   provider policy.

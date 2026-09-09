@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { SLACK_TARGET_SYSCALLS, type SlackTargetCall } from "./slack-target";
+import { forwardSlackTargetResponse } from "./slack-target-response";
 import type {
   AdapterTargetDescriptor,
   AdapterTargetRequestFrame,
@@ -170,8 +172,8 @@ type ManagedWorkspaceStub = {
   executeTarget(
     actorId: string,
     expectedGeneration: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>>;
   cancelTarget(
     actorId: string,
     expectedGeneration: string,
@@ -200,8 +202,8 @@ type ManagedWorkspaceClient = Omit<
   executeTarget(
     actorId: string,
     expectedGeneration: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec"> & Disposable>;
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall> & Disposable>;
   cancelTarget(
     actorId: string,
     expectedGeneration: string,
@@ -382,10 +384,10 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     return [{
       id: SLACK_TARGET_ID,
       label: `Slack — ${authorization.teamName ?? authorization.teamId}`,
-      description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Run `slack --help` for commands.",
+      description: "Slack workspace: reads with the paired user's OAuth visibility; writes as the installed GSV app and labels target messages with that user's GSV. Read `/README.txt` for filesystem paths; run `slack --help` for commands.",
       platform: "slack",
       version: "web-api",
-      implements: ["shell.exec"],
+      implements: [...SLACK_TARGET_SYSCALLS],
     }];
   }
 
@@ -393,8 +395,8 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     installationId: string,
     routeGeneration: string,
     targetId: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">> {
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>> {
     if (targetId !== SLACK_TARGET_ID) {
       return targetError(frame.id, 404, "Slack target is unavailable");
     }
@@ -437,21 +439,30 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         actorId: state.actorId,
         generation: state.workspaceGeneration,
       };
-      using response = await this.workspace(active.workspace.accountId).executeTarget(
+      const response = await this.workspace(active.workspace.accountId).executeTarget(
         active.workspace.actorId,
         active.workspace.generation,
         frame,
       );
-      const detachedResponse = structuredClone(response);
+      let rejection = frame.call === "shell.exec" ? undefined : targetCallCancellation(active, frame.id);
       try {
         const current = await this.requireTargetRoute(installationId, routeGeneration);
         if (current.workspaceGeneration !== state.workspaceGeneration) {
-          return targetError(frame.id, 409, "Slack target authorization changed during execution");
+          rejection = targetError(frame.id, 409, "Slack target authorization changed during execution");
         }
       } catch {
-        return targetError(frame.id, 409, "Slack target route changed during execution");
+        rejection = targetError(frame.id, 409, "Slack target route changed during execution");
       }
-      return detachedResponse;
+      if (frame.call !== "shell.exec") rejection ??= targetCallCancellation(active, frame.id);
+      if (rejection) {
+        try {
+          if (response.ok) await cancelBinaryBody(response.body, "Slack target route changed");
+        } finally {
+          response[Symbol.dispose]();
+        }
+        return rejection;
+      }
+      return forwardSlackTargetResponse(response);
     } finally {
       if (this.targetCalls.get(key) === active) this.targetCalls.delete(key);
     }
@@ -1253,14 +1264,14 @@ function targetError(
   id: string,
   code: number,
   message: string,
-): AdapterTargetResponseFrame<"shell.exec"> {
+): AdapterTargetResponseFrame<SlackTargetCall> {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 
 function targetCallCancellation(
   active: ActiveManagedSlackTargetCall,
   id: string,
-): AdapterTargetResponseFrame<"shell.exec"> | undefined {
+): AdapterTargetResponseFrame<SlackTargetCall> | undefined {
   const cancellation = active.cancellation;
   return cancellation ? targetError(id, cancellation.code, cancellation.message) : undefined;
 }
