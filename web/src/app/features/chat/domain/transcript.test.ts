@@ -63,6 +63,19 @@ function history(messages: HistoryFixture[]): ChatHistory {
 }
 
 describe("chat transcript rows", () => {
+  it("retains the owning process for work before a canonical reply exists", () => {
+    const record = procHistoryRecordSchema.parse({
+      kind: "call", payload: { runId: "run-working", callId: "read", tool: "Read", syscall: "fs.read", target: "gsv", args: { path: "/note.md" } },
+      id: 1, messageId: 1, index: 0, runId: "run-working", generation: 1, createdAt: 1, source: "typed",
+    });
+    const original = { ...history([]), pid: "original-process", records: [record] };
+    const replacement = { ...original, pid: "replacement-process" };
+
+    expect(transcriptRowsFromHistory(original)[0]).toMatchObject({ processId: "original-process", toolCallId: "read" });
+    expect(transcriptRowsFromHistory(replacement)[0]).toMatchObject({ processId: "replacement-process", toolCallId: "read" });
+    expect(transcriptRowsFromHistory(original)[0].processId).toBe("original-process");
+  });
+
   it("does not downgrade a live directed Message during history synchronization", () => {
     const current = {
       id: "conversation:msg-one",

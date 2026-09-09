@@ -74,6 +74,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           text: record.payload.text, media: record.payload.media,
           origin: record.payload.origin.interaction,
           messageDirection: record.payload.direction,
+          conversationMessageId: record.payload.conversationMessageId,
         });
         break;
       case "note": {
@@ -90,6 +91,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           ...base, id: `tool:${record.runId ?? ""}:${record.payload.callId}`, role: "tool",
           text: displayValue(record.payload.args), toolArgs: record.payload.args,
           toolCallId: record.payload.callId, toolName: record.payload.tool,
+          toolStartedAt: record.createdAt ?? null, toolCallRecordKey: historyRecordKey(record),
           toolSyscall: record.payload.syscall, toolTarget: record.payload.target,
           toolRunControl: isRunControlCall(record.payload),
           status: "planning", meta: record.payload.syscall ?? undefined,
@@ -102,6 +104,8 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           ...base, id: record.payload.callId === null ? base.id : `tool:${record.runId ?? ""}:${record.payload.callId}`, role: "toolResult",
           text: record.payload.error?.message ?? displayValue(record.payload.output),
           toolCallId: record.payload.callId ?? undefined, toolName: record.payload.tool,
+          toolStartedAt: call ? call.createdAt ?? null : undefined,
+          toolCallRecordKey: call ? historyRecordKey(call) : undefined,
           toolOutput: record.payload.output, toolOutcome: record.payload.outcome,
           toolArgs: call?.payload.args, toolSyscall: call?.payload.syscall ?? null,
           toolTarget: call?.payload.target ?? null,

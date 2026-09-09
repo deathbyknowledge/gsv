@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
-import type { ChatTranscriptRow } from "../../chat/domain/transcript";
+import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
+import { mergeTranscriptRows } from "../../chat/domain/transcriptMerge";
+import { transcriptRowsFromRecords } from "../../chat/domain/typedHistory";
+import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
 import {
   activitiesForRows,
   answerAttribution,
@@ -11,13 +14,13 @@ import {
   linkPlaceReferences,
   momentsFromRows,
   momentsFromConversation,
+  memoryPagesForMoment,
   isMessageSend,
   outputText,
   parsePromptInput,
   placeLabel,
   receiptDuration,
-  receiptPhrases,
-  receiptRunning,
+  receiptTargets,
   receiptSteps,
   resolvePlace,
   resolveTail,
@@ -237,7 +240,133 @@ describe("activitiesForRows", () => {
   });
 });
 
+describe("filesystem operation presentation", () => {
+  const present = (syscall: string, output: ChatTranscriptValue, overrides: Partial<ChatTranscriptRow> = {}) => activitiesForRows([row({
+    id: "operation", role: "toolResult", toolCallId: "operation", toolSyscall: syscall, toolTarget: "gsv",
+    toolArgs: { path: "/tmp/requested.txt" }, toolOutput: output, toolOutcome: "completed", status: "done", text: "original diagnostic",
+    ...overrides,
+  })], "run", false)[0].calls[0];
+
+  it("moves verified mutation confirmations into the heading using returned paths and counts", () => {
+    const cases: [string, ChatTranscriptValue, { label: string; subject: string; detail?: string }][] = [
+      ["fs.write", { ok: true, path: "/tmp/resolved.txt", size: 11 }, { label: "wrote", subject: "/tmp/resolved.txt", detail: "11 bytes" }],
+      ["fs.write", { ok: true, path: "/tmp/empty.txt", size: 0 }, { label: "wrote", subject: "/tmp/empty.txt", detail: "0 bytes" }],
+      ["fs.write", { ok: true, path: "/tmp/one.txt", size: 1 }, { label: "wrote", subject: "/tmp/one.txt", detail: "1 byte" }],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: 1 }, { label: "edited", subject: "/tmp/resolved.txt", detail: "1 replacement" }],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: 2 }, { label: "edited", subject: "/tmp/resolved.txt", detail: "2 replacements" }],
+      ["fs.delete", { ok: true, path: "/tmp/resolved.txt" }, { label: "deleted", subject: "/tmp/resolved.txt" }],
+    ];
+    for (const [syscall, output, operation] of cases) {
+      const call = present(syscall, output);
+      expect(call).toMatchObject({ operation, finished: true, failed: false, output: "" });
+      expect(outputText(syscall, output, "fallback")).not.toBe("");
+    }
+  });
+
+  it.each(["failed", "denied", "cancelled"] as const)("keeps %s operations neutral and retains the diagnostic body", (outcome) => {
+    for (const [syscall, label] of [["fs.write", "write"], ["fs.edit", "edit"], ["fs.delete", "delete"]]) {
+      expect(present(syscall, { ok: false, error: "permission denied" }, { toolOutcome: outcome })).toMatchObject({
+        operation: { label, subject: "/tmp/requested.txt" }, failed: true, output: "permission denied",
+      });
+    }
+  });
+
+  it("does not turn contradictory or unknown outcomes into successful headings or hide their result", () => {
+    const output = { ok: true, path: "/tmp/resolved.txt", size: 11 };
+    for (const overrides of [
+      { toolOutcome: undefined }, { toolOutcome: "failed" as const }, { isError: true }, { status: "error" as const },
+    ]) {
+      const call = present("fs.write", output, { ...overrides, text: "" });
+      expect(call.operation).toEqual({ label: "write", subject: "/tmp/requested.txt" });
+      expect(call.output).toBe(JSON.stringify(output, null, 2));
+    }
+  });
+
+  it("keeps the authoritative typed failure message when its output has a success shape", () => {
+    const result = present("fs.write", { ok: true, path: "/tmp/resolved.txt", size: 11 }, {
+      toolOutcome: "failed", text: "The returned result could not be retained.",
+    });
+    expect(result).toMatchObject({ operation: { label: "write", subject: "/tmp/requested.txt" }, failed: true,
+      output: "The returned result could not be retained.",
+    });
+  });
+
+  it("retains malformed mutation data instead of inferring success from the stored prose", () => {
+    const malformed: [string, ChatTranscriptValue, string][] = [
+      ["fs.write", { ok: true, path: "/tmp/resolved.txt", size: "11" }, "write"],
+      ["fs.edit", { ok: true, path: "/tmp/resolved.txt", replacements: -1 }, "edit"],
+      ["fs.delete", { ok: true }, "delete"],
+    ];
+    for (const [syscall, output, label] of malformed) {
+      expect(present(syscall, output, { text: "wrote 11 bytes" })).toMatchObject({
+        operation: { label, subject: "/tmp/requested.txt" }, output: "wrote 11 bytes",
+      });
+    }
+  });
+
+  it("describes running and planned operations without claiming completion", () => {
+    const output = { ok: true, path: "/tmp/resolved.txt", size: 11 };
+    const running = present("fs.write", output, { role: "tool", status: "running", toolOutcome: undefined });
+    expect(running).toMatchObject({ operation: { label: "writing", subject: "/tmp/requested.txt" }, finished: false, output: "" });
+    const planned = present("fs.delete", null, { role: "tool", status: "planning", toolOutcome: undefined });
+    expect(planned.operation).toEqual({ label: "delete", subject: "/tmp/requested.txt" });
+  });
+
+  it("keeps file content in the body and search query/path separate from matching results", () => {
+    const read = present("fs.read", { ok: true, path: "/tmp/requested.txt", kind: "text", content: "line one\nline two" });
+    expect(read.operation).toEqual({ label: "read", subject: "/tmp/requested.txt" });
+    expect(read.output).toBe("line one\nline two");
+    const search = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
+      toolArgs: { query: "needle", path: "/tmp", include: "*.txt" },
+    });
+    expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "1 result" });
+    expect(search.output).toBe("");
+    const noScope = present("fs.search", { ok: true, matches: [], count: 0 }, { toolArgs: { query: "needle" } });
+    expect(noScope.operation).toEqual({ label: "searched", subject: "needle", detail: "0 results" });
+    expect(noScope.output).toBe("");
+    const truncated = present("fs.search", { ok: true, matches: [], count: 25, truncated: true }, { toolArgs: { query: "needle" } });
+    expect(truncated.operation).toEqual({ label: "searched", subject: "needle", detail: "25+ results" });
+    expect(truncated.output).toBe("");
+    const unknown = present("fs.search", { matches: [] }, { toolArgs: { query: "needle", path: "/tmp" } });
+    expect(unknown.operation?.label).toBe("search");
+    const failed = present("fs.search", { ok: false, error: "search rejected" }, { toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed" });
+    expect(failed).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search rejected", failed: true });
+    const interrupted = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
+      toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed", text: "search interrupted",
+    });
+    expect(interrupted).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search interrupted", failed: true });
+  });
+
+  it("does not invent search terms or filesystem operations from tool text", () => {
+    const search = present("fs.search", { matches: [] }, { toolArgs: { q: "not query", path: "/tmp" }, text: "searched secret in /elsewhere" });
+    expect(search.operation).toEqual({ label: "search", subject: "in /tmp" });
+    expect(present("shell.exec", { stdout: "ok", exitCode: 0 }, { toolArgs: { input: "cat file", path: "/tmp" } }).operation).toBeUndefined();
+    expect(present("codemode.exec", { status: "completed", result: 1 }, { toolArgs: { code: "return 1;", path: "/tmp" } }).operation).toBeUndefined();
+  });
+
+  it("preserves the original search subject when the final result arrives without arguments", () => {
+    const calls = activitiesForRows([
+      row({ id: "search", role: "tool", status: "running", toolCallId: "search", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { query: "needle", path: "/tmp" } }),
+      row({ id: "result", role: "toolResult", status: "done", toolCallId: "search", toolSyscall: "fs.search", toolTarget: "gsv", toolOutcome: "completed", toolOutput: { ok: true, matches: [], count: 0 } }),
+    ], "run", false)[0].calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "0 results" });
+  });
+});
+
 describe("momentsFromRows", () => {
+  it("retains originating process identities on messages, working moments, and events", () => {
+    const moments = momentsFromRows([
+      row({ id: "human", role: "user", text: "Look", processId: "previous-ship" }),
+      row({ id: "call", role: "tool", runId: "work", toolSyscall: "fs.read", toolTarget: "gsv", status: "running" }),
+      row({ id: "answer", role: "assistant", runId: "work", text: "Done", processId: "worker" }),
+      row({ id: "later", role: "assistant", runId: "work", text: "Still done", processId: "different-process" }),
+      row({ id: "event", role: "system", text: "An event", processId: "event-owner" }),
+    ], null);
+    expect(moments.map((moment) => [moment.role, moment.processId])).toEqual([
+      ["human", "previous-ship"], ["ship", "worker"], ["note", "event-owner"],
+    ]);
+  });
   it("folds a run into a human moment and one ship moment carrying its activities", () => {
     const rows = [
       row({ id: "u1", role: "user", text: "look around", runId: "r1", timestamp: 1 }),
@@ -322,6 +451,25 @@ describe("momentsFromConversation", () => {
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
   });
+  it("keeps the canonical reply's process when joining another transcript and fills only absent identities", () => {
+    const moments = momentsFromConversation([
+      message({ id: "old", text: "Old answer", runId: "old-run", processId: "old-ship" }),
+      message({ id: "new", text: "New answer", runId: "new-run" }),
+      message({ id: "human", role: "user", text: "Question", processId: "conversation-owner" }),
+    ], [
+      message({ id: "old-note", text: "Old working", runId: "old-run", processId: "current-ship" }),
+      message({ id: "new-note", text: "New working", runId: "new-run", processId: "new-ship" }),
+      message({ id: "orphan-call", role: "tool", toolSyscall: "fs.read", runId: "working-run", processId: "worker", status: "running" }),
+      message({ id: "event", role: "system", text: "Notice", processId: "event-owner" }),
+    ], "working-run");
+    expect(moments.slice(0, 4).map((moment) => [moment.id, moment.processId])).toEqual([
+      ["old", "old-ship"], ["new", "new-ship"], ["human", "conversation-owner"], ["event", "event-owner"],
+    ]);
+    expect(moments[0].narration).toBe("");
+    expect(moments[1].narration).toBe("New working");
+    expect(moments[4]).toMatchObject({ processId: "current-ship", text: "", narration: "Old working" });
+    expect(moments[5]).toMatchObject({ processId: "worker", thinking: true });
+  });
   it("shows what the ship sent, folds what it told itself, and keeps the run's work", () => {
     const messages = [
       message({ id: "u1", role: "user", text: "tidy my downloads", timestamp: 1_000 }),
@@ -345,6 +493,250 @@ describe("momentsFromConversation", () => {
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
   });
+
+  const sent = (id: string, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => message({
+    id: `conversation:${id}`, messageId: id, runId: "run", processId: "ship", text: id, timestamp, ...overrides,
+  });
+  const call = (id: string, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => message({
+    id, role: "toolResult", text: "", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv",
+    toolArgs: { path: `/pages/${id}.md` }, toolOutput: id, toolOutcome: "completed", status: "done",
+    runId: "run", processId: "ship", timestamp, ...overrides,
+  });
+  const outgoing = (id: string, key: string, timestamp: number) => message({
+    id: `history:${key}`, historyRecordKey: key, messageDirection: "out", conversationMessageId: id,
+    text: id, runId: "run", processId: "ship", timestamp,
+  });
+  const callsOf = (moment: Moment) => moment.activities.flatMap((activity) => activity.calls.map((entry) => entry.callId));
+
+  it("partitions two Sends and trailing work without duplicating narration or calls", () => {
+    const messages = [sent("first", 20), sent("second", 40)];
+    const transcript = [
+      call("before-first", 10), message({ id: "n1", runId: "run", processId: "ship", text: "First thought", timestamp: 11 }),
+      outgoing("first", "20:0", 20),
+      call("before-second", 30), message({ id: "n2", runId: "run", processId: "ship", text: "Second thought", timestamp: 31 }),
+      outgoing("second", "40:0", 40),
+      call("after-second", 50), message({ id: "n3", runId: "run", processId: "ship", text: "More work", timestamp: 51 }),
+      call("send-control", 52, { toolName: "Send", toolSyscall: null }),
+      call("shell-control", 53, { toolName: "Shell", toolSyscall: null, toolRunControl: true }),
+    ];
+    const moments = momentsFromConversation(messages, transcript, "run");
+    expect(moments.map((entry) => [entry.text, callsOf(entry), entry.narration])).toEqual([
+      ["first", ["before-first"], "First thought"],
+      ["second", ["before-second"], "Second thought"],
+      ["", ["after-second"], "More work"],
+    ]);
+    expect(moments.slice(0, 2).map(({ id, timestamp, processId }) => ({ id, timestamp, processId }))).toEqual([
+      { id: "conversation:first", timestamp: 20, processId: "ship" },
+      { id: "conversation:second", timestamp: 40, processId: "ship" },
+    ]);
+    expect(new Set(moments.flatMap((entry) => entry.activities.map((activity) => activity.key))).size).toBe(3);
+    const completed = momentsFromConversation(messages, transcript, null);
+    expect(completed.map((entry) => entry.id)).toEqual(moments.map((entry) => entry.id));
+    expect(completed.at(-1)?.thinking).toBe(false);
+    const next = momentsFromConversation([...messages, sent("third", 60)], transcript, null);
+    expect(next.map((entry) => [entry.text, callsOf(entry)])).toEqual([
+      ["first", ["before-first"]], ["second", ["before-second"]], ["third", ["after-second"]],
+    ]);
+  });
+
+  it("keeps interleaved processes and runs in their own message intervals", () => {
+    const messages = [sent("one", 20), sent("other-process", 30, { processId: "worker" }), sent("other-run", 35, { runId: "run2" }), sent("two", 50)];
+    const transcript = [call("a", 10), call("b", 15, { processId: "worker" }), call("c", 25, { runId: "run2" }), call("d", 40), call("e", 45, { processId: "worker" })];
+    const moments = momentsFromConversation(messages, transcript, null);
+    expect(moments.map((entry) => [entry.text, entry.processId, callsOf(entry)])).toEqual([
+      ["one", "ship", ["a"]], ["other-process", "worker", ["b"]], ["other-run", "ship", ["c"]],
+      ["", "worker", ["e"]], ["two", "ship", ["d"]],
+    ]);
+  });
+
+  it("uses durable call and outgoing coordinates when multiple Sends share one millisecond", () => {
+    const messages = [sent("first", 100, { conversationSequence: 1 }), sent("second", 100, { conversationSequence: 2 })];
+    const transcript = [
+      call("first-call", 300, { historyRecordKey: "9:0", toolCallRecordKey: "1:1", toolStartedAt: 100 }),
+      outgoing("first", "2:0", 100),
+      call("second-call", 300, { historyRecordKey: "10:0", toolCallRecordKey: "3:1", toolStartedAt: 100 }),
+      outgoing("second", "4:0", 100),
+      call("last-call", 300, { historyRecordKey: "11:0", toolCallRecordKey: "5:1", toolStartedAt: 99 }),
+    ];
+    const moments = momentsFromConversation(messages, transcript, null).sort((left, right) => (left.timestamp ?? 0) - (right.timestamp ?? 0));
+    expect(moments.map((entry) => [entry.text, callsOf(entry)])).toEqual([
+      ["first", ["first-call"]], ["second", ["second-call"]], ["", ["last-call"]],
+    ]);
+    expect(moments.at(-1)?.timestamp).toBe(100);
+    expect(moments.at(-1)?.activities[0].startedAt).toBe(99);
+  });
+
+  it("keeps a pending parallel call with the message it preceded when completion arrives after a later Send", () => {
+    const messages = [sent("first", 20), sent("second", 40)];
+    const pending = call("slow", 10, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, toolTarget: "laptop" });
+    const between = call("quick", 30);
+    const before = momentsFromConversation(messages, [pending, between], "run");
+    expect(before.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(before[0].activities[0].live).toBe(true);
+    const result = call("slow", 60, { toolArgs: undefined, toolTarget: undefined, toolSyscall: undefined, toolOutput: "finished later" });
+    const after = momentsFromConversation(messages, [pending, between, result], "run");
+    expect(after.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(after[0].activities[0]).toMatchObject({ target: "laptop", startedAt: 10, endedAt: 60, live: false });
+    expect(after[0].activities[0].calls[0]).toMatchObject({ finished: true, output: "finished later", filePath: "/pages/slow.md" });
+    const reloaded = momentsFromConversation(messages, [{ ...result, toolStartedAt: 10, toolTarget: "laptop", toolSyscall: "fs.read", toolArgs: pending.toolArgs }, between], "run");
+    expect(reloaded).toEqual(after);
+  });
+
+  it("joins a streamed message to its committed identity without repeating its work", () => {
+    const streaming = sent("first", 20, { id: "stream:first", text: "Fir", streaming: true });
+    const committed = sent("first", 20, { text: "First answer", streaming: false });
+    const transcript = [call("a", 10), call("b", 30)];
+    const live = momentsFromConversation([streaming], transcript, "run");
+    const durable = momentsFromConversation([streaming, committed], [...transcript, outgoing("first", "20:0", 20)], "run");
+    expect(live.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(durable.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(durable[0]).toMatchObject({ id: committed.id, text: "First answer", streaming: false, timestamp: 20 });
+    expect(durable[1].id).toBe(live[1].id);
+    expect(momentsFromConversation([committed, streaming], transcript, "run")[0]).toMatchObject({ id: committed.id, streaming: false });
+  });
+
+  it("does not attach work before an unloaded Send to the next visible message", () => {
+    const moments = momentsFromConversation([sent("visible", 40)], [
+      call("old", 10), outgoing("unloaded", "20:0", 20), call("current", 30), outgoing("visible", "40:0", 40),
+    ], null);
+    expect(moments.map((entry) => [entry.text, callsOf(entry)])).toEqual([["", ["old"]], ["visible", ["current"]]]);
+  });
+
+  it("keeps same-millisecond unpersisted work in deterministic input order without merging distinct messages", () => {
+    const moments = momentsFromConversation([sent("first", 100), sent("second", 100)], [call("a", 100), call("b", 100)], null);
+    expect(moments.map((entry) => [entry.id, callsOf(entry)])).toEqual([
+      ["conversation:first", ["a", "b"]], ["conversation:second", []],
+    ]);
+  });
+
+  it("preserves call placement through actual typed projection and a partial live-result merge", () => {
+    const envelope = (messageId: number, createdAt: number) => ({
+      id: messageId, messageId, index: 0, generation: 1, runId: "run", createdAt, source: "typed" as const,
+    });
+    const before: ProcHistoryRecord[] = [
+      { ...envelope(1, 10), kind: "call", payload: { callId: "slow", tool: "Read", syscall: "fs.read", args: { path: "/pages/slow.md" }, target: "laptop", runId: "run" } },
+      { ...envelope(2, 20), kind: "message", payload: { direction: "out", text: "first", media: [], origin: {}, conversationMessageId: "first" } },
+    ];
+    const projected = transcriptRowsFromRecords(before).map((entry) => ({ ...entry, processId: "ship" }));
+    const messages = [sent("first", 20), sent("second", 40)];
+    const pending = momentsFromConversation(messages, projected, "run");
+    expect(pending.map(callsOf)).toEqual([["slow"], []]);
+    expect(pending[0].activities[0].live).toBe(true);
+    const merged = mergeTranscriptRows(projected, [row({
+      id: "finish", role: "toolResult", runId: "run", toolCallId: "slow", toolName: "Read", text: "", toolOutput: "finished", status: "done", timestamp: 60,
+    })]);
+    const live = momentsFromConversation(messages, merged, "run");
+    const after: ProcHistoryRecord[] = [...before,
+      { ...envelope(3, 40), kind: "message", payload: { direction: "out", text: "second", media: [], origin: {}, conversationMessageId: "second" } },
+      { ...envelope(4, 60), kind: "result", payload: { callId: "slow", tool: "Read", outcome: "completed", output: "finished", media: [], resources: [] } },
+    ];
+    const durable = momentsFromConversation(messages, transcriptRowsFromRecords(after).map((entry) => ({ ...entry, processId: "ship" })), "run");
+    expect(live).toEqual(durable);
+    expect(durable[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60, target: "laptop", live: false });
+    expect(durable.map(callsOf)).toEqual([["slow"], []]);
+  });
+
+  it("retains distinct identities and unknown times for unlinked historical work", () => {
+    const moments = momentsFromConversation([], [
+      call("a", 1, { runId: undefined, timestamp: null }), call("b", 2, { runId: undefined, timestamp: null }),
+    ], null);
+    expect(moments.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(new Set(moments.map((entry) => entry.id)).size).toBe(2);
+    expect(moments.map((entry) => entry.timestamp)).toEqual([null, null]);
+  });
+
+  it("orders parallel calls by start while retaining the last completion time for the target", () => {
+    const moments = momentsFromConversation([sent("first", 20)], [
+      call("fast", 15, { toolStartedAt: 11 }), call("slow", 60, { toolStartedAt: 10 }),
+    ], null);
+    expect(moments).toHaveLength(1);
+    expect(callsOf(moments[0])).toEqual(["slow", "fast"]);
+    expect(moments[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60 });
+    expect(receiptDuration(moments[0])).toBe(formatSeconds(50));
+  });
+});
+
+describe("memoryPagesForMoment", () => {
+  const personal: LibraryCollection = { id: "personal", title: "Personal", repo: "owner/wiki", writable: true, updatedAt: null };
+  const read = (id: string, path: string, overrides: Partial<ChatTranscriptRow> = {}) => row({
+    id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv",
+    toolArgs: { path }, status: "done", toolOutcome: "completed", ...overrides,
+  });
+  const moment = (rows: ChatTranscriptRow[]): Moment => ({
+    id: "reply", role: "ship", text: "See personal/pages/example.md", streaming: false, thinking: false,
+    runId: "run", timestamp: 1, activities: activitiesForRows(rows, "run", false), narration: "",
+  });
+
+  it("resolves exact known pages after collection discovery and deduplicates repeated reads", () => {
+    const longPath = `pages/deep/${"long-name-".repeat(12)}.md`;
+    const value = moment([
+      read("overview", "/src/repos/owner/wiki/index.md"),
+      read("nested", `/src/repos/owner/wiki/${longPath}`),
+      read("again", "/src/repos/owner/wiki/index.md"),
+    ]);
+    expect(memoryPagesForMoment(value, [])).toEqual([]);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([
+      { db: "personal", path: "personal/index.md" },
+      { db: "personal", path: `personal/${longPath}` },
+    ]);
+    expect(value.activities[0].calls[1].filePath).toBe(`/src/repos/owner/wiki/${longPath}`);
+  });
+
+  it("retains the exact Read path when its completion omits arguments", () => {
+    const path = "/src/repos/owner/wiki/pages/example.md";
+    const value = moment([
+      read("same-call", path, { role: "tool", status: "running", toolOutcome: undefined }),
+      read("same-call", path, { toolArgs: undefined }),
+    ]);
+    expect(value.activities[0].calls).toHaveLength(1);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([{ db: "personal", path: "personal/pages/example.md" }]);
+  });
+
+  const ineligibleCalls: Partial<ChatTranscriptRow>[] = [
+    { role: "tool" as const, status: "running" as const, toolOutcome: undefined },
+    { toolOutcome: "failed" as const },
+    { toolOutcome: "denied" as const },
+    { toolOutcome: "cancelled" as const },
+    { isError: true },
+    { status: "error" as const },
+    { toolTarget: "laptop" },
+    { toolTarget: null },
+    { toolSyscall: "fs.write" },
+    { toolSyscall: "shell.exec", toolArgs: { input: "wiki read personal/pages/example.md" } },
+    { toolSyscall: "codemode.exec", toolArgs: { code: "read a wiki page" } },
+    { toolArgs: undefined, text: '{"path":"/src/repos/owner/wiki/pages/example.md"}', toolOutput: { path: "/src/repos/owner/wiki/pages/example.md" } },
+    { toolArgs: { path: 42 } },
+  ];
+  it.each(ineligibleCalls)("does not make a Memory link from an ineligible call: %j", (overrides) => {
+    expect(memoryPagesForMoment(moment([read("read", "/src/repos/owner/wiki/pages/example.md", overrides)]), [personal])).toEqual([]);
+  });
+
+  it("excludes direct user commands and text-only references", () => {
+    const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
+    value.activities[0].you = true;
+    expect(memoryPagesForMoment(value, [personal])).toEqual([]);
+    expect(memoryPagesForMoment(moment([]), [personal])).toEqual([]);
+  });
+
+  it.each([
+    "personal/pages/example.md", "~/wiki/pages/example.md", "/src/repos/owner/unknown/pages/example.md",
+    "/src/repos/owner/wiki-extra/pages/example.md", "/src/repos/owner/wiki/README.md",
+    "/src/repos/owner/wiki/pages/example.txt", "/src/repos/owner/wiki/pages/folder",
+    "/src/repos/owner/wiki/pages/../index.md", "/src/repos/owner/wiki/pages/./example.md",
+    "/src/repos/owner/wiki/pages//example.md", "/src/repos/owner/wiki/pages/example.md/",
+    "/src/repos/owner/wiki/pages/example.md ", " /src/repos/owner/wiki/pages/example.md",
+    "/src/repos/owner/wiki/pages/\0example.md",
+  ])("rejects unmatched, non-page, or ambiguous path %j", (path) => {
+    const value = moment([read("read", path)]);
+    expect(value.activities[0].calls[0].filePath).toBe(path);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([]);
+  });
+
+  it("does not choose between ambiguous repository or collection identities", () => {
+    const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
+    expect(memoryPagesForMoment(value, [personal, { ...personal, id: "other" }])).toEqual([]);
+    expect(memoryPagesForMoment(value, [personal, { ...personal, repo: "other/wiki" }])).toEqual([]);
+  });
 });
 
 describe("isMessageSend", () => {
@@ -363,6 +755,55 @@ describe("outputText", () => {
     expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
     expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
+  });
+  it("retains fallback for unknown or malformed shell results", () => {
+    expect(outputText("shell.exec", { status: "failed", error: "unrecognized failure" }, "fallback")).toBe("fallback");
+    expect(outputText("shell.exec", { stdout: 3 }, "fallback")).toBe("fallback");
+    expect(outputText("shell.exec", {}, "fallback")).toBe("fallback");
+  });
+  it.each(["codemode.exec", "codemode.run"])("shows %s logs, return values, and failures without treating returned data as a shell envelope", (syscall) => {
+    expect(outputText(syscall, { status: "completed", result: "hello", logs: ["first", "second"] }, "fallback")).toBe("first\nsecond\nhello");
+    expect(outputText(syscall, { status: "completed", result: false }, "fallback")).toBe("false");
+    expect(outputText(syscall, { status: "completed", result: 0 }, "fallback")).toBe("0");
+    expect(outputText(syscall, { status: "completed", result: null }, "fallback")).toBe("completed");
+    expect(outputText(syscall, { status: "completed", result: null, logs: ["logged"] }, "fallback")).toBe("logged");
+    expect(outputText(syscall, { status: "completed", result: "" }, "fallback")).toBe('""');
+    const returned = { stdout: "ordinary field", output: "also ordinary", exitCode: 0, values: [false, 0] };
+    expect(outputText(syscall, { status: "completed", result: returned }, "fallback")).toBe(JSON.stringify(returned, null, 2));
+    const literal = '{"stdout":"literal JSON-looking string"}';
+    expect(outputText(syscall, { status: "completed", result: literal }, "fallback")).toBe(literal);
+    expect(outputText(syscall, { status: "failed", error: "execution failed", logs: ["before failure"] }, "fallback")).toBe("before failure\nexecution failed");
+    expect(outputText(syscall, { status: "failed", error: "execution failed" }, "fallback")).toBe("execution failed");
+  });
+  it.each(["codemode.exec", "codemode.run"])("retains fallback for unknown or malformed %s results", (syscall) => {
+    const outputs: ChatTranscriptValue[] = [
+      {}, { status: "completed" }, { status: "completed", output: "not a CodeMode result" },
+      { status: "completed", result: 1, logs: [false] }, { status: "failed", error: false },
+      { status: "running", result: 1 }, { stdout: "not a CodeMode result" },
+    ];
+    for (const output of outputs) {
+      expect(outputText(syscall, output, "fallback")).toBe("fallback");
+    }
+    const literal = '{"status":"completed","result":1}';
+    expect(outputText(syscall, literal, "fallback")).toBe(literal);
+    expect(outputText("codemode.other", { status: "completed", result: 1 }, "fallback")).toBe("fallback");
+  });
+  it("describes successful filesystem mutations with correct counts", () => {
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 11 }, "fallback")).toBe("wrote 11 bytes");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 1 }, "fallback")).toBe("wrote 1 byte");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: 0 }, "fallback")).toBe("wrote 0 bytes");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 1 }, "fallback")).toBe("replaced 1 occurrence");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 2 }, "fallback")).toBe("replaced 2 occurrences");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 0 }, "fallback")).toBe("replaced 0 occurrences");
+    expect(outputText("fs.delete", { ok: true, path: "/note.md" }, "fallback")).toBe("deleted");
+  });
+  it("retains fallback for malformed filesystem mutation results", () => {
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: "11" }, "fallback")).toBe("fallback");
+    expect(outputText("fs.write", { ok: true, size: 11 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.write", { ok: true, path: "/note.md", size: -1 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.edit", { ok: true, path: "/note.md", replacements: 1.5 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.edit", { ok: false, path: "/note.md", replacements: 1, error: 1 }, "fallback")).toBe("fallback");
+    expect(outputText("fs.delete", { ok: true }, "fallback")).toBe("fallback");
   });
   it("renders typed output independently of JSON-looking row text", () => {
     const row: ChatTranscriptRow = { id: "t", role: "toolResult", text: "{\"output\":\"misleading prose\"}", toolOutput: { status: "completed", output: "hello\nworld" }, time: "", timestamp: 1, toolSyscall: "shell.exec", toolArgs: { input: "echo" } };
@@ -398,29 +839,40 @@ describe("receipt", () => {
     activities: activitiesForRows(rows, "run", active),
     narration: "",
   });
-  it("names each finished call by verb and place-qualified argument, in order", () => {
+  it("summarizes targets in first-touch order, retaining failure and expanded call details", () => {
     const rows = [
       row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
       row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
       row({ id: "t3", role: "toolResult", toolCallId: "3", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/" }, toolOutcome: "denied", status: "done", timestamp: 300 }),
     ];
     // places come in first-touch order, and each place's calls in theirs
-    expect(receiptPhrases(moment(rows)).map((phrase) => [phrase.verb, phrase.what, phrase.failed])).toEqual([
-      ["searched", "~/mail", false],
-      ["read", "laptop:~/Downloads/Q2.pdf", false],
-      ["ran", "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/", true],
+    expect(receiptTargets(moment(rows))).toEqual([
+      { target: "gsv", live: false, failed: false },
+      { target: "laptop", live: false, failed: true },
     ]);
+    expect(moment(rows).activities[1].calls.map((call) => call.syscall)).toEqual(["fs.read", "shell.exec"]);
     expect(receiptSteps(moment(rows))).toBe(3);
     expect(receiptDuration(moment(rows))).toBe(formatSeconds(200));
   });
-  it("folds three or more alike calls into a count and keeps two apart", () => {
+  it("keeps one target summary for mixed work without discarding any calls", () => {
     const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path }, status: "done", timestamp: 1 });
-    expect(receiptPhrases(moment([read("1", "a"), read("2", "b"), read("3", "c")]))).toEqual([{ verb: "read", what: null, count: 3, noun: "files", failed: false }]);
-    expect(receiptPhrases(moment([read("1", "a"), read("2", "b")])).map((phrase) => phrase.what)).toEqual(["a", "b"]);
+    const value = moment([read("1", "a"), read("2", "b"), read("3", "c")]);
+    expect(receiptTargets(value)).toEqual([{ target: "gsv", live: false, failed: false }]);
+    expect(value.activities[0].calls.map((call) => call.summary)).toEqual(["a", "b", "c"]);
   });
-  it("says what is still running in the present tense", () => {
+  it("identifies the target still in use and omits empty work", () => {
     const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
-    expect(receiptRunning(moment(rows, true))).toMatchObject({ verb: "reading", what: "laptop:~/x" });
-    expect(receiptRunning(moment([]))).toBeNull();
+    expect(receiptTargets(moment(rows, true))).toEqual([{ target: "laptop", live: true, failed: false }]);
+    expect(receiptTargets(moment([]))).toEqual([]);
+  });
+  it("keeps every unfinished parallel target live when a later target has already finished", () => {
+    const value = moment([
+      row({ id: "a", role: "tool", toolCallId: "a", toolSyscall: "fs.read", toolTarget: "laptop", status: "running" }),
+      row({ id: "b", role: "tool", toolCallId: "b", toolSyscall: "fs.read", toolTarget: "office", status: "running" }),
+      row({ id: "c", role: "toolResult", toolCallId: "c", toolSyscall: "fs.read", toolTarget: "gsv", status: "done" }),
+    ], true);
+    expect(receiptTargets(value)).toEqual([
+      { target: "laptop", live: true, failed: false }, { target: "office", live: true, failed: false }, { target: "gsv", live: false, failed: false },
+    ]);
   });
 });

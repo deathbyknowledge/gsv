@@ -18,7 +18,7 @@ import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
-import { Wordmark } from "../shared/Wordmark";
+import { InstrumentHeader } from "../shared/InstrumentHeader";
 import {
   CLOUD_TARGET_ID,
   clockTime,
@@ -38,6 +38,8 @@ import {
   relativeTime,
   runsTodayByPlace,
   targetRow,
+  visibleProcesses,
+  reconcileFleetSelection,
   type LedgerLine,
   type Place,
   shortPid,
@@ -50,6 +52,7 @@ export type FleetProps = {
   initialRow: FleetRow | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
   onZen: (prefill?: string, pid?: string) => void;
+  onMemory: () => void;
 };
 
 const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
@@ -79,7 +82,7 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialRow, onZen }: FleetProps) {
+export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const now = useNow();
@@ -87,11 +90,15 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
     queryFn: () => loadConsoleTargets(client),
+    refetchOnMount: (query) => initialRow?.startsWith("target:") && initialRow !== targetRow(CLOUD_TARGET_ID)
+      && !query.state.data?.some((target) => targetRow(target.deviceId) === initialRow) ? "always" : true,
     enabled: connected,
   });
   const processesQuery = useQuery({
     queryKey: INSTRUMENT_PROCESSES_KEY,
     queryFn: () => loadConsoleProcesses(client),
+    refetchOnMount: (query) => initialRow?.startsWith("proc:")
+      && !query.state.data?.some((process) => processRow(process.pid) === initialRow) ? "always" : true,
     enabled: connected,
   });
   const responsibilitiesQuery = useQuery({
@@ -145,11 +152,20 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     () => (selected?.startsWith("proc:") ? processes.find((process) => processRow(process.pid) === selected) ?? null : null),
     [selected, processes],
   );
+  const missingRequestedRow = selected !== null && selected === initialRow && (
+    (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
+  );
+  const requestedKind = selected?.startsWith("proc:") ? "process" : "place";
+  const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
   const [cmdOpen, setCmdOpen] = useState(false);
   /* the technical view shows raw syscalls and arguments; t toggles it */
   const [technical, setTechnical] = useState(false);
   const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
+  const shownProcesses = useMemo(() => visibleProcesses(processes, selected, processLimit), [processes, selected, processLimit]);
+  useEffect(() => {
+    if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
+  }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
@@ -201,16 +217,19 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
+    if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
+    if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
-    if (!selected || !rows.includes(selected)) setSelected(initialRow && rows.includes(initialRow) ? initialRow : rows[0]);
-  }, [places.length, processes.length, shownLedger.length, selected, initialRow, visibleRows]);
+    const next = reconcileFleetSelection(selected, initialRow, rows);
+    if (next !== selected) setSelected(next);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows]);
   useEffect(() => {
     if (!selected) return;
     const row = document.querySelector(`[data-row="${selected}"]`);
     // ledger rows are display: contents and have no box of their own; their first cell does
-    (row?.firstElementChild ?? row)?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [selected, places, shownProcesses]);
   const selectedLine = useMemo(
     () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
     [selected, shownLedger],
@@ -252,7 +271,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
         loadOlder();
       } else if (event.key === "Enter" && selected === moreRow) {
         event.preventDefault();
-        setProcessLimit((limit) => (limit < processes.length ? limit + 20 : PROCESS_PAGE));
+        setProcessLimit(shownProcesses.length < processes.length ? shownProcesses.length + 20 : PROCESS_PAGE);
       } else if (event.key === "Enter") {
         const primary = inspectorRef.current?.querySelector<HTMLButtonElement>(".ibtn.is-primary");
         if (primary) {
@@ -265,7 +284,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, openCmd, processes.length, visibleRows]);
+  }, [selected, openCmd, processes.length, shownProcesses.length, loadOlder, visibleRows]);
 
   useEffect(() => {
     if (!selected) return;
@@ -293,21 +312,20 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
 
   return (
     <main class="fleet" aria-label="Fleet">
-      <div class="fleet-top">
-        <div>
-          <Wordmark /> &nbsp;·&nbsp; fleet
-        </div>
-        <div class="center">
-          {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
+      <InstrumentHeader status={<>
+          fleet · {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
           {processes.length} processes
           {modelsQuery.data?.preferredModelId ? ` · ${modelsQuery.data.preferredModelId}` : ""}
-        </div>
-        <div class="right">
-          <button type="button" onClick={() => onZen()}>
-            <kbd>z</kbd>zen
-          </button>
-        </div>
-      </div>
+      </>}>
+        <button type="button" onClick={() => onZen()}>
+          <kbd>z</kbd>zen
+        </button>
+        <span aria-current="page">fleet</span>
+        <button type="button" onClick={onMemory}>
+          memory
+        </button>
+        <span><kbd>?</kbd>keys</span>
+      </InstrumentHeader>
 
       <div class="fleet-body">
         <div ref={manifestRef} class="fleet-manifest">
@@ -369,7 +387,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 </tr>
               </thead>
               <tbody>
-                {processes.slice(0, processLimit).map((process) => (
+                {shownProcesses.map((process) => (
                   <tr
                     key={process.pid}
                     data-row={processRow(process.pid)}
@@ -391,9 +409,9 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
                 {processes.length > PROCESS_PAGE ? (
                   <tr class={`more${selected === moreRow ? " is-sel" : ""}`} data-row={moreRow} tabIndex={0} onClick={() => setSelected(moreRow)}>
                     <td colSpan={6}>
-                      {processLimit < processes.length ? (
-                        <button type="button" onClick={() => setProcessLimit(processLimit + 20)}>
-                          show {Math.min(20, processes.length - processLimit)} more of {processes.length}
+                      {shownProcesses.length < processes.length ? (
+                        <button type="button" onClick={() => setProcessLimit(shownProcesses.length + 20)}>
+                          show {Math.min(20, processes.length - shownProcesses.length)} more of {processes.length}
                         </button>
                       ) : (
                         <button type="button" onClick={() => setProcessLimit(PROCESS_PAGE)}>
@@ -487,6 +505,18 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
               lines={shownLedger.filter((line) => line.processId === selectedProcess.pid).slice(0, 8)}
               placeLabelFor={placeLabel}
             />
+          ) : missingRequestedRow ? (
+            <div>
+              <h3>{requestedKind === "process" ? "Process" : "Place"}</h3>
+              <div class="sub">{selected?.slice(selected.indexOf(":") + 1)}</div>
+              {!connected || requestedQuery.isPending || requestedQuery.isFetching ? (
+                <p class="note" role="status">{connected ? `Loading ${requestedKind}…` : "Connecting…"}</p>
+              ) : requestedQuery.isError ? (
+                <p class="error" role="alert">Could not load this {requestedKind}: {requestedQuery.error.message}</p>
+              ) : (
+                <p class="note" role="status">This {requestedKind} is unavailable.</p>
+              )}
+            </div>
           ) : (
             <p class="note">{connected ? "Nothing here yet." : "Connecting…"}</p>
           )}

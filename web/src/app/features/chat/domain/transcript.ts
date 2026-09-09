@@ -102,9 +102,12 @@ export type ChatTranscriptRow = {
   processId?: string;
   delivery?: "directed" | "sync";
   conversationSequence?: number;
+  conversationMessageId?: string;
   origin?: InteractionOrigin;
   toolArgs?: ChatTranscriptValue;
   toolCallId?: string;
+  toolStartedAt?: number | null;
+  toolCallRecordKey?: string;
   toolName?: string;
   toolOutcome?: ChatToolOutcome;
   toolOutput?: ChatTranscriptValue;
@@ -398,7 +401,7 @@ export function applyChatSignal(
  *  Fail-safe: anything unmatched renders as a neutral informational row —
  *  a new gateway error format degrades to neutral, never to a false red. */
 export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptRow[] {
-  return transcriptRowsFromRecords(history.records);
+  return transcriptRowsFromRecords(history.records).map((row) => ({ ...row, processId: history.pid }));
 }
 
 function isToolActivityRow(row: Pick<ChatTranscriptRow, "role">): boolean {
