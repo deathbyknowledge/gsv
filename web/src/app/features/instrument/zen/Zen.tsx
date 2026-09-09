@@ -833,7 +833,7 @@ export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid
           ))}
         </div>
         {empty ? (
-          pidProp ? <div class="zen-empty"><p>This helper has no messages yet.</p></div> : <FirstDay places={onlinePlaces} onFleet={onFleet} onSettings={onSettings} />
+          pidProp ? <div class="zen-empty"><p>This helper has no messages yet.</p></div> : <FirstDay />
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} />
         ) : (
