@@ -6,11 +6,12 @@ import { listLibraryCollections, saveLibraryPage } from "../../gsv-console/libra
 import { libraryPathInDb } from "../../gsv-console/library/libraryModel";
 import type { MemoryPageRef } from "../shared/navigation";
 import type { LibrarySavePageInput, LibraryEntry } from "../../gsv-console/library/libraryTypes";
-import { renderMarkdownHtml } from "../shared/markdown";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { INSTRUMENT_MEMORY_KEY as MEMORY_KEY } from "../wire/queryKeys";
 import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
 import { refreshSavedMemoryPage } from "./memoryQueries";
+import { MemoryArticle } from "./MemoryArticle";
+import { memoryLinkFromUrl, type MemoryLink } from "./memoryLinks";
 import "./memory.css";
 
 export type MemoryProps = {
@@ -30,8 +31,10 @@ export type MemoryProps = {
 export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
-  const [db, setDb] = useState<string | null>(initialPage?.db ?? null);
-  const [path, setPath] = useState<string | null>(initialPage?.path ?? null);
+  const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
+  const [db, setDb] = useState<string | null>(initialPage?.db ?? locationPage?.db ?? null);
+  const [path, setPath] = useState<string | null>(initialPage?.path ?? locationPage?.path ?? null);
+  const [fragment, setFragment] = useState(initialPage ? "" : locationPage?.fragment ?? "");
   const [query, setQuery] = useState("");
   const [asked, setAsked] = useState("");
   const [editor, setEditor] = useState<LibrarySavePageInput | null>(null);
@@ -43,6 +46,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
     if (!initialPage) return;
     setDb(initialPage.db);
     setPath(initialPage.path);
+    setFragment("");
     setEditor(null);
     setStatus(null);
   }, [initialPage?.db, initialPage?.path]);
@@ -99,6 +103,14 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
 
   const open = useCallback((entry: LibraryEntry) => {
     setPath(entry.path);
+    setFragment("");
+    setEditor(null);
+    setStatus(null);
+  }, []);
+  const openLink = useCallback((link: MemoryLink) => {
+    setDb(link.db);
+    setPath(link.path);
+    setFragment(link.fragment);
     setEditor(null);
     setStatus(null);
   }, []);
@@ -203,6 +215,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
                       class={entry.id === selectedDb ? "is-sel" : ""}
                       onClick={() => {
                         setDb(entry.id);
+                        setFragment("");
                         setPath(null);
                         setEditor(null);
                         setStatus(null);
@@ -312,7 +325,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
                     onKeyDown={onEditorKey}
                   />
                 ) : (
-                  <article class="prose" dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(note.markdown) }} />
+                  <MemoryArticle note={note} db={selectedDb} fragment={fragment} onOpen={openLink} />
                 )}
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (

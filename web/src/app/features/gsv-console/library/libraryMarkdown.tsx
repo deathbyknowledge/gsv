@@ -2,11 +2,8 @@ import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { useEffect, useRef } from "preact/hooks";
 import { z } from "zod";
-import {
-  normalizeDbScopedLibraryPath,
-  normalizeLibraryPath,
-  prepareLibraryArticleMarkdown,
-} from "./libraryModel";
+import { prepareLibraryArticleMarkdown } from "./libraryModel";
+import { assignLibraryHeadingIds, resolveLibraryLink } from "./libraryLinks";
 import type {
   LibraryNote,
   LibraryPreviewPayload,
@@ -107,14 +104,7 @@ function renderArticleInto(container: HTMLElement, options: RenderOptions): () =
   });
   container.innerHTML = article ? renderMarkdownHtml(article) : '<div class="gsv-library-empty-copy">This page has no body yet.</div>';
   const cleanups: Array<() => void> = [];
-  const seenHeadingIds = new Map<string, number>();
-
-  container.querySelectorAll("h2, h3, h4, h5, h6").forEach((node) => {
-    const base = slugifyHeading(node.textContent || "");
-    const count = seenHeadingIds.get(base) || 0;
-    seenHeadingIds.set(base, count + 1);
-    node.id = count === 0 ? base : `${base}-${count + 1}`;
-  });
+  assignLibraryHeadingIds(container);
 
   container.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
     const href = anchor.getAttribute("href") || "";
@@ -122,7 +112,7 @@ function renderArticleInto(container: HTMLElement, options: RenderOptions): () =
     if (internalPath) {
       anchor.href = "#";
       anchor.dataset.previewKind = "page";
-      const request: LibraryPreviewRequest = { kind: "page", db: options.selectedDb, path: internalPath };
+      const request: LibraryPreviewRequest = { kind: "page", db: internalPath.split("/")[0], path: internalPath };
       const onClick = (event: MouseEvent) => {
         event.preventDefault();
         options.onPreviewClose(true);
@@ -225,35 +215,6 @@ function renderMarkdownHtml(markdown: string): string {
   return DOMPurify.sanitize(html.success ? html.data : String(parsed));
 }
 
-function resolveLibraryLink(rawHref: string, selectedDb: string, selectedPath: string): string | null {
-  const href = rawHref.trim();
-  if (!href || /^(https?:|mailto:|#)/i.test(href) || /^[a-z0-9._-]+:\/\//i.test(href)) {
-    return null;
-  }
-  const cleanHref = href.split("#")[0]?.split("?")[0]?.trim() || "";
-  if (!cleanHref) {
-    return null;
-  }
-  const trimmedHref = cleanHref.replace(/^\.\//, "");
-
-  if (selectedDb && (trimmedHref === `${selectedDb}/index.md` || trimmedHref.startsWith(`${selectedDb}/pages/`))) {
-    return normalizeLibraryPath(trimmedHref);
-  }
-  if (selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/"))) {
-    return normalizeDbScopedLibraryPath(trimmedHref, selectedDb);
-  }
-  if (/^[a-z0-9._-]+\/(index\.md|pages\/)/i.test(trimmedHref)) {
-    return normalizeLibraryPath(trimmedHref);
-  }
-  if (selectedPath && !cleanHref.startsWith("/")) {
-    const basePath = normalizeLibraryPath(selectedPath);
-    const baseDir = basePath.includes("/") ? basePath.slice(0, basePath.lastIndexOf("/") + 1) : "";
-    const resolved = new URL(cleanHref, `https://library.local/${baseDir}`).pathname.replace(/^\/+/, "");
-    return resolved ? normalizeLibraryPath(resolved) : null;
-  }
-  return null;
-}
-
 function parseRenderedSourceRef(value: string): { target: string; path: string; title: string } | null {
   const text = value.trim();
   const match = text.match(/^\[([^\]]+)\]\s+(.+?)(?:\s+\|\s+(.+))?$/);
@@ -265,15 +226,6 @@ function parseRenderedSourceRef(value: string): { target: string; path: string; 
     path: match[2].trim(),
     title: match[3]?.trim() || "",
   };
-}
-
-function slugifyHeading<T>(value: T): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-") || "section";
 }
 
 function escapeHtml<T>(value: T): string {

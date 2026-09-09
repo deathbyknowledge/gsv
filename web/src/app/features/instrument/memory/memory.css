@@ -144,6 +144,7 @@
 .memory-page .prose h1:first-child, .memory-page .prose h2:first-child { margin-top: 0; }
 .memory-page .prose p { margin: 0 0 0.8em; }
 .memory-page .prose a { color: var(--path); }
+.memory-page .prose [id] { scroll-margin-top: calc(var(--instrument-header-height) + 64px); }
 .memory-page .prose code { font-family: var(--gsv-font-mono); font-size: 0.85em; color: var(--path); }
 .memory-page .prose pre { font-family: var(--gsv-font-mono); font-size: 12px; overflow-x: auto; padding: 10px 12px; border: 1px solid var(--border); }
 .memory-page .prose ul, .memory-page .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
