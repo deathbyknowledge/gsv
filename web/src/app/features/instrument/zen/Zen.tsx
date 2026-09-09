@@ -86,7 +86,7 @@ const HISTORY_LIMIT = 400;
 const RESOLVE_FRAME_MS = 60;
 /** How long a message that arrived whole takes to settle out of glyph noise: brisk for a line, longer for a page, never a wait. */
 function settleDuration(length: number): number {
-  return Math.min(680, Math.max(400, length * 0.85));
+  return Math.min(430, Math.max(250, length * 0.54));
 }
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
 const SETTLE_ON_LOAD = 12;
