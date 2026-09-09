@@ -1,7 +1,7 @@
 import { LoadingState } from "../../../components/ui/Spinner";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { useQuery } from "@tanstack/preact-query";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../gsv-console/backend/consoleService";
 import { SettingsError } from "./settingsShared";
@@ -30,8 +30,8 @@ export function Settings({ onZen, onFleet, onMemory, onDirtyChange }: SettingsPr
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
   const integrationsDirty = useCallback((value: boolean) => setDirty((old) => old.integrations === value ? old : { ...old, integrations: value }), []);
   const hasDrafts = Object.values(dirty).some(Boolean);
-  useEffect(() => { onDirtyChange?.(hasDrafts); }, [hasDrafts, onDirtyChange]);
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  useLayoutEffect(() => { onDirtyChange?.(hasDrafts); }, [hasDrafts, onDirtyChange]);
+  useLayoutEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   useEffect(() => {
     if (!hasDrafts) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { AddModel } from "./AddModel";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../components/ui/AgentEditor";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { aiProviderDisplayLabel } from "../../../domain/aiProviders";
@@ -22,6 +22,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const [addingModel, setAddingModel] = useState(false);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
+  const drag = useRef<{ id: string; x: number; y: number; moved: boolean; to: number | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const editable = connected && !config.isError && !!config.data && canConfigure(account, "sys.config.set");
@@ -63,8 +64,8 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     {connected && (config.isPending || models.isPending) && <LoadingState variant="panel">Loading preferences…</LoadingState>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">Your account can view these preferences but cannot change them.</p>}
     {addingModel && models.data && config.data ? <AddModel account={account} config={config.data} models={models.data} active={active} onDirty={setModelDraftDirty} onCancel={() => {
-      if (!modelDraftDirty || window.confirm("Discard this unsaved model?")) setAddingModel(false);
-    }} onAdded={() => { setAddingModel(false); setSaved("model-added"); }} /> : <>
+      if (!modelDraftDirty || window.confirm("Discard this unsaved model?")) { setModelDraftDirty(false); setAddingModel(false); }
+    }} onAdded={() => { setModelDraftDirty(false); setAddingModel(false); setSaved("model-added"); }} /> : <>
     <div class="settings-model-heading"><h2>Model order</h2><button class="ibtn" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setAddingModel(true); }}>add model</button></div>
     {orderDirty && <p class="settings-muted">Save or discard your order changes before adding a model.</p>}
     {saved === "model-added" && <p role="status">Model added to your stack.</p>}
@@ -73,22 +74,36 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       event.preventDefault();
       if (stackEditable && order && orderDirty && !saving) saveOrder.mutate(order);
     }}>
-      <ol class="settings-model-stack">{rows.map((model, index) => {
+      <ol class="settings-model-stack" aria-label="Model fallback order">{rows.map((model, index) => {
         const own = model.source === editableModelSource(account.uid);
         const ownIndex = ownRows.findIndex((entry) => entry.id === model.id);
-        return <li key={model.id} data-model-id={model.id} class={dropTarget === model.id ? "is-drop-target" : ""} onDragOver={(event) => {
-          if (!dragging || !own || !stackEditable || saving) return;
-          event.preventDefault();
-          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-          setDropTarget(model.id);
-        }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }} onDrop={(event) => {
-          if (!dragging || !own || !models.data || !order || !stackEditable || saving) return;
-          event.preventDefault();
-          updateOrder(moveModelTo(models.data, order, account.uid, dragging, ownIndex));
+        const draggable = own && ownRows.length > 1 && stackEditable && !saving;
+        return <li key={model.id} data-model-id={model.id} class={`${draggable ? "is-draggable" : ""}${dragging === model.id ? " is-dragging" : ""}${dropTarget === model.id ? " is-drop-target" : ""}`} onPointerDown={(event) => {
+          if (!draggable || event.button !== 0 || (event.target as Element).closest("button, a, input")) return;
+          drag.current = { id: model.id, x: event.clientX, y: event.clientY, moved: false, to: null };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }} onPointerMove={(event) => {
+          const current = drag.current;
+          if (!current || current.id !== model.id) return;
+          if (!current.moved && Math.hypot(event.clientX - current.x, event.clientY - current.y) < 5) return;
+          current.moved = true;
+          setDragging(current.id);
+          const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(".settings-model-stack > li");
+          const to = ownRows.findIndex((entry) => entry.id === row?.dataset.modelId);
+          current.to = to >= 0 ? to : null;
+          setDropTarget(to >= 0 ? ownRows[to].id : null);
+        }} onPointerUp={(event) => {
+          const current = drag.current;
+          if (!current || current.id !== model.id) return;
+          if (current.moved && current.to !== null && models.data && order && stackEditable && !saving) {
+            updateOrder(moveModelTo(models.data, order, account.uid, current.id, current.to));
+          }
+          drag.current = null;
           setDragging(null);
           setDropTarget(null);
-        }}>
-          <span class="settings-model-position">{index === 0 ? "First choice" : `Fallback ${index}`}</span>
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }} onLostPointerCapture={() => { drag.current = null; setDragging(null); setDropTarget(null); }}>
+          <span class="settings-model-position">{draggable && <span class="settings-model-grip" aria-hidden="true">⠿</span>}{index === 0 ? "First choice" : `Fallback ${index}`}</span>
           <div class="settings-model-details">
             <strong>{model.name}</strong>
             <span>{aiProviderDisplayLabel(model.provider)} / {model.model}</span>
@@ -97,11 +112,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
           <div class="settings-actions">
             {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, account.uid, model.id)); }}>use first</button>}
             {own && ownRows.length > 1 && <>
-              <button class="ibtn settings-model-drag" type="button" draggable={stackEditable && !saving} aria-label={`Drag to reorder ${model.name}; use the arrow buttons with a keyboard`} title="Drag to reorder" disabled={!stackEditable || saving} onDragStart={(event) => {
-                if (!stackEditable || saving) { event.preventDefault(); return; }
-                setDragging(model.id);
-                if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", model.id); }
-              }} onDragEnd={() => { setDragging(null); setDropTarget(null); }}>⠿</button>
               <button class="ibtn" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || ownIndex === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, -1)); }}>↑</button>
               <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || ownIndex === ownRows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, 1)); }}>↓</button>
             </>}

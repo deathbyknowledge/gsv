@@ -971,7 +971,7 @@ function ToolApprovalSettingsGroup({
   );
 }
 
-export function ModelProfileForm({
+function ModelProfileForm({
   config,
   defaultValues,
   editable,
@@ -981,7 +981,6 @@ export function ModelProfileForm({
   targets,
   viewer,
   onCancel,
-  onDirtyChange,
   onCheckOpenAiCodexOAuth,
   onDelete,
   onPollOpenAiCodexOAuth,
@@ -999,7 +998,6 @@ export function ModelProfileForm({
   targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   onCancel: () => void;
-  onDirtyChange?: (dirty: boolean) => void;
   onCheckOpenAiCodexOAuth: () => Promise<boolean>;
   onDelete?: () => Promise<void>;
   onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
@@ -1092,8 +1090,6 @@ export function ModelProfileForm({
     clearedSecretKeys.size > 0 ||
     JSON.stringify(drafts) !== JSON.stringify(initialValues);
   useUnsavedGuard(() => dirty);
-  useEffect(() => { onDirtyChange?.(dirty || pending); }, [dirty, pending, onDirtyChange]);
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const run = async (action: () => Promise<void>, successText: string, label = "SAVING") => {
     setPending(true);

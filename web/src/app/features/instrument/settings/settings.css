@@ -35,15 +35,25 @@
 .settings-model-stack .settings-actions { justify-content: flex-end; }
 .settings-model-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5rem; margin-top: 2.5rem; }
 .settings-model-heading h2 { margin: 0; }
-.settings-model-drag { cursor: grab; font-size: 1.1rem; }
-.settings-model-drag:active { cursor: grabbing; }
+.settings-model-stack > li.is-draggable { cursor: grab; touch-action: none; user-select: none; }
+.settings-model-stack > li.is-dragging { cursor: grabbing; opacity: .55; }
+.settings-model-stack:has(.is-dragging) { cursor: grabbing; }
+.settings-model-grip { display: inline-block; margin-right: .5rem; font-size: 1rem; color: var(--faint); }
+.settings-model-stack > li.is-draggable:hover .settings-model-grip { color: var(--accent); }
 .settings-model-stack > li.is-drop-target { border-color: var(--accent); background: var(--wash); }
 .settings-model-editor { padding: 0 0 2rem; }
-.settings-model-editor .gsv-console-model-form { background: transparent; border: 0; box-shadow: none; padding: 0; }
-.settings-model-editor .gsv-console-model-wizard-copy h3 { color: var(--text); font-family: var(--gsv-font-prose); }
-.settings-model-editor .gsv-console-model-wizard-copy p { color: var(--text-dim); }
-.settings-model-editor .gsv-console-settings-actions { margin-top: 1rem; }
-.settings-model-editor label.gsv-rd-click, .settings-model-editor label.gsv-cb { flex-direction: row; align-items: center; gap: .6rem; margin: 0; }
+.settings-add-model { max-width: 34rem; padding-top: 1.5rem; }
+.settings-add-model label { gap: .5rem; }
+.settings-add-model label small { font-size: .7rem; }
+.settings-text-action { border: 0; padding: .25rem 0; background: none; color: var(--text-dim); font: inherit; font-size: .75rem; cursor: pointer; }
+.settings-text-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.settings-text-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.settings-model-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; }
+.settings-model-options summary { cursor: pointer; font-size: .8rem; color: var(--text-dim); }
+.settings-model-options[open] summary { margin-bottom: 1.5rem; }
+.settings-model-login { margin-bottom: 1.5rem; }
+.settings-model-login a { color: var(--accent); }
+.settings-login-code { color: var(--text); letter-spacing: .15em; }
 .settings-telegram { padding-bottom: 1rem; }
 .settings-telegram-flow { margin-top: 1.5rem; }
 .settings-telegram-step { font-size: .8rem; color: var(--text-dim); margin-bottom: 1rem; }

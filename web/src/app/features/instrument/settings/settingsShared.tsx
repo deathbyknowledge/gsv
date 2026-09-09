@@ -1,4 +1,4 @@
-import { useEffect } from "preact/hooks";
+import { useLayoutEffect } from "preact/hooks";
 import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
 
 export type SettingsSectionProps = {
@@ -8,7 +8,7 @@ export type SettingsSectionProps = {
 };
 
 export function useSettingsDirty(dirty: boolean, report: (dirty: boolean) => void) {
-  useEffect(() => { report(dirty); }, [dirty, report]);
+  useLayoutEffect(() => { report(dirty); }, [dirty, report]);
 }
 
 export function SettingsError({ error }: { error: Error | null }) {
