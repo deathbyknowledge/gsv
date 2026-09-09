@@ -141,6 +141,21 @@ describe("ConfigStore", () => {
     },
   );
 
+  it("validates personal model orders at the shared config boundary", () =>
+    runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql);
+      const key = "users/1000/ai/model_order";
+      store.set(key, '[" included ","new-model"]');
+      expect(store.get(key)).toBe('["included","new-model"]');
+      for (const value of ['["included","included"]', '["bad/id"]', '{}', 'oops']) {
+        expect(() => store.set(key, value)).toThrow("Invalid AI model order");
+        expect(store.get(key)).toBe('["included","new-model"]');
+      }
+      store.set(key, "");
+      expect(store.getExplicit(key)).toBeNull();
+    }),
+  );
+
   it("defines lean common process context once for all profiles", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
     expect(context).toContain("GSV is a personal intelligence OS");

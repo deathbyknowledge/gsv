@@ -1,9 +1,11 @@
 import type { AiModelEntry, AiModelSource, AiModelStack } from "@humansandmachines/gsv/protocol";
+import { orderAiModelIds } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 export const SYSTEM_AI_MODELS_CONFIG_KEY = "config/ai/models";
 
 const MODEL_ENTRY_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const storedAiModelOrderSchema = z.array(z.string().trim().regex(MODEL_ENTRY_ID_PATTERN));
 const optionalTextSchema = z.string().trim().min(1).optional();
 const positiveIntegerSchema = z.number().int().positive().optional();
 const storedAiModelEntrySchema = z.object({
@@ -24,6 +26,15 @@ const storedAiModelStackSchema = z.object({
 
 export function userAiModelsConfigKey(ownerUid: number): string {
   return `users/${ownerUid}/ai/models`;
+}
+
+export function parseAiModelOrder(raw: string): string[] | null {
+  try {
+    const parsed = storedAiModelOrderSchema.safeParse(JSON.parse(raw));
+    return parsed.success && new Set(parsed.data).size === parsed.data.length ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 export function aiModelApiKeyConfigKey(scopeKey: string, modelId: string): string {
@@ -129,19 +140,14 @@ export function layerAiModelStacks(layers: {
 }
 
 /** Moves the preferred entry to the front; the rest keep their layered order. */
+// An owner's saved ID order takes precedence over layered order when supplied.
 export function orderEffectiveAiModels(
   entries: readonly EffectiveAiModelEntry[],
   preferredModelId: string | null | undefined,
+  modelOrder?: readonly string[],
 ): EffectiveAiModelEntry[] {
-  const preferred = preferredModelId?.trim().toLowerCase();
-  if (!preferred) {
-    return [...entries];
-  }
-  const index = entries.findIndex((item) => item.entry.id.toLowerCase() === preferred);
-  if (index <= 0) {
-    return [...entries];
-  }
-  return [entries[index], ...entries.slice(0, index), ...entries.slice(index + 1)];
+  const byId = new Map(entries.map((item) => [item.entry.id, item]));
+  return orderAiModelIds([...byId.keys()], modelOrder, preferredModelId).map((id) => byId.get(id)!);
 }
 
 export function orderAiModelStack(

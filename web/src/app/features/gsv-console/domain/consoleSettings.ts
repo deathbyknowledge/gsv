@@ -1,4 +1,4 @@
-import type { AiModelListEntry, AiModelSource, AiModelsResult } from "@humansandmachines/gsv/protocol";
+import { orderAiModelIds, type AiModelListEntry, type AiModelSource, type AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
@@ -493,7 +493,9 @@ export function modelProfilesFromListing(
     return [];
   }
   // Display order: the preferred entry first, as generation will run it.
-  return promotePreferred(storedModelProfiles(listing, config, uid), listing.preferredModelId);
+  const profiles = storedModelProfiles(listing, config, uid);
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+  return orderAiModelIds([...byId.keys()], listing.modelOrder, listing.preferredModelId).map((id) => byId.get(id)!);
 }
 
 /**
@@ -532,16 +534,6 @@ function storedModelProfiles(
     );
   }
   return profiles;
-}
-
-function promotePreferred(
-  profiles: readonly ConsoleModelProfile[],
-  preferredModelId: string | null,
-): ConsoleModelProfile[] {
-  const preferred = preferredModelId?.toLowerCase();
-  const index = preferred ? profiles.findIndex((profile) => profile.id.toLowerCase() === preferred) : -1;
-  if (index <= 0) return [...profiles];
-  return [profiles[index], ...profiles.slice(0, index), ...profiles.slice(index + 1)];
 }
 
 export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[]): string {

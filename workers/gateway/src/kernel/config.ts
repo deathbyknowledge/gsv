@@ -25,6 +25,7 @@ import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
   isAiModelStackConfigKey,
+  parseAiModelOrder,
   isSameAiModelCredentialScope,
   parseAiModelApiKeyConfigKey,
   parseAiModelStack,
@@ -148,6 +149,12 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    if (/^users\/\d+\/ai\/model_order$/.test(key)) {
+      if (!value.trim()) { this.delete(key); return; }
+      const order = parseAiModelOrder(value);
+      if (!order) throw new Error(`Invalid AI model order at /sys/${key}`);
+      value = JSON.stringify(order);
+    }
     const credential = parseAiModelApiKeyConfigKey(key);
     if (credential) {
       const stack = parseAiModelStack(this.get(credential.stackKey));

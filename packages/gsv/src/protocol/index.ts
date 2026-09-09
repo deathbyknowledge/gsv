@@ -20,6 +20,7 @@ export {
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/ai";
+export { orderAiModelIds } from "./syscalls/ai";
 export type * from "./syscalls/mail";
 export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";

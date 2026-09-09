@@ -27,11 +27,10 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const [saved, setSaved] = useState<string | null>(null);
   const editable = connected && !config.isError && !!config.data && canConfigure(account, "sys.config.set");
   const stackEditable = editable && !!models.data && !models.isError;
-  const originalOrder = models.data ? configuredModelOrder(models.data, account.uid) : null;
+  const originalOrder = models.data ? configuredModelOrder(models.data) : null;
   const order = orderDraft ?? originalOrder;
   const orderDirty = !!orderDraft && JSON.stringify(orderDraft) !== JSON.stringify(originalOrder);
-  const rows = models.data && order ? orderedModels(models.data, order, account.uid) : [];
-  const ownRows = rows.filter((model) => model.source === editableModelSource(account.uid));
+  const rows = models.data && order ? orderedModels(models.data, order) : [];
   const reasoningKey = `users/${account.uid}/ai/reasoning`;
   const originalReasoning = config.data?.find((entry) => entry.key === reasoningKey)?.value ?? "";
   const reasoning = reasoningDraft ?? originalReasoning;
@@ -76,8 +75,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     }}>
       <ol class="settings-model-stack" aria-label="Model fallback order">{rows.map((model, index) => {
         const own = model.source === editableModelSource(account.uid);
-        const ownIndex = ownRows.findIndex((entry) => entry.id === model.id);
-        const draggable = own && ownRows.length > 1 && stackEditable && !saving;
+        const draggable = rows.length > 1 && stackEditable && !saving;
         return <li key={model.id} data-model-id={model.id} class={`${draggable ? "is-draggable" : ""}${dragging === model.id ? " is-dragging" : ""}${dropTarget === model.id ? " is-drop-target" : ""}`} onPointerDown={(event) => {
           if (!draggable || event.button !== 0 || (event.target as Element).closest("button, a, input")) return;
           drag.current = { id: model.id, x: event.clientX, y: event.clientY, moved: false, to: null };
@@ -89,14 +87,14 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
           current.moved = true;
           setDragging(current.id);
           const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(".settings-model-stack > li");
-          const to = ownRows.findIndex((entry) => entry.id === row?.dataset.modelId);
+          const to = rows.findIndex((entry) => entry.id === row?.dataset.modelId);
           current.to = to >= 0 ? to : null;
-          setDropTarget(to >= 0 ? ownRows[to].id : null);
+          setDropTarget(to >= 0 ? rows[to].id : null);
         }} onPointerUp={(event) => {
           const current = drag.current;
           if (!current || current.id !== model.id) return;
           if (current.moved && current.to !== null && models.data && order && stackEditable && !saving) {
-            updateOrder(moveModelTo(models.data, order, account.uid, current.id, current.to));
+            updateOrder(moveModelTo(models.data, order, current.id, current.to));
           }
           drag.current = null;
           setDragging(null);
@@ -110,20 +108,20 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
             <small>{own ? account.uid === 0 ? "Installation model" : "Your model" : model.source === "base" ? "Included model" : "Shared model"}</small>
           </div>
           <div class="settings-actions">
-            {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, account.uid, model.id)); }}>use first</button>}
-            {own && ownRows.length > 1 && <>
-              <button class="ibtn" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || ownIndex === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, -1)); }}>↑</button>
-              <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || ownIndex === ownRows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, 1)); }}>↓</button>
+            {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, model.id)); }}>use first</button>}
+            {rows.length > 1 && <>
+              <button class="ibtn" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || index === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, -1)); }}>↑</button>
+              <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || index === rows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, 1)); }}>↓</button>
             </>}
           </div>
         </li>;
       })}</ol>
       {models.data?.models.length === 0 && <p>No models are available.</p>}
-      {rows.some((model) => model.source !== editableModelSource(account.uid)) && <p class="settings-muted">Shared and included models keep their configured fallback order. You can still choose one to go first.</p>}
+      {rows.length > 1 && <p class="settings-muted">Drag a model or use the arrows to change your fallback order.</p>}
       <div class="settings-actions">
         <button class="ibtn" disabled={!stackEditable || saving || !orderDirty} type="submit">{saveOrder.isPending ? <LoadingState>saving…</LoadingState> : "save model order"}</button>
         {orderDirty && <button class="ibtn" type="button" disabled={saving} onClick={() => { setOrderDraft(null); saveOrder.reset(); }}>discard changes</button>}
-        {order?.preferredId && <button class="ibtn" type="button" disabled={!stackEditable || saving} onClick={() => updateOrder({ ...order, preferredId: null })}>use configured order</button>}
+        {order?.customized && <button class="ibtn" type="button" disabled={!stackEditable || saving} onClick={() => { if (models.data) updateOrder({ ids: models.data.models.map((model) => model.id), customized: false }); }}>use configured order</button>}
         {saved === "models" && <span role="status">saved</span>}
       </div>
     </form>

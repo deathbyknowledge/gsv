@@ -204,6 +204,9 @@ describe("console settings domain", () => {
     };
 
     expect(modelProfilesFromListing(listing, [], 42).map((profile) => profile.id)).toEqual(["b", "a", "gsv-included"]);
+    const ordered = { ...listing, modelOrder: ["gsv-included", "b", "a"], preferredModelId: null };
+    expect(modelProfilesFromListing(ordered, [], 42).map((profile) => profile.id)).toEqual(["gsv-included", "b", "a"]);
+    expect(writableModelProfiles(ordered, [], 42).map((profile) => profile.id)).toEqual(["a", "b"]);
     expect(writableModelProfiles(listing, [], 42).map((profile) => profile.id)).toEqual(["a", "b"]);
     expect(writableModelProfiles(listing, [], 0)).toEqual([]);
   });

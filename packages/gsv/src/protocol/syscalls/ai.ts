@@ -108,12 +108,28 @@ export type AiModelListEntry = AiModelEntry & {
  * layer in its configured order. Generation moves `preferredModelId` to the
  * front; the listing keeps the stored order so a client can edit a layer
  * without baking that preference into it.
+ * `modelOrder`, when present, is applied before the first-choice preference.
  */
 export type AiModelsResult = {
   models: AiModelListEntry[];
   /** Stable id of the entry generation runs first, when a valid preference is set. */
   preferredModelId: string | null;
+  /** Owner's optional ID order across layers; unknown IDs are skipped and unlisted models follow. */
+  modelOrder?: string[];
 };
+
+/** Resolve fallback order without changing model definitions or their credential scope. */
+export function orderAiModelIds(
+  availableIds: readonly string[],
+  modelOrder: readonly string[] = [],
+  preferredModelId?: string | null,
+): string[] {
+  const available = new Map(availableIds.map((id) => [id.toLowerCase(), id]));
+  return [...new Set([preferredModelId ?? "", ...modelOrder, ...availableIds].flatMap((id) => {
+    const canonical = available.get(id.trim().toLowerCase());
+    return canonical ? [canonical] : [];
+  }))];
+}
 
 export type AiConfigArgs = {
   /**
