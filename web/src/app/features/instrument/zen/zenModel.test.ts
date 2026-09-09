@@ -319,14 +319,22 @@ describe("filesystem operation presentation", () => {
     const search = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
       toolArgs: { query: "needle", path: "/tmp", include: "*.txt" },
     });
-    expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp" });
-    expect(search.output).toBe("/tmp/hit.txt");
+    expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "1 result" });
+    expect(search.output).toBe("");
     const noScope = present("fs.search", { ok: true, matches: [], count: 0 }, { toolArgs: { query: "needle" } });
-    expect(noScope.operation).toEqual({ label: "searched", subject: "needle" });
+    expect(noScope.operation).toEqual({ label: "searched", subject: "needle", detail: "0 results" });
+    expect(noScope.output).toBe("");
+    const truncated = present("fs.search", { ok: true, matches: [], count: 25, truncated: true }, { toolArgs: { query: "needle" } });
+    expect(truncated.operation).toEqual({ label: "searched", subject: "needle", detail: "25+ results" });
+    expect(truncated.output).toBe("");
     const unknown = present("fs.search", { matches: [] }, { toolArgs: { query: "needle", path: "/tmp" } });
     expect(unknown.operation?.label).toBe("search");
     const failed = present("fs.search", { ok: false, error: "search rejected" }, { toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed" });
     expect(failed).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search rejected", failed: true });
+    const interrupted = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
+      toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed", text: "search interrupted",
+    });
+    expect(interrupted).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search interrupted", failed: true });
   });
 
   it("does not invent search terms or filesystem operations from tool text", () => {
@@ -342,7 +350,7 @@ describe("filesystem operation presentation", () => {
       row({ id: "result", role: "toolResult", status: "done", toolCallId: "search", toolSyscall: "fs.search", toolTarget: "gsv", toolOutcome: "completed", toolOutput: { ok: true, matches: [], count: 0 } }),
     ], "run", false)[0].calls;
     expect(calls).toHaveLength(1);
-    expect(calls[0].operation).toEqual({ label: "searched", subject: "needle in /tmp" });
+    expect(calls[0].operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "0 results" });
   });
 });
 

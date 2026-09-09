@@ -204,7 +204,7 @@ const fileEditResultSchema = z.object({ ok: z.literal(true), path: z.string(), r
 const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
-const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative() });
+const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative(), truncated: z.boolean().optional() });
 const filesystemOperationVerbs = new Map([
   ["fs.read", ["read", "reading", "read"]],
   ["fs.write", ["write", "writing", "wrote"]],
@@ -310,7 +310,14 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   if (syscall === "fs.search") {
     const query = stringField(row.toolArgs, "query") ?? "";
     call.operation.subject = [query, path ? `in ${path}` : ""].filter(Boolean).join(" ");
-    if (completed && fileSearchResultSchema.safeParse(row.toolOutput).success) call.operation.label = verb[2];
+    const result = fileSearchResultSchema.safeParse(row.toolOutput);
+    if (completed && result.success) {
+      call.operation.label = verb[2];
+      call.operation.detail = result.data.truncated ? `${result.data.count}+ results` : countLabel(result.data.count, "result");
+      call.output = "";
+    } else if (finished && result.success) {
+      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+    }
   } else if (syscall !== "fs.read") {
     const result = mutationConfirmation(syscall, row.toolOutput);
     if (completed && result) {
