@@ -1,4 +1,4 @@
-import { resolveTail, RESOLVE_TAIL } from "./zenModel";
+import { resolveTail, RESOLVE_GLYPHS, RESOLVE_TAIL } from "./zenModel";
 
 const MASK_NAME = "gsv-zen-glyphs";
 let sharedMask: Highlight | undefined;
@@ -54,7 +54,9 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
       }
       // Keep offscreen text masked too: Zen can scroll a new reply into view before the next frame.
       // A negative progress means a live reply: only its newest glyphs are unsettled.
-      const front = progress < 0 ? glyphs.length : Math.min(glyphs.length, Math.ceil(progress * (glyphs.length + RESOLVE_TAIL)));
+      const streaming = progress < 0;
+      // Start the entire message as glyphs, then let the real text settle from left to right.
+      const front = streaming ? glyphs.length : Math.floor(Math.max(0, (progress - 0.15) / 0.85) * glyphs.length);
       for (const run of runs) {
         if (run.end <= front) continue;
         run.range.setStart(run.node, front <= run.start ? 0 : glyphs[front].start);
@@ -85,30 +87,41 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
       context.fillStyle = getComputedStyle(canvas).color;
       context.textBaseline = "alphabetic";
 
-      const tail = glyphs.slice(Math.max(0, front - RESOLVE_TAIL), front);
-      const resolved = resolveTail(tail.map((glyph) => glyph.text).join(""), Math.random);
+      const start = streaming ? Math.max(0, glyphs.length - RESOLVE_TAIL) : front;
+      const unresolved = glyphs.slice(start);
+      const resolved = streaming ? resolveTail(unresolved.map((glyph) => glyph.text).join(""), Math.random) : null;
       const fonts = new Map<Element, string>();
-      for (let index = 0; index < tail.length; index += 1) {
-        const noise = resolved.tail[index]?.noise;
-        if (!noise) continue;
-        const glyph = tail[index];
-        const range = document.createRange();
-        range.setStart(glyph.node, glyph.start);
-        range.setEnd(glyph.node, glyph.end);
-        const rect = range.getBoundingClientRect();
-        if (rect.bottom <= top || rect.top >= bottom || rect.width === 0) continue;
-        const parent = glyph.node.parentElement!;
-        let font = fonts.get(parent);
-        if (!font) {
-          const style = getComputedStyle(parent);
-          font = `${style.fontStyle} ${style.fontWeight} ${parseFloat(style.fontSize) * scale}px ${style.fontFamily}`;
-          fonts.set(parent, font);
+      // Skip offscreen text in blocks before measuring individual glyphs.
+      const block = document.createRange();
+      for (let first = 0; first < unresolved.length; first += 64) {
+        const end = Math.min(first + 64, unresolved.length);
+        block.setStart(unresolved[first].node, unresolved[first].start);
+        block.setEnd(unresolved[end - 1].node, unresolved[end - 1].end);
+        const blockBounds = block.getBoundingClientRect();
+        if (blockBounds.bottom <= top || blockBounds.top >= bottom || blockBounds.width === 0) continue;
+        for (let index = first; index < end; index += 1) {
+          const glyph = unresolved[index];
+          if (/^\s+$/u.test(glyph.text)) continue;
+          const noise = resolved ? resolved.tail[index]?.noise : RESOLVE_GLYPHS[Math.floor(Math.random() * RESOLVE_GLYPHS.length)];
+          if (!noise) continue;
+          const range = document.createRange();
+          range.setStart(glyph.node, glyph.start);
+          range.setEnd(glyph.node, glyph.end);
+          const rect = range.getBoundingClientRect();
+          if (rect.bottom <= top || rect.top >= bottom || rect.width === 0) continue;
+          const parent = glyph.node.parentElement!;
+          let font = fonts.get(parent);
+          if (!font) {
+            const style = getComputedStyle(parent);
+            font = `${style.fontStyle} ${style.fontWeight} ${parseFloat(style.fontSize) * scale}px ${style.fontFamily}`;
+            fonts.set(parent, font);
+          }
+          context.font = font;
+          const metrics = context.measureText(noise);
+          const baseline = (rect.height + metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2;
+          context.fillText(noise, rect.left - bounds.left, rect.top - top + baseline, rect.width);
+          if (streaming) masked.add(range);
         }
-        context.font = font;
-        const metrics = context.measureText(noise);
-        const baseline = (rect.height + metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2;
-        context.fillText(noise, rect.left - bounds.left, rect.top - top + baseline, rect.width);
-        masked.add(range);
       }
       updateMask();
     },
