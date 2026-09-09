@@ -1,10 +1,17 @@
 import { resolveTail, RESOLVE_GLYPHS, RESOLVE_TAIL } from "./zenModel";
 
 const MASK_NAME = "gsv-zen-glyphs";
-let sharedMask: Highlight | undefined;
+const sharedMask = new Set<Range>();
 
-type Glyph = { node: Text; start: number; end: number; text: string };
-type TextRun = { node: Text; start: number; end: number; range: Range };
+function publishMask(): void {
+  // Publish a fresh highlight so removed ranges repaint as readable text.
+  const highlight = new Highlight();
+  for (const range of sharedMask) highlight.add(range);
+  CSS.highlights.set(MASK_NAME, highlight);
+  if (sharedMask.size === 0) CSS.highlights.delete(MASK_NAME);
+}
+
+type Glyph = { node: Text; start: number; end: number; text: string; scramble: boolean; range?: Range };
 
 export type GlyphReveal = { paint(progress: number): void; dispose(): void };
 
@@ -19,34 +26,36 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
   canvas.setAttribute("aria-hidden", "true");
 
   const glyphs: Glyph[] = [];
-  const runs: TextRun[] = [];
   const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node as Text;
-    const start = glyphs.length;
     for (const part of segmenter.segment(text.data)) {
-      glyphs.push({ node: text, start: part.index, end: part.index + part.segment.length, text: part.segment });
+      // Choose once per reveal so the other letters stay readable throughout.
+      glyphs.push({
+        node: text,
+        start: part.index,
+        end: part.index + part.segment.length,
+        text: part.segment,
+        scramble: !/^\s+$/u.test(part.segment) && Math.random() < 0.4,
+      });
     }
-    runs.push({ node: text, start, end: glyphs.length, range: document.createRange() });
   }
-  const mask = sharedMask ??= new Highlight();
   const masked = new Set<Range>();
   const updateMask = () => {
-    for (const range of masked) mask.add(range);
-    if (mask.size > 0) CSS.highlights.set(MASK_NAME, mask);
-    else CSS.highlights.delete(MASK_NAME);
+    for (const range of masked) sharedMask.add(range);
+    publishMask();
   };
   const clear = () => {
-    for (const range of masked) mask.delete(range);
+    for (const range of masked) sharedMask.delete(range);
     masked.clear();
-    if (mask.size === 0) CSS.highlights.delete(MASK_NAME);
+    publishMask();
     canvas.remove();
   };
 
   return {
     dispose: clear,
     paint(progress) {
-      for (const range of masked) mask.delete(range);
+      for (const range of masked) sharedMask.delete(range);
       masked.clear();
       if (progress >= 1) {
         clear();
@@ -55,13 +64,15 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
       // Keep offscreen text masked too: Zen can scroll a new reply into view before the next frame.
       // A negative progress means a live reply: only its newest glyphs are unsettled.
       const streaming = progress < 0;
-      // Start the entire message as glyphs, then let the real text settle from left to right.
+      // Let the selected glyphs settle from left to right among the readable letters.
       const front = streaming ? glyphs.length : Math.floor(Math.max(0, (progress - 0.15) / 0.85) * glyphs.length);
-      for (const run of runs) {
-        if (run.end <= front) continue;
-        run.range.setStart(run.node, front <= run.start ? 0 : glyphs[front].start);
-        run.range.setEnd(run.node, run.node.length);
-        masked.add(run.range);
+      for (let index = front; index < glyphs.length; index += 1) {
+        const glyph = glyphs[index];
+        if (!glyph.scramble) continue;
+        glyph.range ??= document.createRange();
+        glyph.range.setStart(glyph.node, glyph.start);
+        glyph.range.setEnd(glyph.node, glyph.end);
+        masked.add(glyph.range);
       }
       const bounds = container.getBoundingClientRect();
       const viewport = container.closest(".zen-moments")?.getBoundingClientRect();
@@ -101,10 +112,11 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
         if (blockBounds.bottom <= top || blockBounds.top >= bottom || blockBounds.width === 0) continue;
         for (let index = first; index < end; index += 1) {
           const glyph = unresolved[index];
+          if (!streaming && !glyph.scramble) continue;
           if (/^\s+$/u.test(glyph.text)) continue;
           const noise = resolved ? resolved.tail[index]?.noise : RESOLVE_GLYPHS[Math.floor(Math.random() * RESOLVE_GLYPHS.length)];
           if (!noise) continue;
-          const range = document.createRange();
+          const range = glyph.range ?? document.createRange();
           range.setStart(glyph.node, glyph.start);
           range.setEnd(glyph.node, glyph.end);
           const rect = range.getBoundingClientRect();
