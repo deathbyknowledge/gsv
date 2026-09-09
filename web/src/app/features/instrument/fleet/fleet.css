@@ -52,6 +52,11 @@
   letter-spacing: 0.1em;
   margin-left: auto;
 }
+.fleet-heading-action { border: 0; background: none; padding: 3px 0; color: var(--text-dim); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: lowercase; cursor: pointer; }
+.fleet-heading-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.fleet-heading-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.fleet-heading-action:disabled { opacity: .45; cursor: default; }
+.fleet-heading-action.is-icon { font-size: 16px; line-height: 1; padding-inline: 3px; }
 .fleet-block .note {
   font-size: 12px;
   color: var(--text-dim);

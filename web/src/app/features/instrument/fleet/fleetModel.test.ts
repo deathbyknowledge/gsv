@@ -200,7 +200,7 @@ describe("ledger", () => {
   it("describes a call by the argument a person recognizes", () => {
     expect(describeToolCall("shell.exec", { input: "ls -la", target: "laptop" })).toBe("ls -la");
     expect(describeToolCall("fs.read", { path: "~/Downloads" })).toBe("~/Downloads");
-    expect(describeToolCall("ai.text.generate", { prompt: "x" })).toBe("ai.text.generate");
+    expect(describeToolCall("ai.text.generate", { prompt: "x" })).toBe("");
   });
 
   it("merges newest first and caps", () => {
@@ -268,7 +268,7 @@ describe("humanCall", () => {
     expect(humanCall("fs.read", { path: "/home/e/Downloads/invoice-0231.pdf" })).toBe("read invoice-0231.pdf");
     expect(humanCall("fs.search", { query: "invoice" })).toBe("searched for invoice");
     expect(humanCall("net.fetch", { url: "https://api.github.com/repos" })).toBe("fetched api.github.com");
-    expect(humanCall("ai.generate", undefined)).toBe("thought about it");
+    expect(humanCall("ai.text.generate", undefined)).toBe("generated text");
     expect(humanCall("codemode.exec", { code: "const x = 1;\nreturn x;" })).toBe("ran a script");
   });
   it("collapses a heredoc to one line in the detail", () => {
@@ -277,6 +277,32 @@ describe("humanCall", () => {
 });
 
 describe("ledgerFromSysLines", () => {
+  it("describes the actual records and paths from structured syscall arguments", () => {
+    expect(describeToolCall("sys.target.update", { targetId: "laptop", label: "My laptop" })).toBe("laptop · My laptop");
+    expect(describeToolCall("proc.spawn", { label: "Review", prompt: "private fixture" })).toBe("Review");
+    expect(describeToolCall("contact.alias.set", { contactId: "contact:123", alias: "Alex" })).toBe("Alex");
+    expect(describeToolCall("fs.copy", { source: { target: "gsv", path: "/notes.md" }, destination: { target: "laptop", path: "/tmp/notes.md" } })).toBe("gsv:/notes.md → laptop:/tmp/notes.md");
+  });
+  it("keeps routine reads plain and never fills missing detail with syscall names or arbitrary arguments", () => {
+    const lines = ledgerFromSysLines([
+      sysLine({ call: "sys.ledger.list", args: '{"limit":60}' }),
+      sysLine({ call: "account.list", args: '{}' }),
+      sysLine({ call: "r12y.list", args: '{"states":["open","active","waiting"]}' }),
+      sysLine({ call: "sched.add", args: '{"name":"Morning check","target":{"kind":"process"}}' }),
+      sysLine({ call: "sys.config.set", args: '{"key":"users/1000/ai/reasoning","value":"private fixture"}' }),
+      sysLine({ call: "future.operation", args: '{"secret":"private fixture"}' }),
+    ]);
+    expect(lines.map(({ what, detail }) => ({ what, detail }))).toEqual([
+      { what: "read the ledger", detail: "" },
+      { what: "listed accounts", detail: "" },
+      { what: "listed responsibilities", detail: "open · active · waiting" },
+      { what: "created a schedule", detail: "Morning check" },
+      { what: "changed a setting", detail: "users/1000/ai/reasoning" },
+      { what: "used another capability", detail: "" },
+    ]);
+    expect(lines[4].args).toContain("private fixture");
+  });
+
   it("draws the kernel's lines from their recorded arguments", () => {
     const lines = ledgerFromSysLines([
       sysLine({ seq: 7, timestamp: 5_000, args: JSON.stringify({ input: "ls -la", target: "laptop" }) }),
@@ -286,6 +312,7 @@ describe("ledgerFromSysLines", () => {
     expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", what: "looked around", detail: "ls -la", outcome: "completed", processId: "p1" });
     expect(lines[1]).toMatchObject({ id: "sys:8", what: "read notes.md", outcome: "running", processId: "you" });
     // a line cut at the size bound is not JSON any more; it is shown as the text it is
-    expect(lines[2]).toMatchObject({ what: "ran a script", detail: '{"code":"const x = 1;\\nconst y = "…' });
+    // The plain row now omits it; the technical inspector still retains the exact recorded text.
+    expect(lines[2]).toMatchObject({ what: "ran a script", detail: "", args: '{"code":"const x = 1;\\nconst y = "…' });
   });
 });

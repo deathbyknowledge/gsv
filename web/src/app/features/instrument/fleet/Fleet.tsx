@@ -378,7 +378,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
           <section class="fleet-block">
             <h2>
               <i /> Places <span class="count">{places.length}</span>
-              <button type="button" class="ibtn" disabled={!connected || !viewer || !canConfigure(viewer, "sys.token.create")} onClick={() => connect("place")}>connect</button>
+              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.token.create")} onClick={() => connect("place")}>connect</button>
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
             <div class="tablewrap">
@@ -419,8 +419,8 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
           <section class="fleet-block" aria-label="Contacts">
             <h2>
               <i /> Contacts <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
-              <button type="button" class="ibtn" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
-              <button type="button" class="ibtn" disabled={!connected || !viewer || !canConfigure(viewer, "contact.list") || contactsQuery.isFetching} onClick={() => void contactsQuery.refetch()}>refresh</button>
+              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
+              <button type="button" class="fleet-heading-action is-icon" aria-label="Refresh contacts" title="Refresh contacts" disabled={!connected || !viewer || !canConfigure(viewer, "contact.list") || contactsQuery.isFetching} onClick={() => void contactsQuery.refetch()}><span aria-hidden="true">↻</span></button>
             </h2>
             {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
             {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
@@ -437,7 +437,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
           <section class="fleet-block">
             <h2>
               <i /> Processes <span class="count">{processes.length}</span>
-              {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="ibtn" disabled={!connected} onClick={() => {
+              {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="fleet-heading-action" disabled={!connected} onClick={() => {
                 setSelected(null);
                 setOpenFile(null);
                 setConnecting(null);
@@ -968,10 +968,10 @@ function LineInspector({
             <dd>{line.syscall}</dd>
           </>
         ) : null}
-        <dt>{technical ? "Arguments" : "Detail"}</dt>
-        <dd>
-          <pre class="line-detail">{technical && line.args ? line.args : line.detail}</pre>
-        </dd>
+        {(technical || line.detail) && <>
+          <dt>{technical ? "Arguments" : "Detail"}</dt>
+          <dd><pre class="line-detail">{technical ? line.args : line.detail}</pre></dd>
+        </>}
       </dl>
       <div class="fleet-actions">
         {line.processId !== "you" ? (
@@ -979,9 +979,9 @@ function LineInspector({
             open the conversation
           </button>
         ) : null}
-        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(technical && line.args ? line.args : line.detail)}>
+        {(technical || line.detail) && <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>
           copy
-        </button>
+        </button>}
       </div>
       <p class="note">{technical ? "Raw view. Press t for plain words." : "Press t for the raw syscall and arguments."}</p>
     </div>

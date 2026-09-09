@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ledgerLabel } from "./ledgerLabels";
 import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { AsciiPlanetVariant } from "../../../components/ui/AsciiPlanet";
 import type { ChatTranscriptValue } from "../../chat/domain/transcript";
@@ -188,7 +189,6 @@ export function rowKeys(places: readonly Place[], processes: readonly ConsolePro
 }
 
 const toolArgsSchema = z.object({
-  target: z.string().optional(),
   input: z.string().optional(),
   path: z.string().optional(),
   url: z.string().optional(),
@@ -196,6 +196,24 @@ const toolArgsSchema = z.object({
   code: z.string().optional(),
   script: z.string().optional(),
   model: z.string().optional(),
+  name: z.string().optional(),
+  title: z.string().optional(),
+  key: z.string().optional(),
+  id: z.string().optional(),
+  pid: z.string().optional(),
+  targetId: z.string().optional(),
+  label: z.string().optional(),
+  alias: z.string().nullable().optional(),
+  source: z.object({ path: z.string(), target: z.string().optional() }).optional(),
+  destination: z.object({ path: z.string(), target: z.string().optional() }).optional(),
+  provider: z.string().optional(),
+  username: z.string().optional(),
+  repo: z.string().optional(),
+  ref: z.string().optional(),
+  serverId: z.string().optional(),
+  contactId: z.string().optional(),
+  adapter: z.string().optional(),
+  states: z.array(z.string()).optional(),
 });
 
 type ToolArgs = z.infer<typeof toolArgsSchema>;
@@ -210,8 +228,25 @@ function parseToolArgs(value: ChatTranscriptValue | undefined): ToolArgs {
 /** The argument that matters, collapsed to one line, so a heredoc or a long path never breaks a row. */
 export function describeToolCall(syscall: string, args: ChatTranscriptValue | undefined): string {
   const parsed = parseToolArgs(args);
-  const raw = parsed.input || parsed.path || parsed.url || parsed.query || parsed.code || parsed.script || syscall;
-  return raw.replace(/\s+/g, " ").trim();
+  let detail = "";
+  if (syscall === "shell.exec") detail = parsed.input ?? "";
+  else if (syscall === "fs.copy") detail = [parsed.source, parsed.destination].map((endpoint) => endpoint ? `${endpoint.target ? `${endpoint.target}:` : ""}${endpoint.path}` : "").filter(Boolean).join(" → ");
+  else if (syscall.startsWith("fs.")) detail = [parsed.path, syscall === "fs.search" ? parsed.query : null].filter(Boolean).join(" · ");
+  else if (syscall.startsWith("net.")) detail = parsed.url ?? "";
+  else if (syscall.startsWith("codemode.")) detail = parsed.code || parsed.script || "";
+  else if (syscall.startsWith("ai.")) detail = parsed.model ?? "";
+  else if (syscall.startsWith("sys.config.")) detail = parsed.key ?? "";
+  else if (syscall.startsWith("r12y.")) detail = parsed.title || parsed.id || parsed.states?.join(" · ") || "";
+  else if (syscall.startsWith("repo.")) detail = [parsed.repo, parsed.ref, parsed.path, parsed.query].filter(Boolean).join(" · ");
+  else if (syscall.startsWith("proc.")) detail = parsed.label || parsed.pid || "";
+  else if (syscall.startsWith("sched.")) detail = parsed.name || parsed.id || "";
+  else if (syscall.startsWith("contact.")) detail = parsed.alias || parsed.contactId || "";
+  else if (syscall.startsWith("account.")) detail = parsed.username ?? "";
+  else if (syscall.startsWith("sys.target.")) detail = [parsed.targetId, parsed.label].filter(Boolean).join(" · ");
+  else if (syscall.startsWith("sys.mcp.")) detail = parsed.name || parsed.serverId || "";
+  else if (syscall.startsWith("sys.oauth.")) detail = parsed.provider ?? "";
+  else if (syscall.startsWith("adapter.") || syscall.startsWith("sys.link") || syscall === "sys.unlink") detail = parsed.adapter ?? "";
+  return detail.replace(/\s+/g, " ").trim();
 }
 
 const SHELL_VERBS: readonly [RegExp, string][] = [
@@ -250,22 +285,13 @@ export function humanCall(syscall: string, args: ChatTranscriptValue | undefined
   }
   const name = parsed.path ? basename(parsed.path) : "";
   if (syscall === "fs.read") return name ? `read ${name}` : "read a file";
+  if (syscall === "fs.edit") return name ? `edited ${name}` : "edited a file";
   if (syscall === "fs.write") return name ? `wrote ${name}` : "wrote a file";
   if (syscall === "fs.delete") return name ? `removed ${name}` : "removed a file";
   if (syscall === "fs.copy") return name ? `copied ${name}` : "copied a file";
   if (syscall === "fs.search") return parsed.query ? `searched for ${parsed.query}` : "searched files";
-  if (syscall.startsWith("fs.transfer")) return "moved a file between places";
-  if (syscall.startsWith("fs.")) return "worked with files";
   if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
-  if (syscall.startsWith("codemode.")) return "ran a script";
-  if (syscall.startsWith("ai.")) return "thought about it";
-  if (syscall === "adapter.send") return "sent a message";
-  if (syscall.startsWith("adapter.")) return "used a messenger";
-  if (syscall === "proc.spawn") return "started a helper";
-  if (syscall.startsWith("proc.")) return "checked on a helper";
-  if (syscall.startsWith("contact.")) return "worked with a contact";
-  if (syscall.startsWith("sys.")) return "checked the system";
-  return syscall;
+  return ledgerLabel(syscall);
 }
 
 /** Newest first, capped. Lines without a timestamp sort last. */
@@ -413,7 +439,7 @@ export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineS
       place: line.target,
       syscall: line.call,
       what: humanCall(line.call, args),
-      detail: args === undefined ? line.args.replace(/\s+/g, " ").trim().slice(0, 200) : describeToolCall(line.call, args),
+      detail: describeToolCall(line.call, args),
       args: line.args,
       outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
       runId: line.runId,
