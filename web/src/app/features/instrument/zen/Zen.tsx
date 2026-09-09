@@ -22,6 +22,7 @@ import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { InstrumentHeader } from "../shared/InstrumentHeader";
+import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { ZenText } from "./ZenText";
 import {
@@ -57,8 +58,6 @@ export type ZenProps = {
   onSettings: () => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (reference?: FleetReference) => void;
-  /** Open the first day: the places manifest with empty rows. */
-  onFirstDay: () => void;
   /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
   prefill?: string | null;
   onPrefillUsed?: () => void;
@@ -271,7 +270,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
+export function Zen({ onFleet, onMemory, onSettings, prefill, onPrefillUsed, pid: pidProp, onShip }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -702,11 +701,6 @@ export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPref
         return;
       }
       if (typing) return;
-      if (event.key === "n") {
-        event.preventDefault();
-        onFirstDay();
-        return;
-      }
       const focused = browse !== null ? moments[browse] : latest;
       if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
         event.preventDefault();
@@ -736,7 +730,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPref
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, focusPrompt, latest, moments, onFirstDay, pendingHil, toggleActivity]);
+  }, [browse, decide, focusPrompt, latest, moments, pendingHil, toggleActivity]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -828,7 +822,6 @@ export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPref
             <kbd>m</kbd>memory
           </button>
         ) : null}
-        <button type="button" onClick={onFirstDay}><kbd>n</kbd>first day</button>
         <button type="button" onClick={onSettings}><kbd>,</kbd>settings</button>
         <span><kbd>?</kbd>keys</span>
       </InstrumentHeader>
@@ -840,17 +833,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, onSettings, prefill, onPref
           ))}
         </div>
         {empty ? (
-          <div class="zen-empty">
-            <p>
-              Ask anything. I can reach <span class="place">your cloud home</span>
-              {onlinePlaces.map((place) => (
-                <span key={place.id}>
-                  , <span class="place">{place.label}</span>
-                </span>
-              ))}
-              . Press <span class="place">n</span> to connect more places.
-            </p>
-          </div>
+          pidProp ? <div class="zen-empty"><p>This helper has no messages yet.</p></div> : <FirstDay places={onlinePlaces} onFleet={onFleet} onSettings={onSettings} />
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} />
         ) : (

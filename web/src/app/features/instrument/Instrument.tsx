@@ -4,7 +4,6 @@ import { GlyphStars } from "../session/backgrounds/GlyphStars";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
 import { Zen } from "./zen/Zen";
-import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
@@ -14,20 +13,19 @@ import type { MemoryPageRef } from "./shared/navigation";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
-export type Distance = "zen" | "firstday" | "fleet" | "memory" | "settings";
+export type Distance = "zen" | "fleet" | "memory" | "settings";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
-  firstday: "/first-day",
   fleet: "/fleet",
   memory: "/memory",
   settings: "/zen/settings",
 } satisfies Record<Distance, string>;
 
-const DISTANCES: readonly Distance[] = ["zen", "firstday", "fleet", "memory", "settings"];
+const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings"];
 
 function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
@@ -45,7 +43,7 @@ function storedScale(): Scale {
     return 1;
   }
 }
-const STAR_DENSITY = { zen: 0.013, firstday: 0.013, fleet: 0.022, memory: 0.010, settings: 0.010 } satisfies Record<Distance, number>;
+const STAR_DENSITY = { zen: 0.013, fleet: 0.022, memory: 0.010, settings: 0.010 } satisfies Record<Distance, number>;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -63,6 +61,9 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  useEffect(() => {
+    if (initialPath === "/first-day") history.replaceState(null, "", "/zen");
+  }, [initialPath]);
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
@@ -123,14 +124,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+      if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
       if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "z") {
         event.preventDefault();
         move(distance === "fleet" ? "zen" : "fleet");
-      }
-      if (event.key === "n" && distance !== "fleet" && distance !== "zen") {
-        event.preventDefault();
-        move(distance === "firstday" ? "zen" : "firstday");
       }
       if (event.key === "m") {
         event.preventDefault();
@@ -176,7 +174,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <h4>Everywhere</h4>
           <dl>
             <dt>z</dt><dd>zen and fleet</dd>
-            <dt>n</dt><dd>first day</dd>
             <dt>m</dt><dd>memory</dd>
             <dt>,</dt><dd>settings</dd>
             <dt>l</dt><dd>light and dark</dd>
@@ -209,12 +206,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onFirstDay={() => move("firstday")} onMemory={(page) => {
+          <Zen onFleet={(reference) => move("fleet", reference ?? null)} onSettings={() => move("settings")} onMemory={(page) => {
             if (page) setSelectedMemoryPage(page);
             move("memory");
           }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
-        ) : distance === "firstday" ? (
-          <FirstDay onZen={() => move("zen")} />
         ) : distance === "memory" ? (
           <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onSettings={() => move("settings")} onAsk={(page, prompt) => {
             setSelectedMemoryPage(page);

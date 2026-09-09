@@ -53,9 +53,15 @@ export function moveModel(listing: AiModelsResult, order: ModelStackDraft, uid: 
   const ids = orderedModels(listing, order, uid)
     .filter((model) => model.source === editableModelSource(uid)).map((model) => model.id);
   const at = ids.indexOf(id);
-  const to = at + direction;
-  if (at < 0 || to < 0 || to >= ids.length) return order;
-  [ids[at], ids[to]] = [ids[to], ids[at]];
+  return at < 0 ? order : moveModelTo(listing, order, uid, id, at + direction);
+}
+
+export function moveModelTo(listing: AiModelsResult, order: ModelStackDraft, uid: number, id: string, to: number): ModelStackDraft {
+  const ids = orderedModels(listing, order, uid)
+    .filter((model) => model.source === editableModelSource(uid)).map((model) => model.id);
+  const at = ids.indexOf(id);
+  if (at < 0 || to < 0 || to >= ids.length || to === at) return order;
+  ids.splice(to, 0, ...ids.splice(at, 1));
   return { ids, preferredId: order.preferredId && ids.includes(order.preferredId) ? null : order.preferredId };
 }
 

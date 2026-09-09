@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { AddModel } from "./AddModel";
 import { useState } from "preact/hooks";
 import { reasoningOptions } from "../../../components/ui/AgentEditor";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -7,7 +8,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleModels, saveConsoleConfig, saveConsoleConfigEntries } from "../../gsv-console/backend/consoleService";
 import { inheritedReasoningForAccount } from "../../gsv-console/domain/consoleAgentBehavior";
 import { editableModelSource } from "../../gsv-console/domain/consoleSettings";
-import { configuredModelOrder, modelOrderWrites, moveModel, orderedModels, useModelFirst, type ModelStackDraft } from "./modelStack";
+import { configuredModelOrder, modelOrderWrites, moveModel, moveModelTo, orderedModels, useModelFirst, type ModelStackDraft } from "./modelStack";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 
@@ -18,6 +19,10 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const models = useQuery({ queryKey: SETTINGS_MODELS_KEY, queryFn: () => loadConsoleModels(client), enabled: connected && active });
   const [orderDraft, setOrderDraft] = useState<ModelStackDraft | null>(null);
   const [reasoningDraft, setReasoningDraft] = useState<string | null>(null);
+  const [addingModel, setAddingModel] = useState(false);
+  const [modelDraftDirty, setModelDraftDirty] = useState(false);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const editable = connected && !config.isError && !!config.data && canConfigure(account, "sys.config.set");
   const stackEditable = editable && !!models.data && !models.isError;
@@ -30,7 +35,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const originalReasoning = config.data?.find((entry) => entry.key === reasoningKey)?.value ?? "";
   const reasoning = reasoningDraft ?? originalReasoning;
   const effortOptions = reasoningOptions(inheritedReasoningForAccount(config.data ?? [], account.uid, account.uid));
-  useSettingsDirty(orderDirty || reasoning !== originalReasoning, onDirty);
+  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty, onDirty);
 
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
@@ -57,7 +62,12 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     <SettingsError error={config.error ?? models.error ?? saveOrder.error ?? saveReasoning.error} />
     {connected && (config.isPending || models.isPending) && <LoadingState variant="panel">Loading preferences…</LoadingState>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">Your account can view these preferences but cannot change them.</p>}
-    <h2>Model order</h2>
+    {addingModel && models.data && config.data ? <AddModel account={account} config={config.data} models={models.data} active={active} onDirty={setModelDraftDirty} onCancel={() => {
+      if (!modelDraftDirty || window.confirm("Discard this unsaved model?")) setAddingModel(false);
+    }} onAdded={() => { setAddingModel(false); setSaved("model-added"); }} /> : <>
+    <div class="settings-model-heading"><h2>Model order</h2><button class="ibtn" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setAddingModel(true); }}>add model</button></div>
+    {orderDirty && <p class="settings-muted">Save or discard your order changes before adding a model.</p>}
+    {saved === "model-added" && <p role="status">Model added to your stack.</p>}
     <p class="settings-muted">The first model is tried first. If it cannot complete the reply, the next model takes over.</p>
     <form class="settings-form" aria-label="Model order" onSubmit={(event) => {
       event.preventDefault();
@@ -66,7 +76,18 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       <ol class="settings-model-stack">{rows.map((model, index) => {
         const own = model.source === editableModelSource(account.uid);
         const ownIndex = ownRows.findIndex((entry) => entry.id === model.id);
-        return <li key={model.id} data-model-id={model.id}>
+        return <li key={model.id} data-model-id={model.id} class={dropTarget === model.id ? "is-drop-target" : ""} onDragOver={(event) => {
+          if (!dragging || !own || !stackEditable || saving) return;
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+          setDropTarget(model.id);
+        }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }} onDrop={(event) => {
+          if (!dragging || !own || !models.data || !order || !stackEditable || saving) return;
+          event.preventDefault();
+          updateOrder(moveModelTo(models.data, order, account.uid, dragging, ownIndex));
+          setDragging(null);
+          setDropTarget(null);
+        }}>
           <span class="settings-model-position">{index === 0 ? "First choice" : `Fallback ${index}`}</span>
           <div class="settings-model-details">
             <strong>{model.name}</strong>
@@ -76,6 +97,11 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
           <div class="settings-actions">
             {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, account.uid, model.id)); }}>use first</button>}
             {own && ownRows.length > 1 && <>
+              <button class="ibtn settings-model-drag" type="button" draggable={stackEditable && !saving} aria-label={`Drag to reorder ${model.name}; use the arrow buttons with a keyboard`} title="Drag to reorder" disabled={!stackEditable || saving} onDragStart={(event) => {
+                if (!stackEditable || saving) { event.preventDefault(); return; }
+                setDragging(model.id);
+                if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", model.id); }
+              }} onDragEnd={() => { setDragging(null); setDropTarget(null); }}>⠿</button>
               <button class="ibtn" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || ownIndex === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, -1)); }}>↑</button>
               <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || ownIndex === ownRows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, account.uid, model.id, 1)); }}>↓</button>
             </>}
@@ -91,7 +117,8 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
         {saved === "models" && <span role="status">saved</span>}
       </div>
     </form>
-    <form class="settings-form" aria-label="Reasoning effort" onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
+    </>}
+    {!addingModel && <form class="settings-form" aria-label="Reasoning effort" onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
       <label>Reasoning effort<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); saveReasoning.reset(); }}>
         {reasoning && !effortOptions.some((option) => option.value === reasoning) && <option value={reasoning}>{reasoning} (unavailable)</option>}
         {effortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -99,6 +126,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       <div class="settings-actions"><button class="ibtn" disabled={!editable || saving || reasoning === originalReasoning} type="submit">{saveReasoning.isPending ? <LoadingState>saving…</LoadingState> : "save effort"}</button>
         {saved === "reasoning" && <span role="status">saved</span>}
       </div>
-    </form>
+    </form>}
   </section>;
 }

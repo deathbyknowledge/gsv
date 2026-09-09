@@ -10,14 +10,15 @@ export const CLOUD_TARGET_ID = "gsv";
 export const CLOUD_TARGET_LABEL = "your cloud home";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
-export type FleetReference = FleetRow | FleetApprovalReference;
+export type FleetConnectReference = { kind: "connect"; to: "place" | "contact" };
+export type FleetReference = FleetRow | FleetApprovalReference | FleetConnectReference;
 
 export function isApprovalReference(reference: FleetReference | null): reference is FleetApprovalReference {
-  return reference !== null && typeof reference === "object";
+  return reference !== null && typeof reference === "object" && reference.kind === "approval";
 }
 
 export function fleetReferenceRow(reference: FleetReference | null): FleetRow | null {
-  return isApprovalReference(reference) ? processRow(reference.pid) : reference;
+  return isApprovalReference(reference) ? processRow(reference.pid) : typeof reference === "object" ? null : reference;
 }
 
 /** A link must never authorize a different request that subsequently occupies the same process. */

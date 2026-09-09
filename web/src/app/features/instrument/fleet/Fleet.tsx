@@ -1,6 +1,9 @@
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import { ConnectPlace } from "./ConnectPlace";
+import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import {
@@ -75,7 +78,7 @@ function useNow(): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "ledger:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "contact:", "ledger:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -91,6 +94,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
   const { snapshot } = useSession();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
+  const initialConnect = typeof initialReference === "object" && initialReference?.kind === "connect" ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
 
   const targetsQuery = useQuery({
@@ -119,6 +123,9 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
 
+  const contactsQuery = useFleetContacts(viewer);
+  const contacts = contactsQuery.data ?? [];
+
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
   /* the Kernel's ledger, newest first, a page at a time; a refetch walks every loaded page again so there is never a gap */
@@ -146,11 +153,15 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
 
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [creatingProcess, setCreatingProcess] = useState(false);
-  useEffect(() => {
+  const [connecting, setConnecting] = useState<"place" | "contact" | null>(initialConnect);
+  useLayoutEffect(() => {
     setSelected(initialRow);
     setOpenFile(null);
     setCreatingProcess(false);
-  }, [initialRow, approvalReference?.requestId]);
+    setConnecting(initialConnect);
+  }, [initialReference]);
+
+  const selectedContact = selected?.startsWith("contact:") ? contacts.find((contact) => `contact:${contact.id}` === selected) : undefined;
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -175,9 +186,17 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
     if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
-  useEffect(() => {
-    if (selected || openFile) setCreatingProcess(false);
-  }, [selected, openFile]);
+  const selectRow = useCallback((row: FleetRow) => {
+    setSelected(row);
+    setOpenFile(null);
+    setCreatingProcess(false);
+    setConnecting(null);
+  }, []);
+  const selectFile = useCallback((file: OpenFile) => {
+    setOpenFile(file);
+    setCreatingProcess(false);
+    setConnecting(null);
+  }, []);
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
     return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
@@ -228,14 +247,14 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
-    if (creatingProcess) return;
+    if (creatingProcess || connecting) return;
     if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
     if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess]);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data]);
   useEffect(() => {
     if (!selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
@@ -251,7 +270,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest(".fleet-process-form")) return;
+      if (target instanceof HTMLElement && target.closest(".fleet-process-form, .fleet-connection")) return;
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
@@ -268,10 +287,10 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
       const index = selected ? rows.indexOf(selected) : 0;
       if (event.key === "j" || event.key === "ArrowDown") {
         event.preventDefault();
-        setSelected(rows[Math.min(rows.length - 1, index + 1)]);
+        selectRow(rows[Math.min(rows.length - 1, index + 1)]);
       } else if (event.key === "k" || event.key === "ArrowUp") {
         event.preventDefault();
-        setSelected(rows[Math.max(0, index - 1)]);
+        selectRow(rows[Math.max(0, index - 1)]);
       } else if (event.key === "t") {
         event.preventDefault();
         setTechnical((value) => !value);
@@ -299,13 +318,25 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, openCmd, processes.length, shownProcesses.length, loadOlder, visibleRows]);
+  }, [selected, openCmd, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
 
   useEffect(() => {
     if (!selected) return;
     const row = document.querySelector<HTMLElement>(`.fleet tr[data-row="${selected}"]`);
     row?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+
+  const connect = (to: "place" | "contact") => {
+    setSelected(null);
+    setOpenFile(null);
+    setCreatingProcess(false);
+    setConnecting(to);
+    inspectorRef.current?.scrollIntoView({ block: "nearest" });
+  };
+  const selectConnected = (row: FleetRow) => {
+    setConnecting(null);
+    setSelected(row);
+  };
 
   const submitCommand = (event: Event) => {
     event.preventDefault();
@@ -347,6 +378,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
           <section class="fleet-block">
             <h2>
               <i /> Places <span class="count">{places.length}</span>
+              <button type="button" class="ibtn" disabled={!connected || !viewer || !canConfigure(viewer, "sys.token.create")} onClick={() => connect("place")}>connect</button>
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
             <div class="tablewrap">
@@ -367,7 +399,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                     data-row={targetRow(place.id)}
                     class={selected === targetRow(place.id) ? "is-sel" : ""}
                     tabIndex={0}
-                    onClick={() => setSelected(targetRow(place.id))}
+                    onClick={() => selectRow(targetRow(place.id))}
                   >
                     <td>
                       <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} />
@@ -384,12 +416,31 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
             </div>
           </section>
 
+          <section class="fleet-block" aria-label="Contacts">
+            <h2>
+              <i /> Contacts <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
+              <button type="button" class="ibtn" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
+              <button type="button" class="ibtn" disabled={!connected || !viewer || !canConfigure(viewer, "contact.list") || contactsQuery.isFetching} onClick={() => void contactsQuery.refetch()}>refresh</button>
+            </h2>
+            {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
+            {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
+              : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
+              : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
+              : <div class="tablewrap"><table>
+                <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
+                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} class={selected === `contact:${contact.id}` ? "is-sel" : ""} onClick={() => selectRow(`contact:${contact.id}`)}>
+                  <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
+                </tr>)}</tbody>
+              </table></div>}
+          </section>
+
           <section class="fleet-block">
             <h2>
               <i /> Processes <span class="count">{processes.length}</span>
               {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="ibtn" disabled={!connected} onClick={() => {
                 setSelected(null);
                 setOpenFile(null);
+                setConnecting(null);
                 setCreatingProcess(true);
                 inspectorRef.current?.scrollIntoView({ block: "nearest" });
               }}>new process</button> : null}
@@ -414,7 +465,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                     data-row={processRow(process.pid)}
                     class={selected === processRow(process.pid) ? "is-sel" : ""}
                     tabIndex={0}
-                    onClick={() => setSelected(processRow(process.pid))}
+                    onClick={() => selectRow(processRow(process.pid))}
                   >
                     <td class="name">{process.personal ? "ship" : process.label}</td>
                     <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
@@ -428,7 +479,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                   </tr>
                 ))}
                 {processes.length > PROCESS_PAGE ? (
-                  <tr class={`more${selected === moreRow ? " is-sel" : ""}`} data-row={moreRow} tabIndex={0} onClick={() => setSelected(moreRow)}>
+                  <tr class={`more${selected === moreRow ? " is-sel" : ""}`} data-row={moreRow} tabIndex={0} onClick={() => selectRow(moreRow)}>
                     <td colSpan={6}>
                       {shownProcesses.length < processes.length ? (
                         <button type="button" onClick={() => setProcessLimit(shownProcesses.length + 20)}>
@@ -454,7 +505,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
             {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
             <div class="fleet-ledger" role="table">
               {shownLedger.map((line) => (
-                <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => setSelected(ledgerRow(line.id))}>
+                <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => selectRow(ledgerRow(line.id))}>
                   <span class="t">{clockTime(line.timestamp)}</span>
                   <span class="place">{placeLabel(line.place)}</span>
                   <span class="what">{technical ? line.syscall : line.what}</span>
@@ -467,7 +518,7 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
               ))}
               {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? <LoadingState>reading…</LoadingState> : "nothing has run yet"}</span> : null}
               {sysLedgerQuery.hasNextPage ? (
-                <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => setSelected(olderRow)}>
+                <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => selectRow(olderRow)}>
                   <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
                     {sysLedgerQuery.isFetchingNextPage ? <LoadingState>reading…</LoadingState> : `show ${LEDGER_PAGE} older`}
                   </button>
@@ -492,14 +543,20 @@ export function Fleet({ initialReference, onZen, onMemory, onSettings }: FleetPr
                 </ul>
               ) : null}
               {places.map((place) => (
-                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={setOpenFile} selectedRow={selected} onSelect={setSelected} />
+                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={selectFile} selectedRow={selected} onSelect={selectRow} />
               ))}
             </div>
           </section>
         </div>
 
         <aside class="fleet-inspector" ref={inspectorRef}>
-          {creatingProcess ? (
+          {connecting === "place" ? (
+            <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={() => setConnecting(null)} onConnected={(id) => selectConnected(targetRow(id))} />
+          ) : connecting === "contact" ? (
+            <AddContact account={viewer} onClose={() => setConnecting(null)} onAdded={(id) => selectConnected(`contact:${id}`)} />
+          ) : selectedContact && !openFile ? (
+            <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer} />
+          ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
           ) : selectedLine && !openFile ? (
             <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />

@@ -20,6 +20,7 @@ import {
   visibleProcesses,
   reconcileFleetSelection,
   fleetReferenceRow,
+  isApprovalReference,
   referencedApproval,
   placeActions,
   placeFromTarget,
@@ -27,6 +28,15 @@ import {
 } from "./fleetModel";
 
 describe("Fleet references and supported place actions", () => {
+  it("opens connection controls without selecting a row or treating them as approvals", () => {
+    for (const to of ["place", "contact"] as const) {
+      const reference = { kind: "connect" as const, to };
+      expect(isApprovalReference(reference)).toBe(false);
+      expect(fleetReferenceRow(reference)).toBeNull();
+    }
+    expect(fleetReferenceRow("contact:person:123")).toBe("contact:person:123");
+  });
+
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {
     const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
     expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");

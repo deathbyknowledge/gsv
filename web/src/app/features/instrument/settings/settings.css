@@ -14,7 +14,7 @@
 .settings-error { color: var(--error); overflow-wrap: anywhere; }
 .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .settings label { display: flex; flex-direction: column; align-items: stretch; gap: .65rem; margin-bottom: 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .8rem; }
-.settings input:not([type="checkbox"]), .settings select, .settings textarea { border: 1px solid var(--border); background: var(--void); color: var(--text); padding: .7rem; font: inherit; border-radius: 0; min-width: 0; width: 100%; box-sizing: border-box; }
+.settings input:not([type="checkbox"]):not([type="radio"]), .settings select, .settings textarea { border: 1px solid var(--border); background: var(--void); color: var(--text); padding: .7rem; font: inherit; border-radius: 0; min-width: 0; width: 100%; box-sizing: border-box; }
 .settings input:focus-visible, .settings select:focus-visible, .settings textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .settings button:disabled, .settings select:disabled, .settings input:disabled { opacity: .45; cursor: not-allowed; }
 .settings textarea[readonly] { color: var(--text-dim); }
@@ -33,6 +33,20 @@
 .settings-model-details strong { color: var(--text); font-weight: 500; }
 .settings-model-details > span { color: var(--text-dim); font-size: .75rem; }
 .settings-model-stack .settings-actions { justify-content: flex-end; }
+.settings-model-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5rem; margin-top: 2.5rem; }
+.settings-model-heading h2 { margin: 0; }
+.settings-model-drag { cursor: grab; font-size: 1.1rem; }
+.settings-model-drag:active { cursor: grabbing; }
+.settings-model-stack > li.is-drop-target { border-color: var(--accent); background: var(--wash); }
+.settings-model-editor { padding: 0 0 2rem; }
+.settings-model-editor .gsv-console-model-form { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.settings-model-editor .gsv-console-model-wizard-copy h3 { color: var(--text); font-family: var(--gsv-font-prose); }
+.settings-model-editor .gsv-console-model-wizard-copy p { color: var(--text-dim); }
+.settings-model-editor .gsv-console-settings-actions { margin-top: 1rem; }
+.settings-model-editor label.gsv-rd-click, .settings-model-editor label.gsv-cb { flex-direction: row; align-items: center; gap: .6rem; margin: 0; }
+.settings-telegram { padding-bottom: 1rem; }
+.settings-telegram-flow { margin-top: 1.5rem; }
+.settings-telegram-step { font-size: .8rem; color: var(--text-dim); margin-bottom: 1rem; }
 .settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .settings-rules { padding-left: 1.6rem; }
 .settings-rules > li { padding: 1rem 0; border-top: 1px solid var(--border); }

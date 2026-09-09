@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AiModelListEntry, AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
-import { configuredModelOrder, modelOrderWrites, moveModel, orderedModels, useModelFirst } from "./modelStack";
+import { configuredModelOrder, modelOrderWrites, moveModel, moveModelTo, orderedModels, useModelFirst } from "./modelStack";
 
 const model = (id: string, source: AiModelListEntry["source"] = "personal"): AiModelListEntry => ({
   id, name: id, provider: "custom", model: `${id}-model`, source, hasCredential: true,
@@ -18,6 +18,17 @@ const storedLayer = (models: AiModelsResult, uid = 1000): ConsoleConfigEntry => 
 });
 
 describe("Settings model order", () => {
+  it("drags across several owned entries without rewriting shared order or credentials", () => {
+    const models = listing("shared");
+    const order = configuredModelOrder(models, 1000);
+    const moved = moveModelTo(models, order, 1000, "three", 0);
+    expect(orderedModels(models, moved, 1000).map((entry) => entry.id)).toEqual(["shared", "three", "one", "two", "included"]);
+    expect(moveModelTo(models, moved, 1000, "shared", 0)).toBe(moved);
+    expect(moveModelTo(models, moved, 1000, "one", 4)).toBe(moved);
+    const writes = modelOrderWrites(models, [storedLayer(models), { key: "users/1000/ai/preferred_model", value: "shared", redacted: false }], 1000, moved);
+    expect(writes.map((entry) => entry.key)).toEqual(["users/1000/ai/models"]);
+  });
+
   it("shows the selected model first and preserves the fallback sequence without changing stored order", () => {
     const models = listing("three");
     const order = configuredModelOrder(models, 1000);
