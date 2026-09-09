@@ -160,7 +160,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         move(distance === "firstday" ? "zen" : "firstday");
       }
-      if (event.key === "m" && distance !== "fleet") {
+      if (event.key === "m") {
         event.preventDefault();
         move(distance === "memory" ? "zen" : "memory");
       }
@@ -247,6 +247,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         ) : (
           <Fleet
+            onMemory={() => move("memory")}
             initialRow={fleetRow}
             onZen={(prefill, pid) => {
               if (prefill) setZenPrefill(prefill);

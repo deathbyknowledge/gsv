@@ -18,7 +18,7 @@ import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
-import { Wordmark } from "../shared/Wordmark";
+import { InstrumentHeader } from "../shared/InstrumentHeader";
 import {
   CLOUD_TARGET_ID,
   clockTime,
@@ -52,6 +52,7 @@ export type FleetProps = {
   initialRow: FleetRow | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
   onZen: (prefill?: string, pid?: string) => void;
+  onMemory: () => void;
 };
 
 const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
@@ -81,7 +82,7 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialRow, onZen }: FleetProps) {
+export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const now = useNow();
@@ -227,7 +228,7 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
     if (!selected) return;
     const row = document.querySelector(`[data-row="${selected}"]`);
     // ledger rows are display: contents and have no box of their own; their first cell does
-    (row?.firstElementChild ?? row)?.scrollIntoView({ block: "nearest" });
+    row?.scrollIntoView({ block: "nearest" });
   }, [selected, places, shownProcesses]);
   const selectedLine = useMemo(
     () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
@@ -311,21 +312,20 @@ export function Fleet({ initialRow, onZen }: FleetProps) {
 
   return (
     <main class="fleet" aria-label="Fleet">
-      <div class="fleet-top">
-        <div>
-          <Wordmark /> &nbsp;·&nbsp; fleet
-        </div>
-        <div class="center">
-          {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
+      <InstrumentHeader status={<>
+          fleet · {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
           {processes.length} processes
           {modelsQuery.data?.preferredModelId ? ` · ${modelsQuery.data.preferredModelId}` : ""}
-        </div>
-        <div class="right">
-          <button type="button" onClick={() => onZen()}>
-            <kbd>z</kbd>zen
-          </button>
-        </div>
-      </div>
+      </>}>
+        <button type="button" onClick={() => onZen()}>
+          <kbd>z</kbd>zen
+        </button>
+        <span aria-current="page">fleet</span>
+        <button type="button" onClick={onMemory}>
+          memory
+        </button>
+        <span><kbd>?</kbd>keys</span>
+      </InstrumentHeader>
 
       <div class="fleet-body">
         <div ref={manifestRef} class="fleet-manifest">

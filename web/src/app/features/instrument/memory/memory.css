@@ -1,7 +1,8 @@
 /* Memory: what the ship knows, as pages. Prose on the void, one mono rail. */
 .memory {
+  position: relative;
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -12,16 +13,23 @@
   min-height: 0;
   overflow: hidden;
 }
-@media (max-width: 720px) {
-  .memory-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-}
 .memory-rail {
-  display: flex;
-  flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  padding-top: var(--instrument-header-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   border-right: 1px solid var(--border);
   font-family: var(--gsv-font-mono);
   font-size: 12px;
+}
+.memory-rail::-webkit-scrollbar { display: none; }
+.memory-tools {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--void);
 }
 .memory-rail .collections {
   display: flex;
@@ -62,11 +70,8 @@
 .memory-rail .search input::placeholder { color: var(--faint); }
 .memory-rail .search .clear { color: var(--text-dim); cursor: pointer; }
 .memory-rail .pages {
-  overflow-y: auto;
-  scrollbar-width: none;
   padding: 8px 0 24px;
 }
-.memory-rail .pages::-webkit-scrollbar { display: none; }
 .memory-rail .ph {
   font-size: 10px;
   letter-spacing: 0.12em;
@@ -96,12 +101,19 @@
   text-overflow: ellipsis;
 }
 .memory-page {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  padding-top: var(--instrument-header-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
+.memory-page::-webkit-scrollbar { display: none; }
 .memory-page .page-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--void);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -114,9 +126,6 @@
   text-transform: uppercase;
   color: var(--text-dim);
 }
-@media (max-width: 720px) {
-  .memory-page .page-head { padding: 10px 18px; }
-}
 .memory-page .page-head .path { color: var(--path); text-transform: none; letter-spacing: 0.02em; }
 .memory-page .page-head .actions { display: flex; align-items: center; gap: 10px; }
 .memory-page .page-head .status { color: var(--online); }
@@ -124,8 +133,6 @@
 .memory-page .page-head .ibtn { padding: 5px 10px; }
 .memory-page .page-head .ibtn kbd { margin-right: 6px; }
 .memory-page .prose {
-  overflow-y: auto;
-  scrollbar-width: none;
   padding: 5vh 40px 10vh;
   max-width: var(--measure-prose);
   font-family: var(--gsv-font-prose);
@@ -133,7 +140,6 @@
   line-height: 1.6;
   color: var(--text-hi);
 }
-.memory-page .prose::-webkit-scrollbar { display: none; }
 .memory-page .prose h1, .memory-page .prose h2, .memory-page .prose h3 { font-weight: 600; line-height: 1.2; margin: 1.4em 0 0.5em; }
 .memory-page .prose h1:first-child, .memory-page .prose h2:first-child { margin-top: 0; }
 .memory-page .prose p { margin: 0 0 0.8em; }
@@ -143,6 +149,8 @@
 .memory-page .prose ul, .memory-page .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
 .memory-page .prose li::marker { color: var(--accent); }
 .memory-page .editor {
+  flex: 1;
+  min-height: 0;
   resize: none;
   width: 100%;
   max-width: var(--measure-prose);
@@ -157,6 +165,8 @@
   line-height: 1.6;
   caret-color: var(--accent);
 }
+.memory-page.is-editing { display: flex; flex-direction: column; overflow: hidden; }
+.memory-page.is-editing .page-head { flex-shrink: 0; }
 .memory-none, .memory-empty {
   padding: 8vh 40px;
   font-family: var(--gsv-font-prose);
@@ -165,3 +175,14 @@
   max-width: var(--measure-prose);
 }
 .memory-empty .place { color: var(--target); }
+.memory-empty { padding-top: calc(var(--instrument-header-height) + 8vh); }
+
+@container instrument (max-width: 720px) {
+  .memory-body { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
+  .memory-rail { border-right: 0; border-bottom: 1px solid var(--border); }
+  .memory-tools { position: static; }
+  .memory-page { padding-top: 0; }
+  .memory-page .page-head { top: 0; padding: 10px 18px; flex-wrap: wrap; }
+  .memory-page .page-head .actions { flex-wrap: wrap; }
+  .memory-page .prose, .memory-page .editor { padding-inline: 18px; }
+}

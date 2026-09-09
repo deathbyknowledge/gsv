@@ -6,7 +6,7 @@ import { libraryPathInDb } from "../../gsv-console/library/libraryModel";
 import type { MemoryPageRef } from "../shared/navigation";
 import type { LibrarySavePageInput, LibraryEntry } from "../../gsv-console/library/libraryTypes";
 import { renderMarkdownHtml } from "../shared/markdown";
-import { Wordmark } from "../shared/Wordmark";
+import { InstrumentHeader } from "../shared/InstrumentHeader";
 import { INSTRUMENT_MEMORY_KEY as MEMORY_KEY } from "../wire/queryKeys";
 import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
 import { refreshSavedMemoryPage } from "./memoryQueries";
@@ -160,26 +160,23 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
 
   return (
     <main class="memory" aria-label="Memory">
-      <div class="instrument-top">
-        <Wordmark />
-        <span>
+      <InstrumentHeader status={<>
           memory ·{" "}
           <span style={connected ? "color: var(--online)" : "color: var(--error)"}>
             {connected ? (collections.length === 1 ? "1 collection" : `${collections.length} collections`) : "offline"}
           </span>
+      </>}>
+        <button type="button" onClick={onZen}>
+          <kbd>m</kbd>zen
+        </button>
+        <button type="button" onClick={onFleet}>
+          <kbd>z</kbd>fleet
+        </button>
+        <span aria-current="page">memory</span>
+        <span>
+          <kbd>?</kbd>keys
         </span>
-        <span class="keys">
-          <button type="button" onClick={onZen}>
-            <kbd>m</kbd>zen
-          </button>
-          <button type="button" onClick={onFleet}>
-            <kbd>z</kbd>fleet
-          </button>
-          <span>
-            <kbd>?</kbd>keys
-          </span>
-        </span>
-      </div>
+      </InstrumentHeader>
 
       {collectionsQuery.isError ? (
         <div class="memory-empty" role="alert">{collectionsQuery.error.message}</div>
@@ -193,58 +190,60 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
       ) : (
         <div class="memory-body">
           <aside class="memory-rail">
-            {collections.length > 1 || (collections.length > 0 && !collection) ? (
-              <div class="collections" role="tablist" aria-label="Collections">
-                {collections.map((entry) => (
+            <div class="memory-tools">
+              {collections.length > 1 || (collections.length > 0 && !collection) ? (
+                <div class="collections" role="tablist" aria-label="Collections">
+                  {collections.map((entry) => (
+                    <button
+                      type="button"
+                      role="tab"
+                      key={entry.id}
+                      aria-selected={entry.id === selectedDb}
+                      class={entry.id === selectedDb ? "is-sel" : ""}
+                      onClick={() => {
+                        setDb(entry.id);
+                        setPath(null);
+                        setEditor(null);
+                        setStatus(null);
+                      }}
+                    >
+                      {entry.title || entry.id}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <form
+                class="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setAsked(query.trim());
+                }}
+              >
+                <span class="sigil">/</span>
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                  placeholder="search what is known"
+                  aria-label="Search memory"
+                  spellcheck={false}
+                  onInput={(event) => setQuery(event.currentTarget.value)}
+                />
+                {asked ? (
                   <button
                     type="button"
-                    role="tab"
-                    key={entry.id}
-                    aria-selected={entry.id === selectedDb}
-                    class={entry.id === selectedDb ? "is-sel" : ""}
+                    class="clear"
+                    aria-label="Clear search"
                     onClick={() => {
-                      setDb(entry.id);
-                      setPath(null);
-                      setEditor(null);
-                      setStatus(null);
+                      setQuery("");
+                      setAsked("");
                     }}
                   >
-                    {entry.title || entry.id}
+                    ×
                   </button>
-                ))}
-              </div>
-            ) : null}
-            <form
-              class="search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setAsked(query.trim());
-              }}
-            >
-              <span class="sigil">/</span>
-              <input
-                ref={searchRef}
-                type="text"
-                value={query}
-                placeholder="search what is known"
-                aria-label="Search memory"
-                spellcheck={false}
-                onInput={(event) => setQuery(event.currentTarget.value)}
-              />
-              {asked ? (
-                <button
-                  type="button"
-                  class="clear"
-                  aria-label="Clear search"
-                  onClick={() => {
-                    setQuery("");
-                    setAsked("");
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </form>
+                ) : null}
+              </form>
+            </div>
             <div class="pages" role="listbox" aria-label={asked ? "Matches" : "Pages"}>
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
@@ -270,7 +269,7 @@ export function Memory({ initialPage, onAsk, onZen, onFleet }: MemoryProps) {
             </div>
           </aside>
 
-          <section class="memory-page">
+          <section class={`memory-page${editing ? " is-editing" : ""}`}>
             {note ? (
               <>
                 <div class="page-head">

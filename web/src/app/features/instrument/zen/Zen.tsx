@@ -22,7 +22,7 @@ import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys
 import type { MemoryPageRef } from "../shared/navigation";
 import { renderMarkdownHtml, escapeHtml } from "../shared/markdown";
 import { PromptLine, type PromptPlace } from "../shared/PromptLine";
-import { Wordmark } from "../shared/Wordmark";
+import { InstrumentHeader } from "../shared/InstrumentHeader";
 import {
   activityDuration,
   answerAttribution,
@@ -43,15 +43,13 @@ import {
   trimOutput,
   noteSummary,
   receiptDuration,
-  receiptPhrases,
-  receiptRunning,
+  receiptTargets,
   receiptSteps,
   CLOUD_PLACE_ID,
   RESOLVE_TAIL,
   type Activity,
   type Moment,
   type Place,
-  type ReceiptPhrase,
 } from "./zenModel";
 import "./zen.css";
 
@@ -133,8 +131,7 @@ function ActivityLine({
   const head = activity.live && running ? (
     <>
       <span class="pulse blink" />
-      on <span class="place">{label}</span>{" "}
-      <span class="n">· {running.syscall} {running.summary}</span>
+      {activity.you ? "you are using" : "using"} <span class="place">{label}</span>
     </>
   ) : (
     <>
@@ -184,45 +181,27 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
 }) {
-  const phrases = receiptPhrases(moment);
-  const running = receiptRunning(moment);
+  const targets = receiptTargets(moment);
   const steps = receiptSteps(moment);
   const duration = receiptDuration(moment);
   const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
-  const phrase = (entry: ReceiptPhrase) =>
-    entry.what === null ? (
-      <>
-        {entry.verb} {entry.count} {entry.noun}
-      </>
-    ) : (
-      <>
-        {entry.verb} <em>{entry.what}</em>
-      </>
-    );
   return (
     <div class={`receipt${open ? " is-open" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
-          {running ? (
-            <span class="now">
-              <span class="pulse blink" />
-              {phrase(running)}
-            </span>
-          ) : null}
-          {phrases.map((entry, index) => (
-            <span key={index} class={entry.failed ? "is-failed" : ""}>
-              {index > 0 || running ? " · " : ""}
-              {phrase(entry)}
-              {entry.failed ? " · failed" : ""}
+          {targets.map((target, index) => (
+            <span key={target.target} class={target.live ? "now" : target.failed ? "is-failed" : ""}>
+              {index > 0 ? " · " : ""}
+              {target.live ? <span class="pulse blink" /> : null}
+              {target.live ? "using" : "used"} <span class="place">{placeLabel(target.target, places)}</span>
+              {target.failed ? " · failed" : ""}
             </span>
           ))}
-          <span class="n">
-            {steps > 0 ? ` · ${countLabel(steps, "step")}${duration ? `, ${duration}` : ""}` : ""}
-            {notes > 0 ? ` · ${countLabel(notes, "note")}` : ""}
-            {` · ${open ? "close" : "open"}`}
-          </span>
+          {targets.length === 0 ? (moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details") : null}
+          {moment.attribution?.fallbacks.length ? <span class="is-failed"> · fallback used</span> : null}
+          <span class="n"> · {open ? "close" : "open"}</span>
         </button>
         {pages.length > 0 ? (
           <span class="memory-references"> · from your memory: {pages.map((page, index) => (
@@ -235,6 +214,21 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
       </div>
       {open ? (
         <div class="detail">
+          <div class="receipt-meta">
+            {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}>answered by {moment.attribution.model}</span> : null}
+            {steps > 0 ? <span>{countLabel(steps, "step")}{duration ? ` · ${duration}` : ""}</span> : null}
+            {notes > 0 ? <span>{countLabel(notes, "note")}</span> : null}
+          </div>
+          {moment.attribution?.fallbacks.length ? (
+            <div class="zen-model-fallback">
+              {moment.attribution.fallbacks.map((fallback, index) => (
+                <span key={`${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
+                  {index ? " · " : "fallback: "}{fallback.from} → {fallback.to}
+                </span>
+              ))}
+              {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : ""}
+            </div>
+          ) : null}
           {worked.map((activity) => (
             <div key={activity.key} class="place-rail">
               <div class="ph">on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
@@ -741,10 +735,10 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
       }
       if (typing) return;
       const focused = browse !== null ? moments[browse] : latest;
-      if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration)) {
+      if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
         event.preventDefault();
         const yours = focused.activities.filter((activity) => activity.you);
-        const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration);
+        const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration || focused.attribution);
         toggleActivity(worked ? `receipt:${focused.id}` : yours[yours.length - 1].key);
         return;
       }
@@ -829,13 +823,13 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   }, [browse, connected, lastAnswer, lastRun, latest, localRuns, moments.length, now, pendingHil, pid, places, runtime.context, thinking, where]);
 
   const onlinePlaces = places.filter((place) => place.online);
+  const latestMessageIndex = moments.reduce((latest, moment, index) =>
+    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.streaming)) ? index : latest, -1);
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
     <main class={`zen${browse !== null ? " is-browse" : ""}`} aria-label="Zen">
-      <div class="instrument-top">
-        <Wordmark />
-        <span>
+      <InstrumentHeader status={<span>
           ship ·{" "}
           <span class={connected ? "is-on" : "is-err"} style={connected ? "color: var(--online)" : "color: var(--error)"}>
             {pidProp ? (
@@ -851,24 +845,19 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
               "offline"
             )}
           </span>
-        </span>
-        <span class="keys">
+        </span>}>
+        <span aria-current="page">zen</span>
         <button type="button" onClick={() => onFleet()}>
           <kbd>z</kbd>fleet
-        </button>
-        <button type="button" onClick={onFirstDay}>
-          <kbd>n</kbd>first day
         </button>
         {onMemory ? (
           <button type="button" onClick={() => onMemory()}>
             <kbd>m</kbd>memory
           </button>
         ) : null}
-        <span>
-          <kbd>?</kbd>keys
-        </span>
-      </span>
-      </div>
+        <button type="button" onClick={onFirstDay}><kbd>n</kbd>first day</button>
+        <span><kbd>?</kbd>keys</span>
+      </InstrumentHeader>
 
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
@@ -918,21 +907,10 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                 );
               }
               return (
-                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${isLatest ? "" : " is-older"}${browse === index ? " is-focus" : ""}`}>
-                  <div class="who">
+                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
+                  {moment.role === "human" || moment.text || moment.streaming ? <div class="who">
                     {moment.role === "human" ? who : "ship"}
-                    {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}> · {moment.attribution.model}</span> : null}
-                  </div>
-                  {moment.attribution?.fallbacks.length ? (
-                    <div class="zen-model-fallback">
-                      {moment.attribution.fallbacks.map((fallback, index) => (
-                        <span key={`${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
-                          {index ? " · " : "fallback: "}{fallback.from} → {fallback.to}
-                        </span>
-                      ))}
-                      {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : null}
-                    </div>
-                  ) : null}
+                  </div> : null}
                   {moment.activities
                     .filter((activity) => activity.you)
                     .map((activity) => (
@@ -945,6 +923,17 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                         onFleet={onFleet}
                       />
                     ))}
+                  {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration || moment.attribution) ? (
+                    <Receipt
+                      moment={moment}
+                      places={places}
+                      collections={memoryCollections.data ?? []}
+                      onMemory={onMemory}
+                      onFleet={onFleet}
+                      open={openActivities.has(`receipt:${moment.id}`)}
+                      onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                    />
+                  ) : null}
                   {moment.role === "human" ? (
                     settlePrefix(moment) !== null ? (
                       <div class="text is-settling">
@@ -970,17 +959,6 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                     <div class="text">
                       <span class="zen-caret blink" />
                     </div>
-                  ) : null}
-                  {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration) ? (
-                    <Receipt
-                      moment={moment}
-                      places={places}
-                      collections={memoryCollections.data ?? []}
-                      onMemory={onMemory}
-                      onFleet={onFleet}
-                      open={openActivities.has(`receipt:${moment.id}`)}
-                      onToggle={() => toggleActivity(`receipt:${moment.id}`)}
-                    />
                   ) : null}
                   {isLatest && pendingHil ? (
                     <div class="zen-approval">

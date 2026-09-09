@@ -1,7 +1,7 @@
 /* Zen: the response is the page. */
 .zen {
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -42,7 +42,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  padding: 5vh 0 6vh;
+  padding: calc(var(--instrument-header-height) + 5vh) 0 6vh;
+  scroll-padding-top: calc(var(--instrument-header-height) + 12px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -57,6 +58,7 @@
   padding: 2.2vh 0;
 }
 .zen-moment.is-older { opacity: 0.55; }
+.zen-moment.is-work { padding-block: 1vh; }
 .zen-moment > .who {
   font-size: 11px;
   letter-spacing: 0.2em;
@@ -155,7 +157,7 @@
 
 /* the receipt under a ship's message: what it did, in words; the working opens beneath */
 .receipt {
-  margin-top: 10px;
+  margin: 0 0 12px;
   max-width: var(--measure-prose);
   font-family: var(--gsv-font-mono);
   font-size: 12px;
@@ -192,6 +194,8 @@
   margin-right: 8px;
 }
 .receipt .detail { margin-top: 8px; }
+.receipt-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text-dim); }
+.receipt-meta:empty { display: none; }
 .receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
 .receipt .place-rail:first-child .ph { margin-top: 0; }
 

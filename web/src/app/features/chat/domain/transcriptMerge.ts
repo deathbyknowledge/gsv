@@ -204,7 +204,22 @@ export function mergeTranscriptRows(
     }
     const current = merged.get(key);
     if (current && shouldKeepCurrentToolRow(current, row)) {
-      merged.set(key, { ...current, toolArgs: row.toolArgs ?? current.toolArgs, toolSyscall: row.toolSyscall ?? current.toolSyscall, toolTarget: row.toolTarget ?? current.toolTarget, toolRunControl: row.toolRunControl ?? current.toolRunControl });
+      merged.set(key, { ...current, toolArgs: row.toolArgs ?? current.toolArgs, toolSyscall: row.toolSyscall ?? current.toolSyscall, toolTarget: row.toolTarget ?? current.toolTarget, toolRunControl: row.toolRunControl ?? current.toolRunControl,
+        toolStartedAt: row.toolStartedAt ?? current.toolStartedAt,
+        toolCallRecordKey: row.toolCallRecordKey ?? current.toolCallRecordKey,
+      });
+      continue;
+    }
+    if (current && isToolActivityRow(current) && isToolActivityRow(row)) {
+      merged.set(key, { ...row,
+        processId: row.processId ?? current.processId,
+        toolArgs: row.toolArgs ?? current.toolArgs,
+        toolSyscall: row.toolSyscall ?? current.toolSyscall,
+        toolTarget: row.toolTarget ?? current.toolTarget,
+        toolRunControl: row.toolRunControl || current.toolRunControl,
+        toolStartedAt: row.toolStartedAt ?? current.toolStartedAt ?? (current.role === "tool" ? current.timestamp : undefined),
+        toolCallRecordKey: row.toolCallRecordKey ?? current.toolCallRecordKey,
+      });
       continue;
     }
     merged.set(key, row);

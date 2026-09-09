@@ -6,6 +6,7 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
+  --instrument-header-height: 44px;
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
@@ -123,6 +124,37 @@
 }
 .instrument-top .keys span {
   margin-left: 14px;
+}
+.instrument-header {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--instrument-header-height);
+  z-index: 3;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  pointer-events: none;
+}
+.instrument-header > * {
+  pointer-events: auto;
+  background: var(--void);
+  padding: 4px 8px;
+  min-width: 0;
+}
+.instrument-header > .wordmark { justify-self: start; margin-left: -8px; }
+.instrument-header .instrument-heading { justify-self: center; max-width: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
+.instrument-header .keys span { margin-left: 0; }
+.instrument-header [aria-current="page"] { color: var(--text-hi); }
+@container instrument (max-width: 900px) {
+  .instrument-header { padding-inline: 18px; gap: 8px; }
+  .instrument-header .keys { gap: 8px; }
+  .instrument-header .keys kbd { display: none; }
+}
+@container instrument (max-width: 600px) {
+  .distance { --instrument-header-height: 68px; }
+  .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
+  .instrument-header .instrument-heading { grid-row: 2; grid-column: 1 / -1; justify-self: center; max-width: 100%; }
+  .instrument-header .keys { grid-row: 1; grid-column: 2; }
 }
 .instrument kbd {
   font: inherit;
@@ -369,7 +401,7 @@
 }
 @container instrument (max-width: 900px) {
   .instrument-top { padding: 0 18px; }
-  .instrument-top .keys { display: none; }
+  .instrument-top:not(.instrument-header) .keys { display: none; }
   .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
   .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: 45vh; }
   .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }

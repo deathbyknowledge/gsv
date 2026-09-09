@@ -102,9 +102,12 @@ export type ChatTranscriptRow = {
   processId?: string;
   delivery?: "directed" | "sync";
   conversationSequence?: number;
+  conversationMessageId?: string;
   origin?: InteractionOrigin;
   toolArgs?: ChatTranscriptValue;
   toolCallId?: string;
+  toolStartedAt?: number | null;
+  toolCallRecordKey?: string;
   toolName?: string;
   toolOutcome?: ChatToolOutcome;
   toolOutput?: ChatTranscriptValue;

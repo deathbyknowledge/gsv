@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow } from "../../chat/domain/transcript";
+import { mergeTranscriptRows } from "../../chat/domain/transcriptMerge";
+import { transcriptRowsFromRecords } from "../../chat/domain/typedHistory";
 import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
 import {
   activitiesForRows,
@@ -18,8 +20,7 @@ import {
   parsePromptInput,
   placeLabel,
   receiptDuration,
-  receiptPhrases,
-  receiptRunning,
+  receiptTargets,
   receiptSteps,
   resolvePlace,
   resolveTail,
@@ -347,10 +348,13 @@ describe("momentsFromConversation", () => {
       message({ id: "orphan-call", role: "tool", toolSyscall: "fs.read", runId: "working-run", processId: "worker", status: "running" }),
       message({ id: "event", role: "system", text: "Notice", processId: "event-owner" }),
     ], "working-run");
-    expect(moments.map((moment) => [moment.id, moment.processId])).toEqual([
-      ["old", "old-ship"], ["new", "new-ship"], ["human", "conversation-owner"],
-      ["event", "event-owner"], ["run:working-run", "worker"],
+    expect(moments.slice(0, 4).map((moment) => [moment.id, moment.processId])).toEqual([
+      ["old", "old-ship"], ["new", "new-ship"], ["human", "conversation-owner"], ["event", "event-owner"],
     ]);
+    expect(moments[0].narration).toBe("");
+    expect(moments[1].narration).toBe("New working");
+    expect(moments[4]).toMatchObject({ processId: "current-ship", text: "", narration: "Old working" });
+    expect(moments[5]).toMatchObject({ processId: "worker", thinking: true });
   });
   it("shows what the ship sent, folds what it told itself, and keeps the run's work", () => {
     const messages = [
@@ -374,6 +378,167 @@ describe("momentsFromConversation", () => {
     const moments = momentsFromConversation([], transcript, "r2");
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
+  });
+
+  const sent = (id: string, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => message({
+    id: `conversation:${id}`, messageId: id, runId: "run", processId: "ship", text: id, timestamp, ...overrides,
+  });
+  const call = (id: string, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => message({
+    id, role: "toolResult", text: "", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv",
+    toolArgs: { path: `/pages/${id}.md` }, toolOutput: id, toolOutcome: "completed", status: "done",
+    runId: "run", processId: "ship", timestamp, ...overrides,
+  });
+  const outgoing = (id: string, key: string, timestamp: number) => message({
+    id: `history:${key}`, historyRecordKey: key, messageDirection: "out", conversationMessageId: id,
+    text: id, runId: "run", processId: "ship", timestamp,
+  });
+  const callsOf = (moment: Moment) => moment.activities.flatMap((activity) => activity.calls.map((entry) => entry.callId));
+
+  it("partitions two Sends and trailing work without duplicating narration or calls", () => {
+    const messages = [sent("first", 20), sent("second", 40)];
+    const transcript = [
+      call("before-first", 10), message({ id: "n1", runId: "run", processId: "ship", text: "First thought", timestamp: 11 }),
+      outgoing("first", "20:0", 20),
+      call("before-second", 30), message({ id: "n2", runId: "run", processId: "ship", text: "Second thought", timestamp: 31 }),
+      outgoing("second", "40:0", 40),
+      call("after-second", 50), message({ id: "n3", runId: "run", processId: "ship", text: "More work", timestamp: 51 }),
+      call("send-control", 52, { toolName: "Send", toolSyscall: null }),
+      call("shell-control", 53, { toolName: "Shell", toolSyscall: null, toolRunControl: true }),
+    ];
+    const moments = momentsFromConversation(messages, transcript, "run");
+    expect(moments.map((entry) => [entry.text, callsOf(entry), entry.narration])).toEqual([
+      ["first", ["before-first"], "First thought"],
+      ["second", ["before-second"], "Second thought"],
+      ["", ["after-second"], "More work"],
+    ]);
+    expect(moments.slice(0, 2).map(({ id, timestamp, processId }) => ({ id, timestamp, processId }))).toEqual([
+      { id: "conversation:first", timestamp: 20, processId: "ship" },
+      { id: "conversation:second", timestamp: 40, processId: "ship" },
+    ]);
+    expect(new Set(moments.flatMap((entry) => entry.activities.map((activity) => activity.key))).size).toBe(3);
+    const completed = momentsFromConversation(messages, transcript, null);
+    expect(completed.map((entry) => entry.id)).toEqual(moments.map((entry) => entry.id));
+    expect(completed.at(-1)?.thinking).toBe(false);
+    const next = momentsFromConversation([...messages, sent("third", 60)], transcript, null);
+    expect(next.map((entry) => [entry.text, callsOf(entry)])).toEqual([
+      ["first", ["before-first"]], ["second", ["before-second"]], ["third", ["after-second"]],
+    ]);
+  });
+
+  it("keeps interleaved processes and runs in their own message intervals", () => {
+    const messages = [sent("one", 20), sent("other-process", 30, { processId: "worker" }), sent("other-run", 35, { runId: "run2" }), sent("two", 50)];
+    const transcript = [call("a", 10), call("b", 15, { processId: "worker" }), call("c", 25, { runId: "run2" }), call("d", 40), call("e", 45, { processId: "worker" })];
+    const moments = momentsFromConversation(messages, transcript, null);
+    expect(moments.map((entry) => [entry.text, entry.processId, callsOf(entry)])).toEqual([
+      ["one", "ship", ["a"]], ["other-process", "worker", ["b"]], ["other-run", "ship", ["c"]],
+      ["", "worker", ["e"]], ["two", "ship", ["d"]],
+    ]);
+  });
+
+  it("uses durable call and outgoing coordinates when multiple Sends share one millisecond", () => {
+    const messages = [sent("first", 100, { conversationSequence: 1 }), sent("second", 100, { conversationSequence: 2 })];
+    const transcript = [
+      call("first-call", 300, { historyRecordKey: "9:0", toolCallRecordKey: "1:1", toolStartedAt: 100 }),
+      outgoing("first", "2:0", 100),
+      call("second-call", 300, { historyRecordKey: "10:0", toolCallRecordKey: "3:1", toolStartedAt: 100 }),
+      outgoing("second", "4:0", 100),
+      call("last-call", 300, { historyRecordKey: "11:0", toolCallRecordKey: "5:1", toolStartedAt: 99 }),
+    ];
+    const moments = momentsFromConversation(messages, transcript, null).sort((left, right) => (left.timestamp ?? 0) - (right.timestamp ?? 0));
+    expect(moments.map((entry) => [entry.text, callsOf(entry)])).toEqual([
+      ["first", ["first-call"]], ["second", ["second-call"]], ["", ["last-call"]],
+    ]);
+    expect(moments.at(-1)?.timestamp).toBe(100);
+    expect(moments.at(-1)?.activities[0].startedAt).toBe(99);
+  });
+
+  it("keeps a pending parallel call with the message it preceded when completion arrives after a later Send", () => {
+    const messages = [sent("first", 20), sent("second", 40)];
+    const pending = call("slow", 10, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, toolTarget: "laptop" });
+    const between = call("quick", 30);
+    const before = momentsFromConversation(messages, [pending, between], "run");
+    expect(before.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(before[0].activities[0].live).toBe(true);
+    const result = call("slow", 60, { toolArgs: undefined, toolTarget: undefined, toolSyscall: undefined, toolOutput: "finished later" });
+    const after = momentsFromConversation(messages, [pending, between, result], "run");
+    expect(after.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(after[0].activities[0]).toMatchObject({ target: "laptop", startedAt: 10, endedAt: 60, live: false });
+    expect(after[0].activities[0].calls[0]).toMatchObject({ finished: true, output: "finished later", filePath: "/pages/slow.md" });
+    const reloaded = momentsFromConversation(messages, [{ ...result, toolStartedAt: 10, toolTarget: "laptop", toolSyscall: "fs.read", toolArgs: pending.toolArgs }, between], "run");
+    expect(reloaded).toEqual(after);
+  });
+
+  it("joins a streamed message to its committed identity without repeating its work", () => {
+    const streaming = sent("first", 20, { id: "stream:first", text: "Fir", streaming: true });
+    const committed = sent("first", 20, { text: "First answer", streaming: false });
+    const transcript = [call("a", 10), call("b", 30)];
+    const live = momentsFromConversation([streaming], transcript, "run");
+    const durable = momentsFromConversation([streaming, committed], [...transcript, outgoing("first", "20:0", 20)], "run");
+    expect(live.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(durable.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(durable[0]).toMatchObject({ id: committed.id, text: "First answer", streaming: false, timestamp: 20 });
+    expect(durable[1].id).toBe(live[1].id);
+    expect(momentsFromConversation([committed, streaming], transcript, "run")[0]).toMatchObject({ id: committed.id, streaming: false });
+  });
+
+  it("does not attach work before an unloaded Send to the next visible message", () => {
+    const moments = momentsFromConversation([sent("visible", 40)], [
+      call("old", 10), outgoing("unloaded", "20:0", 20), call("current", 30), outgoing("visible", "40:0", 40),
+    ], null);
+    expect(moments.map((entry) => [entry.text, callsOf(entry)])).toEqual([["", ["old"]], ["visible", ["current"]]]);
+  });
+
+  it("keeps same-millisecond unpersisted work in deterministic input order without merging distinct messages", () => {
+    const moments = momentsFromConversation([sent("first", 100), sent("second", 100)], [call("a", 100), call("b", 100)], null);
+    expect(moments.map((entry) => [entry.id, callsOf(entry)])).toEqual([
+      ["conversation:first", ["a", "b"]], ["conversation:second", []],
+    ]);
+  });
+
+  it("preserves call placement through actual typed projection and a partial live-result merge", () => {
+    const envelope = (messageId: number, createdAt: number) => ({
+      id: messageId, messageId, index: 0, generation: 1, runId: "run", createdAt, source: "typed" as const,
+    });
+    const before: ProcHistoryRecord[] = [
+      { ...envelope(1, 10), kind: "call", payload: { callId: "slow", tool: "Read", syscall: "fs.read", args: { path: "/pages/slow.md" }, target: "laptop", runId: "run" } },
+      { ...envelope(2, 20), kind: "message", payload: { direction: "out", text: "first", media: [], origin: {}, conversationMessageId: "first" } },
+    ];
+    const projected = transcriptRowsFromRecords(before).map((entry) => ({ ...entry, processId: "ship" }));
+    const messages = [sent("first", 20), sent("second", 40)];
+    const pending = momentsFromConversation(messages, projected, "run");
+    expect(pending.map(callsOf)).toEqual([["slow"], []]);
+    expect(pending[0].activities[0].live).toBe(true);
+    const merged = mergeTranscriptRows(projected, [row({
+      id: "finish", role: "toolResult", runId: "run", toolCallId: "slow", toolName: "Read", text: "", toolOutput: "finished", status: "done", timestamp: 60,
+    })]);
+    const live = momentsFromConversation(messages, merged, "run");
+    const after: ProcHistoryRecord[] = [...before,
+      { ...envelope(3, 40), kind: "message", payload: { direction: "out", text: "second", media: [], origin: {}, conversationMessageId: "second" } },
+      { ...envelope(4, 60), kind: "result", payload: { callId: "slow", tool: "Read", outcome: "completed", output: "finished", media: [], resources: [] } },
+    ];
+    const durable = momentsFromConversation(messages, transcriptRowsFromRecords(after).map((entry) => ({ ...entry, processId: "ship" })), "run");
+    expect(live).toEqual(durable);
+    expect(durable[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60, target: "laptop", live: false });
+    expect(durable.map(callsOf)).toEqual([["slow"], []]);
+  });
+
+  it("retains distinct identities and unknown times for unlinked historical work", () => {
+    const moments = momentsFromConversation([], [
+      call("a", 1, { runId: undefined, timestamp: null }), call("b", 2, { runId: undefined, timestamp: null }),
+    ], null);
+    expect(moments.map(callsOf)).toEqual([["a"], ["b"]]);
+    expect(new Set(moments.map((entry) => entry.id)).size).toBe(2);
+    expect(moments.map((entry) => entry.timestamp)).toEqual([null, null]);
+  });
+
+  it("orders parallel calls by start while retaining the last completion time for the target", () => {
+    const moments = momentsFromConversation([sent("first", 20)], [
+      call("fast", 15, { toolStartedAt: 11 }), call("slow", 60, { toolStartedAt: 10 }),
+    ], null);
+    expect(moments).toHaveLength(1);
+    expect(callsOf(moments[0])).toEqual(["slow", "fast"]);
+    expect(moments[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60 });
+    expect(receiptDuration(moments[0])).toBe(formatSeconds(50));
   });
 });
 
@@ -511,29 +676,40 @@ describe("receipt", () => {
     activities: activitiesForRows(rows, "run", active),
     narration: "",
   });
-  it("names each finished call by verb and place-qualified argument, in order", () => {
+  it("summarizes targets in first-touch order, retaining failure and expanded call details", () => {
     const rows = [
       row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
       row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
       row({ id: "t3", role: "toolResult", toolCallId: "3", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/" }, toolOutcome: "denied", status: "done", timestamp: 300 }),
     ];
     // places come in first-touch order, and each place's calls in theirs
-    expect(receiptPhrases(moment(rows)).map((phrase) => [phrase.verb, phrase.what, phrase.failed])).toEqual([
-      ["searched", "~/mail", false],
-      ["read", "laptop:~/Downloads/Q2.pdf", false],
-      ["ran", "cp ~/Downloads/Q2.pdf ~/Documents/Taxes/", true],
+    expect(receiptTargets(moment(rows))).toEqual([
+      { target: "gsv", live: false, failed: false },
+      { target: "laptop", live: false, failed: true },
     ]);
+    expect(moment(rows).activities[1].calls.map((call) => call.syscall)).toEqual(["fs.read", "shell.exec"]);
     expect(receiptSteps(moment(rows))).toBe(3);
     expect(receiptDuration(moment(rows))).toBe(formatSeconds(200));
   });
-  it("folds three or more alike calls into a count and keeps two apart", () => {
+  it("keeps one target summary for mixed work without discarding any calls", () => {
     const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path }, status: "done", timestamp: 1 });
-    expect(receiptPhrases(moment([read("1", "a"), read("2", "b"), read("3", "c")]))).toEqual([{ verb: "read", what: null, count: 3, noun: "files", failed: false }]);
-    expect(receiptPhrases(moment([read("1", "a"), read("2", "b")])).map((phrase) => phrase.what)).toEqual(["a", "b"]);
+    const value = moment([read("1", "a"), read("2", "b"), read("3", "c")]);
+    expect(receiptTargets(value)).toEqual([{ target: "gsv", live: false, failed: false }]);
+    expect(value.activities[0].calls.map((call) => call.summary)).toEqual(["a", "b", "c"]);
   });
-  it("says what is still running in the present tense", () => {
+  it("identifies the target still in use and omits empty work", () => {
     const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
-    expect(receiptRunning(moment(rows, true))).toMatchObject({ verb: "reading", what: "laptop:~/x" });
-    expect(receiptRunning(moment([]))).toBeNull();
+    expect(receiptTargets(moment(rows, true))).toEqual([{ target: "laptop", live: true, failed: false }]);
+    expect(receiptTargets(moment([]))).toEqual([]);
+  });
+  it("keeps every unfinished parallel target live when a later target has already finished", () => {
+    const value = moment([
+      row({ id: "a", role: "tool", toolCallId: "a", toolSyscall: "fs.read", toolTarget: "laptop", status: "running" }),
+      row({ id: "b", role: "tool", toolCallId: "b", toolSyscall: "fs.read", toolTarget: "office", status: "running" }),
+      row({ id: "c", role: "toolResult", toolCallId: "c", toolSyscall: "fs.read", toolTarget: "gsv", status: "done" }),
+    ], true);
+    expect(receiptTargets(value)).toEqual([
+      { target: "laptop", live: true, failed: false }, { target: "office", live: true, failed: false }, { target: "gsv", live: false, failed: false },
+    ]);
   });
 });

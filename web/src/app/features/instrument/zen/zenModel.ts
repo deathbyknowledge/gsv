@@ -269,6 +269,7 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
     const call = callFromRow(row);
     const existing = activities.find((activity) => activity.target === target);
     const timestamp = row.timestamp ?? null;
+    const startedAt = row.toolStartedAt ?? timestamp;
     if (existing) {
       const index = existing.calls.findIndex((candidate) => candidate.callId === call.callId);
       if (index >= 0) {
@@ -276,7 +277,8 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
         existing.calls[index] = call;
       }
       else existing.calls.push(call);
-      if (timestamp !== null) existing.endedAt = timestamp;
+      if (startedAt !== null) existing.startedAt = Math.min(existing.startedAt ?? startedAt, startedAt);
+      if (timestamp !== null) existing.endedAt = Math.max(existing.endedAt ?? timestamp, timestamp);
     } else {
       activities.push({
         key: `${runKey}:${target}`,
@@ -284,15 +286,12 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
         calls: [call],
         live: false,
         you: false,
-        startedAt: timestamp,
+        startedAt,
         endedAt: timestamp,
       });
     }
   }
-  if (active && activities.length > 0) {
-    const last = activities[activities.length - 1];
-    last.live = last.calls.some((call) => !call.finished);
-  }
+  for (const activity of activities) activity.live = active && activity.calls.some((call) => !call.finished);
   return activities;
 }
 
@@ -515,10 +514,50 @@ export function momentsFromConversation(
   activeRunId: string | null,
 ): Moment[] {
   const moments: Moment[] = [];
-  const shipByRun = new Map<string, Moment>();
+  const processesByRun = new Map<string, Set<string>>();
+  for (const row of [...messages, ...transcript]) {
+    if (!row.runId || !row.processId) continue;
+    const processes = processesByRun.get(row.runId) ?? new Set<string>();
+    processes.add(row.processId);
+    processesByRun.set(row.runId, processes);
+  }
+  type Position = { record: [number, number] | null; timestamp: number | null };
+  type Boundary = { id: string; position: Position; row: ChatTranscriptRow; moment?: Moment };
+  type Work = { position: Position; rows: ChatTranscriptRow[] };
+  type Run = { key: string; processId?: string; runId: string | null; boundaries: Boundary[]; work: Work[]; calls: Map<string, Work> };
+  const runs = new Map<string, Run>();
+  const runFor = (row: ChatTranscriptRow): Run => {
+    const candidates = row.runId ? processesByRun.get(row.runId) : undefined;
+    const processId = row.processId ?? (candidates?.size === 1 ? [...candidates][0] : undefined);
+    const key = JSON.stringify([processId ?? null, row.runId ?? null, row.runId ? null : row.toolCallId ?? row.id]);
+    let run = runs.get(key);
+    if (!run) {
+      run = { key, processId, runId: row.runId ?? null, boundaries: [], work: [], calls: new Map() };
+      runs.set(key, run);
+    }
+    return run;
+  };
+  const position = (row: ChatTranscriptRow, call = false): Position => {
+    const key = call ? row.toolCallRecordKey ?? row.historyRecordKey : row.historyRecordKey;
+    const match = key ? /^(\d+):(\d+)$/.exec(key) : null;
+    return {
+      record: match ? [Number(match[1]), Number(match[2])] : null,
+      timestamp: call ? row.toolStartedAt ?? row.timestamp : row.timestamp,
+    };
+  };
+  const compare = (left: Position, right: Position): number => {
+    if (left.record && right.record) return left.record[0] - right.record[0] || left.record[1] - right.record[1];
+    return (left.timestamp ?? Infinity) - (right.timestamp ?? Infinity);
+  };
+  const canonical = new Map<string, ChatTranscriptRow>();
   for (const row of messages) {
     if (row.role !== "user" && row.role !== "assistant") continue;
-    if (row.role === "assistant" && !row.text.trim() && !row.streaming) continue;
+    const key = JSON.stringify([row.role, row.messageId ?? row.id]);
+    const previous = canonical.get(key);
+    if (!previous || previous.streaming || !row.streaming) canonical.set(key, row);
+  }
+  for (const row of canonical.values()) {
+    if (row.role === "assistant" && !row.text.trim() && !row.streaming && !row.media?.length) continue;
     const moment: Moment = {
       id: row.id,
       role: row.role === "user" ? "human" : "ship",
@@ -532,146 +571,96 @@ export function momentsFromConversation(
       narration: "",
     };
     moments.push(moment);
-    if (moment.role === "ship" && moment.runId) shipByRun.set(moment.runId, moment);
+    if (moment.role === "ship" && moment.runId) {
+      const run = runFor(row);
+      moment.processId ??= run.processId;
+      run.boundaries.push({ id: String(row.messageId ?? row.id), position: position(row), row, moment });
+    }
   }
 
-  const toolRowsByRun = new Map<string, ChatTranscriptRow[]>();
-  const narrationByRun = new Map<string, string[]>();
-  const runStarted = new Map<string, number | null>();
-  const processByRun = new Map<string, string>();
-  transcript.forEach((row, index) => {
+  for (const row of transcript) {
     if (row.role === "system" && row.text.trim()) {
-      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") return;
+      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") continue;
       moments.push({ id: row.id, role: "note", event: row.event, text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, processId: row.processId, timestamp: row.timestamp ?? null, activities: [], narration: "" });
-      return;
+      continue;
     }
-    const runKey = runKeyOf(row, index);
-    if (!runStarted.has(runKey)) runStarted.set(runKey, row.timestamp ?? null);
-    if (row.processId && !processByRun.has(runKey)) processByRun.set(runKey, row.processId);
-    if (isToolRow(row)) {
-      const bucket = toolRowsByRun.get(runKey) ?? [];
-      bucket.push(row);
-      toolRowsByRun.set(runKey, bucket);
-    } else if (row.role === "assistant" && row.messageDirection !== "out" && row.text.trim()) {
-      const bucket = narrationByRun.get(runKey) ?? [];
-      bucket.push(row.text.trim());
-      narrationByRun.set(runKey, bucket);
+    if (row.messageDirection === "out") {
+      if (!row.runId || !row.conversationMessageId) continue;
+      const run = runFor(row);
+      const boundary = run.boundaries.find((entry) => entry.id === row.conversationMessageId);
+      if (boundary) boundary.position.record = position(row).record;
+      else run.boundaries.push({ id: row.conversationMessageId, position: position(row), row });
+      continue;
     }
-  });
-
-  const runKeys = new Set([...toolRowsByRun.keys(), ...narrationByRun.keys()]);
-  for (const runKey of runKeys) {
-    const toolRows = toolRowsByRun.get(runKey) ?? [];
-    const active = activeRunId !== null && runKey === activeRunId;
-    let moment = shipByRun.get(runKey);
-    if (!moment) {
-      // a run that has not sent anything yet, or never did: it still shows what it did
-      moment = { id: `run:${runKey}`, role: "ship", text: "", streaming: false, thinking: active, runId: runKey, timestamp: runStarted.get(runKey) ?? null, activities: [], narration: "" };
-      moments.push(moment);
-      shipByRun.set(runKey, moment);
+    if (isToolRow(row) && !isMessageSend(row)) {
+      const run = runFor(row);
+      const key = row.toolCallId ?? row.id;
+      const existing = run.calls.get(key);
+      const start = position(row, true);
+      if (existing) {
+        existing.rows.push(row);
+        if (compare(start, existing.position) < 0) existing.position = start;
+      } else {
+        const work = { position: start, rows: [row] };
+        run.calls.set(key, work);
+        run.work.push(work);
+      }
+    } else if (row.role === "assistant" && row.text.trim()) {
+      runFor(row).work.push({ position: position(row), rows: [row] });
     }
-    moment.processId ??= processByRun.get(runKey);
-    moment.activities = toolRows.length > 0 ? activitiesForRows(toolRows, runKey, active) : [];
-    moment.narration = (narrationByRun.get(runKey) ?? []).join("\n\n");
-    if (moment.thinking && (moment.activities.length > 0 || moment.narration)) moment.thinking = active;
   }
 
+  for (const run of runs.values()) {
+    run.boundaries.sort((left, right) => compare(left.position, right.position)
+      || (left.row.conversationSequence ?? Infinity) - (right.row.conversationSequence ?? Infinity));
+    run.work.sort((left, right) => compare(left.position, right.position));
+    const segments = new Map<Boundary | undefined, Work[]>();
+    for (const work of run.work) {
+      const boundary = run.boundaries.find((entry) => compare(work.position, entry.position) <= 0);
+      const segment = segments.get(boundary) ?? [];
+      segment.push(work);
+      segments.set(boundary, segment);
+    }
+    for (const [boundary, work] of segments) {
+      const previous = boundary ? run.boundaries[run.boundaries.indexOf(boundary) - 1] : run.boundaries.at(-1);
+      const active = activeRunId !== null && run.runId === activeRunId;
+      let moment = boundary?.moment;
+      if (!moment) {
+        // a run that has not sent anything yet, or never did: it still shows what it did
+        moment = {
+          id: `work:${JSON.stringify([run.key, boundary ? ["before", boundary.id] : ["after", previous?.id ?? null]])}`,
+          role: "ship", text: "", streaming: false, thinking: active, runId: run.runId, processId: run.processId,
+          timestamp: work[0].position.timestamp, activities: [], narration: "",
+        };
+        if (previous?.moment?.timestamp !== undefined && previous.moment.timestamp !== null) {
+          moment.timestamp = Math.max(moment.timestamp ?? previous.moment.timestamp, previous.moment.timestamp);
+        }
+        moments.push(moment);
+      }
+      const tools = work.filter((entry) => isToolRow(entry.rows[0])).map((entry) => {
+        const terminal = entry.rows.filter((row) => row.role === "toolResult" || row.status === "done" || row.status === "error");
+        const result = terminal.at(-1) ?? entry.rows.at(-1)!;
+        const call = entry.rows.find((row) => row.role === "tool") ?? entry.rows[0];
+        return {
+          ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
+          toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.position.timestamp,
+        };
+      });
+      moment.activities = activitiesForRows(tools, moment.id, active);
+      moment.narration = work.filter((entry) => entry.rows[0].role === "assistant").map((entry) => entry.rows[0].text.trim()).join("\n\n");
+    }
+  }
   return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }
 
 /* the receipt: what a ship moment did, in plain words, generated from its calls */
 
-type ReceiptVerb = { past: string; present: string; noun: string };
-const verb = (past: string, present: string, noun: string): ReceiptVerb => ({ past, present, noun });
-const RECEIPT_VERBS = new Map<string, ReceiptVerb>([
-  ["fs.read", verb("read", "reading", "files")],
-  ["fs.write", verb("wrote", "writing", "files")],
-  ["fs.edit", verb("edited", "editing", "files")],
-  ["fs.delete", verb("deleted", "deleting", "files")],
-  ["fs.list", verb("listed", "listing", "folders")],
-  ["fs.search", verb("searched", "searching", "searches")],
-  ["fs.grep", verb("searched", "searching", "searches")],
-  ["fs.copy", verb("copied", "copying", "files")],
-  ["fs.stat", verb("checked", "checking", "files")],
-  ["fs.transfer.send", verb("sent", "sending", "files")],
-  ["shell.exec", verb("ran", "running", "commands")],
-  ["codemode.exec", verb("ran code", "running code", "scripts")],
-  ["net.fetch", verb("fetched", "fetching", "pages")],
-]);
-
-/** The words that stand for a syscall; an unknown one keeps its own name, which is still true. */
-function receiptVerb(syscall: string, present: boolean): [verb: string, noun: string] {
-  const known = RECEIPT_VERBS.get(syscall);
-  if (known) return [present ? known.present : known.past, known.noun];
-  return [present ? `${syscall}…` : syscall, "steps"];
-}
-
-function shortenMiddle(text: string, max = 48): string {
-  if (text.length <= max) return text;
-  const head = Math.ceil((max - 1) / 2);
-  const tail = Math.floor((max - 1) / 2);
-  return `${text.slice(0, head)}…${text.slice(-tail)}`;
-}
-
-/** The one argument a person wants to see, qualified by its place when that place is not the cloud home. */
-function receiptWhat(syscall: string, summary: string, target: string): string {
-  if (!summary) return "";
-  if (syscall.startsWith("net.")) {
-    try {
-      return new URL(summary).host;
-    } catch {
-      return shortenMiddle(summary);
-    }
-  }
-  const qualified = syscall.startsWith("fs.") && target !== CLOUD_PLACE_ID ? `${target}:${summary}` : summary;
-  return shortenMiddle(qualified);
-}
-
-export type ReceiptPhrase = {
-  verb: string;
-  /** The argument shown; null when three or more alike calls were folded into a count. */
-  what: string | null;
-  count: number;
-  noun: string;
-  failed: boolean;
-};
-
-const RECEIPT_FOLD_AT = 3;
-
-/** Finished calls as phrases, in order; a run of three or more with the same verb folds into a count. */
-export function receiptPhrases(moment: Moment): ReceiptPhrase[] {
-  const singles: ReceiptPhrase[] = [];
-  for (const activity of moment.activities) {
-    if (activity.you) continue;
-    for (const call of activity.calls) {
-      if (!call.finished) continue;
-      const [verb, noun] = receiptVerb(call.syscall, false);
-      singles.push({ verb, what: receiptWhat(call.syscall, call.summary, activity.target), count: 1, noun, failed: call.failed });
-    }
-  }
-  const phrases: ReceiptPhrase[] = [];
-  let index = 0;
-  while (index < singles.length) {
-    let end = index + 1;
-    while (end < singles.length && singles[end].verb === singles[index].verb && !singles[end].failed && !singles[index].failed) end += 1;
-    const run = end - index;
-    if (run >= RECEIPT_FOLD_AT) phrases.push({ ...singles[index], what: null, count: run });
-    else phrases.push(...singles.slice(index, end));
-    index = end;
-  }
-  return phrases;
-}
-
-/** The call still running, in the present tense, or null when nothing is. */
-export function receiptRunning(moment: Moment): ReceiptPhrase | null {
-  for (const activity of moment.activities) {
-    if (activity.you) continue;
-    const call = activity.calls.find((entry) => !entry.finished);
-    if (!call) continue;
-    const [verb, noun] = receiptVerb(call.syscall, true);
-    return { verb, what: receiptWhat(call.syscall, call.summary, activity.target), count: 1, noun, failed: false };
-  }
-  return null;
+export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {
+  return moment.activities.filter((activity) => !activity.you).map((activity) => ({
+    target: activity.target,
+    live: activity.live,
+    failed: activity.calls.some((call) => call.failed),
+  }));
 }
 
 export function receiptSteps(moment: Moment): number {

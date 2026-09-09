@@ -2,10 +2,36 @@ import { describe, expect, it } from "vitest";
 import { procHistoryRecordSchema, procHistoryArchivedRecordSchema } from "@humansandmachines/gsv/protocol";
 import { mergeTranscriptRows } from "./transcriptMerge";
 import { transcriptRowsFromRecords } from "./typedHistory";
-import { momentsFromConversation, activitiesForRows, receiptPhrases } from "../../instrument/zen/zenModel";
+import { momentsFromConversation, activitiesForRows, receiptTargets } from "../../instrument/zen/zenModel";
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
+  it("retains a call's start and a sent message's identity when the result arrives after sending", () => {
+    const call = procHistoryRecordSchema.parse({ ...identity, createdAt: 10, kind: "call", payload: {
+      runId: "r", callId: "read", tool: "Read", syscall: "fs.read", target: "gsv", args: { path: "/note.md" },
+    } });
+    const sent = procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, createdAt: 10, kind: "message", payload: {
+      direction: "out", conversationMessageId: "sent-one", text: "An update", media: [], origin: {},
+    } });
+    const result = procHistoryRecordSchema.parse({ ...identity, id: 3, messageId: 3, createdAt: 20, kind: "result", payload: {
+      callId: "read", tool: "Read", outcome: "completed", output: "Read output", media: [], resources: [],
+    } });
+    const started = transcriptRowsFromRecords([call]).map((row) => ({ ...row, processId: "original", status: "running" as const }));
+    const delta = mergeTranscriptRows(started, transcriptRowsFromRecords([sent, result]));
+    const reloaded = transcriptRowsFromRecords([call, sent, result]);
+
+    for (const rows of [delta, reloaded]) {
+      expect(rows.find((row) => row.role === "toolResult")).toMatchObject({
+        toolStartedAt: 10, toolCallRecordKey: "1:0", timestamp: 20,
+        toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path: "/note.md" },
+      });
+      expect(rows.find((row) => row.messageDirection === "out")).toMatchObject({
+        conversationMessageId: "sent-one", historyRecordKey: "2:0", timestamp: 10,
+      });
+    }
+    expect(delta.find((row) => row.role === "toolResult")?.processId).toBe("original");
+  });
+
   it.each(["live", "archive"])("hides redacted thinking in %s notes without changing retained content", (source) => {
     const schema = source === "live" ? procHistoryRecordSchema : procHistoryArchivedRecordSchema;
     const hidden = { type: "thinking", thinking: "opaque provider redaction", redacted: true, thinkingSignature: "hidden-signature" };
@@ -104,7 +130,7 @@ describe("typed history projection", () => {
       const moments = momentsFromConversation([], rows, null);
       expect(moments).toHaveLength(1);
       expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: output.error, finished: true, failed: true })]);
-      expect(receiptPhrases(moments[0])).toEqual([{ verb: "read", what: path, count: 1, noun: "files", failed: true }]);
+      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, failed: true }]);
     }
   });
 
@@ -127,7 +153,7 @@ describe("typed history projection", () => {
       const moments = momentsFromConversation([], rows, null);
       expect(moments).toHaveLength(1);
       expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: content, finished: true, failed: false })]);
-      expect(receiptPhrases(moments[0])).toEqual([{ verb: "read", what: path, count: 1, noun: "files", failed: false }]);
+      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, failed: false }]);
     }
   });
 
