@@ -6,7 +6,7 @@ import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KE
 import { createLedgerSync } from "./ledgerSync";
 import {
   isProcessSignal,
-  ledgerAppendedSignalSchema,
+  ledgerChangedSignalSchema,
   patchProcesses,
   patchTargets,
   procSignalSchema,
@@ -40,7 +40,7 @@ export function WireSync(): null {
 
   useEffect(() => {
     if (!connected) return;
-    const ledger = createLedgerSync(client, queryClient);
+    const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
       if (signal === "target.status") {
         const parsed = targetStatusSignalSchema.safeParse(payload);
@@ -70,12 +70,10 @@ export function WireSync(): null {
         else void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
         return;
       }
-      if (signal === "ledger.appended") {
-        const parsed = ledgerAppendedSignalSchema.safeParse(payload);
+      if (signal === "ledger.changed") {
+        const parsed = ledgerChangedSignalSchema.safeParse(payload);
         if (!parsed.success) return;
-        // more arrived at once than one page holds: walk the loaded pages again rather than leave a gap
-        // Catch-up walks the cursor back to the cached head, without rereading older loaded pages.
-        ledger.appended(parsed.data.seq);
+        ledger.changed(parsed.data.lines);
       }
     });
     return () => { unsubscribe(); ledger.stop(); };

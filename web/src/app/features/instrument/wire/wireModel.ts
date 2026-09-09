@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import type { LedgerLine } from "../fleet/fleetModel";
+import { sysLedgerListResultSchema } from "../fleet/fleetModel";
+import type { SysLedgerChangedSignal } from "@humansandmachines/gsv/protocol";
 
 /* what each signal carries, as far as the instrument needs it */
 
@@ -28,7 +30,7 @@ export const procSignalSchema = z.object({
   }).nullable().optional(),
 });
 
-export const ledgerAppendedSignalSchema = z.object({ seq: z.number(), count: z.number() });
+export const ledgerChangedSignalSchema = z.object({ lines: sysLedgerListResultSchema.shape.lines.max(32) }) satisfies z.ZodType<SysLedgerChangedSignal>;
 
 export type Patch<T> = { next: T; known: boolean };
 
@@ -96,6 +98,35 @@ export function patchProcesses(
 
 export type LedgerPage = { lines: LedgerLine[]; nextCursor: string | null };
 export type LedgerPages = { pages: LedgerPage[]; pageParams: (string | null)[] };
+
+export function ledgerSequence(line: LedgerLine | undefined): number {
+  return Number(line?.id.slice("sys:".length) ?? 0);
+}
+
+/** Patch loaded rows and insert rows newer than the ordinary snapshot, including out-of-order owner batches. */
+export function mergeLedgerChanges(data: LedgerPages, changes: readonly LedgerLine[], snapshotHead: number): LedgerPages {
+  const updates = new Map(changes.map((line) => [line.id, line]));
+  const seen = new Set<string>();
+  let changed = false;
+  const pages = data.pages.map((page) => {
+    let pageChanged = false;
+    const lines = page.lines.map((line) => {
+      seen.add(line.id);
+      const update = updates.get(line.id);
+      if (!update || (line.outcome !== "running" && update.outcome === "running")) return line;
+      if (line.outcome === update.outcome && line.costNanoUsd === update.costNanoUsd) return line;
+      pageChanged = changed = true;
+      return update;
+    });
+    return pageChanged ? { ...page, lines } : page;
+  });
+  const fresh = [...updates.values()].filter((line) => !seen.has(line.id) && ledgerSequence(line) > snapshotHead);
+  const patched = changed ? { ...data, pages } : data;
+  if (fresh.length === 0) return patched;
+  const next = prependLedger(patched, fresh);
+  next.pages[0].lines.sort((a, b) => ledgerSequence(b) - ledgerSequence(a));
+  return next;
+}
 
 /** Fresh lines, newest first, put in front of the first cached page; lines the cache already holds are skipped. */
 export function prependLedger(data: LedgerPages, fresh: readonly LedgerLine[]): LedgerPages {

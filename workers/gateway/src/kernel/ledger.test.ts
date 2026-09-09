@@ -135,6 +135,27 @@ describe("outcomeOfResponse", () => {
 });
 
 describe("LedgerStore", () => {
+  it("publishes persisted capped rows after append, completion and stale cancellation, exactly once per transition", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const changes: { ownerUid: number; line: import("./ledger").LedgerLine }[] = [];
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()), (ownerUid, line) => {
+        expect(sql.exec<{ outcome: string | null }>("SELECT outcome FROM ledger_window WHERE seq = ?", line.seq).one().outcome).toBe(line.outcome);
+        changes.push({ ownerUid, line });
+      });
+      store.append(entry({ requestId: "first", ownerUid: 1001, args: "x".repeat(LEDGER_ARGS_LIMIT + 1) }));
+      store.complete("first", { outcome: "denied", tokens: 15, costNanoUsd: 42 }, 1200);
+      store.complete("first", { outcome: "failed" }, 1300);
+      store.complete("absent", { outcome: "failed" });
+      store.append(entry({ requestId: "stale" }));
+      store.closeStale(LEDGER_WINDOW_AGE_MS + 2000);
+      expect(changes.map(({ ownerUid, line }) => [ownerUid, line.outcome])).toEqual([[1001, null], [1001, "denied"], [1000, null], [1000, "cancelled"]]);
+      expect(changes[0].line.args).toHaveLength(LEDGER_ARGS_LIMIT);
+      expect(changes[1].line).toMatchObject({ durationMs: 200, tokens: 15, costNanoUsd: 42 });
+      expect(changes[0].line).not.toHaveProperty("ownerUid");
+      expect(changes[0].line).not.toHaveProperty("requestId");
+    });
+  });
+
   it("appends open lines, caps every client field, and completes with outcome and duration", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));

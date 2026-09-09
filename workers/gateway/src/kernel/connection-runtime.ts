@@ -7,6 +7,7 @@ import type {
   JsonValue,
   ProcessIdentity,
   ProcHistoryEventPayload,
+  SysLedgerChangedSignal,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -38,6 +39,7 @@ import {
 } from "./connection";
 import type { Kernel } from "./do";
 import { deliverTargetConnectionEvent } from "./target-events";
+import { hasCapability } from "./capabilities";
 import {
   sameRouteOrigin,
 } from "./do-shared";
@@ -294,6 +296,24 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       if (!peer.grant.signals.includes(signal)) continue;
       if (peer.principal.account.uid === uid) {
         conn.send(json);
+      }
+    }
+  }
+
+  /** Ledger rows contain private arguments; the signal grant alone never grants read access. */
+  broadcastLedgerChanges(ownerUid: number, payload: SysLedgerChangedSignal): void {
+    let json: string | undefined;
+    for (const [, conn] of this.host.connections) {
+      const peer = conn.state.peer;
+      if (conn.state.step !== "connected" || !peer || peer.principal.kind !== "human") continue;
+      if (peer.principal.account.uid !== ownerUid && peer.principal.account.uid !== 0) continue;
+      if (!peer.grant.signals.includes("ledger.changed") || !hasCapability(peer.grant.calls, "sys.ledger.list")) continue;
+      json ??= JSON.stringify({ type: "sig", signal: "ledger.changed", payload } satisfies SignalFrame);
+      try {
+        conn.send(json);
+      } catch {
+        // Reconnection reloads the authoritative snapshot if this connection cannot accept a patch.
+        conn.close(1011, "Ledger feed interrupted");
       }
     }
   }

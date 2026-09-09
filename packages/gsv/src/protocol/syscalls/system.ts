@@ -676,3 +676,8 @@ export type SysLedgerListResult = {
   lines: SysLedgerLine[];
   nextCursor: string | null;
 };
+
+/** Authoritative inserted or completed rows, delivered only to authorized ledger readers. */
+export type SysLedgerChangedSignal = {
+  lines: SysLedgerLine[];
+};

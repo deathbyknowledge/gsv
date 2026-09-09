@@ -37,6 +37,8 @@ describe("user-facing signal policy", () => {
       "target.status",
       "adapter.status",
       "mcp.changed",
+      "ledger.changed",
     ]));
+    expect(USER_CONNECTION_SIGNALS).not.toContain("ledger.appended");
   });
 });

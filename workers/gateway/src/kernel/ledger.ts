@@ -325,6 +325,7 @@ export class LedgerStore {
     private readonly storage: Pick<DurableObjectStorage, "transactionSync">,
     /** The installation's object store; swapped in tests to make writes fail. */
     public bucket: LedgerObjectStore,
+    private readonly changed?: (ownerUid: number, line: LedgerLine) => void,
   ) {}
 
   /* ---------- the active window ---------- */
@@ -339,10 +340,10 @@ export class LedgerStore {
 
   /** Writes an open line. Every client-controlled field is capped here, whatever the caller checked. */
   append(entry: LedgerAppend): number {
-    this.sql.exec(
+    const row = this.sql.exec<WindowRow>(
       `INSERT INTO ledger_window
        (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, args)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       capField(entry.requestId, LEDGER_ID_LIMIT),
       entry.timestamp,
       capField(entry.principalKind, 32),
@@ -353,15 +354,15 @@ export class LedgerStore {
       capField(entry.target, LEDGER_ID_LIMIT),
       capField(entry.call, LEDGER_ID_LIMIT),
       capField(entry.args, LEDGER_ARGS_LIMIT),
-    );
-    const [row] = [...this.sql.exec<{ seq: number }>("SELECT last_insert_rowid() AS seq")];
-    const seq = row?.seq ?? 0;
+    ).one();
+    const seq = row.seq;
     this.open.set(entry.requestId, seq);
     while (this.open.size > LEDGER_WINDOW_ROWS) {
       const oldest = this.open.keys().next().value;
       if (oldest === undefined) break;
       this.open.delete(oldest);
     }
+    this.changed?.(row.owner_uid, publicLine(rowToStored(row)));
     return seq;
   }
 
@@ -369,21 +370,19 @@ export class LedgerStore {
   complete(requestId: string, completion: LedgerCompletion, now = Date.now()): boolean {
     const known = this.open.get(requestId);
     this.open.delete(requestId);
-    const [open] = known === undefined
-      ? [...this.sql.exec<{ seq: number; ts: number }>(
-        "SELECT seq, ts FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1",
-        capField(requestId, LEDGER_ID_LIMIT),
-      )]
-      : [...this.sql.exec<{ seq: number; ts: number }>("SELECT seq, ts FROM ledger_window WHERE seq = ? AND outcome IS NULL", known)];
-    if (!open) return false;
-    this.sql.exec(
-      "UPDATE ledger_window SET outcome = ?, duration_ms = ?, tokens = ?, cost_nano_usd = ? WHERE seq = ?",
+    const [row] = [...this.sql.exec<WindowRow>(
+      `UPDATE ledger_window SET outcome = ?, duration_ms = MAX(0, ? - ts), tokens = ?, cost_nano_usd = ?
+       WHERE seq = ${known === undefined
+         ? "(SELECT seq FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1)"
+         : "?"} AND outcome IS NULL RETURNING *`,
       completion.outcome,
-      Math.max(0, now - open.ts),
+      now,
       completion.tokens ?? null,
       completion.costNanoUsd ?? null,
-      open.seq,
-    );
+      known ?? capField(requestId, LEDGER_ID_LIMIT),
+    )];
+    if (!row) return false;
+    this.changed?.(row.owner_uid, publicLine(rowToStored(row)));
     return true;
   }
 
@@ -404,10 +403,16 @@ export class LedgerStore {
 
   /** Closes as cancelled every line still open past the window age; returns how many. */
   closeStale(now = Date.now()): number {
-    return this.sql.exec(
-      "UPDATE ledger_window SET outcome = 'cancelled', duration_ms = NULL WHERE outcome IS NULL AND ts < ?",
+    const rows = this.sql.exec<{ seq: number }>(
+      "UPDATE ledger_window SET outcome = 'cancelled', duration_ms = NULL WHERE outcome IS NULL AND ts < ? RETURNING seq",
       now - LEDGER_WINDOW_AGE_MS,
-    ).rowsWritten;
+    );
+    for (const { seq } of rows) {
+      if (!this.changed) continue;
+      const row = this.sql.exec<WindowRow>("SELECT * FROM ledger_window WHERE seq = ?", seq).one();
+      this.changed(row.owner_uid, publicLine(rowToStored(row)));
+    }
+    return rows.rowsWritten;
   }
 
   /** Drops lines past retention that never needed a segment, so the window keeps the bucket's promise; returns how many. */

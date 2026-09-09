@@ -118,6 +118,7 @@ import {
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
@@ -444,7 +445,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.targets = new TargetRegistry(sql);
 
     this.routes = new RoutingTable(sql);
-    this.ledger = new LedgerStore(sql, ctx.storage, this.storage);
+    this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
+      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
+      // Only its open notification is suppressed; completion now pushes the row without requesting another read.
+      if (line.call !== "sys.ledger.list" || line.outcome !== null) this.ledgerFeed.changed(ownerUid, line);
+    });
 
     this.shellSessions = new ShellSessionStore(sql);
 
@@ -1473,7 +1478,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
                                                       /* ---------- the ledger: one line per dispatched syscall ---------- */
 
-  private readonly ledgerSignals = new Map<number, { timer: ReturnType<typeof setTimeout>; count: number; seq: number }>();
+  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
+  private readonly ledgerFeed = new LedgerFeed((ownerUid, payload) => this.connectionRuntime.broadcastLedgerChanges(ownerUid, payload));
 
   private recordLedgerDispatch(frame: RequestFrame, ctx: KernelContext, origin: RouteOrigin): void {
     try {
@@ -1494,8 +1500,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         call: frame.call,
         args: argsText(args),
       });
-      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
-      this.noteLedgerAppend(ownerUid, seq, frame.call !== "sys.ledger.list");
+      void this.armLedgerRotation(seq);
     } catch (error) {
       console.warn(`[ledger] append failed: ${error instanceof Error ? error.name : "error"}`);
     }
@@ -1516,26 +1521,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
     }
-  }
-
-  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
-  private noteLedgerAppend(ownerUid: number, seq: number, signal: boolean): void {
-    for (const uid of signal ? (ownerUid === 0 ? [0] : [ownerUid, 0]) : []) {
-      const pending = this.ledgerSignals.get(uid);
-      if (pending) {
-        pending.count += 1;
-        pending.seq = seq;
-        continue;
-      }
-      const timer = setTimeout(() => {
-        const entry = this.ledgerSignals.get(uid);
-        this.ledgerSignals.delete(uid);
-        if (!entry) return;
-        this.connectionRuntime.broadcastToUserUid(uid, "ledger.appended", { seq: entry.seq, count: entry.count });
-      }, 500);
-      this.ledgerSignals.set(uid, { timer, count: 1, seq });
-    }
-    void this.armLedgerRotation(seq);
   }
 
   /**

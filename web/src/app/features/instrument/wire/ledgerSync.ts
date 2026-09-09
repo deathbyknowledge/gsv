@@ -1,100 +1,90 @@
 import type { QueryClient } from "@tanstack/preact-query";
-import type { GSVClient } from "@humansandmachines/gsv/client";
-import { ledgerFromSysLines, sysLedgerListResultSchema, type LedgerLine } from "../fleet/fleetModel";
-import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE } from "./queryKeys";
-import { prependLedger, type LedgerPages } from "./wireModel";
+import type { SysLedgerLine } from "@humansandmachines/gsv/protocol";
+import { ledgerFromSysLines, type LedgerLine } from "../fleet/fleetModel";
+import { INSTRUMENT_LEDGER_KEY } from "./queryKeys";
+import { ledgerSequence, mergeLedgerChanges, type LedgerPages } from "./wireModel";
 
 const KEY = [...INSTRUMENT_LEDGER_KEY, "sys"] as const;
-type Client = Pick<GSVClient, "request">;
+export const LEDGER_PENDING_LIMIT = 256;
 
-function latestSequence(data: LedgerPages): number {
-  return Number(data.pages[0]?.lines[0]?.id.slice("sys:".length) ?? 0);
-}
-
-/** Walk the cursor to the cached head; signal counts exclude ledger reads and cannot delimit the gap. */
-async function readNewLines(client: Client, after: number, signal: AbortSignal): Promise<LedgerLine[]> {
-  const lines: LedgerLine[] = [];
-  const cursors = new Set<string>();
-  let cursor: string | null = null;
-  do {
-    signal.throwIfAborted();
-    const { data, body } = await client.request("sys.ledger.list", {
-      limit: INSTRUMENT_LEDGER_PAGE, ...(cursor ? { cursor } : {}),
-    }, { signal });
-    if (body) await body.stream.cancel();
-    signal.throwIfAborted();
-    const page = sysLedgerListResultSchema.parse(data);
-    lines.push(...ledgerFromSysLines(page.lines.filter((line) => line.seq > after)));
-    if (after === 0 || page.lines.some((line) => line.seq <= after)) break;
-    cursor = page.nextCursor;
-    if (cursor) {
-      if (cursors.has(cursor)) throw new Error("The ledger returned a repeated page cursor");
-      cursors.add(cursor);
-    }
-  } while (cursor);
-  return lines;
-}
-
-/** One catch-up at a time for an observed ledger, after any ordinary page fetch settles. */
-export function createLedgerSync(client: Client, cache: QueryClient): { appended: (seq: number) => void; stop: () => void } {
+/** Keep patches received during a page fetch until its snapshot is committed. */
+export function createLedgerSync(cache: QueryClient): { changed: (lines: SysLedgerLine[]) => void; stop: () => void } {
   const currentQuery = () => cache.getQueryCache().find<LedgerPages>({ queryKey: KEY, exact: true });
-  let pending = 0;
-  let running: AbortController | null = null;
+  let query = currentQuery();
+  let snapshotHead = ledgerSequence(query?.state.data?.pages[0]?.lines[0]);
+  const pending = new Map<string, LedgerLine>();
+  let overflowed = false;
   let scheduled = false;
   let stopped = false;
 
+  const selectQuery = () => {
+    const current = currentQuery();
+    if (current !== query) {
+      query = current;
+      snapshotHead = ledgerSequence(query?.state.data?.pages[0]?.lines[0]);
+      pending.clear();
+      overflowed = false;
+    }
+    return current;
+  };
   const schedule = () => {
     if (stopped || scheduled) return;
     scheduled = true;
-    queueMicrotask(() => { scheduled = false; void flush(); });
+    queueMicrotask(() => { scheduled = false; flush(); });
   };
-  const flush = async () => {
-    if (stopped || (!pending && !running)) return;
-    const query = currentQuery();
-    if (!query || !query.isActive()) {
-      running?.abort();
-      pending = 0;
-      if (query && !query.state.isInvalidated) {
-        void cache.invalidateQueries({ queryKey: KEY, exact: true, refetchType: "none" });
-      }
+  const flush = () => {
+    if (stopped) return;
+    const current = selectQuery();
+    if (!current || (!pending.size && !overflowed)) return;
+    if (!current.isActive()) {
+      pending.clear(); overflowed = false;
+      void cache.invalidateQueries({ queryKey: KEY, exact: true, refetchType: "none" });
       return;
     }
-    if (running) {
-      if (query.state.fetchStatus !== "idle") running.abort();
+    if (current.state.fetchStatus !== "idle") return;
+    if (overflowed) {
+      pending.clear(); overflowed = false;
+      // more arrived at once than one page holds: walk the loaded pages again rather than leave a gap
+      // Only an overflowing in-flight buffer needs recovery; ordinary row patches never request a list.
+      void cache.invalidateQueries({ queryKey: KEY, exact: true });
       return;
     }
-    if (query.state.fetchStatus !== "idle" || !query.state.data) return;
-    const after = latestSequence(query.state.data);
-    if (after >= pending) { pending = 0; return; }
-    const requested = pending;
-    pending = 0;
-    const controller = new AbortController();
-    running = controller;
-    try {
-      const fresh = await readNewLines(client, after, controller.signal);
-      if (!stopped && !controller.signal.aborted && currentQuery() === query && query.isActive()) {
-        cache.setQueryData<LedgerPages>(KEY, (data) => data ? prependLedger(data, fresh) : data);
-      }
-    } catch {
-      if (!stopped && currentQuery() === query && query.isActive()) {
-        if (controller.signal.aborted) pending = Math.max(pending, requested);
-        else {
-          // An ordinary refresh owns visible query errors if catch-up fails.
-          void cache.invalidateQueries({ queryKey: KEY, exact: true });
-        }
-      }
-    } finally {
-      running = null;
-      schedule();
-    }
+    if (!current.state.data) { pending.clear(); return; }
+    const changes = [...pending.values()];
+    pending.clear();
+    const next = mergeLedgerChanges(current.state.data, changes, snapshotHead);
+    if (next !== current.state.data) cache.setQueryData(KEY, next);
   };
   const unsubscribe = cache.getQueryCache().subscribe((event) => {
-    if (event.query.queryHash === cache.getQueryCache().find({ queryKey: KEY, exact: true })?.queryHash || event.type === "removed") {
-      if (pending || running) schedule();
+    const current = selectQuery();
+    if (event.query !== current) return;
+    if (event.type === "updated" && event.action.type === "success" && !event.action.manual && !current.state.fetchMeta?.fetchMore) {
+      snapshotHead = ledgerSequence(current?.state.data?.pages[0]?.lines[0]);
     }
+    if (pending.size || overflowed) schedule();
   });
   return {
-    appended: (seq) => { pending = Math.max(pending, seq); schedule(); },
-    stop: () => { stopped = true; unsubscribe(); running?.abort(); },
+    changed: (lines) => {
+      if (stopped) return;
+      const current = selectQuery();
+      if (!current) return;
+      if (!current.isActive()) {
+        pending.clear(); overflowed = false;
+        if (!current.state.isInvalidated) void cache.invalidateQueries({ queryKey: KEY, exact: true, refetchType: "none" });
+        return;
+      }
+      if (!overflowed) {
+        for (const line of ledgerFromSysLines(lines)) {
+          const previous = pending.get(line.id);
+          if (!previous || previous.outcome === "running" || line.outcome !== "running") pending.set(line.id, line);
+          if (pending.size > LEDGER_PENDING_LIMIT) {
+            pending.clear(); overflowed = true;
+            break;
+          }
+        }
+      }
+      schedule();
+    },
+    stop: () => { stopped = true; unsubscribe(); pending.clear(); },
   };
 }

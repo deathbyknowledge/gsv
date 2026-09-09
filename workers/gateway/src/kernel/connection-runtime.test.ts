@@ -69,3 +69,36 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
     expect(host.connections.size).toBe(1);
   });
 });
+
+describe("ConnectionRuntime.broadcastLedgerChanges", () => {
+  it("requires a connected human reader, the signal grant, and the owning uid or root", () => {
+    const socket = (uid: number, calls = ["sys.ledger.list"], signals = ["ledger.changed"], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({
+      step, protocol: 4,
+      peer: { ...MACHINE_PEER, principal: { kind, account: { ...MACHINE_PEER.principal.account, uid } }, grant: { calls, signals, implements: [] } },
+    });
+    const owner = socket(1000);
+    const root = socket(0, ["*"]);
+    const wildcard = socket(1000, ["sys.ledger.*"]);
+    const rejected = [socket(1001), socket(1000, []), socket(1000, ["sys.ledger.list"], []), socket(1000, ["*"], ["ledger.changed"], "machine"), socket(1000, ["*"], ["ledger.changed"], "human", "superseded")];
+    const { runtime } = runtimeWith([owner, root, wildcard, ...rejected]);
+    runtime.rehydrateConnections();
+    runtime.broadcastLedgerChanges(1000, { lines: [] });
+    for (const recipient of [owner, root, wildcard]) expect(recipient.send).toHaveBeenCalledOnce();
+    for (const recipient of rejected) expect(recipient.send).not.toHaveBeenCalled();
+    runtime.broadcastLedgerChanges(0, { lines: [] });
+    expect(root.send).toHaveBeenCalledTimes(2);
+    expect(owner.send).toHaveBeenCalledOnce();
+  });
+
+  it("closes a failed reader for snapshot recovery and continues delivering to other readers", () => {
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" }, grant: { calls: ["*"], signals: ["ledger.changed"], implements: [] } };
+    const failed = fakeSocket({ step: "connected", protocol: 4, peer });
+    const healthy = fakeSocket({ step: "connected", protocol: 4, peer });
+    failed.send.mockImplementation(() => { throw new Error("closed"); });
+    const { runtime } = runtimeWith([failed, healthy]);
+    runtime.rehydrateConnections();
+    runtime.broadcastLedgerChanges(1000, { lines: [] });
+    expect(failed.close).toHaveBeenCalledWith(1011, "Ledger feed interrupted");
+    expect(healthy.send).toHaveBeenCalledOnce();
+  });
+});

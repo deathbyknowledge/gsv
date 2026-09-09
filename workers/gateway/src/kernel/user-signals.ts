@@ -21,7 +21,7 @@ export const USER_CONNECTION_SIGNALS = [
   "target.status",
   "adapter.status",
   "mcp.changed",
-  "ledger.appended",
+  "ledger.changed",
 ] as const;
 
 const USER_PROCESS_SIGNAL_SET = new Set<string>(USER_PROCESS_SIGNALS);
