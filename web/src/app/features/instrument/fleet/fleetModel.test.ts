@@ -16,6 +16,8 @@ import {
   shortPid,
   humanCall,
   ledgerFromSysLines,
+  visibleProcesses,
+  reconcileFleetSelection,
 } from "./fleetModel";
 
 function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
@@ -97,6 +99,14 @@ describe("places", () => {
 });
 
 describe("processes", () => {
+  it.each(["proc:replaced", "target:removed"] as const)("retains an unavailable explicit reference %s until the person leaves it", (requested) => {
+    const rows = ["target:gsv", "proc:current"] as const;
+    expect(reconcileFleetSelection(requested, requested, [])).toBe(requested);
+    expect(reconcileFleetSelection(requested, requested, rows)).toBe(requested);
+    expect(reconcileFleetSelection(requested, requested, [...rows, requested])).toBe(requested);
+    expect(reconcileFleetSelection("proc:current", requested, rows)).toBe("proc:current");
+    expect(reconcileFleetSelection("proc:disappeared", requested, rows)).toBe("target:gsv");
+  });
   it("leads with the ship, then the most recently active", () => {
     const ordered = orderProcesses([
       process({ pid: "42", lastActiveAt: 10 }),
@@ -109,6 +119,33 @@ describe("processes", () => {
   it("lists row keys as places then processes", () => {
     const keys = rowKeys(orderPlaces([target({})]), [process({ pid: "7" })]);
     expect(keys).toEqual(["target:laptop", "target:gsv", "proc:7"]);
+  });
+
+  it("reveals a linked process beyond the first page when the list arrives", () => {
+    const selected = "proc:helper:11";
+    expect(visibleProcesses([], selected, 8)).toEqual([]);
+    const loaded = Array.from({ length: 14 }, (_, index) => process({ pid: `helper:${index}` }));
+    const shown = visibleProcesses(loaded, selected, 8);
+    expect(shown.map((entry) => entry.pid)).toEqual(loaded.slice(0, 12).map((entry) => entry.pid));
+    expect(shown.at(-1)?.pid).toBe("helper:11");
+    expect(loaded).toHaveLength(14);
+  });
+
+  it("keeps the selected process visible when refreshed activity changes its position", () => {
+    const linked = process({ pid: "linked", lastActiveAt: 100 });
+    const others = Array.from({ length: 12 }, (_, index) => process({ pid: `other:${index}`, lastActiveAt: 90 - index }));
+    expect(visibleProcesses(orderProcesses([linked, ...others]), "proc:linked", 8)).toHaveLength(8);
+    const reordered = orderProcesses([{ ...linked, lastActiveAt: 0 }, ...others]);
+    const shown = visibleProcesses(reordered, "proc:linked", 8);
+    expect(shown).toHaveLength(13);
+    expect(shown.at(-1)?.pid).toBe("linked");
+  });
+
+  it("preserves expanded pages and does not treat another row kind as a process reference", () => {
+    const processes = Array.from({ length: 30 }, (_, index) => process({ pid: `helper:${index}` }));
+    expect(visibleProcesses(processes, "proc:helper:2", 20)).toHaveLength(20);
+    expect(visibleProcesses(processes, "target:helper:29", 8)).toHaveLength(8);
+    expect(visibleProcesses(processes, "proc:missing", 8)).toHaveLength(8);
   });
 });
 

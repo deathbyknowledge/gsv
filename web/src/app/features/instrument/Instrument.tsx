@@ -7,6 +7,7 @@ import { FirstDay } from "./firstday/FirstDay";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { WireSync } from "./wire/WireSync";
+import type { MemoryPageRef } from "./shared/navigation";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -77,6 +78,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetRow, setFleetRow] = useState<FleetRow | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
+  const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const [theme, setTheme] = useState<Theme>(() => storedTheme() ?? systemTheme());
   useEffect(() => {
@@ -230,11 +232,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} onMemory={() => move("memory")} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
+          <Zen onFleet={(row) => move("fleet", row ?? null)} onFirstDay={() => move("firstday")} onMemory={(page) => {
+            if (page) setSelectedMemoryPage(page);
+            move("memory");
+          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} onShip={() => setZenPid(null)} />
         ) : distance === "firstday" ? (
           <FirstDay onZen={() => move("zen")} />
         ) : distance === "memory" ? (
-          <Memory onZen={() => move("zen")} onFleet={() => move("fleet")} />
+          <Memory initialPage={selectedMemoryPage} onZen={() => move("zen")} onFleet={() => move("fleet")} onAsk={(page, prompt) => {
+            setSelectedMemoryPage(page);
+            setZenPid(null);
+            setZenPrefill(prompt);
+            move("zen");
+          }} />
         ) : (
           <Fleet
             initialRow={fleetRow}

@@ -3,3 +3,6 @@ export const INSTRUMENT_TARGETS_KEY = ["instrument", "targets"] as const;
 export const INSTRUMENT_PROCESSES_KEY = ["instrument", "processes"] as const;
 export const INSTRUMENT_LEDGER_KEY = ["instrument", "ledger"] as const;
 export const INSTRUMENT_LEDGER_PAGE = 60;
+
+/** Memory reads share their cache between the browser and references in Zen. */
+export const INSTRUMENT_MEMORY_KEY = ["instrument", "memory"] as const;

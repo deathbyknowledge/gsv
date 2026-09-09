@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
+import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
+import type { MemoryPageRef } from "../shared/navigation";
 
 /* ---------- the prompt line ---------- */
 
@@ -65,6 +67,8 @@ export type ActivityCall = {
   output: string;
   finished: boolean;
   failed: boolean;
+  /** The original structured Read path, before display shortening. */
+  filePath?: string;
 };
 
 export type Activity = {
@@ -86,6 +90,7 @@ export type Moment = {
   streaming: boolean;
   thinking: boolean;
   runId: string | null;
+  processId?: string;
   timestamp: number | null;
   activities: Activity[];
   /** The ship's working narration for this run: what it told itself, not what it sent. Folded by default. */
@@ -235,9 +240,10 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     callId: row.toolCallId ?? row.id,
     syscall,
     summary,
+    filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
     output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
     finished,
-    failed: row.isError === true || row.toolOutcome === "failed" || row.toolOutcome === "denied",
+    failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
   };
 }
 
@@ -265,7 +271,10 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
     const timestamp = row.timestamp ?? null;
     if (existing) {
       const index = existing.calls.findIndex((candidate) => candidate.callId === call.callId);
-      if (index >= 0) existing.calls[index] = call;
+      if (index >= 0) {
+        if (call.syscall === "fs.read" && row.toolArgs === undefined) call.filePath ??= existing.calls[index].filePath;
+        existing.calls[index] = call;
+      }
       else existing.calls.push(call);
       if (timestamp !== null) existing.endedAt = timestamp;
     } else {
@@ -285,6 +294,28 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
     last.live = last.calls.some((call) => !call.finished);
   }
   return activities;
+}
+
+/** Only successful structured reads of an unambiguous known wiki page become Memory links. */
+export function memoryPagesForMoment(moment: Moment, collections: readonly LibraryCollection[]): MemoryPageRef[] {
+  const pages = new Map<string, MemoryPageRef>();
+  for (const activity of moment.activities) {
+    if (activity.you || activity.target !== CLOUD_PLACE_ID) continue;
+    for (const call of activity.calls) {
+      if (call.syscall !== "fs.read" || !call.finished || call.failed || !call.filePath) continue;
+      const path = call.filePath;
+      if (!path.startsWith("/src/repos/") || path.includes("\0") || path.split("/").slice(1).some((part) => !part || part === "." || part === "..")) continue;
+      const matches = collections.filter((collection) => path.startsWith(`/src/repos/${collection.repo}/`));
+      if (matches.length !== 1) continue;
+      const collection = matches[0];
+      if (collections.filter((entry) => entry.id === collection.id).length !== 1) continue;
+      const localPath = path.slice(`/src/repos/${collection.repo}/`.length);
+      if (localPath !== "index.md" && !/^pages\/(?:[^/]+\/)*[^/]+\.md$/i.test(localPath)) continue;
+      const page = { db: collection.id, path: `${collection.id}/${localPath}` };
+      pages.set(page.path, page);
+    }
+  }
+  return [...pages.values()];
 }
 
 function runKeyOf(row: ChatTranscriptRow, index: number): string {
@@ -310,6 +341,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         streaming: false,
         thinking: false,
         runId: row.runId ?? null,
+        processId: row.processId,
         timestamp: row.timestamp ?? null,
         activities: [],
         narration: "",
@@ -328,12 +360,16 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
           streaming: false,
           thinking: activeRunId !== null && row.runId === activeRunId,
           runId: row.runId ?? null,
+          processId: row.processId,
           timestamp: row.timestamp ?? null,
           activities: [],
           narration: "",
         };
         shipByRun.set(runKey, placeholder);
         moments.push(placeholder);
+      } else {
+        const existing = shipByRun.get(runKey);
+        if (existing) existing.processId ??= row.processId;
       }
       return;
     }
@@ -346,6 +382,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         existing.streaming = row.streaming === true;
         existing.thinking = false;
         existing.timestamp = row.timestamp ?? existing.timestamp;
+        existing.processId ??= row.processId;
         return;
       }
       const moment: Moment = {
@@ -355,6 +392,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         streaming: row.streaming === true,
         thinking: false,
         runId: row.runId ?? null,
+        processId: row.processId,
         timestamp: row.timestamp ?? null,
         activities: [],
         narration: "",
@@ -372,6 +410,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
         streaming: false,
         thinking: false,
         runId: row.runId ?? null,
+        processId: row.processId,
         timestamp: row.timestamp ?? null,
         activities: [],
         narration: "",
@@ -487,6 +526,7 @@ export function momentsFromConversation(
       streaming: row.streaming === true,
       thinking: false,
       runId: row.runId ?? null,
+      processId: row.processId,
       timestamp: row.timestamp ?? null,
       activities: [],
       narration: "",
@@ -498,14 +538,16 @@ export function momentsFromConversation(
   const toolRowsByRun = new Map<string, ChatTranscriptRow[]>();
   const narrationByRun = new Map<string, string[]>();
   const runStarted = new Map<string, number | null>();
+  const processByRun = new Map<string, string>();
   transcript.forEach((row, index) => {
     if (row.role === "system" && row.text.trim()) {
       if (row.event?.audience === "model" && row.event.kind !== "history.compacted") return;
-      moments.push({ id: row.id, role: "note", event: row.event, text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, timestamp: row.timestamp ?? null, activities: [], narration: "" });
+      moments.push({ id: row.id, role: "note", event: row.event, text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, processId: row.processId, timestamp: row.timestamp ?? null, activities: [], narration: "" });
       return;
     }
     const runKey = runKeyOf(row, index);
     if (!runStarted.has(runKey)) runStarted.set(runKey, row.timestamp ?? null);
+    if (row.processId && !processByRun.has(runKey)) processByRun.set(runKey, row.processId);
     if (isToolRow(row)) {
       const bucket = toolRowsByRun.get(runKey) ?? [];
       bucket.push(row);
@@ -528,6 +570,7 @@ export function momentsFromConversation(
       moments.push(moment);
       shipByRun.set(runKey, moment);
     }
+    moment.processId ??= processByRun.get(runKey);
     moment.activities = toolRows.length > 0 ? activitiesForRows(toolRows, runKey, active) : [];
     moment.narration = (narrationByRun.get(runKey) ?? []).join("\n\n");
     if (moment.thinking && (moment.activities.length > 0 || moment.narration)) moment.thinking = active;

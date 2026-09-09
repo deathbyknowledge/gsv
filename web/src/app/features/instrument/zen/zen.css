@@ -165,8 +165,19 @@
   padding-left: 12px;
   letter-spacing: 0.02em;
 }
-.receipt .line { cursor: pointer; }
-.receipt .line:hover { color: var(--text-hi); }
+.receipt-toggle, .zen .work-link {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.receipt-toggle:hover, .zen .work-link:hover { color: var(--text-hi); }
+.zen .work-link { text-decoration: underline; text-underline-offset: 3px; }
 .receipt em { font-style: normal; color: var(--path); }
 .receipt .n { color: var(--faint); }
 .receipt .is-failed { color: var(--warn); }

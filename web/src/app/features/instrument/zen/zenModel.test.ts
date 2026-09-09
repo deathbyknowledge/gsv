@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow } from "../../chat/domain/transcript";
+import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
 import {
   activitiesForRows,
   answerAttribution,
@@ -11,6 +12,7 @@ import {
   linkPlaceReferences,
   momentsFromRows,
   momentsFromConversation,
+  memoryPagesForMoment,
   isMessageSend,
   outputText,
   parsePromptInput,
@@ -238,6 +240,18 @@ describe("activitiesForRows", () => {
 });
 
 describe("momentsFromRows", () => {
+  it("retains originating process identities on messages, working moments, and events", () => {
+    const moments = momentsFromRows([
+      row({ id: "human", role: "user", text: "Look", processId: "previous-ship" }),
+      row({ id: "call", role: "tool", runId: "work", toolSyscall: "fs.read", toolTarget: "gsv", status: "running" }),
+      row({ id: "answer", role: "assistant", runId: "work", text: "Done", processId: "worker" }),
+      row({ id: "later", role: "assistant", runId: "work", text: "Still done", processId: "different-process" }),
+      row({ id: "event", role: "system", text: "An event", processId: "event-owner" }),
+    ], null);
+    expect(moments.map((moment) => [moment.role, moment.processId])).toEqual([
+      ["human", "previous-ship"], ["ship", "worker"], ["note", "event-owner"],
+    ]);
+  });
   it("folds a run into a human moment and one ship moment carrying its activities", () => {
     const rows = [
       row({ id: "u1", role: "user", text: "look around", runId: "r1", timestamp: 1 }),
@@ -322,6 +336,22 @@ describe("momentsFromConversation", () => {
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
   });
+  it("keeps the canonical reply's process when joining another transcript and fills only absent identities", () => {
+    const moments = momentsFromConversation([
+      message({ id: "old", text: "Old answer", runId: "old-run", processId: "old-ship" }),
+      message({ id: "new", text: "New answer", runId: "new-run" }),
+      message({ id: "human", role: "user", text: "Question", processId: "conversation-owner" }),
+    ], [
+      message({ id: "old-note", text: "Old working", runId: "old-run", processId: "current-ship" }),
+      message({ id: "new-note", text: "New working", runId: "new-run", processId: "new-ship" }),
+      message({ id: "orphan-call", role: "tool", toolSyscall: "fs.read", runId: "working-run", processId: "worker", status: "running" }),
+      message({ id: "event", role: "system", text: "Notice", processId: "event-owner" }),
+    ], "working-run");
+    expect(moments.map((moment) => [moment.id, moment.processId])).toEqual([
+      ["old", "old-ship"], ["new", "new-ship"], ["human", "conversation-owner"],
+      ["event", "event-owner"], ["run:working-run", "worker"],
+    ]);
+  });
   it("shows what the ship sent, folds what it told itself, and keeps the run's work", () => {
     const messages = [
       message({ id: "u1", role: "user", text: "tidy my downloads", timestamp: 1_000 }),
@@ -344,6 +374,89 @@ describe("momentsFromConversation", () => {
     const moments = momentsFromConversation([], transcript, "r2");
     expect(moments).toHaveLength(1);
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
+  });
+});
+
+describe("memoryPagesForMoment", () => {
+  const personal: LibraryCollection = { id: "personal", title: "Personal", repo: "owner/wiki", writable: true, updatedAt: null };
+  const read = (id: string, path: string, overrides: Partial<ChatTranscriptRow> = {}) => row({
+    id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv",
+    toolArgs: { path }, status: "done", toolOutcome: "completed", ...overrides,
+  });
+  const moment = (rows: ChatTranscriptRow[]): Moment => ({
+    id: "reply", role: "ship", text: "See personal/pages/example.md", streaming: false, thinking: false,
+    runId: "run", timestamp: 1, activities: activitiesForRows(rows, "run", false), narration: "",
+  });
+
+  it("resolves exact known pages after collection discovery and deduplicates repeated reads", () => {
+    const longPath = `pages/deep/${"long-name-".repeat(12)}.md`;
+    const value = moment([
+      read("overview", "/src/repos/owner/wiki/index.md"),
+      read("nested", `/src/repos/owner/wiki/${longPath}`),
+      read("again", "/src/repos/owner/wiki/index.md"),
+    ]);
+    expect(memoryPagesForMoment(value, [])).toEqual([]);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([
+      { db: "personal", path: "personal/index.md" },
+      { db: "personal", path: `personal/${longPath}` },
+    ]);
+    expect(value.activities[0].calls[1].filePath).toBe(`/src/repos/owner/wiki/${longPath}`);
+  });
+
+  it("retains the exact Read path when its completion omits arguments", () => {
+    const path = "/src/repos/owner/wiki/pages/example.md";
+    const value = moment([
+      read("same-call", path, { role: "tool", status: "running", toolOutcome: undefined }),
+      read("same-call", path, { toolArgs: undefined }),
+    ]);
+    expect(value.activities[0].calls).toHaveLength(1);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([{ db: "personal", path: "personal/pages/example.md" }]);
+  });
+
+  const ineligibleCalls: Partial<ChatTranscriptRow>[] = [
+    { role: "tool" as const, status: "running" as const, toolOutcome: undefined },
+    { toolOutcome: "failed" as const },
+    { toolOutcome: "denied" as const },
+    { toolOutcome: "cancelled" as const },
+    { isError: true },
+    { status: "error" as const },
+    { toolTarget: "laptop" },
+    { toolTarget: null },
+    { toolSyscall: "fs.write" },
+    { toolSyscall: "shell.exec", toolArgs: { input: "wiki read personal/pages/example.md" } },
+    { toolSyscall: "codemode.exec", toolArgs: { code: "read a wiki page" } },
+    { toolArgs: undefined, text: '{"path":"/src/repos/owner/wiki/pages/example.md"}', toolOutput: { path: "/src/repos/owner/wiki/pages/example.md" } },
+    { toolArgs: { path: 42 } },
+  ];
+  it.each(ineligibleCalls)("does not make a Memory link from an ineligible call: %j", (overrides) => {
+    expect(memoryPagesForMoment(moment([read("read", "/src/repos/owner/wiki/pages/example.md", overrides)]), [personal])).toEqual([]);
+  });
+
+  it("excludes direct user commands and text-only references", () => {
+    const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
+    value.activities[0].you = true;
+    expect(memoryPagesForMoment(value, [personal])).toEqual([]);
+    expect(memoryPagesForMoment(moment([]), [personal])).toEqual([]);
+  });
+
+  it.each([
+    "personal/pages/example.md", "~/wiki/pages/example.md", "/src/repos/owner/unknown/pages/example.md",
+    "/src/repos/owner/wiki-extra/pages/example.md", "/src/repos/owner/wiki/README.md",
+    "/src/repos/owner/wiki/pages/example.txt", "/src/repos/owner/wiki/pages/folder",
+    "/src/repos/owner/wiki/pages/../index.md", "/src/repos/owner/wiki/pages/./example.md",
+    "/src/repos/owner/wiki/pages//example.md", "/src/repos/owner/wiki/pages/example.md/",
+    "/src/repos/owner/wiki/pages/example.md ", " /src/repos/owner/wiki/pages/example.md",
+    "/src/repos/owner/wiki/pages/\0example.md",
+  ])("rejects unmatched, non-page, or ambiguous path %j", (path) => {
+    const value = moment([read("read", path)]);
+    expect(value.activities[0].calls[0].filePath).toBe(path);
+    expect(memoryPagesForMoment(value, [personal])).toEqual([]);
+  });
+
+  it("does not choose between ambiguous repository or collection identities", () => {
+    const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
+    expect(memoryPagesForMoment(value, [personal, { ...personal, id: "other" }])).toEqual([]);
+    expect(memoryPagesForMoment(value, [personal, { ...personal, repo: "other/wiki" }])).toEqual([]);
   });
 });
 

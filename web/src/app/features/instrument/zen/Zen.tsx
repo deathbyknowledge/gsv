@@ -13,9 +13,13 @@ import {
 import { useChatConversation } from "../../chat/hooks/useChatConversation";
 import { useChatRuntime } from "../../chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
+import { listLibraryCollections } from "../../gsv-console/library/libraryService";
+import { libraryTitleFromPath } from "../../gsv-console/library/libraryModel";
+import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
-import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import type { MemoryPageRef } from "../shared/navigation";
 import { renderMarkdownHtml, escapeHtml } from "../shared/markdown";
 import { PromptLine, type PromptPlace } from "../shared/PromptLine";
 import { Wordmark } from "../shared/Wordmark";
@@ -29,6 +33,7 @@ import {
   isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
+  memoryPagesForMoment,
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
   placeLabel,
@@ -51,7 +56,7 @@ import {
 import "./zen.css";
 
 export type ZenProps = {
-  onMemory?: () => void;
+  onMemory?: (page?: MemoryPageRef) => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (row?: FleetRow) => void;
   /** Open the first day: the places manifest with empty rows. */
@@ -115,11 +120,13 @@ function ActivityLine({
   places,
   open,
   onToggle,
+  onFleet,
 }: {
   activity: Activity;
   places: readonly Place[];
   open: boolean;
   onToggle: () => void;
+  onFleet: ZenProps["onFleet"];
 }) {
   const label = placeLabel(activity.target, places);
   const running = activity.calls.find((call) => !call.finished);
@@ -159,6 +166,7 @@ function ActivityLine({
       </div>
       {open ? (
         <div class="detail">
+          <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button>
           <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
         </div>
       ) : null}
@@ -167,13 +175,22 @@ function ActivityLine({
 }
 
 /** One line under a ship's message: what it did, generated from its calls; the working opens beneath. */
-function Receipt({ moment, places, open, onToggle }: { moment: Moment; places: readonly Place[]; open: boolean; onToggle: () => void }) {
+function Receipt({ moment, places, collections, open, onToggle, onMemory, onFleet }: {
+  moment: Moment;
+  places: readonly Place[];
+  collections: readonly LibraryCollection[];
+  open: boolean;
+  onToggle: () => void;
+  onMemory: ZenProps["onMemory"];
+  onFleet: ZenProps["onFleet"];
+}) {
   const phrases = receiptPhrases(moment);
   const running = receiptRunning(moment);
   const steps = receiptSteps(moment);
   const duration = receiptDuration(moment);
   const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
   const worked = moment.activities.filter((activity) => !activity.you);
+  const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   const phrase = (entry: ReceiptPhrase) =>
     entry.what === null ? (
       <>
@@ -186,43 +203,43 @@ function Receipt({ moment, places, open, onToggle }: { moment: Moment; places: r
     );
   return (
     <div class={`receipt${open ? " is-open" : ""}`}>
-      <div
-        class="line"
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        onClick={onToggle}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onToggle();
-          }
-        }}
-      >
-        {running ? (
-          <span class="now">
-            <span class="pulse blink" />
-            {phrase(running)}
+      <div class="line">
+        <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
+          {running ? (
+            <span class="now">
+              <span class="pulse blink" />
+              {phrase(running)}
+            </span>
+          ) : null}
+          {phrases.map((entry, index) => (
+            <span key={index} class={entry.failed ? "is-failed" : ""}>
+              {index > 0 || running ? " · " : ""}
+              {phrase(entry)}
+              {entry.failed ? " · failed" : ""}
+            </span>
+          ))}
+          <span class="n">
+            {steps > 0 ? ` · ${countLabel(steps, "step")}${duration ? `, ${duration}` : ""}` : ""}
+            {notes > 0 ? ` · ${countLabel(notes, "note")}` : ""}
+            {` · ${open ? "close" : "open"}`}
           </span>
+        </button>
+        {pages.length > 0 ? (
+          <span class="memory-references"> · from your memory: {pages.map((page, index) => (
+            <span key={`${page.db}:${page.path}`}>
+              {index > 0 ? ", " : ""}
+              <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
+            </span>
+          ))}</span>
         ) : null}
-        {phrases.map((entry, index) => (
-          <span key={index} class={entry.failed ? "is-failed" : ""}>
-            {index > 0 || running ? " · " : ""}
-            {phrase(entry)}
-            {entry.failed ? " · failed" : ""}
-          </span>
-        ))}
-        <span class="n">
-          {steps > 0 ? ` · ${countLabel(steps, "step")}${duration ? `, ${duration}` : ""}` : ""}
-          {notes > 0 ? ` · ${countLabel(notes, "note")}` : ""}
-          {` · ${open ? "close" : "open"}`}
-        </span>
       </div>
       {open ? (
         <div class="detail">
           {worked.map((activity) => (
             <div key={activity.key} class="place-rail">
-              <div class="ph">on {placeLabel(activity.target, places)}</div>
+              <div class="ph">on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
+                <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
+              )}</div>
               <div class="machine-rail" dangerouslySetInnerHTML={{ __html: railHtml(activity) }} />
             </div>
           ))}
@@ -232,6 +249,7 @@ function Receipt({ moment, places, open, onToggle }: { moment: Moment; places: r
               <div class="machine-rail narration">{moment.narration}</div>
             </div>
           ) : null}
+          {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>view process</button> : null}
         </div>
       ) : null}
     </div>
@@ -486,6 +504,17 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
 
+  const hasMemoryRead = moments.some((moment) => moment.activities.some((activity) =>
+    !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
+      call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
+    ),
+  ));
+  const memoryCollections = useQuery({
+    queryKey: [...INSTRUMENT_MEMORY_KEY, "collections"],
+    queryFn: () => listLibraryCollections(client),
+    enabled: connected && Boolean(onMemory) && hasMemoryRead,
+  });
+
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   useLayoutEffect(() => {
@@ -655,14 +684,14 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
   }, [pendingHil]);
 
   useEffect(() => {
-    if (!prefill) return;
+    if (!prefill || !connected || !pid) return;
     const input = promptRef.current?.querySelector("input");
-    if (!input) return;
+    if (!input || input.disabled) return;
     input.value = prefill;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     onPrefillUsed?.();
-  }, [prefill, onPrefillUsed]);
+  }, [prefill, onPrefillUsed, connected, pid]);
 
   const focusPrompt = useCallback(() => {
     promptRef.current?.querySelector("input")?.focus();
@@ -831,7 +860,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
           <kbd>n</kbd>first day
         </button>
         {onMemory ? (
-          <button type="button" onClick={onMemory}>
+          <button type="button" onClick={() => onMemory()}>
             <kbd>m</kbd>memory
           </button>
         ) : null}
@@ -913,6 +942,7 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                         places={places}
                         open={openActivities.has(activity.key)}
                         onToggle={() => toggleActivity(activity.key)}
+                        onFleet={onFleet}
                       />
                     ))}
                   {moment.role === "human" ? (
@@ -945,6 +975,9 @@ export function Zen({ onFleet, onFirstDay, onMemory, prefill, onPrefillUsed, pid
                     <Receipt
                       moment={moment}
                       places={places}
+                      collections={memoryCollections.data ?? []}
+                      onMemory={onMemory}
+                      onFleet={onFleet}
                       open={openActivities.has(`receipt:${moment.id}`)}
                       onToggle={() => toggleActivity(`receipt:${moment.id}`)}
                     />

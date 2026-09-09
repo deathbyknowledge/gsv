@@ -120,6 +120,7 @@
 .memory-page .page-head .path { color: var(--path); text-transform: none; letter-spacing: 0.02em; }
 .memory-page .page-head .actions { display: flex; align-items: center; gap: 10px; }
 .memory-page .page-head .status { color: var(--online); }
+.memory-page .page-head .status.is-error { color: var(--error); }
 .memory-page .page-head .ibtn { padding: 5px 10px; }
 .memory-page .page-head .ibtn kbd { margin-right: 6px; }
 .memory-page .prose {
