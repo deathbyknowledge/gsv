@@ -16,9 +16,16 @@ export const targetStatusSignalSchema = z.object({
 
 export const procSignalSchema = z.object({
   pid: z.string(),
+  changes: z.array(z.string()).optional(),
   runId: z.string().optional(),
   queuedCount: z.number().optional(),
   timestamp: z.number().optional(),
+  aiConfig: z.object({
+    version: z.literal(2),
+    modelId: z.string().optional(),
+    reasoning: z.string().optional(),
+    updatedAt: z.number(),
+  }).nullable().optional(),
 });
 
 export const ledgerAppendedSignalSchema = z.object({ seq: z.number(), count: z.number() });

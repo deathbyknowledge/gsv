@@ -2,17 +2,14 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { decideChatHil, getChatHistory, getChatProcessAiConfig } from "../../chat/backend/chatService";
+import { decideChatHil, getChatHistory } from "../../chat/backend/chatService";
 import {
   loadConsoleAccounts,
-  loadConsoleModels,
   loadConsoleProcesses,
   loadConsoleTargets,
   runConsoleProcessAction,
-  saveConsoleConfig,
 } from "../../gsv-console/backend/consoleService";
 import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
-import { preferredModelSaveEntry } from "../../gsv-console/domain/consoleSettings";
 import { loadResponsibilitiesWorkspace } from "../../gsv-console/responsibilities/responsibilitiesService";
 import { readFilesPath } from "../../files/backend/filesService";
 import { executeTerminalCommand } from "../../terminal/backend/terminalService";
@@ -45,6 +42,8 @@ import {
   shortPid,
   ledgerRow,
 } from "./fleetModel";
+import { NewProcess, ProcessAiControls } from "./ProcessControls";
+import { canConfigure } from "../settings/settingsModel";
 import "./fleet.css";
 
 export type FleetProps = {
@@ -106,16 +105,12 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
     queryFn: () => loadResponsibilitiesWorkspace(client),
     enabled: connected,
   });
-  const modelsQuery = useQuery({
-    queryKey: ["fleet", "models"],
-    queryFn: () => loadConsoleModels(client),
-    enabled: connected,
-  });
   const accountsQuery = useQuery({
     queryKey: ["fleet", "accounts"],
     queryFn: () => loadConsoleAccounts(client),
     enabled: connected,
   });
+  const viewer = accountsQuery.data?.find((account) => account.relation === "self");
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
@@ -143,6 +138,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   );
 
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
+  const [creatingProcess, setCreatingProcess] = useState(false);
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -167,6 +163,9 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
     if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  useEffect(() => {
+    if (selected || openFile) setCreatingProcess(false);
+  }, [selected, openFile]);
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
     return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
@@ -217,13 +216,14 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
+    if (creatingProcess) return;
     if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
     if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows]);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess]);
   useEffect(() => {
     if (!selected) return;
     const row = document.querySelector(`[data-row="${selected}"]`);
@@ -238,6 +238,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
+      if (target instanceof HTMLElement && target.closest(".fleet-process-form")) return;
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
@@ -315,7 +316,6 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
       <InstrumentHeader status={<>
           fleet · {snapshot.username ? `${snapshot.username}'s installation` : "installation"} · {places.length} places ·{" "}
           {processes.length} processes
-          {modelsQuery.data?.preferredModelId ? ` · ${modelsQuery.data.preferredModelId}` : ""}
       </>}>
         <button type="button" onClick={() => onZen()}>
           <kbd>z</kbd>zen
@@ -372,6 +372,12 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
           <section class="fleet-block">
             <h2>
               <i /> Processes <span class="count">{processes.length}</span>
+              {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="ibtn" disabled={!connected} onClick={() => {
+                setSelected(null);
+                setOpenFile(null);
+                setCreatingProcess(true);
+                inspectorRef.current?.scrollIntoView({ block: "nearest" });
+              }}>new process</button> : null}
             </h2>
             {processesQuery.error ? <p class="error">Could not list processes: {String(processesQuery.error)}</p> : null}
             <div class="tablewrap">
@@ -478,7 +484,9 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
         </div>
 
         <aside class="fleet-inspector" ref={inspectorRef}>
-          {selectedLine && !openFile ? (
+          {creatingProcess ? (
+            <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
+          ) : selectedLine && !openFile ? (
             <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />
           ) : openFile ? (
             <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} />
@@ -497,9 +505,7 @@ export function Fleet({ initialRow, onZen, onMemory }: FleetProps) {
               model={modelFor(selectedProcess.pid)}
               cost={costFor(selectedProcess.pid)}
               responsibilities={responsibilityCount(selectedProcess.pid)}
-              models={modelsQuery.data?.models.map((entry) => ({ id: entry.id, name: entry.name })) ?? []}
-              preferredModelId={modelsQuery.data?.preferredModelId ?? null}
-              uid={accountsQuery.data?.find((account) => account.relation === "self")?.uid ?? null}
+              canEditAi={!!viewer && canConfigure(viewer, "proc.ai.config.set")}
               now={now}
               onZen={onZen}
               lines={shownLedger.filter((line) => line.processId === selectedProcess.pid).slice(0, 8)}
@@ -778,16 +784,14 @@ type ProcessInspectorProps = {
   model: string | null;
   cost: number | null;
   responsibilities: number;
-  models: readonly { id: string; name: string }[];
-  preferredModelId: string | null;
-  uid: number | null;
+  canEditAi: boolean;
   now: number;
   onZen: (prefill?: string, pid?: string) => void;
   lines: LedgerLine[];
   placeLabelFor: (placeId: string) => string;
 };
 
-function ProcessInspector({ process, model, cost, responsibilities, models, preferredModelId, uid, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
+function ProcessInspector({ process, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
   const { client } = useGateway();
   const queryClient = useQueryClient();
   const invalidate = () => {
@@ -811,22 +815,7 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
     },
     onSuccess: invalidate,
   });
-  const aiConfig = useQuery({
-    queryKey: ["fleet", "ai-config", process.pid],
-    queryFn: () => getChatProcessAiConfig(client, { pid: process.pid }),
-  });
-  const changeModel = useMutation({
-    mutationFn: (modelId: string) => {
-      if (uid === null) throw new Error("Your account id is not known yet.");
-      return saveConsoleConfig(client, preferredModelSaveEntry(uid, modelId || null));
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["fleet", "models"] });
-    },
-  });
-  const [showModels, setShowModels] = useState(false);
-  const effectiveModel = aiConfig.data?.modelId ?? preferredModelId ?? model ?? "gsv/default";
-  const error = stop.error ?? decide.error ?? changeModel.error ?? null;
+  const error = stop.error ?? decide.error;
 
   return (
     <div>
@@ -841,8 +830,8 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
           {process.activeRunId ? "running" : processStateLabel(process.state)}
           {process.queuedCount > 0 ? ` · ${process.queuedCount} queued` : ""}
         </dd>
-        <dt>Model</dt>
-        <dd>{effectiveModel}</dd>
+        <dt>Last model request</dt>
+        <dd>{model ?? "—"}</dd>
         <dt>Responsibilities</dt>
         <dd>{responsibilities === 0 ? "none open" : `${responsibilities} open`}</dd>
         <dt>Last active</dt>
@@ -872,29 +861,9 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
         <button type="button" class="ibtn" onClick={() => stop.mutate()} disabled={process.state !== "running" || stop.isPending}>
           stop
         </button>
-        <button type="button" class="ibtn" onClick={() => setShowModels(!showModels)}>
-          change model
-        </button>
-        {showModels ? (
-          <select
-            class="fleet-select"
-            aria-label="Preferred model"
-            value={preferredModelId ?? ""}
-            disabled={changeModel.isPending}
-            onChange={(event) => {
-              if (event.currentTarget instanceof HTMLSelectElement) changeModel.mutate(event.currentTarget.value);
-            }}
-          >
-            <option value="">deployment default</option>
-            {models.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name}
-              </option>
-            ))}
-          </select>
-        ) : null}
       </div>
       {error ? <p class="error">{String(error)}</p> : null}
+      <ProcessAiControls pid={process.pid} canEdit={canEditAi} />
       {lines.length > 0 ? (
         <div class="inspector-lines">
           <div class="kicker">recently</div>
@@ -906,11 +875,9 @@ function ProcessInspector({ process, model, cost, responsibilities, models, pref
           ))}
         </div>
       ) : null}
-      <p class="note">
-        {process.state === "waiting_hil" && pending.data
-          ? `The process is held on ${pending.data.syscall} on ${pending.data.target}. Approving runs exactly what it asked for, nothing else.`
-          : "Responsibilities are the standing instructions this process carries between runs; the preferred model applies to your whole installation."}
-      </p>
+      {process.state === "waiting_hil" && pending.data ? <p class="note">
+        {`The process is held on ${pending.data.syscall} on ${pending.data.target}. Approving runs exactly what it asked for, nothing else.`}
+      </p> : null}
     </div>
   );
 }

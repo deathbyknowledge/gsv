@@ -3,7 +3,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import { ledgerFromSysLines, sysLedgerListResultSchema } from "../fleet/fleetModel";
-import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import {
   isProcessSignal,
   ledgerAppendedSignalSchema,
@@ -55,6 +55,14 @@ export function WireSync(): null {
       if (isProcessSignal(signal)) {
         const parsed = procSignalSchema.safeParse(payload);
         if (!parsed.success) return;
+        if (signal === "proc.changed" && parsed.data.changes?.includes("ai.config")) {
+          const key = instrumentProcessAiKey(parsed.data.pid);
+          if (queryClient.getQueryState(key)) {
+            // Ambient signals omit raw process details; refresh only this process's preferences.
+            if (parsed.data.aiConfig === undefined) void queryClient.invalidateQueries({ queryKey: key });
+            else queryClient.setQueryData(key, parsed.data.aiConfig);
+          }
+        }
         const current = queryClient.getQueryData<ConsoleProcess[]>(INSTRUMENT_PROCESSES_KEY);
         if (!current) return;
         const patch = patchProcesses(current, signal, parsed.data, Date.now());
