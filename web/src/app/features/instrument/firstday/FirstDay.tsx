@@ -1,10 +1,10 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { loadConsoleTargets, type IssuedMachineNodeToken } from "../../../services/system/consoleService";
+import { loadConsoleTargets } from "../../../services/system/consoleService";
 import type { ConnectFlowShellProps } from "../../../components/connect-flow/ConnectFlowShell";
 import { mutateContactsWorkspace } from "../../../services/contacts/contactsService";
 import {
@@ -17,9 +17,6 @@ import {
 import {
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
-  defaultMachineName,
-  expiresAtFromDays,
-  machineDeviceIdFromName,
 } from "../../../services/machines/machineProvision";
 import {
   ManagedTelegramOnboardingFlow,
@@ -31,11 +28,11 @@ import {
   joinNames,
   nextToConnect,
   reachablePlaces,
-  uniqueDeviceId,
   type ComputerOs,
   type PlaceId,
   type PlaceRow,
 } from "./firstdayModel";
+import { useComputerPairing } from "./useComputerPairing";
 import "./firstday.css";
 
 const OS_CHOICES: readonly { id: ComputerOs; label: string }[] = [
@@ -51,10 +48,6 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function errorText(error: Error | null): string {
-  return error ? error.message : "";
 }
 
 /** Renders one step of a console connect flow inside our panel, without the console's page chrome. */
@@ -110,27 +103,11 @@ function ComputerPanel({ release, taken, username, origin }: {
   origin: string;
 }) {
   const createToken = useCreateMachineNodeToken();
-  const { client } = useGateway();
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
-  const [os, setOs] = useState<ComputerOs | null>(null);
-  const [issued, setIssued] = useState<{ os: ComputerOs; deviceId: string; token: IssuedMachineNodeToken } | null>(null);
-
-  const choose = (next: ComputerOs) => {
-    setOs(next);
-    if (issued?.os === next || createToken.isPending) return;
-    const deviceId = uniqueDeviceId(machineDeviceIdFromName(defaultMachineName(next)), taken);
-    void createToken
-      .mutateAsync({ deviceId, label: defaultMachineName(next), expiresAt: expiresAtFromDays(30) })
-      .then(async (token) => {
-        if (mounted.current) setIssued({ os: next, deviceId, token });
-        else await client.sys.token.revoke({ tokenId: token.tokenId, reason: "Connection closed before the pairing key was displayed" });
-      })
-      .catch(() => {});
-  };
+  const { client, connected } = useGateway();
+  const { os, issued, pending, error, choose } = useComputerPairing({ create: createToken.mutateAsync, revoke: client.sys.token.revoke }, taken);
 
   const installCommand = os ? buildMachineInstallCommand(os, release) : "";
-  const connectCommand = issued && issued.os === os
+  const connectCommand = !pending && issued && issued.os === os
     ? buildMachineBootstrapCommand({ origin, platform: issued.os, username, deviceId: issued.deviceId, token: issued.token.token })
     : "";
 
@@ -143,7 +120,8 @@ function ComputerPanel({ release, taken, username, origin }: {
             key={choice.id}
             type="button"
             class={`ibtn${os === choice.id ? " is-primary" : ""}`}
-            onClick={() => choose(choice.id)}
+            disabled={!connected || pending}
+            onClick={() => void choose(choice.id)}
           >
             {choice.label}
           </button>
@@ -162,11 +140,10 @@ function ComputerPanel({ release, taken, username, origin }: {
             </div>
             {connectCommand ? (
               <pre>{connectCommand}</pre>
-            ) : createToken.isError ? (
-              <pre class="is-error">{errorText(createToken.error)}</pre>
-            ) : (
-              <pre class="is-dim">minting a key for this computer…</pre>
+            ) : error ? null : (
+              <pre class="is-dim">preparing a key for this computer…</pre>
             )}
+            {error ? <pre class="is-error" role="alert">{error}</pre> : null}
           </div>
           {issued ? <p class="fd-note">The key is only shown here, once, and expires in 30 days if the computer never connects.</p> : null}
         </div>
