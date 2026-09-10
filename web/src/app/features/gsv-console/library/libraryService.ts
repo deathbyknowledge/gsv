@@ -163,6 +163,17 @@ export async function saveLibraryPage(
   }
   const collection = await requireCollection(client, db);
   const localPath = libraryPathInDb(path, db);
+  let expectedHead: string | undefined;
+  if (input.createOnly || input.expectedMarkdown !== undefined) {
+    const history = await client.call("repo.log", { repo: collection.repo, limit: 1 });
+    expectedHead = history.entries[0]?.hash;
+    if (!expectedHead) throw new Error("This collection has no saved revision to edit.");
+    const current = await readRepoPath(client, collection.repo, localPath);
+    if (input.createOnly && current.kind !== "missing") throw new Error("A page with this name already exists. Choose another name.");
+    if (input.expectedMarkdown !== undefined && (current.kind !== "file" || current.isBinary || current.content !== input.expectedMarkdown)) {
+      throw new Error("This page changed since you opened the editor. Your draft is kept; reopen the latest page before saving.");
+    }
+  }
   const ops: RepoApplyOp[] = [{
     type: "put",
     path: localPath,
@@ -177,6 +188,7 @@ export async function saveLibraryPage(
   await client.call("repo.apply", {
     repo: collection.repo,
     message: `wiki: update ${path}`,
+    ...(expectedHead ? { expectedHead } : {}),
     ops,
   });
 

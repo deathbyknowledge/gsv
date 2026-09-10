@@ -19,6 +19,36 @@ function saveClient(index: RepoReadResult | Error) {
 }
 
 describe("library page saving", () => {
+  function guardedClient(current: RepoReadResult | Error) {
+    const client = { call: vi.fn<GSVClient["call"]>(), request: vi.fn<GSVClient["request"]>() };
+    client.call.mockResolvedValueOnce({ repos: [{ repo: "agent/knowledge", owner: "agent", name: "knowledge", kind: "user", writable: true, public: false }] });
+    client.call.mockResolvedValueOnce(file("wiki.json", JSON.stringify({ kind: "gsv.wiki", id: "personal", title: "Personal" })));
+    client.call.mockResolvedValueOnce({ entries: [{ hash: "revision-1" }] });
+    if (current instanceof Error) client.call.mockRejectedValueOnce(current);
+    else client.call.mockResolvedValueOnce(current);
+    client.call.mockResolvedValueOnce(file("index.md", "# Memory\n"));
+    client.call.mockResolvedValue({});
+    return client;
+  }
+
+  it("refuses to create over an existing page", async () => {
+    const client = guardedClient(file("pages/new.md", "Keep me"));
+    await expect(saveLibraryPage(client, { db: "personal", path: "pages/new.md", markdown: "Replacement", createOnly: true })).rejects.toThrow("already exists");
+    expect(client.call.mock.calls.some(([call]) => call === "repo.apply")).toBe(false);
+  });
+
+  it("refuses to overwrite changes made since opening an editor", async () => {
+    const client = guardedClient(file("pages/new.md", "Newer changes"));
+    await expect(saveLibraryPage(client, { db: "personal", path: "pages/new.md", markdown: "My edit", expectedMarkdown: "Old content" })).rejects.toThrow("changed since");
+    expect(client.call.mock.calls.some(([call]) => call === "repo.apply")).toBe(false);
+  });
+
+  it("fences the page and index creation against a concurrent commit", async () => {
+    const client = guardedClient(new Error("Path not found: pages/new.md"));
+    await saveLibraryPage(client, { db: "personal", path: "pages/new.md", markdown: "New", createOnly: true });
+    expect(client.call).toHaveBeenLastCalledWith("repo.apply", expect.objectContaining({ expectedHead: "revision-1", ops: expect.arrayContaining([{ type: "put", path: "pages/new.md", content: "New" }]) }));
+  });
+
   it("saves an explicit overview edit without automatic index changes", async () => {
     const client = saveClient(file("index.md", "Unused"));
     const markdown = "# Updated overview\n\nAuthored text.\n";

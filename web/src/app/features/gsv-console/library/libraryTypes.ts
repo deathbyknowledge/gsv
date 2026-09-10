@@ -61,6 +61,8 @@ export type LibraryCreateCollectionInput = {
 };
 
 export type LibrarySavePageInput = {
+  createOnly?: boolean;
+  expectedMarkdown?: string;
   db: string;
   path: string;
   markdown: string;

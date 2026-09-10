@@ -1,3 +1,4 @@
+import { useDraftGuard } from "../shared/useDraftGuard";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -7,7 +8,7 @@ import { libraryPathInDb } from "../../gsv-console/library/libraryModel";
 import type { MemoryPageRef } from "../shared/navigation";
 import type { LibrarySavePageInput, LibraryEntry } from "../../gsv-console/library/libraryTypes";
 import { INSTRUMENT_MEMORY_KEY as MEMORY_KEY } from "../wire/queryKeys";
-import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
+import { listMemoryPages, readMemoryPage, searchMemory, newMemoryPagePath } from "./memoryService";
 import { refreshSavedMemoryPage } from "./memoryQueries";
 import { MemoryArticle } from "./MemoryArticle";
 import { memoryLinkFromUrl, type MemoryLink } from "./memoryLinks";
@@ -16,6 +17,7 @@ import { buildMemoryTree, memoryTreePages } from "./memoryTree";
 import "./memory.css";
 
 export type MemoryProps = {
+  onDirtyChange?: (dirty: boolean) => void;
   initialPage?: MemoryPageRef | null;
   onAsk: (page: MemoryPageRef, prompt: string) => void;
 };
@@ -27,7 +29,7 @@ export type MemoryProps = {
  * voices write here. Each read is one ask: the list from the tree, a page
  * when opened, a search in the gateway.
  */
-export function Memory({ initialPage, onAsk }: MemoryProps) {
+export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
@@ -37,6 +39,8 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
   const [query, setQuery] = useState("");
   const [asked, setAsked] = useState("");
   const [editor, setEditor] = useState<LibrarySavePageInput | null>(null);
+  const [newName, setNewName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ db: string; path: string; text: string; error: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -87,42 +91,66 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
     enabled: connected && collection !== null && currentPath !== null,
   });
   const note = pageQuery.data ?? null;
-  const editing = editor !== null && editor.db === selectedDb && editor.path === note?.path;
+  const creating = editor?.createOnly === true;
+  const editing = editor !== null && editor.db === selectedDb && (creating || editor.path === note?.path);
+  const dirty = editing && (creating ? Boolean(newName || editor.markdown) : editor.markdown !== editor.expectedMarkdown);
   const pageStatus = status?.db === selectedDb && status.path === currentPath ? status : null;
 
   const save = useMutation({
     mutationFn: (input: LibrarySavePageInput) => saveLibraryPage(client, input),
     onSuccess: async (result, input) => {
-      setEditor((current) => current?.db === input.db && current.path === input.path && current.markdown === input.markdown ? null : current);
+      setEditor((current) => current?.db === input.db && (current.createOnly || current.path === input.path) && current.markdown === input.markdown ? null : current);
+      setPath(result.openPath);
+      setAsked("");
+      setQuery("");
+      setNewName("");
       setStatus({ db: input.db, path: input.path, text: result.statusText || "saved", error: false });
       await refreshSavedMemoryPage(queryClient, input);
     },
-    onError: (error: Error, input) => setStatus({ db: input.db, path: input.path, text: error.message, error: true }),
+    onError: (error: Error, input) => {
+      if (input.createOnly) setCreateError(error.message);
+      else setStatus({ db: input.db, path: input.path, text: error.message, error: true });
+    },
   });
+  useDraftGuard(dirty || save.isPending, onDirtyChange);
+  const canLeaveEditor = () => !save.isPending && (!dirty || window.confirm("Discard your unsaved page changes?"));
+  const closeEditor = () => { if (canLeaveEditor()) { setEditor(null); setCreateError(null); save.reset(); } };
   const saveEdit = () => {
-    if (editor && editing && connected && writable && !save.isPending) save.mutate(editor);
+    if (!editor || !editing || !connected || !writable || save.isPending) return;
+    try {
+      const input = creating ? { ...editor, path: newMemoryPagePath(selectedDb, newName) } : editor;
+      setCreateError(null);
+      save.mutate(input);
+    } catch (error) { setCreateError(error instanceof Error ? error.message : String(error)); }
+  };
+  const newPage = () => {
+    if (!writable || !connected || !canLeaveEditor()) return;
+    setNewName(""); setCreateError(null); save.reset(); setStatus(null);
+    setEditor({ db: selectedDb, path: "", markdown: "", createOnly: true });
   };
 
   const open = useCallback((entry: LibraryEntry) => {
+    if (!canLeaveEditor()) return;
     setPath(entry.path);
     setFragment("");
     setEditor(null);
     setStatus(null);
-  }, []);
+  }, [dirty, save.isPending]);
   const openLink = useCallback((link: MemoryLink) => {
+    if (!canLeaveEditor()) return;
     setDb(link.db);
     setPath(link.path);
     setFragment(link.fragment);
     setEditor(null);
     setStatus(null);
-  }, []);
+  }, [dirty, save.isPending]);
   const beginEdit = useCallback(() => {
     if (!note || !writable) return;
-    setEditor({ db: selectedDb, path: note.path, markdown: note.markdown });
+    setEditor({ db: selectedDb, path: note.path, markdown: note.markdown, expectedMarkdown: note.markdown });
     setStatus(null);
   }, [note, selectedDb, writable]);
   useEffect(() => {
-    if (editing) editorRef.current?.focus();
+    if (editing && !creating) editorRef.current?.focus();
   }, [editing]);
 
   /* keys: j k walk the pages, enter opens, / searches, e edits, esc leaves the editor or the search */
@@ -134,7 +162,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
       if (event.key === "Escape") {
         if (editing) {
           event.preventDefault();
-          setEditor(null);
+          closeEditor();
           return;
         }
         if (typing && target instanceof HTMLElement) {
@@ -163,7 +191,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [beginEdit, editing, note?.path, open, orderedPages]);
+  }, [beginEdit, editing, note?.path, open, orderedPages, dirty, save.isPending]);
 
   const onEditorKey = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -199,6 +227,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                       aria-selected={entry.id === selectedDb}
                       class={entry.id === selectedDb ? "is-sel" : ""}
                       onClick={() => {
+                        if (!canLeaveEditor()) return;
                         setDb(entry.id);
                         setFragment("");
                         setPath(null);
@@ -243,6 +272,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                 ) : null}
               </form>
             </div>
+            {writable && <button type="button" class="memory-new-page" disabled={!connected || save.isPending} onClick={newPage}>new page</button>}
             <nav class="pages" aria-label={asked ? "Matches" : "Pages"}>
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
@@ -270,13 +300,13 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
           </aside>
 
           <section class={`memory-page${editing ? " is-editing" : ""}`}>
-            {note ? (
+            {note || creating ? (
               <>
                 <div class="page-head">
-                  <span class="path">{note.path}</span>
+                  {creating ? <input autoFocus class="memory-page-name" value={newName} aria-label="New page name" placeholder="Page name" disabled={save.isPending} onInput={(event) => setNewName(event.currentTarget.value)} /> : <span class="path">{note?.path}</span>}
                   <span class="actions">
                     {pageStatus ? <span class={`status${pageStatus.error ? " is-error" : ""}`} role={pageStatus.error ? "alert" : "status"}>{pageStatus.text}</span> : null}
-                    {!editing && collection ? <button type="button" class="page-action" onClick={() => onAsk(
+                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(
                       { db: selectedDb, path: note.path },
                       `Tell me about the memory page “${note.title}” (gsv:/src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}). `,
                     )}>ask about this</button> : null}
@@ -285,7 +315,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                         <button type="button" class="ibtn is-primary" disabled={save.isPending || !connected || !writable} onClick={() => saveEdit()}>
                           {save.isPending ? <LoadingState>saving</LoadingState> : "save"}
                         </button>
-                        <button type="button" class="ibtn" onClick={() => setEditor(null)}>
+                        <button type="button" class="ibtn" disabled={save.isPending} onClick={closeEditor}>
                           cancel
                         </button>
                       </>
@@ -296,10 +326,12 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                     ) : null}
                   </span>
                 </div>
+                {createError || (creating && save.error) ? <p class="memory-editor-error" role="alert">{createError ?? save.error?.message}</p> : null}
                 <div class="page-content">
                   {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
                   {editing ? (
                     <textarea
+                      disabled={save.isPending}
                       ref={editorRef}
                       class="editor"
                       value={editor?.markdown ?? ""}
@@ -312,7 +344,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                       onKeyDown={onEditorKey}
                     />
                   ) : (
-                    <MemoryArticle note={note} db={selectedDb} fragment={fragment} onOpen={openLink} />
+                    note && <MemoryArticle note={note} db={selectedDb} fragment={fragment} onOpen={openLink} />
                   )}
                 </div>
               </>

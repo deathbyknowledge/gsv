@@ -207,3 +207,8 @@
   .memory-page .page-head { padding: 10px 18px; flex-wrap: wrap; }
   .memory-page .prose, .memory-page .editor { padding-inline: 18px; }
 }
+
+.memory-new-page { display: block; margin: 12px 16px 0; color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer; }
+.memory-new-page:hover { color: var(--accent); }
+.memory-page-name { flex: 1; min-width: 8rem; border: 0; background: transparent; color: var(--text-title); font: inherit; padding: 0; }
+.memory-editor-error { color: var(--error); padding: 8px 24px; font-size: 12px; }

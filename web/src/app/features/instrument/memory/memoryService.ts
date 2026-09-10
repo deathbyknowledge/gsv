@@ -98,3 +98,10 @@ export async function searchMemory(client: MemoryClient, collection: LibraryColl
     truncated: result.truncated === true,
   };
 }
+
+/** A new page stays in the selected collection's page tree. */
+export function newMemoryPagePath(db: string, value: string): string {
+  const name = value.trim().replace(/\.md$/i, "");
+  if (!name || name === "." || name === ".." || /[\/\\\x00-\x1f\x7f]/.test(name)) throw new Error("Give the page a name without folders.");
+  return `${db}/pages/${name}.md`;
+}
