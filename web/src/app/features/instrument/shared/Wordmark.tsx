@@ -1,19 +1,18 @@
-import { useMemo } from "preact/hooks";
-import { AsciiAnimation, type AsciiAnimationScene } from "../../../components/ui/AsciiAnimation";
-import { AsciiGalaxyScanRenderer, GALAXY_SCAN_FINAL_SECONDS, waitForGalaxyScanFonts } from "../../../components/ui/AsciiGalaxyScan";
+import { useEffect, useState } from "preact/hooks";
+
+const GLITCH_EVERY_MS = 3200;
+const GLITCH_FOR_MS = 90;
 
 /** The wordmark in phosphor, with the auth galaxy's glitch burst every few seconds. */
 export function Wordmark() {
-  const scene = useMemo<AsciiAnimationScene>(() => {
-    const renderer = new AsciiGalaxyScanRenderer({ text: "GSV", cols: 104, rows: 32, particleCount: 3500, frameRate: 15 });
-    return {
-      stillAt: 0,
-      prepare: async () => {
-        await waitForGalaxyScanFonts();
-        renderer.init();
-      },
-      frame: (seconds, motion) => renderer.frame(GALAXY_SCAN_FINAL_SECONDS + seconds, motion),
-    };
+  const [glitch, setGlitch] = useState(false);
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const every = window.setInterval(() => {
+      setGlitch(true);
+      window.setTimeout(() => setGlitch(false), GLITCH_FOR_MS);
+    }, GLITCH_EVERY_MS);
+    return () => window.clearInterval(every);
   }, []);
-  return <AsciiAnimation inline scene={scene} label="GSV" frameRate={15} fontSize={1.1} className="wordmark" />;
+  return <span class={`wordmark${glitch ? " is-glitch" : ""}`}>GSV</span>;
 }

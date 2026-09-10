@@ -157,22 +157,15 @@
   padding: 0 5px;
   margin-right: 4px;
 }
-.instrument .wordmark {
-  --ascii-foreground: var(--glyph);
-  --ascii-foreground-glow: 0 0 0.5px var(--glyph), 0 0 0.5px var(--glyph);
-  display: inline-block;
-  flex: 0 0 76px;
-  width: 76px;
-  height: 36px;
-  min-height: 0;
-  aspect-ratio: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+.wordmark {
+  color: var(--glyph);
+  text-shadow: var(--glow);
+  letter-spacing: 0.34em;
+  font-size: 12px;
 }
-.wordmark .gsv-ascii-galaxy-pre {
-  font-family: "Departure Mono", monospace;
+.wordmark.is-glitch {
+  text-shadow: 1px 0 0 rgba(255, 90, 160, 0.3), -1px 0 0 rgba(90, 200, 255, 0.28), 0 0 9px rgba(140, 120, 235, 0.55);
+  transform: translateX(0.6px);
 }
 
 /* the prompt line: a place chip and the input; typing $ turns the chip into the working directory */
@@ -330,6 +323,7 @@
 @media (prefers-reduced-motion: reduce) {
   .distance { transition: none; }
   .blink { animation: none; }
+  .wordmark.is-glitch { transform: none; }
 }
 
 /* ---------- the light theme: the same identity on paper ----------
@@ -380,7 +374,7 @@
 .instrument.is-light .instrument-scan,
 .instrument.is-light .instrument-vignette { display: none; }
 .instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); text-shadow: none; }
-.instrument.is-light .wordmark { --ascii-glitch-glow: none; }
+.instrument.is-light .wordmark.is-glitch { text-shadow: none; }
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .zen-caret,
