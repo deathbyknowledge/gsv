@@ -99,3 +99,11 @@
   .settings-model-details, .settings-model-stack .settings-actions { grid-column: 1 / -1; }
   .settings-model-inspector { grid-column: 1 / -1; }
 }
+
+.settings-account { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; color: var(--faint); font-size: .75rem; }
+.settings-policy-recovery, .settings-account-grants { margin-block: 1.5rem; font-size: .8rem; }
+.settings-policy-recovery summary, .settings-account-grants summary { cursor: pointer; color: var(--text-dim); }
+.settings-policy-recovery pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; color: var(--text-dim); }
+.settings-account-grants ul { list-style: none; padding: 0; }
+.settings-account-grants li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
+.settings-account-grants code { color: var(--faint); overflow-wrap: anywhere; }

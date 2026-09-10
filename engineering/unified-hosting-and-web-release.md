@@ -134,7 +134,8 @@ and `web/src/app/features/instrument/settings/README.md`.
   preview on 2026-09-10 and verified with a disposable managed adapter fixture.
 - [x] Complete contact conversations and cross-Ship request management in the
   appropriate Instrument surfaces.
-- [ ] Finish retained permissions/account-grant controls.
+- [x] Finish approval-policy recovery, account-grant inspection, and sign-out.
+  The old UI has no richer conditional-policy or grant editor to migrate.
 - [x] Support custom MCP headers in the add-server form. Verified with a real
   loopback MCP server in the disposable UI test environment on 2026-09-10.
 - [ ] Verify the complete new-user and returning-user flows: onboarding/login,
@@ -146,3 +147,40 @@ and `web/src/app/features/instrument/settings/README.md`.
 These are release requirements, not claims that the work is already complete.
 Do not fold WhatsApp Business, iMessage, hosting migration, or a license change
 into the remaining UI batches.
+
+
+## Old UI retirement inventory
+
+Audit of the actual route and component implementations on 2026-09-10. The old
+shell remains reachable while the remaining product scope is decided; changing
+the default route or deleting it now would remove workflows. A question has been
+sent to the maintainer about retaining these directly in Instrument versus using
+Ship/the CLI. Do not treat silence as authorization to delete them.
+
+| Workflow | Instrument status | Work before retiring the old surface |
+| --- | --- | --- |
+| Personal chat, process messages, attachments, tool inspection and approvals | Implemented in Zen and Fleet | Final integrated smoke and deep-link mapping |
+| Models, fallback order, process choices and personal instructions | Implemented in Settings and Fleet | Final integrated smoke |
+| Computers and browser connections | Implemented in Fleet | Final integrated smoke |
+| Managed Telegram/Slack links, reconnect and unlink | Implemented in Settings | Completed browser validation |
+| Contact invitations, identities, messages/media and requests | Implemented in Fleet | Completed two-Ship browser validation |
+| Simple approval rules, stored-policy inspection/replacement and sign-out | Implemented in Settings | Completed browser validation |
+| Memory reading, search, links and correcting existing pages | Implemented in Memory | Map existing reader/editor deep links |
+| New Memory pages/collections, capture and collection build | Existing old Library workflows have no corresponding Instrument controls | Retain in the UI or explicitly move to Ship/the CLI |
+| General file creation, editing and deletion | Fleet currently browses and inspects files | Retain direct controls or explicitly move writes to Ship/the CLI |
+| Responsibilities, standing-source switches and scheduled routines | Fleet shows open responsibility summaries on processes | Retain management/history controls or explicitly move them to Ship/the CLI |
+| Repository import, refs, history, comparison and removal | No dedicated Instrument controls | Retain in the UI or explicitly move to Ship/the CLI |
+| Image, transcription, speech, shell and server configuration | Old Settings has additional configuration groups | Decide which remain user-facing under the current managed runtime |
+| Agent account creation and account-specific defaults | Processes have creation and preference controls; these do not replace account administration | Decide whether the old account-management UI is retained |
+| Standalone terminal workspace and detailed runtime traces | Fleet has its command line and activity inspector | Decide whether these specialist presentations are retained |
+
+Source inventory: `web/src/app/features/gsv-shell/routing/shellRoutes.ts`,
+`web/src/app/features/gsv-console/components/GsvConsole.tsx`, and their referenced
+workspaces. The old `AgentToolsPanel` accepts a capabilities prop but does not edit
+grants. Runtime approval compatibility reads legacy `when.target`; it does not
+implement arbitrary conditions. The new UI must not imply otherwise.
+
+Removal must keep genuinely shared domain and service code used by Instrument,
+move it out of the obsolete presentation namespace where appropriate, and remove
+obsolete pages only after retained routes are mapped and tested. Design catalog
+routes are a separate development surface.

@@ -1,8 +1,9 @@
+import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { loadConsoleConfig, loadConsoleTargets, saveConsoleConfig } from "../../gsv-console/backend/consoleService";
-import { APPROVAL_ACTIONS, actionLabel } from "../../../components/ui/agentToolApprovalOptions";
+import { loadConsoleConfig, loadConsoleTargets } from "../../gsv-console/backend/consoleService";
+import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../gsv-console/domain/consoleAgentBehavior";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
@@ -19,7 +20,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   const key = `users/${account.uid}/ai/tools/approval`;
   const original = config.data?.find((entry) => entry.key === key)?.value ?? "";
   const inherited = defaultApprovalPolicyForConfig(config.data ?? []);
-  const [draft, setDraft] = useState<{ inherited: boolean; policy: SettingsPolicy } | null>(null);
+  const [draft, setDraft] = useState<{ inherited: boolean; policy: SettingsPolicy; base: string } | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [saved, setSaved] = useState(false);
   const usesDefault = draft?.inherited ?? !original;
@@ -29,10 +30,11 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   useSettingsDirty(dirty, onDirty);
   const editable = connected && !!config.data && !config.isError && canConfigure(account, "sys.config.set") && policy !== null;
   const save = useMutation({
-    mutationFn: (value: string) => saveConsoleConfig(client, { key, value }),
+    mutationFn: (value: string) => saveApprovalPolicy(client, account.uid, draft?.base ?? original, value),
+    onError: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
-  const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next }); setSaved(false); setError(null); };
+  const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
   return <section aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">Permissions</h1>
     <p class="settings-intro">Choose when your agents ask before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.</p>
@@ -40,7 +42,15 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     <SettingsError error={config.error ?? error ?? save.error} />
     {config.isPending && connected && <LoadingState variant="panel">Loading permissions…</LoadingState>}
     {targetQuery.error && <p class="settings-muted" role="status">Target names could not be loaded. Stored target IDs remain available.</p>}
-    {config.data && !policy && <p class="settings-error" role="alert">This policy contains advanced or unrecognized fields. It is preserved unchanged; use the existing advanced settings to edit it.</p>}
+    {config.data && !policy && <div class="settings-policy-recovery">
+      <p class="settings-error" role="alert">This saved policy contains fields this editor cannot safely change. It has been kept unchanged.</p>
+      <details><summary>inspect saved policy</summary><pre>{original}</pre></details>
+      <p class="settings-muted">To replace it, start from the inherited policy, then review and save your changes.</p>
+      <button class="settings-text-action" type="button" disabled={!connected || config.isError || !canConfigure(account, "sys.config.set")} onClick={() => {
+        const replacement = readSettingsPolicy(inherited);
+        if (replacement) update(replacement);
+      }}>prepare replacement</button>
+    </div>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">Your account cannot change approval defaults.</p>}
     <form onSubmit={(event) => {
       event.preventDefault();
@@ -51,7 +61,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     }}>
       <fieldset disabled={!editable || save.isPending}>
         <label class="settings-check"><input type="checkbox" checked={usesDefault} onChange={(event) => {
-          if (policy) { setDraft({ inherited: event.currentTarget.checked, policy }); setSaved(false); }
+          if (policy) { setDraft({ inherited: event.currentTarget.checked, policy, base: draft?.base ?? original }); setSaved(false); }
         }} />Use inherited policy</label>
         {policy && <>
           <label>When no rule matches<select value={policy.default} disabled={usesDefault} onChange={(event) => update({ ...policy, default: settingsAction(event.currentTarget.value) })}>
@@ -80,11 +90,15 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
           <div class="settings-actions">
             <button class="ibtn" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: [...policy.rules, { match: "", action: "ask" }] })}>add rule</button>
             <button class="ibtn" type="submit" disabled={!dirty}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save policy"}</button>
-            {dirty && <button class="ibtn" type="button" onClick={() => { setDraft(null); setError(null); }}>discard changes</button>}
+            {dirty && <button class="ibtn" type="button" onClick={() => { setDraft(null); setError(null); save.reset(); }}>discard changes</button>}
             {saved && <span role="status">saved</span>}
           </div>
         </>}
       </fieldset>
     </form>
+    <details class="settings-account-grants"><summary>Your account access</summary>
+      <p class="settings-muted">These grants set what your account can do. Approval rules cannot grant additional access.</p>
+      {account.capabilities.length ? <ul>{account.capabilities.map((capability) => <li key={capability}><span>{capability === "*" ? "All capabilities" : humanToolCapabilityLabel(capability)}</span><code>{capability}</code></li>)}</ul> : <p class="settings-muted">No capabilities are granted.</p>}
+    </details>
   </section>;
 }

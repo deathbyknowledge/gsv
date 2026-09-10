@@ -1,3 +1,4 @@
+import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useQuery } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
@@ -19,6 +20,7 @@ type Section = typeof SECTIONS[number];
 
 export function Settings({ onDirtyChange }: SettingsProps) {
   const { client, connected } = useGateway();
+  const { service: session } = useSession();
   const [section, setSection] = useState<Section>("preferences");
   const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, integrations: false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
@@ -40,6 +42,10 @@ export function Settings({ onDirtyChange }: SettingsProps) {
     <div class="settings-body">
       <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.map((entry) => <button class={`ibtn${section === entry ? " active" : ""}`} aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content">
+        <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
+          if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
+          session.lock("Signed out");
+        }}>sign out</button></div>
         {!connected && <p class="settings-muted" role="status">Disconnected. Reconnect to load or save settings.</p>}
         <SettingsError error={accounts.error} />
         {accounts.isPending && connected && <LoadingState variant="panel">Loading your account…</LoadingState>}
