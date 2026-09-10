@@ -446,3 +446,4 @@
 .fleet-contact-conversation > .fleet-place-form { flex-shrink: 0; margin-top: 12px; padding-top: 0; }
 .fleet-contact-conversation textarea { min-height: 3.5rem; max-height: 20vh; }
 .fleet-contact-conversation .fleet-actions { margin-top: 10px; }
+.fleet-contact-conversation .fleet-actions button[type="submit"] { margin-inline-start: auto; }

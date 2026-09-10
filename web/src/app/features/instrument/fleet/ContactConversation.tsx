@@ -95,9 +95,10 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       }} /></label>
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={draft.pending} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
-      <div class="fleet-actions"><button class="contact-link" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button><button class="contact-link" type="submit" disabled={disabled || (!draft.text.trim() && !draft.media.length)}>{draft.pending ? <LoadingState>sending…</LoadingState> : "send"}</button>
-        {(draft.text || draft.media.length > 0) && <button class="contact-link" type="button" disabled={draft.pending} onClick={() => onDraft({ text: "", media: [], intent: null, error: null, status: null })}>discard draft</button>}
+      <div class="fleet-actions">
+        <button class="contact-link" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
         {draft.status && <span class="note" role="status">{draft.status}</span>}
+        <button class="contact-link" type="submit" disabled={disabled || (!draft.text.trim() && !draft.media.length)}>{draft.pending ? <LoadingState>sending…</LoadingState> : "send"}</button>
       </div>
       {draft.error && <p class="error" role="alert">{draft.error}</p>}
       {!connected ? <p class="note">Reconnecting… Your draft is kept here.</p> : contact.state !== "active" ? <p class="note">This connection is revoked. Previous messages remain available.</p> : !maySend && <p class="note">Your account cannot send messages to this contact.</p>}
