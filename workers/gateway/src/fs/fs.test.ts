@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
@@ -67,6 +67,42 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 describe("GsvFs openFile", () => {
+  it("keeps generated-file revisions stable while their stat timestamps change", async () => {
+    const fs = makeConfigBackedFs(ROOT, { "config/server/name": "fixture" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000);
+      const first = await fs.openFile("/sys/config/server/name");
+      expect(await new Response(first.body).text()).toBe("fixture\n");
+      vi.setSystemTime(2_000);
+      const again = await fs.openFile("/sys/config/server/name", { conditions: { etagDoesNotMatch: first.etag } });
+      expect(again).toMatchObject({ status: 304, etag: first.etag, size: 8, totalSize: 8 });
+      expect(again.body).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("detects same-size generated-file edits and ranges the actual bytes", async () => {
+    const fs = makeConfigBackedFs(ROOT, { "config/server/name": "before" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000);
+      const first = await fs.openFile("/sys/config/server/name");
+      await first.body?.cancel();
+      await fs.writeFile("/sys/config/server/name", "after!\n");
+      const stale = await fs.openFile("/sys/config/server/name", { conditions: { etagMatches: first.etag } });
+      expect(stale.status).toBe(412);
+      expect(stale.etag).not.toBe(first.etag);
+      expect(stale.body).toBeUndefined();
+      const current = await fs.openFile("/sys/config/server/name", { range: { offset: 1, length: 3 } });
+      expect(current).toMatchObject({ status: 206, size: 3, totalSize: 7, range: { offset: 1, length: 3, total: 7 } });
+      expect(await new Response(current.body).text()).toBe("fte");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns a byte stream for backends without openFile", async () => {
     // SAFETY: this fixture supplies only the GsvFs methods exercised by the test.
     const fs = Object.create(GsvFs.prototype) as any;

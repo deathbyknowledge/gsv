@@ -815,6 +815,30 @@ describe("native shell execution", () => {
     });
   });
 
+  it("transfers a generated file's advertised revision and rejects a later edit", async () => {
+    const ctx = makeContext({ config: { "config/server/timezone": "UTC" } });
+    const path = "/sys/config/server/timezone";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000);
+      const read = await handleFsRead({ path, representation: "reference" }, ctx);
+      if (!read.data.ok || !("resource" in read.data) || !read.data.resource) throw new Error("Expected a file reference");
+      const ref = read.data.resource;
+      vi.setSystemTime(2_000);
+      const stat = await handleFsTransferStat({ path }, ctx);
+      expect(stat).toMatchObject({ ok: true, size: ref.size, revision: ref.revision });
+      const sent = await handleFsTransferSend({ path, revision: ref.revision }, ctx, "generated-1");
+      expect(sent.data).toMatchObject({ ok: true, size: ref.size, revision: ref.revision, contentType: ref.contentType });
+      expect(sent.body && await bodyToText(sent.body)).toBe("UTC\n");
+      ctx.config.set("config/server/timezone", "GMT");
+      const stale = await handleFsTransferSend({ path, revision: ref.revision }, ctx, "generated-2");
+      expect(stale.data).toEqual({ ok: false, error: `Source revision is no longer available: ${path}` });
+      expect(stale.body).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses to transfer a different file revision", async () => {
     const path = "/tmp/fs-transfer-revision.png";
     await env.STORAGE.put(path.slice(1), new Uint8Array([1]), {

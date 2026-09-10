@@ -98,21 +98,24 @@ export class GsvFs implements IFileSystem {
     if (!stat.isFile) {
       throw new Error(`EISDIR: illegal operation on a directory, open '${p}'`);
     }
-    const etag = weakStatEtag(stat);
+    // Generated mounts may report a fresh mtime and zero size for unchanged content.
+    const bytes = await backend.readFileBuffer(p);
+    const totalSize = bytes.byteLength;
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const etag = `"sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}"`;
     const conditionalStatus = evaluateOpenFileConditions(stat, etag, options?.conditions);
     if (conditionalStatus) {
       return {
-        size: stat.size,
-        totalSize: stat.size,
+        size: totalSize,
+        totalSize,
         mtime: stat.mtime,
         status: conditionalStatus,
         etag,
       };
     }
     const range = options?.range
-      ? resolveOpenFileRange(options.range, stat.size)
+      ? resolveOpenFileRange(options.range, totalSize)
       : undefined;
-    const bytes = await backend.readFileBuffer(p);
     const body = range
       ? bytes.subarray(range.offset, range.offset + range.length)
       : bytes;
@@ -120,7 +123,7 @@ export class GsvFs implements IFileSystem {
     const result = {
       body: bytesToStream(body),
       size,
-      totalSize: stat.size,
+      totalSize,
       mtime: stat.mtime,
       status: range ? 206 as const : 200 as const,
       contentType: stat.contentType,
@@ -633,8 +636,4 @@ function evaluateOpenFileConditions(
   }
 
   return null;
-}
-
-function weakStatEtag(stat: { size: number; mtime: Date }): string {
-  return `W/"${stat.size.toString(16)}-${stat.mtime.getTime().toString(16)}"`;
 }
