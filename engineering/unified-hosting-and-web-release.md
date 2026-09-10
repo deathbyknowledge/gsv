@@ -152,10 +152,9 @@ into the remaining UI batches.
 ## Old UI retirement inventory
 
 Audit of the actual route and component implementations on 2026-09-10. The old
-shell remains reachable while the remaining product scope is decided; changing
-the default route or deleting it now would remove workflows. A question has been
-sent to the maintainer about retaining these directly in Instrument versus using
-Ship/the CLI. Do not treat silence as authorization to delete them.
+shell remains reachable while the retained controls are reviewed. The maintainer
+approved the scope below; old-route mapping, final smoke testing and removal
+remain separate work after this review.
 
 | Workflow | Instrument status | Work before retiring the old surface |
 | --- | --- | --- |
@@ -166,13 +165,13 @@ Ship/the CLI. Do not treat silence as authorization to delete them.
 | Contact invitations, identities, messages/media and requests | Implemented in Fleet | Completed two-Ship browser validation |
 | Simple approval rules, stored-policy inspection/replacement and sign-out | Implemented in Settings | Completed browser validation |
 | Memory reading, search, links and correcting existing pages | Implemented in Memory | Map existing reader/editor deep links |
-| New Memory pages/collections, capture and collection build | Existing old Library workflows have no corresponding Instrument controls | Retain in the UI or explicitly move to Ship/the CLI |
-| General file creation, editing and deletion | Fleet currently browses and inspects files | Retain direct controls or explicitly move writes to Ship/the CLI |
-| Responsibilities, standing-source switches and scheduled routines | Fleet shows open responsibility summaries on processes | Retain management/history controls or explicitly move them to Ship/the CLI |
-| Repository import, refs, history, comparison and removal | No dedicated Instrument controls | Retain in the UI or explicitly move to Ship/the CLI |
-| Image, transcription, speech, shell and server configuration | Old Settings has additional configuration groups | Decide which remain user-facing under the current managed runtime |
-| Agent account creation and account-specific defaults | Processes have creation and preference controls; these do not replace account administration | Decide whether the old account-management UI is retained |
-| Standalone terminal workspace and detailed runtime traces | Fleet has its command line and activity inspector | Decide whether these specialist presentations are retained |
+| New Memory pages | Quiet new-page action uses the existing editor, checks name collisions and preserves concurrent edits | Review with the reader; collection setup/capture/build stay with Ship or commands |
+| File reading, editing, download and deletion | Preview expands to a wide reader/editor; return restores selection and scroll | Review; general file creation remains in Zen commands/Ship |
+| Responsibilities, standing-source switches and scheduled routines | Fleet has current/history, details/blockers/next checks, process filters, cancellation, standing switches and routine create/edit/pause | Review controls and live updates |
+| Repository import, refs, history and comparison | Maintainer approved keeping dedicated repository UI out | Native `rgit` commands are available through `gsv shell`/Zen; removal remains a syscall/CodeMode operation |
+| Image, transcription, speech, shell and server configuration | Maintainer explicitly rejected these extra controls; use good defaults | Timezone is the only added preference; existing model stack and effort controls remain |
+| Agent account creation and account-specific defaults | Processes have creation and preference controls; `proc accounts` lists runnable accounts | Explicit CLI gap: account creation is currently a syscall/SDK/CodeMode operation, not a native account-management command; settle before deleting the old route |
+| Standalone terminal workspace and detailed runtime traces | Fleet command opens Zen on the chosen target; ledger inspection adds bounded failure reasons, duration and request details; full tool output stays in Zen | Maintainer agreed to one terminal and useful inspection, without a separate trace chart |
 
 Source inventory: `web/src/app/features/gsv-shell/routing/shellRoutes.ts`,
 `web/src/app/features/gsv-console/components/GsvConsole.tsx`, and their referenced
@@ -184,3 +183,33 @@ Removal must keep genuinely shared domain and service code used by Instrument,
 move it out of the obsolete presentation namespace where appropriate, and remove
 obsolete pages only after retained routes are mapped and tested. Design catalog
 routes are a separate development surface.
+
+
+## Review batch: responsibilities, routines, Memory and files
+
+Implemented for the isolated 5174 preview on 2026-09-10. This batch does not change
+the default route, delete the old UI, merge, or deploy production.
+
+- Work stays in Fleet tables and the existing inspector, after Contacts. History
+  and standing policies are loaded when opened; owner-scoped change notices update
+  affected open lists without polling. Scheduled tasks outside the recurring Ship
+  routine editor remain inspectable and can be paused.
+- A routine edit retains existing target metadata, priority and interval anchor.
+  It checks the latest editable definition before saving. Scheduler updates do
+  not yet offer an atomic revision precondition; that race remains at the syscall
+  boundary rather than being hidden by the UI.
+- Memory page writes use the repository head as a precondition for the page and
+  index change. New pages refuse collisions; editing refuses a changed baseline.
+- Wide file reads/downloads use versioned file references. Text editing is limited
+  to 1 MiB; image display to 8 MiB; downloads currently use the shared 25 MiB
+  resource reader. Saves reread the target and retain a draft on an observed
+  conflict. `fs.write` does not provide an atomic compare-and-swap precondition.
+- The user timezone belongs to the human, influences Ship and defaults for new
+  routines, and leaves existing routine timezones intact. No media, shell or
+  installation-name settings were added.
+- Failure messages are bounded ledger data with the same owner authorization and
+  archive retention as other ledger fields. Existing archived rows remain readable.
+
+Maintainer-authored comments about Fleet's former command line and the old
+AI/UI-only config prefix list were preserved; the implementation now routes the
+command to Zen and additionally allows locale preferences.

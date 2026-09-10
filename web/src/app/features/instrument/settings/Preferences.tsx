@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { ModelEditor } from "./ModelEditor";
+import { Timezone } from "./Timezone";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../components/ui/AgentEditor";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -24,6 +25,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [removingModel, setRemovingModel] = useState<string | null>(null);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
+  const [timezoneDirty, setTimezoneDirty] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const drag = useRef<{ id: string; x: number; y: number; moved: boolean; to: number | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     onError: async () => { await refresh(); },
   });
   const saving = saveOrder.isPending || saveReasoning.isPending || removeModel.isPending;
-  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || saving, onDirty);
+  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || timezoneDirty || saving, onDirty);
   const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); saveOrder.reset(); };
 
   return <section aria-labelledby="settings-preferences-title">
@@ -169,5 +171,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
         {saved === "reasoning" && <span role="status">saved</span>}
       </div>
     </form>}
+    {!modelEditor && config.data && <Timezone uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? ""} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable} onDirty={setTimezoneDirty} />}
   </section>;
 }

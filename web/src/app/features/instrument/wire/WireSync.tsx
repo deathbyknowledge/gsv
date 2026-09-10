@@ -6,6 +6,7 @@ import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleDat
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
+import { syncWorkSignal } from "./workSync";
 import { syncProcessSignal } from "./processSync";
 import { createLedgerSync } from "./ledgerSync";
 import {
@@ -47,6 +48,10 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed") {
+        void syncWorkSignal(queryClient, signal);
+        return;
+      }
       // Contacts carry invalidations, so invitation codes and private records stay out of signals.
       if (signal === "contact.changed" || signal === "contact.invite.changed") {
         void refreshContactQuery(queryClient, signal === "contact.changed" ? INSTRUMENT_CONTACTS_KEY : INSTRUMENT_CONTACT_INVITES_KEY);

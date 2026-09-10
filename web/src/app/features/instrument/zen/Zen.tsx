@@ -60,6 +60,7 @@ export type ZenProps = {
   onFleet: (reference?: FleetReference) => void;
   /** Text to place in the prompt on arrival, such as a file reference from Fleet. */
   prefill?: string | null;
+  initialTarget?: string | null;
   onPrefillUsed?: () => void;
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
@@ -265,7 +266,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -276,7 +277,7 @@ export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, o
   const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
   const runtime = processRuntime.runtime;
   const [places, setPlaces] = useState<Place[]>([]);
-  const [where, setWhere] = useState<string | null>(null);
+  const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
   const [draftText, setDraftText] = useState("");
   const [sending, setSending] = useState<"uploading" | "sending" | null>(null);

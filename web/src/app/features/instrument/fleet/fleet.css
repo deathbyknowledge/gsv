@@ -16,6 +16,7 @@
   min-width: 0;
   min-height: 0;
 }
+.fleet-body[hidden] { display: none; }
 .fleet-manifest {
   min-width: 0;
   overflow-y: auto;
@@ -310,47 +311,6 @@
 .fleet-process-form input, .fleet-process-form select { min-width: 0; width: 100%; box-sizing: border-box; }
 .fleet-process-form input { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 7px 10px; }
 .fleet-process-form fieldset:disabled { opacity: 0.6; }
-.fleet-cmdline {
-  display: none;
-  align-items: baseline;
-  gap: 8px;
-  padding: 8px var(--space-5);
-  border-top: 1px solid var(--border);
-  background: var(--panel);
-  font-size: 14px;
-}
-.fleet-cmdline.is-open {
-  display: flex;
-}
-.fleet-cmdline .s {
-  color: var(--live);
-  font-weight: 700;
-}
-.fleet-cmdline .place {
-  color: var(--target);
-}
-.fleet-cmdline input {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: 0;
-  outline: 0;
-  color: var(--text-hi);
-  font: inherit;
-  caret-color: var(--accent);
-}
-.fleet-cmdline input:focus {
-  text-shadow: var(--glow-focus);
-}
-.fleet-cmdline .progress {
-  color: var(--live);
-}
-.fleet-cmdline .error {
-  color: var(--error);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 /* tables never widen the page: each one scrolls inside its own wrapper, long cells truncate */
 .fleet .tablewrap { overflow-x: auto; margin: 0 -10px; padding: 0 10px; }
 .fleet .manifest { overflow-x: hidden; }
@@ -447,3 +407,46 @@
 .fleet-contact-conversation textarea { min-height: 3.5rem; max-height: 20vh; }
 .fleet-contact-conversation .fleet-actions { margin-top: 10px; }
 .fleet-contact-conversation .fleet-actions button[type="submit"] { margin-inline-start: auto; }
+
+.fleet-file-reader { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: var(--instrument-header-height) 24px 20px; background: transparent; }
+.file-reader-head { display: flex; align-items: baseline; gap: 20px; padding: 22px 0 18px; border-bottom: 1px solid var(--border); }
+.file-reader-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--path); font-size: 12px; }
+.file-reader-actions { display: flex; gap: 18px; align-items: baseline; }
+.file-reader-content { flex: 1; min-height: 0; overflow: auto; padding-top: 22px; }
+.file-reader-content pre { margin: 0; font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; color: var(--text); }
+.file-reader-content img { max-width: 100%; }
+.file-reader-content, .file-reader-editor { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.file-reader-editor { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; background: transparent; color: var(--text); padding: 22px 0; font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; }
+.file-reader-more { position: relative; }
+.file-reader-more summary { cursor: pointer; list-style: none; }
+.file-reader-more[open] button { position: absolute; right: 0; top: 24px; white-space: nowrap; padding: 10px; background: var(--void); }
+.file-reader-confirm { padding: 12px 0; color: var(--error); }
+.file-reader-confirm button { margin-right: 18px; }
+@media (max-width: 720px) { .fleet-file-reader { padding-left: 16px; padding-right: 16px; } .file-reader-head { flex-wrap: wrap; gap: 14px; } .file-reader-path { flex-basis: 60%; } }
+
+.fleet-work-filters { display: flex; gap: 16px; margin: 6px 0 12px; }
+.fleet-work-filters button, .fleet-count-action { background: transparent; border: 0; padding: 0; color: var(--text-dim); font: inherit; cursor: pointer; }
+.fleet-work-filters button { font-size: 12px; }
+.fleet-work-filters button[aria-pressed="true"] { color: var(--accent); text-decoration: underline; text-underline-offset: 5px; }
+.fleet-count-action:hover { color: var(--accent); text-decoration: underline; }
+.fleet-work-details { margin: 16px 0; font-size: 12px; }
+.fleet-work-details > div { display: grid; grid-template-columns: minmax(75px, 30%) minmax(0, 1fr); gap: 12px; margin: 9px 0; }
+.fleet-work-details dt { color: var(--label); overflow-wrap: anywhere; }
+.fleet-work-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.fleet-work-details dd .fleet-work-details { margin-top: 0; }
+.fleet-work-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fleet-work-technical { margin: 20px 0; font-size: 12px; color: var(--text-dim); }
+.fleet-work-technical summary { cursor: pointer; }
+.fleet-work-form { margin-top: 0; border-top: 0; padding-top: 0; }
+.fleet-work-form textarea, .fleet-work-form select { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 8px; }
+.fleet-work-form textarea { resize: vertical; line-height: 1.6; }
+.fleet-work-form input:focus, .fleet-work-form textarea:focus, .fleet-work-form select:focus { outline: none; border-color: var(--accent); box-shadow: none; }
+.file-reader-editor:focus { outline: none; caret-color: var(--accent); }
+.fleet-work-form .fleet-work-checkbox { display: flex; align-items: center; }
+.fleet-work-form .fleet-work-checkbox input, .fleet-work-source input { width: 14px; height: 14px; accent-color: var(--accent); }
+.fleet-work-interval { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.fleet-work-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.fleet-work-source { border-top: 1px solid var(--rule-inner); padding: 16px 0 6px; }
+.fleet-work-source label { display: flex; justify-content: space-between; align-items: center; gap: 14px; font-size: 13px; }
+.fleet-work-source p { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.fleet-line-error .line-detail { max-height: 280px; overflow: auto; }

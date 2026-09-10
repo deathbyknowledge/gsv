@@ -1,3 +1,7 @@
+import { FileReader } from "./FileReader";
+import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
+import { RoutineEditor } from "./RoutineEditor";
+import { useDraftGuard } from "../shared/useDraftGuard";
 import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import { ConnectPlace } from "./ConnectPlace";
@@ -14,7 +18,6 @@ import {
 } from "../../gsv-console/backend/consoleService";
 import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
 import { readFilesPath } from "../../files/backend/filesService";
-import { executeTerminalCommand } from "../../terminal/backend/terminalService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {
@@ -25,7 +28,6 @@ import {
   modelByProcess,
   ledgerFromSysLines,
   sysLedgerListResultSchema,
-  mergeLedger,
   orderPlaces,
   orderProcesses,
   placeStateLabel,
@@ -53,6 +55,7 @@ import { canConfigure } from "../settings/settingsModel";
 import "./fleet.css";
 
 export type FleetProps = {
+  onCommand: (target: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   /** The row to land on, when Zen sent us here from a reference. */
   initialReference: FleetReference | null;
@@ -76,7 +79,7 @@ function useNow(): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "contact:", "ledger:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "contact:", "work:", "routine:", "ledger:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -87,8 +90,12 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
-  const contactDrafts = useContactDrafts(onDirtyChange);
+export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: FleetProps) {
+  const [contactDirty, setContactDirty] = useState(false);
+  const [fileDirty, setFileDirty] = useState(false);
+  const [workDirty, setWorkDirty] = useState(false);
+  useDraftGuard(contactDirty || fileDirty || workDirty, onDirtyChange);
+  const contactDrafts = useContactDrafts(setContactDirty);
   const { client, connected } = useGateway();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
@@ -109,17 +116,14 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
       && !query.state.data?.some((process) => processRow(process.pid) === initialRow) ? "always" : true,
     enabled: connected,
   });
-  const responsibilitiesQuery = useQuery({
-    queryKey: ["fleet", "responsibilities", "open"],
-    queryFn: () => client.r12y.list({ states: ["open", "active", "waiting"], limit: 500 }),
-    enabled: connected,
-  });
   const accountsQuery = useQuery({
     queryKey: ["fleet", "accounts"],
     queryFn: () => loadConsoleAccounts(client),
     enabled: connected,
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
+  const work = useFleetWork(viewer);
+  const [workPanel, setWorkPanel] = useState<"new" | "sources" | null>(null);
 
   const contactsQuery = useFleetContacts(viewer);
   const contacts = contactsQuery.data ?? [];
@@ -175,7 +179,6 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
   const requestedKind = selected?.startsWith("proc:") ? "process" : "place";
   const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
-  const [cmdOpen, setCmdOpen] = useState(false);
   /* the technical view shows raw syscalls and arguments; t toggles it */
   const [technical, setTechnical] = useState(false);
   const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
@@ -184,55 +187,33 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
     if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  const [expandedFile, setExpandedFile] = useState<OpenFile | null>(null);
+  const savedScroll = useRef(0);
   const selectRow = useCallback((row: FleetRow) => {
+    if (row !== selected && workDirty && !window.confirm("Discard this unsaved routine?")) return;
+    setWorkPanel(null);
     setSelected(row);
     setOpenFile(null);
     setCreatingProcess(false);
     setConnecting(null);
-  }, []);
+  }, [workDirty, selected]);
   const selectFile = useCallback((file: OpenFile) => {
+    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
+    setWorkPanel(null);
+    setSelected(`file:${file.target}:${file.path}`);
     setOpenFile(file);
     setCreatingProcess(false);
     setConnecting(null);
-  }, []);
+  }, [workDirty]);
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
     return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
   };
-  const cmdInputRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const cmdPlace = selectedPlace ?? places.find((place) => place.id === CLOUD_TARGET_ID) ?? null;
 
-  const openCmd = useCallback(() => {
-    setCmdOpen(true);
-    window.setTimeout(() => cmdInputRef.current?.focus(), 0);
-  }, []);
-
-  const [localLines, setLocalLines] = useState<LedgerLine[]>([]);
-  const runCommand = useMutation({
-    mutationFn: (input: string) =>
-      executeTerminalCommand(client, { input, target: cmdPlace?.id ?? CLOUD_TARGET_ID }),
-    onSuccess: (entry) => {
-      setLocalLines((lines) => [
-        {
-          id: `you:${entry.id}`,
-          timestamp: entry.completedAt,
-          processId: "you",
-          place: entry.target || CLOUD_TARGET_ID,
-          syscall: "shell.exec",
-          what: "ran a command",
-          detail: `${entry.command} · by you`,
-          args: "",
-          outcome: entry.status === "failed" ? "failed" : "completed",
-          runId: null,
-          costNanoUsd: null,
-        },
-        ...lines,
-      ]);
-    },
-  });
-
-  const shownLedger = useMemo(() => mergeLedger([localLines, ledger], localLines.length + ledger.length), [localLines, ledger]);
+  const openCmd = useCallback(() => onCommand(cmdPlace?.id ?? CLOUD_TARGET_ID), [onCommand, cmdPlace?.id]);
+  const shownLedger = ledger;
   const moreRow: FleetRow = "more:processes";
   const olderRow: FleetRow = "more:ledger";
   const loadOlder = useCallback(() => {
@@ -245,14 +226,14 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
-    if (creatingProcess || connecting) return;
+    if (creatingProcess || connecting || workPanel || workDirty) return;
     if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
     if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data]);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
   useEffect(() => {
     if (!selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
@@ -272,13 +253,7 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (typing) {
-        if (event.key === "Escape" && target === cmdInputRef.current) {
-          event.preventDefault();
-          setCmdOpen(false);
-        }
-        return;
-      }
+      if (typing || expandedFile) return;
       if (event.key === "Enter" && target instanceof HTMLElement && target.closest("button, a[href]")) return;
       const rows = visibleRows();
       if (event.metaKey || event.ctrlKey || event.altKey || rows.length === 0) return;
@@ -310,13 +285,11 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
           event.preventDefault();
           primary.focus();
         }
-      } else if (event.key === "Escape") {
-        setCmdOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, openCmd, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
+  }, [selected, openCmd, expandedFile, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
 
   useEffect(() => {
     if (!selected) return;
@@ -325,6 +298,8 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
   }, [selected]);
 
   const connect = (to: "place" | "contact") => {
+    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
+    setWorkPanel(null);
     setSelected(null);
     setOpenFile(null);
     setCreatingProcess(false);
@@ -336,27 +311,31 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
     setSelected(row);
   };
 
-  const submitCommand = (event: Event) => {
-    event.preventDefault();
-    const input = cmdInputRef.current;
-    if (!input) return;
-    const text = input.value.trim();
-    input.value = "";
-    setCmdOpen(false);
-    if (text) runCommand.mutate(text);
-  };
-
   const ledgerState = sysLedgerQuery.isPending ? "ledger loading" : "ledger current";
   const responsibilityCount = (pid: string) =>
-    (responsibilitiesQuery.data?.responsibilities ?? []).filter(
-      (record) => record.assignee.kind === "process" && record.assignee.processId === pid,
-    ).length;
+    work.open.filter((record) => assignedTo(record, processes.find((process) => process.pid === pid) ?? { pid, personal: false })).length;
+  const selectedWork = work.records.find((record) => selected === `work:${record.id}`);
+  const selectedRoutine = work.schedules.find((schedule) => selected === `routine:${schedule.id}`);
+  const openWorkPanel = (panel: "new" | "sources") => {
+    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
+    setWorkPanel(panel); setSelected(null); setOpenFile(null); setCreatingProcess(false); setConnecting(null);
+    inspectorRef.current?.scrollIntoView({ block: "nearest" });
+  };
+  const filterWork = (pid: string) => {
+    work.setHistory(false); work.setFilterPid(pid);
+    requestAnimationFrame(() => document.getElementById("fleet-responsibilities")?.scrollIntoView({ block: "start" }));
+  };
   const costFor = (pid: string) => costToday.get(pid) ?? null;
   const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
 
   return (
     <main class="fleet" aria-label="Fleet">
-      <div class="fleet-body">
+      {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty} onClose={(deleted) => {
+        if (deleted) setOpenFile(null);
+        setExpandedFile(null);
+        requestAnimationFrame(() => { if (manifestRef.current) manifestRef.current.scrollTop = savedScroll.current; });
+      }} />}
+      <div class="fleet-body" hidden={Boolean(expandedFile)}>
         <div ref={manifestRef} class="fleet-manifest">
           <section class="fleet-block">
             <h2>
@@ -404,6 +383,8 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
             <h2>
               <i /> Processes
               {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="fleet-heading-action" disabled={!connected} onClick={() => {
+                if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
+                setWorkPanel(null);
                 setSelected(null);
                 setOpenFile(null);
                 setConnecting(null);
@@ -436,7 +417,7 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
                   >
                     <td class="name">{process.personal ? "ship" : process.label}</td>
                     <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
-                    <td class="dim">{responsibilityCount(process.pid) || "—"}</td>
+                    <td class="dim"><button type="button" class="fleet-count-action" aria-label={`Responsibilities for ${process.personal ? "ship" : process.label}`} onClick={(event) => { event.stopPropagation(); filterWork(process.pid); }}>{work.current.isPending || work.current.isError ? "-" : `${responsibilityCount(process.pid)}${work.current.hasNextPage ? "+" : ""}`}</button></td>
                     <td>
                       <span class={`dot is-${processStateTone(process.state)}`} />
                       {processStateLabel(process.state)}
@@ -482,6 +463,8 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
                 </tr>)}</tbody>
               </table></div>}
           </section>
+
+          <WorkSections work={work} account={viewer} processes={processes} selected={selected} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
 
           <section class="fleet-block">
             <h2>
@@ -535,7 +518,15 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
         </div>
 
         <aside class="fleet-inspector" ref={inspectorRef}>
-          {connecting === "place" ? (
+          {workPanel === "new" ? (
+            <RoutineEditor onDirty={setWorkDirty} onCancel={() => setWorkPanel(null)} onSaved={(id) => { setWorkPanel(null); setSelected(`routine:${id}`); }} />
+          ) : workPanel === "sources" ? (
+            <StandingResponsibilities account={viewer} />
+          ) : selectedWork && !openFile ? (
+            <ResponsibilityInspector key={selectedWork.id} record={selectedWork} account={viewer} processName={processNameFor} onProcess={(pid) => onZen(undefined, pid)} />
+          ) : selectedRoutine && !openFile ? (
+            <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
+          ) : connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={() => setConnecting(null)} onConnected={(id) => selectConnected(targetRow(id))} />
           ) : connecting === "contact" ? (
             <AddContact account={viewer} onClose={() => setConnecting(null)} onAdded={(id) => selectConnected(`contact:${id}`)} />
@@ -549,7 +540,10 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
           ) : selectedLine && !openFile ? (
             <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />
           ) : openFile ? (
-            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} />
+            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} onExpand={() => {
+              savedScroll.current = manifestRef.current?.scrollTop ?? 0;
+              setExpandedFile(openFile);
+            }} />
           ) : selectedPlace ? (
             <PlaceInspector
               key={selectedPlace.id}
@@ -594,13 +588,7 @@ export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
         </aside>
       </div>
 
-      <form class={`fleet-cmdline${cmdOpen || runCommand.isPending || runCommand.error ? " is-open" : ""}`} onSubmit={submitCommand}>
-        <span class="s">›</span>
-        <span class="place">{cmdPlace?.label ?? "your cloud home"}</span>
-        <input ref={cmdInputRef} hidden={!cmdOpen} type="text" placeholder="run a command on this place" aria-label="Fleet command" spellcheck={false} />
-        {runCommand.isPending ? <span class="progress" role="status"><LoadingState>running…</LoadingState></span> : null}
-        {runCommand.error ? <span class="error" role="alert">{String(runCommand.error)}</span> : null}
-      </form>
+
     </main>
   );
 }
@@ -681,7 +669,6 @@ function DirNode({
                   class={`file${selectedRow === `file:${place.id}:${entry.path}` ? " is-sel" : ""}`}
                   data-row={`file:${place.id}:${entry.path}`}
                   onClick={() => {
-                    onSelect(`file:${place.id}:${entry.path}`);
                     onOpenFile({ target: place.id, path: entry.path, name: entry.name });
                   }}
                 >
@@ -708,11 +695,13 @@ const PREVIEW_LINES = 40;
 /** A file in the inspector: a bounded preview, and the two things a person does with it here. */
 function FileInspector({
   file,
+  onExpand,
   placeLabel: label,
   onClose,
   onZen,
 }: {
   file: OpenFile;
+  onExpand: () => void;
   placeLabel: string;
   onClose: () => void;
   onZen: (prefill?: string) => void;
@@ -755,6 +744,7 @@ function FileInspector({
         {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
       </div>
       <div class="fleet-actions">
+        <button type="button" class="ibtn" onClick={onExpand}>expand</button>
         <button type="button" class="ibtn is-primary" onClick={() => onZen(`${reference} `)}>
           talk about it
         </button>
@@ -818,7 +808,7 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
       </div>
       <PlaceActions place={place} uid={uid} focusPair={focusPair} />
       <p class="note">
-        Everything the ship can do here, you can do from this panel. A command runs with no model in the loop and lands in the ledger like any other run.
+        Run a command opens Zen on this place. Commands run directly and appear in the ledger.
       </p>
     </div>
   );
@@ -931,6 +921,7 @@ function LineInspector({
         <dd class={failed ? "error" : ""}>{outcomeWord(line.outcome)}</dd>
         <dt>By</dt>
         <dd>{processName}</dd>
+        {line.durationMs != null && <><dt>Duration</dt><dd>{line.durationMs < 1000 ? `${line.durationMs} ms` : `${(line.durationMs / 1000).toFixed(1)} s`}</dd></>}
         {technical ? (
           <>
             <dt>Syscall</dt>
@@ -942,6 +933,8 @@ function LineInspector({
           <dd><pre class="line-detail">{technical ? line.args : line.detail}</pre></dd>
         </>}
       </dl>
+      {line.error && <div class="fleet-line-error"><h4>Failure</h4><pre class="line-detail error">{line.error}</pre></div>}
+      <details class="fleet-work-technical"><summary>Request details</summary><dl class="fleet-work-details"><div><dt>Call</dt><dd>{line.syscall}</dd></div><div><dt>Target</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>Run</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
       <div class="fleet-actions">
         {line.processId !== "you" ? (
           <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, line.processId)}>

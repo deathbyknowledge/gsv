@@ -17,7 +17,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
@@ -72,6 +72,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
+  const [memoryDirty, setMemoryDirty] = useState(false);
+  const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
   const [scale, setScale] = useState<Scale>(() => storedScale());
@@ -93,21 +95,24 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
 
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
-      if (moving.current || to === distance) {
+      if (moving.current) return false;
+      if (to === distance) {
         if (reference) setFleetReference(reference);
-        return;
+        return true;
       }
-      if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return;
-      if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
-      if (fleetDirty && !window.confirm("Discard your unsent contact messages and attachments?")) return;
+      if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return false;
+      if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return false;
+      if (fleetDirty && !window.confirm("Discard your unsaved Fleet changes?")) return false;
+      if (memoryDirty && !window.confirm("Discard your unsaved Memory changes?")) return false;
       setSettingsDirty(false);
       setZenDirty(false);
       setFleetDirty(false);
+      setMemoryDirty(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
         setDistance(to);
-        return;
+        return true;
       }
       moving.current = true;
       setPhase("leaving");
@@ -121,8 +126,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }),
         );
       }, MOVE_MS);
+      return true;
     },
-    [distance, settingsDirty, zenDirty, fleetDirty],
+    [distance, settingsDirty, zenDirty, fleetDirty, memoryDirty],
   );
 
   useLayoutEffect(() => {
@@ -227,26 +233,29 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+            if (!move("memory")) return;
             if (page) setSelectedMemoryPage(page);
-            move("memory");
-          }} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
         ) : distance === "memory" ? (
-          <Memory initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
+            if (!move("zen")) return;
             setSelectedMemoryPage(page);
             setZenPid(null);
+            setZenTarget(null);
             setZenPrefill(prompt);
-            move("zen");
           }} />
         ) : distance === "settings" ? (
           <Settings onDirtyChange={setSettingsDirty} />
         ) : (
           <Fleet
+            onCommand={(target) => { if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); } }}
             onDirtyChange={setFleetDirty}
             initialReference={fleetReference}
             onZen={(prefill, pid) => {
-              if (prefill) setZenPrefill(prefill);
+              if (!move("zen")) return;
+              setZenTarget(null);
+              setZenPrefill(prefill ?? null);
               setZenPid(pid ?? null);
-              move("zen");
             }}
           />
         )}

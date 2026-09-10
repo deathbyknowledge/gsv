@@ -62,6 +62,8 @@ export type LedgerLine = {
   /** The call's arguments as the Kernel recorded them, JSON text; empty for a line made here. */
   args: string;
   outcome: string;
+  error?: string | null;
+  durationMs?: number | null;
   runId: string | null;
   costNanoUsd: number | null;
 };
@@ -407,6 +409,7 @@ const sysLedgerLineSchema = z.object({
   call: z.string(),
   args: z.string(),
   outcome: z.enum(["ok", "failed", "denied", "cancelled"]).nullable(),
+  error: z.string().nullable().optional(),
   durationMs: z.number().nullable(),
   tokens: z.number().nullable().optional(),
   costNanoUsd: z.number().nullable().optional(),
@@ -442,6 +445,8 @@ export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineS
       detail: describeToolCall(line.call, args),
       args: line.args,
       outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
+      error: line.error ?? null,
+      durationMs: line.durationMs,
       runId: line.runId,
       costNanoUsd: line.costNanoUsd ?? null,
     };
