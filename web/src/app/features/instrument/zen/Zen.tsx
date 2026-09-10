@@ -723,9 +723,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
       const target = event.target;
-      const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
       if (typing && event.key === "Escape") {
         // Escape leaves the prompt even if the input's own handler did not run.
         event.preventDefault();
@@ -757,12 +757,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         setBrowse(Math.max(0, browse - 1));
         return;
       }
-      if (event.key === "Escape" || event.key === "Enter") {
+      if (event.key === "i") {
         event.preventDefault();
-        focusPrompt();
-        return;
-      }
-      if (event.key.length === 1 && !["z", "n", "m", ",", "j", "k", "o", "l", "x", "?"].includes(event.key)) {
         focusPrompt();
       }
     };
@@ -791,7 +787,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
-    <main class={`zen${browse !== null ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
+    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -961,16 +957,17 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             placeholder={
               pendingHil
                 ? "answer the approval first"
-                : currentPlace.online
-                  ? "Ask in plain words, or start with $ to run a command yourself"
-                  : `Ask in plain words; ${currentPlace.label} will run it when it's back`
+                : !promptFocused
+                  ? "Press i or click here to write"
+                  : currentPlace.online
+                    ? "Ask in plain words, or start with $ to run a command yourself"
+                    : `Ask in plain words; ${currentPlace.label} will run it when it's back`
             }
             disabled={!connected || !pid}
             onSubmit={onSubmit}
             allowEmpty={attachments.length > 0}
             onFiles={addFiles}
             onHistory={onHistory}
-            autoFocus
           />
           <div class="zen-compose-actions">
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {

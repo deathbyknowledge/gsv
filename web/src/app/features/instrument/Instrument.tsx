@@ -197,37 +197,74 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         }} help={help} onHelp={() => setHelp((open) => !open)} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Keys">
-          <h4>Everywhere</h4>
+          <h4>Views & appearance</h4>
+          <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>
-            <dt>z</dt><dd>zen and fleet</dd>
-            <dt>m</dt><dd>memory</dd>
-            <dt>,</dt><dd>settings</dd>
-            <dt>l</dt><dd>light and dark</dd>
-            <dt>x</dt><dd>type size</dd>
-            <dt>esc</dt><dd>leave the prompt</dd>
+            <dt>z</dt><dd>Fleet · press again to return to Zen</dd>
+            <dt>m</dt><dd>Memory · press again to return to Zen</dd>
+            <dt>,</dt><dd>Settings · press again to return to Zen</dd>
+            <dt>l</dt><dd>Switch between light and dark</dd>
+            <dt>x</dt><dd>Cycle text size</dd>
+            <dt>?</dt><dd>Show or hide these shortcuts</dd>
+            <dt>Esc</dt><dd>Close this panel</dd>
           </dl>
-          <h4>Zen</h4>
-          <dl>
-            <dt>$ …</dt><dd>run it yourself, no model</dd>
-            <dt>@place</dt><dd>move the prompt</dd>
-            <dt>j k</dt><dd>browse moments</dd>
-            <dt>o</dt><dd>show the run</dd>
-            <dt>y n</dt><dd>answer an approval</dd>
-          </dl>
-          <h4>Memory</h4>
-          <dl>
-            <dt>j k</dt><dd>walk the pages</dd>
-            <dt>/</dt><dd>search</dd>
-            <dt>e</dt><dd>correct a page</dd>
-            <dt>⌘ enter</dt><dd>save</dd>
-          </dl>
-          <h4>Fleet</h4>
-          <dl>
-            <dt>j k</dt><dd>move</dd>
-            <dt>enter</dt><dd>open</dd>
-            <dt>/</dt><dd>command on the place</dd>
-            <dt>t</dt><dd>plain words or technical</dd>
-          </dl>
+          {distance === "zen" && <>
+            <h4>Zen · browse</h4>
+            <dl>
+              <dt>i</dt><dd>Start typing in the prompt</dd>
+              <dt>j / ↓</dt><dd>Next message or activity</dd>
+              <dt>k / ↑</dt><dd>Previous message or activity</dd>
+              <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
+              <dt>y / n</dt><dd>Approve or deny a pending request</dd>
+            </dl>
+            <h4>Zen · input</h4>
+            <dl>
+              <dt>Enter</dt><dd>Send the message or run the command</dd>
+              <dt>Shift + Enter</dt><dd>New line</dd>
+              <dt>Esc</dt><dd>Return to browse; closes the place picker first</dd>
+              <dt>↑</dt><dd>Recall the last input when the prompt is empty</dd>
+              <dt>@place</dt><dd>Choose a target with ↑ ↓ and Enter</dd>
+              <dt>$ command</dt><dd>Run a shell command on that target, without the model</dd>
+            </dl>
+          </>}
+          {distance === "memory" && <>
+            <h4>Memory</h4>
+            <dl>
+              <dt>j / ↓</dt><dd>Open the next page</dd>
+              <dt>k / ↑</dt><dd>Open the previous page</dd>
+              <dt>/</dt><dd>Focus page search</dd>
+              <dt>e</dt><dd>Edit the open page</dd>
+              <dt>⌘ / Ctrl + Enter</dt><dd>Save while editing page text</dd>
+              <dt>Esc</dt><dd>Leave search or close the editor</dd>
+            </dl>
+          </>}
+          {distance === "fleet" && <>
+            <h4>Fleet</h4>
+            <dl>
+              <dt>j / ↓</dt><dd>Select the next row</dd>
+              <dt>k / ↑</dt><dd>Select the previous row</dd>
+              <dt>Enter</dt><dd>Open a file or folder; otherwise focus the inspector’s main action</dd>
+              <dt>/</dt><dd>Open a command prompt for the selected place</dd>
+              <dt>t</dt><dd>Switch between human labels and technical details</dd>
+            </dl>
+            <h4>Expanded file</h4>
+            <dl>
+              <dt>⌘ / Ctrl + Enter</dt><dd>Save file edits</dd>
+              <dt>Esc</dt><dd>Return to Fleet</dd>
+            </dl>
+            <h4>Contact messages</h4>
+            <dl>
+              <dt>Enter</dt><dd>Send the message</dd>
+              <dt>Shift + Enter</dt><dd>New line</dd>
+            </dl>
+          </>}
+          {distance === "settings" && <>
+            <h4>Settings</h4>
+            <dl>
+              <dt>Tab / Shift + Tab</dt><dd>Move between controls</dd>
+              <dt>Enter / Space</dt><dd>Activate the focused button</dd>
+            </dl>
+          </>}
         </aside>
       ) : null}
       <div class={`distance${phaseClass}`}>

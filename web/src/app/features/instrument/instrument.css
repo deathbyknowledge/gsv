@@ -406,7 +406,7 @@
 /* ---------- the keys, on ? ---------- */
 .instrument-help {
   position: absolute;
-  right: 56px;
+  right: 16px;
   top: calc(var(--instrument-header-height) + 8px);
   z-index: 5;
   background: var(--panel);
@@ -416,10 +416,19 @@
   line-height: 1.8;
   color: var(--label);
   box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.04), 0 14px 40px rgba(5, 3, 18, 0.55);
-  min-width: 240px;
+  box-sizing: border-box;
+  width: min(32rem, calc(100% - 32px));
+  max-height: calc(100% - var(--instrument-header-height) - 24px);
+  overflow-y: auto;
 }
 .instrument.is-light .instrument-help { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
 .instrument-help h4 { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 400; }
+.instrument-help h4:not(:first-child) { margin-top: 14px; }
+.instrument-help p { margin: 0 0 10px; color: var(--faint); font-size: 11px; line-height: 1.5; }
 .instrument-help dl { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; margin: 0 0 10px; }
-.instrument-help dt { color: var(--text-hi); }
+.instrument-help dt { color: var(--text-hi); white-space: nowrap; }
 .instrument-help dd { margin: 0; }
+@container instrument (max-width: 350px) {
+  .instrument-help dl { grid-template-columns: minmax(0, 1fr); }
+  .instrument-help dd { margin-bottom: 8px; }
+}
