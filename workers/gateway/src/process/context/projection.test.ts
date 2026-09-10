@@ -87,11 +87,49 @@ describe("context epoch projection", () => {
       mcpServers: ["Calendar"],
       system: { timezone: "UTC" },
       skillIndexMode: "summary",
-    }, new Date("2026-08-28T12:00:00Z"), fallback);
+    }, new Date("2026-08-28T12:00:00Z"), { skills: fallback, targets: [] });
 
     expect(projection.mcpServers).toEqual(["Calendar"]);
     expect(projection.skills).toEqual(fallback);
     expect(projection.skills).not.toBe(fallback);
     expect(projection.skills.entries[0]).not.toBe(fallback.entries[0]);
+  });
+
+  it("retains targets through failed discovery and recovery but accepts a confirmed removal", () => {
+    const now = new Date("2026-08-28T12:00:00Z");
+    const snapshot = {
+      targets: [{ id: "slack-target:workspace", implements: ["shell.exec"] }],
+      mcpServers: ["Search"],
+      system: { timezone: "UTC" },
+      skillIndexMode: "off" as const,
+    };
+    const initial = createContextProjection(snapshot, now);
+    const unavailable = createContextProjection({ ...snapshot, targets: undefined }, now, initial);
+    const recovered = createContextProjection(snapshot, now, unavailable);
+    const removed = createContextProjection({ ...snapshot, targets: [] }, now, recovered);
+
+    expect(unavailable).toEqual(initial);
+    expect(unavailable.targets).not.toBe(initial.targets);
+    expect(recovered).toEqual(initial);
+    expect(removed.targets).toEqual([]);
+    expect(contextProjectionsEqual(recovered, removed)).toBe(false);
+
+    const otherChanges = createContextProjection({
+      ...snapshot,
+      targets: undefined,
+      mcpServers: ["Calendar"],
+    }, new Date("2026-08-29T12:00:00Z"), initial);
+    expect(otherChanges.targets).toEqual(initial.targets);
+    expect(otherChanges.mcpServers).toEqual(["Calendar"]);
+    expect(otherChanges.runtime.date).toBe("2026-08-29");
+  });
+
+  it("starts an unavailable target catalog without inventing a prior target", () => {
+    const projection = createContextProjection({
+      mcpServers: [],
+      system: { timezone: "UTC" },
+      skillIndexMode: "off",
+    });
+    expect(projection.targets).toEqual([]);
   });
 });

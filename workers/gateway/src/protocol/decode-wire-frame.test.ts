@@ -6,6 +6,16 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it.each([{}, { targets: [] }])("preserves unavailable versus empty target catalogs over the wire: %j", (targets) => {
+    const response = {
+      type: "res" as const,
+      id: "context-targets",
+      ok: true as const,
+      data: { ...targets, mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" },
+    };
+    expect(decodeWireResponse("ai.context", response)).toEqual(response);
+  });
+
   it.each(["person", "model", "both"])("accepts a registered target watch for audience %s", (audience) => {
     const frame = {
       type: "req", id: "target-watch", call: "signal.watch",

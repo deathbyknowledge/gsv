@@ -216,6 +216,7 @@ export interface AdapterService {
   adapterPairingActivate?: AdapterPairingWorkerInterface["adapterPairingActivate"];
   adapterPairingFinalize?: AdapterPairingWorkerInterface["adapterPairingFinalize"];
   adapterPairingDisconnect?: AdapterPairingWorkerInterface["adapterPairingDisconnect"];
+  /** Return an authoritative list, including empty for revoked access; reject failed discovery. */
   adapterTargetList?: (
     installation: AdapterInstallationContext,
     identity: AdapterTargetIdentity,

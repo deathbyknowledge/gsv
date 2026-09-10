@@ -23,7 +23,8 @@ import {
   type SlackUploadFilesInput,
   uploadSlackFiles,
 } from "./slack-api";
-import { executeSlackTargetShell } from "./slack-target-shell";
+import { executeSlackTarget, managedSlackTargetRequestSchema, type SlackTargetCall } from "./slack-target";
+import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   managedSlackWorkspaceObjectName,
   requireWorkspaceAccountId,
@@ -314,8 +315,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     };
     try {
       authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
-    } catch {
-      return { available: false };
+    } catch (error) {
+      if (error instanceof SlackTargetAuthorizationUnavailableError) return { available: false };
+      throw error;
     }
     return {
       available: true,
@@ -329,16 +331,11 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   async executeTarget(
     actorIdInput: string,
     expectedGeneration: string,
-    frame: AdapterTargetRequestFrame<"shell.exec">,
-  ): Promise<AdapterTargetResponseFrame<"shell.exec">> {
+    frame: AdapterTargetRequestFrame<SlackTargetCall>,
+  ): Promise<AdapterTargetResponseFrame<SlackTargetCall>> {
     const actorId = requireSlackId(actorIdInput, "Slack actor");
-    if (
-      frame.type !== "req"
-      || frame.call !== "shell.exec"
-      || !frame.id.trim()
-      || !Number.isFinite(frame.deadlineAt)
-      || frame.body
-    ) {
+    if (!managedSlackTargetRequestSchema.safeParse(frame).success) {
+      await cancelBinaryBody(frame.body, "Slack target request is invalid");
       return targetError(frame.id, 400, "Slack target request is invalid");
     }
     const remaining = Math.min(
@@ -374,8 +371,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     }, remaining);
 
     try {
-      const data = await executeSlackTargetShell({
-        args: frame.args,
+      const response = await executeSlackTarget(frame, {
         userToken: credential.token,
         botToken: workspace.botToken,
         actorId,
@@ -392,12 +388,14 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
           );
         },
       });
-      await this.requireTargetAuthorization(
-        actorId,
-        expectedGeneration,
-        credential.generation,
-      );
-      return { type: "res", id: frame.id, ok: true, data };
+      try {
+        await this.requireTargetAuthorization(actorId, expectedGeneration, credential.generation);
+        if (frame.call !== "shell.exec") controller.signal.throwIfAborted();
+        return response;
+      } catch (error) {
+        if (response.ok) await cancelBinaryBody(response.body, "Slack target authorization changed");
+        throw error;
+      }
     } catch {
       if (controller.signal.aborted) {
         return targetError(
@@ -582,7 +580,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       || !state.botToken
       || missingRequiredScopes(normalizedScopes(state.scope)).length > 0
     ) {
-      throw new Error("Slack workspace route changed");
+      throw new SlackTargetAuthorizationUnavailableError("Slack workspace route changed");
     }
     this.assertObjectName(state.accountId);
     return state;
@@ -612,7 +610,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       || missingScopes(normalizedScopes(credential.scope), TARGET_USER_SCOPES).length > 0
       || missingScopes(normalizedScopes(workspace.scope), TARGET_BOT_SCOPES).length > 0
     ) {
-      throw new Error("Slack target authorization is unavailable");
+      throw new SlackTargetAuthorizationUnavailableError("Slack target authorization is unavailable");
     }
     requireSlackToken(credential.token, "Slack user token", "xoxp-");
     return { workspace, credential };
@@ -691,6 +689,8 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       : fetch;
   }
 }
+
+class SlackTargetAuthorizationUnavailableError extends Error {}
 
 function accountIdFromObjectName(name: string | undefined): string {
   if (!name?.startsWith("workspace:")) throw new Error("Slack workspace identity unavailable");
@@ -777,7 +777,7 @@ function targetError(
   id: string,
   code: number,
   message: string,
-): AdapterTargetResponseFrame<"shell.exec"> {
+): AdapterTargetResponseFrame<SlackTargetCall> {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 

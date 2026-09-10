@@ -15,11 +15,12 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { withByteStreamFinalizer } from "../shared/streams";
 import {
+  logAdapterBoundaryFailure,
   resolveAdapterService,
 } from "./adapter-service";
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
-import type { TargetDescriptor, TargetListOptions } from "./targets";
+import type { TargetDescriptor, TargetDiscovery, TargetListOptions } from "./targets";
 import { z } from "zod";
 
 const adapterTargetLinkMetadataSchema = z.object({
@@ -37,21 +38,23 @@ export type AdapterTargetRoute = {
   adapterTargetId: string;
 };
 
-export async function listVisibleAdapterTargets(
+export async function discoverVisibleAdapterTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
-): Promise<TargetDescriptor[]> {
-  if (!principalOf(ctx) || requirePrincipal(ctx).kind !== "human") return [];
+): Promise<TargetDiscovery> {
+  if (!principalOf(ctx) || requirePrincipal(ctx).kind !== "human") {
+    return { targets: [], complete: true };
+  }
 
   const ownerUid = resolveCallerOwnerUid(ctx);
   const links = ctx.adapters.identityLinks.list(ownerUid);
   const groups = new Map<string, IdentityLinkRecord>();
-  const targetSupport = new Map<string, Promise<boolean>>();
+  const targetSupport = new Map<string, Promise<boolean | null>>();
   for (const link of links) {
     groups.set(`${link.adapter}\0${link.accountId}\0${link.actorId}`, link);
   }
 
-  const targets = await Promise.all([...groups.values()].map(async (link) => {
+  const groupsDiscovered = await Promise.all([...groups.values()].map(async (link) => {
     const adapter = link.adapter.trim().toLowerCase();
     const accountId = link.accountId.trim();
     const actorId = link.actorId.trim();
@@ -67,16 +70,18 @@ export async function listVisibleAdapterTargets(
       return [];
     }
 
+    const status = ctx.adapters.status.get(adapter, accountId);
+    const online = status?.connected === true && status.authenticated === true;
+    if (!options.includeOffline && !online) return [];
+
     let supported = targetSupport.get(adapter);
     if (!supported) {
       supported = adapterSupportsTargets(adapter, service, ctx);
       targetSupport.set(adapter, supported);
     }
-    if (!await supported) return [];
-
-    const status = ctx.adapters.status.get(adapter, accountId);
-    const online = status?.connected === true && status.authenticated === true;
-    if (!options.includeOffline && !online) return [];
+    const supportsTargets = await supported;
+    if (supportsTargets === null) return null;
+    if (!supportsTargets) return [];
 
     const identity = adapterTargetIdentity(link);
     try {
@@ -85,12 +90,15 @@ export async function listVisibleAdapterTargets(
         identity,
       );
       const acquired = await waitForAdapterDiscovery(acquisition, ctx);
-      if (!acquired) return [];
+      if (!acquired) return null;
       using descriptors = acquired;
       const decoded = adapterTargetDescriptorListSchema.safeParse(
         descriptors,
       );
-      if (!decoded.success) return [];
+      if (!decoded.success) {
+        logAdapterBoundaryFailure("warn", "target_discovery_invalid_response");
+        return null;
+      }
 
       const seen = new Set<string>();
       const projected: TargetDescriptor[] = [];
@@ -129,18 +137,22 @@ export async function listVisibleAdapterTargets(
       }
       return projected;
     } catch {
-      return [];
+      logAdapterBoundaryFailure("warn", "target_discovery_failed");
+      return null;
     }
   }));
 
-  return targets.flat();
+  return {
+    targets: groupsDiscovered.flatMap((targets) => targets ?? []),
+    complete: groupsDiscovered.every((targets) => targets !== null),
+  };
 }
 
 async function adapterSupportsTargets(
   adapter: string,
   service: NonNullable<ReturnType<typeof resolveAdapterService>>,
   ctx: KernelContext,
-): Promise<boolean> {
+): Promise<boolean | null> {
   try {
     if (!service.adapterDescribe) return false;
     // SAFETY: object-valued Workers RPC results carry a disposer that owns the
@@ -149,14 +161,17 @@ async function adapterSupportsTargets(
       AdapterServiceDescriptor & Disposable
     >;
     const acquired = await waitForAdapterDiscovery(acquisition, ctx);
-    if (!acquired) return false;
+    if (!acquired) return null;
     using descriptorResult = acquired;
     const descriptor = adapterServiceDescriptorSchema.safeParse(descriptorResult);
-    return descriptor.success
-      && descriptor.data.id === adapter
-      && descriptor.data.capabilities.targets === true;
+    if (!descriptor.success || descriptor.data.id !== adapter) {
+      logAdapterBoundaryFailure("warn", "target_discovery_invalid_descriptor");
+      return null;
+    }
+    return descriptor.data.capabilities.targets === true;
   } catch {
-    return false;
+    logAdapterBoundaryFailure("warn", "target_discovery_failed");
+    return null;
   }
 }
 
@@ -282,6 +297,7 @@ async function waitForAdapterDiscovery<T extends Disposable>(
   const outcome = await Promise.race([settled, timedOut]);
   if (timeout !== undefined) clearTimeout(timeout);
   if (outcome.kind === "result") return outcome.value;
+  logAdapterBoundaryFailure("warn", `target_discovery_${outcome.kind}`);
   if (outcome.kind === "timed_out") {
     if (!disposeAdapterDiscoveryAcquisition(acquisition)) {
       ctx.defer(settled.then((late) => {

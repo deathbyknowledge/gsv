@@ -72,8 +72,12 @@ GSV currently projects these environments:
   browser-specific commands even though the browser is not an operating-system
   machine.
 - Managed Slack projects a personally authorized workspace as a service-backed
-  `shell.exec` target. Its ephemeral just-bash environment exposes a composable
-  `slack` CLI for conversations, threads, messages, reactions, and users. The
+  target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
+  filesystem exposes conversations, exact messages, bounded history and thread
+  pages, and users. The same resources back its ephemeral just-bash environment,
+  with execution-local `/tmp` scratch space and a composable `slack` CLI for
+  provider actions. Search matches literal content in an explicitly selected
+  file or finite history page; indexes expose pagination and coverage. The
   paired user's OAuth token supplies read visibility; mutations use the
   installed GSV app identity, and the adapter retains both credentials and
   provider policy.
@@ -127,6 +131,16 @@ Target-originated messages must visibly attribute the paired person's GSV even
 though the provider records the installed app as their technical author.
 
 ## Target discovery and lifecycle
+
+Adapter discovery distinguishes an authoritative empty list from a failed,
+timed-out, or malformed response. If any adapter refresh is incomplete, the
+Kernel omits `targets` from `ai.context` and Process retains the entire last
+observed target catalog until a complete snapshot is available. This prevents
+transient discovery failures from producing removal and addition events.
+Ordinary target listing and syscall routing continue to use freshly discovered
+targets and current authorization; the retained Process projection grants no
+access. Adapters return an empty list for confirmed absence or revoked access
+and propagate infrastructure failures.
 
 Targets should describe their environment and effective implementations so a
 process can discover where work belongs without loading provider-specific tools

@@ -17,6 +17,7 @@ const createGenerationServiceMock = vi.fn((_options?: KernelTestValue) => ({
 const seedBuiltinSkillsToHomeMock = vi.fn();
 import * as inferenceService from "../inference/service";
 import * as skillsSeed from "./sys/skills-seed";
+import * as adapterTargets from "./adapter-targets";
 vi.spyOn(inferenceService, "createGenerationService").mockImplementation(createGenerationServiceMock);
 vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome").mockImplementation(seedBuiltinSkillsToHomeMock);
 
@@ -493,6 +494,24 @@ describe("handleAiConfig", () => {
     });
     expect(result).not.toHaveProperty("apiKey");
     expect(result).not.toHaveProperty("model");
+  });
+
+  it("omits an incomplete target catalog without discarding other context", async () => {
+    const discovery = vi.spyOn(adapterTargets, "discoverVisibleAdapterTargets").mockResolvedValue({
+      targets: [],
+      complete: false,
+    });
+    try {
+      const ctx = makeAiConfigContext({ "config/ai/skills/index_mode": "off" });
+      const result = await handleAiContext({}, ctx);
+      expect(result).not.toHaveProperty("targets");
+      expect(result).toMatchObject({ mcpServers: [], skillIndex: [], system: { timezone: "UTC" } });
+
+      discovery.mockResolvedValue({ targets: [], complete: true });
+      await expect(handleAiContext({}, ctx)).resolves.toHaveProperty("targets", []);
+    } finally {
+      discovery.mockRestore();
+    }
   });
 
   it("keeps context refresh usable when the skill catalog cannot be read", async () => {
