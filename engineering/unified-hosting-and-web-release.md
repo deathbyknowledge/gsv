@@ -134,7 +134,9 @@ and `web/src/app/features/instrument/settings/README.md`.
   preview on 2026-09-10 and verified with a disposable managed adapter fixture.
 - [ ] Complete contact conversations and cross-Ship request management in the
   appropriate Instrument surfaces.
-- [ ] Finish retained permissions/account-grant controls and MCP custom headers.
+- [ ] Finish retained permissions/account-grant controls.
+- [x] Support custom MCP headers in the add-server form. Verified with a real
+  loopback MCP server in the disposable UI test environment on 2026-09-10.
 - [ ] Verify the complete new-user and returning-user flows: onboarding/login,
   chat and media, approvals, models, connections, Memory, and live Fleet state.
 - [ ] Make Instrument the default and migrate supported deep links, then remove

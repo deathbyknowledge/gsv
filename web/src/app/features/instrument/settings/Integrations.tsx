@@ -7,6 +7,7 @@ import { addConsoleMcpServer, loadConsoleMcpServers, refreshConsoleMcpServer, re
 import type { ConsoleMcpTransport } from "../../gsv-console/domain/consoleModels";
 import { canConfigure, SETTINGS_MCP_KEY, signInUrl } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
+import { parseMcpHeaders, type McpHeaderDraft } from "./mcpHeaders";
 
 export function Integrations({ account, active, onDirty }: SettingsSectionProps) {
   const { client, connected } = useGateway();
@@ -14,13 +15,18 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [transport, setTransport] = useState<ConsoleMcpTransport>("auto");
+  const [headers, setHeaders] = useState<McpHeaderDraft[]>([]);
+  const parsedHeaders = parseMcpHeaders(headers);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const canList = canConfigure(account, "sys.mcp.list");
   const servers = useQuery({ queryKey: SETTINGS_MCP_KEY, queryFn: () => loadConsoleMcpServers(client), enabled: connected && active && canList });
-  useSettingsDirty(name !== "" || url !== "" || transport !== "auto", onDirty);
+  useSettingsDirty(name !== "" || url !== "" || transport !== "auto" || headers.some((header) => header.name !== "" || header.value !== ""), onDirty);
   const add = useMutation({
-    mutationFn: () => addConsoleMcpServer(client, { name, url, transport }),
-    onSuccess: async () => { setName(""); setUrl(""); setTransport("auto"); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
+    mutationFn: () => {
+      if (!parsedHeaders.ok) throw new Error(parsedHeaders.error);
+      return addConsoleMcpServer(client, { name, url, transport, headers: parsedHeaders.headers });
+    },
+    onSuccess: async () => { setName(""); setUrl(""); setTransport("auto"); setHeaders([]); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
   });
   const change = useMutation({
     mutationFn: async (input: { id: string; action: "remove" | "refresh" }) => {
@@ -72,7 +78,18 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
           const value = event.currentTarget.value;
           if (value === "auto" || value === "streamable-http" || value === "sse") setTransport(value);
         }}><option value="auto">automatic</option><option value="streamable-http">streamable HTTP</option><option value="sse">server-sent events</option></select></label>
-        <button class="ibtn" type="submit" disabled={!name.trim() || !signInUrl(url)}>{add.isPending ? <LoadingState>adding…</LoadingState> : "add server"}</button>
+        <details class="settings-mcp-options">
+          <summary>Custom headers{headers.some((header) => header.name || header.value) ? ` · ${headers.filter((header) => header.name || header.value).length}` : ""}</summary>
+          <p class="settings-muted">For servers that need an API key or another HTTP header.</p>
+          {headers.map((header, index) => <div class="settings-mcp-header" key={header.id}>
+            <label>Header name<input aria-label={`Header ${index + 1} name`} value={header.name} placeholder="Authorization" autoComplete="off" spellcheck={false} onInput={(event) => { const name = event.currentTarget.value; setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, name } : row)); }} /></label>
+            <label>Header value<input aria-label={`Header ${index + 1} value`} type="password" value={header.value} placeholder="Value" autoComplete="off" spellcheck={false} onInput={(event) => { const value = event.currentTarget.value; setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, value } : row)); }} /></label>
+            <button class="settings-text-action" type="button" aria-label={`Remove header ${index + 1}`} onClick={() => setHeaders((rows) => rows.filter((row) => row.id !== header.id))}>remove</button>
+          </div>)}
+          {!parsedHeaders.ok && <p class="settings-error" role="alert">{parsedHeaders.error}</p>}
+          <button class="settings-text-action" type="button" onClick={() => setHeaders((rows) => [...rows, { id: crypto.randomUUID(), name: "", value: "" }])}>add header</button>
+        </details>
+        <button class="ibtn" type="submit" disabled={!name.trim() || !signInUrl(url) || !parsedHeaders.ok}>{add.isPending ? <LoadingState>adding…</LoadingState> : "add server"}</button>
       </fieldset>
     </form>
   </section>;

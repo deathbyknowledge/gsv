@@ -74,6 +74,11 @@
 .settings-messenger-links .settings-messenger-status.is-connected { color: var(--online); }
 .settings-messenger-status.is-connected i { background: currentColor; }
 .settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
+.settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
+.settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }
+.settings-mcp-header { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: 1rem; }
+.settings-mcp-header label { flex: 1 1 12rem; margin: 0; }
+.settings-mcp-header .settings-text-action { margin-bottom: .6rem; }
 .settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .settings-rules { padding-left: 1.6rem; }
 .settings-rules > li { padding: 1rem 0; border-top: 1px solid var(--border); }
