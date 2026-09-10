@@ -107,6 +107,67 @@ describe("shared typed process history synchronization", () => {
     expect(h.history.mock.calls[1][0]).toEqual({ pid: "p", beforeMessageId: 2, limit: 50, format: 2 });
   });
 
+  it("paginates the contiguous tail after late updates introduce unloaded older groups", async () => {
+    const companion = record(1, "late companion", 1);
+    const h = harness([
+      page([record(5), record(6)], 6, { hasMoreBefore: true }),
+      page([record(1, "updated media"), companion], 7, { hasMore: true }),
+      page([record(5, "updated boundary"), record(7)], 8),
+      page([record(3), record(4)], 8, { cursor: undefined, hasMoreBefore: true }),
+      page([record(1, "stale media"), record(2)], 8, { cursor: undefined, hasMoreBefore: false }),
+    ]);
+    await h.sync.read("p", 2);
+    await h.sync.read("p", 2);
+    expect(h.current().beforeMessageId).toBe(5);
+    expect(h.current().cursor).toBe("c8");
+    expect(h.current().records.map(({ messageId, index }) => [messageId, index])).toEqual([[1, 0], [1, 1], [5, 0], [6, 0], [7, 0]]);
+    await h.sync.loadOlder("p", h.current().beforeMessageId!, 2);
+    expect(h.current().beforeMessageId).toBe(3);
+    expect(h.current().hasMoreBefore).toBe(true);
+    await h.sync.loadOlder("p", h.current().beforeMessageId!, 2);
+    expect(h.current().records).toEqual([record(1, "updated media"), companion, record(2), record(3), record(4), record(5, "updated boundary"), record(6), record(7)]);
+    expect(h.current().hasMoreBefore).toBe(false);
+    expect(h.current().cursor).toBe("c8");
+    expect(h.history.mock.calls.slice(-2).map(([args]) => args?.beforeMessageId)).toEqual([5, 3]);
+  });
+
+  it("retains an older group's delta while its historical page is in flight", async () => {
+    const older = deferred<ProcHistoryResult>();
+    const h = harness([page([record(5), record(6)], 6, { hasMoreBefore: true }), older.promise, page([record(3, "updated media")], 7)]);
+    await h.sync.read("p", 2);
+    const loading = h.sync.loadOlder("p", 5, 2);
+    await h.sync.read("p", 2);
+    expect(h.current().beforeMessageId).toBe(5);
+    older.resolve(page([record(3), record(4)], 6, { cursor: undefined, hasMoreBefore: true }));
+    await loading;
+    expect(h.current().records).toEqual([record(3, "updated media"), record(4), record(5), record(6)]);
+    expect(h.current().beforeMessageId).toBe(3);
+    expect(h.current().cursor).toBe("c7");
+  });
+
+  it("does not move a refreshed tail boundary past a gap when an earlier page arrives late", async () => {
+    const older = deferred<ProcHistoryResult>();
+    const h = harness([
+      page([record(5), record(6)], 6, { hasMoreBefore: true }), older.promise,
+      page([record(8), record(9)], 9, { hasMoreBefore: true }),
+      page([record(5), record(6), record(7)], 9, { cursor: undefined, hasMoreBefore: true }),
+    ]);
+    const close = h.sync.retain("p", 2, false);
+    await h.sync.read("p", 2);
+    const loading = h.sync.loadOlder("p", 5, 2);
+    h.status({ state: "disconnected", url: null, username: null, connectionId: null, message: null });
+    h.status({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    await h.sync.read("p", 2);
+    older.resolve(page([record(3), record(4)], 6, { cursor: undefined, hasMoreBefore: false }));
+    await loading;
+    expect(h.current().beforeMessageId).toBe(8);
+    expect(h.current().hasMoreBefore).toBe(true);
+    await h.sync.loadOlder("p", h.current().beforeMessageId!, 3);
+    expect(h.history.mock.calls.at(-1)?.[0]?.beforeMessageId).toBe(8);
+    expect(h.current().records.map(({ messageId }) => messageId)).toEqual([3, 4, 5, 6, 7, 8, 9]);
+    close();
+  });
+
   it("shares observation and reconnects with one snapshot for multiple surfaces", async () => {
     const h = harness([page([record(1)], 1), page([record(2)], 2)]);
     const releaseChat = h.sync.retain("p", 50, true);

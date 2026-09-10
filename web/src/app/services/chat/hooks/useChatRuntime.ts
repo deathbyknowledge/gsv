@@ -43,10 +43,10 @@ export function useChatRuntime({
   const appendOptimisticUserMessage = useCallback((message: string, media: unknown[] = []) => {
     sync.appendOptimistic(processId, message, media);
   }, [processId, sync]);
-  const oldest = history.data?.records[0]?.messageId;
+  const oldest = history.data?.beforeMessageId;
   const hasOlderHistory = history.data?.hasMoreBefore === true;
   const loadOlderHistory = useCallback(async () => {
-    if (!enabled || !connected || !hasOlderHistory || oldest === undefined || loadingOlderHistory) return;
+    if (!enabled || !connected || !hasOlderHistory || oldest == null || loadingOlderHistory) return;
     setLoadingOlderHistory(true);
     setHistoryError("");
     try {

@@ -12,7 +12,11 @@ import { mergeHistoryRecords } from "../domain/typedHistory";
 import { getChatHistory } from "./chatService";
 
 export const processHistoryKey = (pid: string) => ["process", pid, "history"] as const;
-export type SyncedChatHistory = ChatHistory & { runtime: ChatRuntimeState };
+export type SyncedChatHistory = ChatHistory & {
+  runtime: ChatRuntimeState;
+  /** Historical pages extend this contiguous window; deltas may replace groups outside it. */
+  beforeMessageId: number | null;
+};
 type HistoryClient = {
   proc: Pick<GSVClient["proc"], "observe" | "unobserve"> & { history(args?: ProcHistoryArgs): Promise<ProcHistoryResult> };
   onSignal: GSVClient["onSignal"];
@@ -168,7 +172,10 @@ export class ProcessHistorySync {
       for (const [signal, payload] of entry.signals) {
         runtime = applyChatSignal(runtime, signal, payload, { pid: entry.pid }).state;
       }
-      current = { ...history, runtime };
+      current = {
+        ...history, runtime,
+        beforeMessageId: reset ? page.records[0]?.messageId ?? null : latest.beforeMessageId,
+      };
       this.queries.setQueryData(processHistoryKey(entry.pid), current);
       if (page.hasMore) entry.dirty = true;
     } while (entry.dirty);
@@ -207,7 +214,7 @@ export class ProcessHistorySync {
       entry.snapshot = true;
       entry.signals = [];
       this.queries.setQueryData<SyncedChatHistory>(key, {
-        ...current, records: [], cursor: undefined,
+        ...current, records: [], cursor: undefined, beforeMessageId: null,
         historyGeneration: identity.data.historyGeneration ?? current.historyGeneration,
         historyResetRevision: identity.data.historyResetRevision ?? current.historyResetRevision,
         runtime: emptyChatRuntimeState(entry.pid),
@@ -240,7 +247,11 @@ export class ProcessHistorySync {
       return this.queries.getQueryData<SyncedChatHistory>(key)!;
     }
     const records = mergeHistoryRecords(page.records, current.records);
-    const history = { ...current, records, hasMoreBefore: page.hasMoreBefore };
+    const history = { ...current, records };
+    if (current.beforeMessageId === beforeMessageId) {
+      history.beforeMessageId = page.records[0]?.messageId ?? null;
+      history.hasMoreBefore = page.hasMoreBefore;
+    }
     this.queries.setQueryData<SyncedChatHistory>(key, {
       ...history,
       runtime: { ...current.runtime, rows: mergeTranscriptRows(current.runtime.rows.filter((row) => !row.historyRecordKey || (row.role === "tool" && row.status === "running")), chatRuntimeStateFromHistory(history).rows) },
