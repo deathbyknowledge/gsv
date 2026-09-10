@@ -133,7 +133,6 @@
 .memory-page .page-content::-webkit-scrollbar { display: none; }
 .memory-page .page-head {
   flex-shrink: 0;
-  background: var(--void);
   display: flex;
   justify-content: space-between;
   align-items: center;
