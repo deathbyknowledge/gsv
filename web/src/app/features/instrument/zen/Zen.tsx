@@ -780,7 +780,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   /* the status line */
-  const showFeedback = !connected || !currentPlace.online || note !== null;
+  const runFeedback = !connected ? null
+    : runtime.runState === "awaiting_hil" ? "waiting for your approval"
+    : runtime.runState === "running" ? "working…"
+    : runtime.runState === "queued" ? "queued…"
+    : localRuns.some((run) => run.pending) ? "running your command…"
+    : null;
+  const showFeedback = !connected || !currentPlace.online || note !== null || runFeedback !== null;
 
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
@@ -909,6 +915,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
       <div class="zen-bottom">
         {showFeedback && <div class="zen-feedback">
+          {runFeedback && <span class="zen-run-status" role="status">{runFeedback}</span>}
           {!connected && <span role="status">Not connected</span>}
           {connected && !currentPlace.online ? (
             <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>

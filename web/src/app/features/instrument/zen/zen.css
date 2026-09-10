@@ -282,6 +282,7 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
+.zen-feedback .zen-run-status { color: var(--text); }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
