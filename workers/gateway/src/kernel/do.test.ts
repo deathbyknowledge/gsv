@@ -10,6 +10,7 @@ const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
 import { AdapterDelivery } from "./adapter-delivery";
+import type { ProcessRecord } from "./processes";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -3371,6 +3372,42 @@ describe("Kernel process runtime projection", () => {
       "proc.run.finished:start",
       "proc.run.finished:done",
     ]);
+  });
+
+  it("publishes meaningful runtime changes without streaming content or stale state", () => {
+    type RuntimeSnapshot = Pick<ProcessRecord, "state" | "activeRunId" | "queuedCount" | "lastActiveAt" | "ownerUid">;
+    let record: RuntimeSnapshot = {
+      state: "idle", activeRunId: null, queuedCount: 0, lastActiveAt: null, ownerUid: 1000,
+    };
+    const kernel = bareKernel();
+    kernel.procs = {
+      get: vi.fn(() => ({ ...record })),
+      updateRuntimeState: vi.fn((_pid: string, patch: Partial<RuntimeSnapshot>) => { record = { ...record, ...patch }; }),
+    };
+    const broadcast = vi.fn();
+    kernel.connectionRuntime.broadcastToUserUid = broadcast;
+    const emit = (signal: string, timestamp: number, runId = "r", extra = {}) => kernel.processOutput.updateProcessRuntimeFromSignal("p", {
+      type: "sig", signal, payload: { pid: "p", runId, timestamp, ...extra },
+    }, runId);
+    emit("proc.run.started", 10);
+    expect(broadcast).toHaveBeenLastCalledWith(1000, "proc.changed", {
+      pid: "p", changes: ["state"], runtime: { state: "running", activeRunId: "r", queuedCount: 0, lastActiveAt: 10 },
+    });
+    emit("proc.run.stream", 11, "r", { event: { type: "text_delta", delta: "private text" } });
+    expect(broadcast).toHaveBeenCalledOnce();
+    emit("proc.run.tool.started", 12);
+    emit("proc.run.hil.requested", 13);
+    expect(broadcast.mock.calls.map(([, , payload]) => payload.runtime.state)).toEqual(["running", "waiting_tool", "waiting_hil"]);
+    emit("proc.run.started", 20, "successor");
+    emit("proc.run.finished", 21, "r");
+    expect(broadcast).toHaveBeenCalledTimes(4);
+    emit("proc.run.finished", 22, "successor", { queuedCount: 2 });
+    expect(broadcast).toHaveBeenLastCalledWith(1000, "proc.changed", {
+      pid: "p", changes: ["state"], runtime: { state: "queued", activeRunId: null, queuedCount: 2, lastActiveAt: 22 },
+    });
+    kernel.procs.get.mockReturnValue(null);
+    expect(emit("proc.run.started", 30)).toBe(false);
+    expect(broadcast).toHaveBeenCalledTimes(5);
   });
 
   it("accepts a newer successor start and rejects an older reordered start", () => {

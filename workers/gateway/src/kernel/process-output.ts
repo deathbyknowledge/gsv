@@ -36,6 +36,7 @@ import type {
   UserProcessSignalFrame,
 } from "./do-shared";
 import type { Kernel } from "./do";
+import { notifyProcessChanged } from "./process-notifications";
 import {
   adapterTypingActivity,
 } from "./do-shared";
@@ -196,6 +197,16 @@ updateProcessRuntimeFromSignal(
       }
     }
 
+    const patchRuntime = (patch: ProcessRuntimePatch) => {
+      this.host.procs.updateRuntimeState(processId, patch);
+      const next = this.host.procs.get(processId);
+      if (next && (next.state !== current.state || next.activeRunId !== current.activeRunId || next.queuedCount !== current.queuedCount)) {
+        notifyProcessChanged({
+          procs: this.host.procs,
+          broadcastToUserUid: this.host.connectionRuntime.broadcastToUserUid.bind(this.host.connectionRuntime),
+        }, processId, ["state"]);
+      }
+    };
     const patchForActive = (state: ProcessState) => {
       const patch: ProcessRuntimePatch = {
         state,
@@ -203,7 +214,7 @@ updateProcessRuntimeFromSignal(
       };
       if (runId) patch.activeRunId = runId;
       if (queuedCount !== undefined) patch.queuedCount = queuedCount;
-      this.host.procs.updateRuntimeState(processId, patch);
+      patchRuntime(patch);
     };
 
     switch (frame.signal) {
@@ -229,7 +240,7 @@ updateProcessRuntimeFromSignal(
             lastActiveAt: timestamp,
           };
           if (queuedCount !== undefined) patch.queuedCount = queuedCount;
-          this.host.procs.updateRuntimeState(processId, patch);
+          patchRuntime(patch);
         }
         return true;
       case "proc.changed":
@@ -251,7 +262,7 @@ updateProcessRuntimeFromSignal(
           return true;
         }
         if (queuedCount !== undefined) {
-          this.host.procs.updateRuntimeState(processId, {
+          patchRuntime({
             queuedCount,
             lastActiveAt: timestamp,
           });

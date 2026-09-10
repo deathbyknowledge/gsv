@@ -42,6 +42,7 @@ import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
+import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -251,6 +252,8 @@ export async function handleProcSpawn(
       error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+
+  notifyProcessChanged(ctx, pid, ["created"]);
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
@@ -869,7 +872,7 @@ function reconcileKilledProcess(
     now: Date.now(),
   });
   ctx.runRoutes.clearForProcess(pid);
-  ctx.procs.kill(pid);
+  unregisterProcess(ctx, pid);
   if (reclaimed.length > 0) {
     ctx.defer(ctx.reconcileResponsibilityWake(ownerUid).catch((error) => {
       console.warn(

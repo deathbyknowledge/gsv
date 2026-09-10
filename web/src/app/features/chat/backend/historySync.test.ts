@@ -34,6 +34,21 @@ function harness(replies: Array<ProcHistoryResult | Promise<ProcHistoryResult>>)
 }
 
 describe("shared typed process history synchronization", () => {
+  it("ignores registry-only changes while still reconciling history revisions", async () => {
+    const h = harness([page([record(1)], 1), page([record(2)], 2)]);
+    const release = h.sync.retain("p", 50, false);
+    await h.sync.read("p");
+    for (const change of ["created", "state"]) {
+      h.emit("proc.changed", { pid: "p", changes: [change], runtime: { state: "running", activeRunId: "r", queuedCount: 0, lastActiveAt: 10 } });
+    }
+    await Promise.resolve();
+    expect(h.history).toHaveBeenCalledOnce();
+    h.emit("proc.changed", { pid: "p", changes: ["state"], historyRevision: 2 });
+    await vi.waitFor(() => expect(h.current().records).toHaveLength(2));
+    expect(h.history).toHaveBeenCalledTimes(2);
+    release();
+  });
+
   it("reconciles a signal received during the initial snapshot using its returned cursor", async () => {
     const first = deferred<ProcHistoryResult>();
     const h = harness([first.promise, page([record(2)], 2)]);

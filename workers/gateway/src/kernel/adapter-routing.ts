@@ -26,6 +26,7 @@ import {
 import type {
   ProcessRecord,
 } from "./processes";
+import { notifyProcessChanged } from "./process-notifications";
 import type {
   SurfaceRouteRecord,
 } from "./surface-routes";
@@ -275,7 +276,7 @@ async function spawnAdapterAgentProcess(
     });
   }
 
-  await sendFrameToProcess(ctx.installationId, pid, {
+  const response = await sendFrameToProcess(ctx.installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
@@ -285,6 +286,10 @@ async function spawnAdapterAgentProcess(
       autoTitle: true,
     },
   });
+
+  if (response?.type === "res" && response.ok && response.data?.ok === true) {
+    notifyProcessChanged(ctx, pid, ["created"]);
+  }
 
   return pid;
 }

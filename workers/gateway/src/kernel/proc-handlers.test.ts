@@ -90,6 +90,7 @@ function makeStorageBucket() {
 
 function makeProcessCleanupMocks() {
   return {
+    broadcastToUserUid: vi.fn(),
     runRoutes: {
       clearForProcess: vi.fn(),
     },
@@ -127,6 +128,7 @@ describe("proc handlers", () => {
       callerOwnerUid: IDENTITY.uid,
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
       procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000 })), spawn: vi.fn() },
+      broadcastToUserUid: vi.fn(),
       runRoutes: { inheritProcessApprovalRoute: vi.fn() },
       config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
       env: {},
@@ -138,6 +140,9 @@ describe("proc handlers", () => {
       identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
     });
     expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(IDENTITY.uid, "proc.changed", expect.objectContaining({ changes: ["created"] }));
+    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeGreaterThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[1]);
   });
 
   it.each([
@@ -1069,6 +1074,7 @@ describe("proc handlers", () => {
         error: expect.stringContaining("Failed to initialize process"),
       });
       expect(pid).toEqual(expect.any(String));
+      expect(cleanup.broadcastToUserUid).not.toHaveBeenCalledWith(expect.anything(), "proc.changed", expect.anything());
       expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
         TEST_INSTALLATION_ID,
         pid,
@@ -1193,6 +1199,7 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       processRunId: "run-parent",
+      broadcastToUserUid: vi.fn(),
       callerOwnerUid: IDENTITY.uid,
       env: {},
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),

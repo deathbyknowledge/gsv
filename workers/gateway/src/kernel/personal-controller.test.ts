@@ -56,6 +56,7 @@ function createContext(registry: ProcessRegistry): KernelContext {
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     },
     procs: registry,
+    broadcastToUserUid: vi.fn(),
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
@@ -96,10 +97,15 @@ describe("ensurePersonalController", () => {
       const initialization = sendFrameToProcessMock.mock.calls[0][2] as RequestFrame;
       expect(sendFrameToProcessMock.mock.calls[0][0]).toBe(TEST_INSTALLATION_ID);
       expect(initialization.args).not.toHaveProperty("pid");
+      expect(ctx.broadcastToUserUid).not.toHaveBeenCalled();
       releaseInitialization?.(successResponse(initialization));
 
       const [firstPid, secondPid] = await Promise.all([first, second]);
       expect(firstPid).toBe(secondPid);
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(HUMAN.uid, "proc.changed", {
+        pid: firstPid, changes: ["created"],
+        runtime: { state: "idle", activeRunId: null, queuedCount: 0, lastActiveAt: null },
+      });
       expect(firstPid).toMatch(/^proc:[0-9a-f-]{36}$/);
       expect(firstPid).not.toBe(`proc:personal-controller:${HUMAN.uid}`);
       expect(registry.getPersonalController(HUMAN.uid)).toMatchObject({
@@ -114,6 +120,7 @@ describe("ensurePersonalController", () => {
       expect(sendFrameToProcessMock).toHaveBeenCalledOnce();
 
       await expect(ensurePersonalController(HUMAN.uid, ctx)).resolves.toBe(firstPid);
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledOnce();
       expect(ensurePersonalAgentMock).toHaveBeenCalledOnce();
       expect(sendFrameToProcessMock).toHaveBeenCalledOnce();
     });

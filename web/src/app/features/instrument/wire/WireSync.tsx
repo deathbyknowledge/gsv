@@ -1,15 +1,15 @@
 import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
-import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery } from "./contactSync";
+import { syncProcessSignal } from "./processSync";
 import { createLedgerSync } from "./ledgerSync";
 import {
   isProcessSignal,
   ledgerChangedSignalSchema,
-  patchProcesses,
   patchTargets,
   procSignalSchema,
   targetStatusSignalSchema,
@@ -22,6 +22,7 @@ import {
  * seen fetches that one list again; nothing refetches on a signal otherwise.
  * A reconnect after a drop is the only moment everything is fetched again.
  * Payload-free contact notifications use selective list invalidation below.
+ * Process title changes and snapshots interrupted by a change also reread their list.
  */
 export function WireSync(): null {
   const { client, connected } = useGateway();
@@ -75,11 +76,7 @@ export function WireSync(): null {
             else queryClient.setQueryData(key, parsed.data.aiConfig);
           }
         }
-        const current = queryClient.getQueryData<ConsoleProcess[]>(INSTRUMENT_PROCESSES_KEY);
-        if (!current) return;
-        const patch = patchProcesses(current, signal, parsed.data, Date.now());
-        if (patch.known) queryClient.setQueryData(INSTRUMENT_PROCESSES_KEY, patch.next);
-        else void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
+        void syncProcessSignal(queryClient, signal, parsed.data);
         return;
       }
       if (signal === "ledger.changed") {

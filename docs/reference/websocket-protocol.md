@@ -305,6 +305,13 @@ Current principal defaults from `buildSignalList()`:
     even for owner connections that are not observing raw Process activity.
     Format-2 clients recover complete changed groups with `proc.history` and
     `since`; missed or coalesced signals do not require guessing from message IDs.
+  - The Kernel also sends `changes: ["created"]` after successful Process
+    initialization and `changes: ["state"]` when its registry state, active run,
+    or queue changes. These carry `runtime: { state, activeRunId, queuedCount,
+    lastActiveAt }` to the owner independently of raw observation. They contain
+    no history revision and do not require a history read. Clients patch known
+    process rows, fetch new or renamed records with `proc.list`, and reread on
+    reconnect. Timestamp-only streaming updates do not emit these notices.
 - `proc.run.started`
 - `proc.run.stream`
 - `proc.run.retrying`
@@ -341,6 +348,8 @@ Current principal defaults from `buildSignalList()`:
   - Reports the terminal Process-run status. A successful user-facing response
     is represented separately by `message.committed`.
 - `process.exit`
+  - Carries `{ pid }` to the owner after a terminated Process is removed from
+    the registry. Clients remove that row; a repeated cleanup emits no new exit.
 - `conversation.changed`
   - Announces that canonical conversation history has advanced. Clients use
     `conversation.history` to synchronize the durable record.
@@ -396,8 +405,8 @@ current Kernel:
   run route
 - another user connection receives that activity only after explicitly calling
   `proc.observe` for the owner-scoped Process; `proc.unobserve` removes the watch
-- idle owner connections receive only a content-free `proc.changed` invalidation
-  for process-list synchronization, not its raw message, context, or run fields
+- idle owner connections receive content-free `proc.changed` history hints and
+  registry runtime summaries, without raw messages, context, or tool content
 - `proc.run.hil.requested` is broadcast to every connected user client for the
   process owner; its payload includes `pid`, and `proc.history` recovers pending
   requests after reconnects

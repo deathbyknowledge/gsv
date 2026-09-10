@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import type { LedgerLine } from "../fleet/fleetModel";
-import { patchProcesses, patchTargets, prependLedger } from "./wireModel";
+import { isProcessSignal, patchProcesses, patchTargets, prependLedger } from "./wireModel";
 
 const target = (deviceId: string, online: boolean): ConsoleTarget => ({
   deviceId,
@@ -48,20 +48,25 @@ describe("patchTargets", () => {
 });
 
 describe("patchProcesses", () => {
-  it("walks a process through a run", () => {
-    const started = patchProcesses([process("p1")], "proc.run.started", { pid: "p1", runId: "r1" }, 10);
+  it("uses committed runtime summaries while preserving process details", () => {
+    const runtime = { state: "running" as const, activeRunId: "r1", queuedCount: 0, lastActiveAt: 10 };
+    const started = patchProcesses([process("p1")], "proc.changed", { pid: "p1", runtime });
     expect(started.next[0]).toMatchObject({ state: "running", activeRunId: "r1", lastActiveAt: 10 });
-    const waiting = patchProcesses(started.next, "proc.run.hil.requested", { pid: "p1" }, 11);
+    const waiting = patchProcesses(started.next, "proc.changed", { pid: "p1", runtime: { ...runtime, state: "waiting_hil", lastActiveAt: 11 } });
     expect(waiting.next[0].state).toBe("waiting_hil");
-    const finished = patchProcesses(waiting.next, "proc.run.finished", { pid: "p1", queuedCount: 2 }, 12);
+    const finished = patchProcesses(waiting.next, "proc.changed", { pid: "p1", runtime: { ...runtime, state: "queued", activeRunId: null, queuedCount: 2 } });
     expect(finished.next[0]).toMatchObject({ state: "queued", activeRunId: null, queuedCount: 2 });
-    const idle = patchProcesses(finished.next, "proc.run.finished", { pid: "p1", queuedCount: 0 }, 13);
+    const idle = patchProcesses(finished.next, "proc.changed", { pid: "p1", runtime: { ...runtime, state: "idle", activeRunId: null } });
     expect(idle.next[0].state).toBe("idle");
+    expect(idle.next[0]).toMatchObject({ label: "p1", personal: true, uid: 1000, createdAt: 1 });
+    expect(isProcessSignal("proc.run.started")).toBe(false);
+    expect(isProcessSignal("proc.run.finished")).toBe(false);
+    expect(isProcessSignal("proc.changed")).toBe(true);
   });
   it("removes an exited process and reports an unknown one, except on exit", () => {
-    expect(patchProcesses([process("p1"), process("p2")], "process.exit", { pid: "p2" }, 1).next.map((entry) => entry.pid)).toEqual(["p1"]);
-    expect(patchProcesses([process("p1")], "proc.run.started", { pid: "p9" }, 1).known).toBe(false);
-    expect(patchProcesses([process("p1")], "process.exit", { pid: "p9" }, 1).known).toBe(true);
+    expect(patchProcesses([process("p1"), process("p2")], "process.exit", { pid: "p2" }).next.map((entry) => entry.pid)).toEqual(["p1"]);
+    expect(patchProcesses([process("p1")], "proc.changed", { pid: "p9" }).known).toBe(false);
+    expect(patchProcesses([process("p1")], "process.exit", { pid: "p9" }).known).toBe(true);
   });
 });
 

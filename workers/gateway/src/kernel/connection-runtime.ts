@@ -290,21 +290,23 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
       : signal === "contact.invite.changed" ? "contact.invite.list" : null;
+    const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
 
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
       if (!peer || peer.principal.kind !== "human") continue;
       if (!peer.grant.signals.includes(signal)) continue;
+      if (guardedFeed && state.step !== "connected") continue;
       // Contact notifications reveal private activity even without a payload.
-      if (contactRead && (state.step !== "connected" || !hasCapability(peer.grant.calls, contactRead))) continue;
+      if (contactRead && !hasCapability(peer.grant.calls, contactRead)) continue;
       if (peer.principal.account.uid === uid) {
-        if (!contactRead) conn.send(json);
+        if (!guardedFeed) conn.send(json);
         else {
           try {
             conn.send(json);
           } catch {
-            conn.close(1011, "Contact feed interrupted");
+            conn.close(1011, contactRead ? "Contact feed interrupted" : "Process feed interrupted");
           }
         }
       }

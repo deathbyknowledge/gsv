@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import { normalizeProcessState } from "../../gsv-console/domain/consoleNormalization";
 import type { LedgerLine } from "../fleet/fleetModel";
 import { sysLedgerListResultSchema } from "../fleet/fleetModel";
 import type { SysLedgerChangedSignal } from "@humansandmachines/gsv/protocol";
@@ -22,6 +23,12 @@ export const procSignalSchema = z.object({
   runId: z.string().optional(),
   queuedCount: z.number().optional(),
   timestamp: z.number().optional(),
+  runtime: z.object({
+    state: z.enum(["idle", "queued", "running", "waiting_tool", "waiting_hil"]),
+    activeRunId: z.string().nullable(),
+    queuedCount: z.number().int().nonnegative(),
+    lastActiveAt: z.number().nullable(),
+  }).optional(),
   aiConfig: z.object({
     version: z.literal(2),
     modelId: z.string().optional(),
@@ -53,17 +60,10 @@ export function patchTargets(current: readonly ConsoleTarget[], signal: z.infer<
   return { next, known: true };
 }
 
-export type ProcessSignalName =
-  | "proc.changed"
-  | "proc.run.started"
-  | "proc.run.hil.requested"
-  | "proc.run.finished"
-  | "process.exit";
-
-const PROCESS_SIGNALS = new Set<string>(["proc.changed", "proc.run.started", "proc.run.hil.requested", "proc.run.finished", "process.exit"]);
+export type ProcessSignalName = "proc.changed" | "process.exit";
 
 export function isProcessSignal(signal: string): signal is ProcessSignalName {
-  return PROCESS_SIGNALS.has(signal);
+  return signal === "proc.changed" || signal === "process.exit";
 }
 
 /** A process signal applied to the cached list: run state, queue length, last activity, or removal on exit. */
@@ -71,27 +71,20 @@ export function patchProcesses(
   current: readonly ConsoleProcess[],
   signal: ProcessSignalName,
   payload: z.infer<typeof procSignalSchema>,
-  now: number,
 ): Patch<ConsoleProcess[]> {
   const index = current.findIndex((process) => process.pid === payload.pid);
   if (index < 0) return { next: [...current], known: signal === "process.exit" };
   if (signal === "process.exit") return { next: current.filter((process) => process.pid !== payload.pid), known: true };
-  const at = payload.timestamp ?? now;
+  const runtime = payload.runtime;
+  if (!runtime) return { next: [...current], known: true };
   const next = current.map((process, position) => {
     if (position !== index) return process;
-    const queuedCount = payload.queuedCount ?? process.queuedCount;
-    switch (signal) {
-      case "proc.changed":
-        return { ...process, queuedCount, lastActiveAt: at };
-      case "proc.run.started":
-        return { ...process, state: "running" as const, rawState: "running", activeRunId: payload.runId ?? process.activeRunId, queuedCount, lastActiveAt: at };
-      case "proc.run.hil.requested":
-        return { ...process, state: "waiting_hil" as const, rawState: "waiting_hil", lastActiveAt: at };
-      case "proc.run.finished": {
-        const state = queuedCount > 0 ? ("queued" as const) : ("idle" as const);
-        return { ...process, state, rawState: state, activeRunId: null, queuedCount, lastActiveAt: at };
-      }
-    }
+    return {
+      ...process,
+      ...runtime,
+      rawState: runtime.state,
+      state: normalizeProcessState(runtime.state, runtime.activeRunId, runtime.queuedCount),
+    };
   });
   return { next, known: true };
 }

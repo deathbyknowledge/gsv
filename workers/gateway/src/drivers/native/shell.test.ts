@@ -263,6 +263,7 @@ function makeContext(options?: {
     testEnv.AI = { run: vi.fn(options.aiRun) };
   }
   return focusedFixture<KernelContext>({
+    broadcastToUserUid: vi.fn(),
     env: testEnv,
     installationId: installationIdentity.installationId,
     installationIdentity,
@@ -4301,7 +4302,7 @@ describe("native administration shell commands", () => {
         isPersonalAgentUid: vi.fn(() => false),
         getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
       },
-      federation: { cancelInvite },
+      federation: { cancelInvite, invite: vi.fn(() => null) },
       processId: "proc:ship",
     });
     const shipResult = await handleShellExec(

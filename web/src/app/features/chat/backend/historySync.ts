@@ -34,6 +34,7 @@ type Entry = {
 };
 const signalIdentitySchema = z.object({
   pid: z.string(),
+  changes: z.array(z.string()).optional(),
   runId: z.string().optional(),
   historyRevision: z.number().optional(),
   historyGeneration: z.number().optional(),
@@ -183,6 +184,12 @@ export class ProcessHistorySync {
   private receive(signal: Signal[0], payload: Signal[1]): void {
     const identity = signalIdentitySchema.safeParse(payload);
     if (!identity.success) return;
+    if (signal === "proc.changed"
+      && identity.data.historyRevision === undefined
+      && identity.data.historyGeneration === undefined
+      && identity.data.historyResetRevision === undefined
+      && identity.data.changes?.length
+      && identity.data.changes.every((change) => change === "state" || change === "created")) return;
     const entry = this.entries.get(identity.data.pid);
     if (!entry || (entry.users === 0 && !entry.inFlight)) return;
     if (identity.data.runId && entry.supersededRunIds.has(identity.data.runId)) return;

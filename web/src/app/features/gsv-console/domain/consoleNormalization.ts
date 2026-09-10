@@ -366,7 +366,7 @@ function normalizeConfigEntry(value: ConsoleWireValue): ConsoleConfigEntry | nul
   };
 }
 
-function normalizeProcessState(rawState: string, activeRunId: string | null, queuedCount: number): ConsoleProcessState {
+export function normalizeProcessState(rawState: string, activeRunId: string | null, queuedCount: number): ConsoleProcessState {
   const state = rawState.toLowerCase();
   if (state === "waiting_hil") return "waiting_hil";
   if (state === "running" || state === "active" || activeRunId) return "running";
