@@ -112,13 +112,13 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
         </> : <>
           {writable && text !== null && complete && <button class="file-reader-action" onClick={() => { save.reset(); setDraft({ original: text, text }); }}>edit</button>}
           {resource && (downloadUrl ? <a class="file-reader-action" href={downloadUrl} download={file.name}>download again</a> : <button class="file-reader-action" disabled={download.isPending} onClick={() => download.mutate()}>{download.isPending ? "preparing…" : "download"}</button>)}
-          {removable && <details class="file-reader-more"><summary class="file-reader-action" aria-label="More file actions">more</summary><button class="file-reader-action" onClick={() => setRemoving(true)}>delete file</button></details>}
+          {removable && <button class="file-reader-action is-danger" type="button" disabled={busy} onClick={() => setRemoving(true)}>delete</button>}
         </>}
       </div>
     </header>
     {error && <p class="error" role="alert">{error.message}</p>}
     {!connected && <p class="note">Reconnect to read or save this file.</p>}
-    {removing && <div class="file-reader-confirm"><p>Delete {file.name} from {file.target}?</p><button class="file-reader-action" disabled={busy} onClick={() => remove.mutate()}>delete permanently</button><button class="file-reader-action" disabled={busy} onClick={() => setRemoving(false)}>cancel</button></div>}
+    {removing && <div class="file-reader-confirm"><p>Delete {file.name} from {file.target}?</p><button class="file-reader-action is-danger" disabled={busy} onClick={() => remove.mutate()}>delete permanently</button><button class="file-reader-action" disabled={busy} onClick={() => setRemoving(false)}>cancel</button></div>}
     {read.isPending && connected ? <LoadingState variant="panel">Reading file…</LoadingState> : draft ? (
       <textarea autoFocus class="file-reader-editor" aria-label="File text" spellcheck={false} disabled={busy} value={draft.text} onInput={(event) => setDraft({ ...draft, text: event.currentTarget.value })} />
     ) : <div class="file-reader-content">
