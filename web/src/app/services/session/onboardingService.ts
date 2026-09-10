@@ -10,6 +10,7 @@ import type {
   OnboardingStage,
 } from "@humansandmachines/gsv/protocol";
 import { readInstallationOnboardingToken } from "./installationOnboarding";
+import { INITIAL_AGENT } from "../../domain/initialAgent";
 
 const STORAGE_ONBOARDING = "gsv.ui.onboarding.v2";
 
@@ -78,7 +79,7 @@ function defaultDraft(username = ""): OnboardingDraft {
     detailStep: "account",
     account: {
       username,
-      agentName: "",
+      agentName: INITIAL_AGENT.username,
       password: "",
       passwordConfirm: "",
     },
@@ -136,6 +137,7 @@ function mergeDraft(
     account: {
       ...base.account,
       ...draft?.account,
+      agentName: INITIAL_AGENT.username,
     },
     admin: {
       ...base.admin,
@@ -239,7 +241,10 @@ export function createOnboardingService(
   };
 
   const setState = (next: OnboardingSnapshot): void => {
-    state = next;
+    state = {
+      ...next,
+      draft: { ...next.draft, account: { ...next.draft.account, agentName: INITIAL_AGENT.username } },
+    };
     emit();
   };
 
@@ -251,7 +256,7 @@ export function createOnboardingService(
     const enabled = booleanValue.success ? booleanValue.data : false;
     switch (patch.path) {
       case "account.username": next.account.username = patch.op === "clear" ? "" : text; break;
-      case "account.agentName": next.account.agentName = patch.op === "clear" ? "" : text; break;
+      case "account.agentName": break;
       case "admin.mode": next.admin.mode = patch.op === "clear" ? "same" : (text === "custom" ? "custom" : "same"); break;
       case "system.timezone": next.system.timezone = patch.op === "clear" ? defaultTimezone() : text; break;
       case "ai.enabled": next.ai.enabled = patch.op === "clear" ? false : enabled; break;

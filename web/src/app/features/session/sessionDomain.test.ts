@@ -29,7 +29,7 @@ function setupDraft(account: Partial<OnboardingDraft["account"]> = {}): Onboardi
     detailStep: "account",
     account: {
       username: "hank",
-      agentName: "friday",
+      agentName: "algo",
       password: "password123",
       passwordConfirm: "password123",
       ...account,
@@ -91,14 +91,18 @@ describe("validateSetupDetails", () => {
     expect(result.message).not.toContain("^[a-z_]");
   });
 
-  it("explains invalid personal agent usernames without exposing the regex", () => {
-    const result = validateSetupDetails(setupDraft({ agentName: "Friday!" }), true);
-
-    expect(result).toEqual({
-      message: "Personal agent username must be 1-32 characters, start with a lowercase letter or underscore, and use only lowercase letters, numbers, underscores, or hyphens.",
+  it("reserves algo for the initial personal agent", () => {
+    expect(validateSetupDetails(setupDraft({ username: "algo" }), true)).toEqual({
+      message: "algo is reserved for your personal agent. Choose a different username.",
       step: "account",
     });
-    expect(result.message).not.toContain("^[a-z_]");
+  });
+
+  it.each(["", "friday", "Friday!", "hank"])("replaces a saved agent name of %j with algo", (agentName) => {
+    const draft = setupDraft({ agentName });
+
+    expect(validateSetupDetails(draft, true)).toEqual({ message: null });
+    expect(buildSetupPayload(draft)).toMatchObject({ username: "hank", agentName: "algo" });
   });
 
   it("rejects unsafe device ids", () => {

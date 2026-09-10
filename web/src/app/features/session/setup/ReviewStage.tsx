@@ -7,15 +7,13 @@ import {
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { InfoTip } from "../../../components/ui/InfoTip";
 import { readInstallationOnboardingToken } from "../../../services/session/installationOnboarding";
+import { INITIAL_AGENT } from "../../../domain/initialAgent";
 import "./ReviewStage.css";
 
 export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
   const managedInferenceIncluded = readInstallationOnboardingToken() !== null;
   const username = draft.account.username.trim();
-  const agentName = draft.account.agentName.trim();
-  const accountSummary = agentName
-    ? `${username} · ${agentName} (agent)`
-    : `${username} · default personal agent`;
+  const accountSummary = `${username} · ${INITIAL_AGENT.displayName} (${INITIAL_AGENT.username})`;
 
   return (
     <section class="gsv-setup-stage gsv-setup-stage-review" data-setup-stage="review" hidden={draft.stage !== "review"}>

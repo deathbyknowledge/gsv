@@ -443,8 +443,8 @@ describe("handleAccountCreate", () => {
     );
 
     const personalAgent = passwd.find((u) => u.uid === result.personalAgent?.uid);
-    expect(personalAgent?.username).toBe("friday");
-    expect(personalAgent?.gecos).toBe("Friday");
+    expect(personalAgent?.username).toBe("algo");
+    expect(personalAgent?.gecos).toBe("Algo");
   });
 
   it("leaves existing personal agent context untouched during a hard cutover", async () => {
