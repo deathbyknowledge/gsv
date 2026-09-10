@@ -91,12 +91,12 @@ export function ConnectPlace({ account, targets, ready, onClose, onConnected }: 
         <p class="note">{label} will appear in Places when it connects.</p>
         <div class="fleet-actions"><button class="ibtn is-primary" type="submit" disabled={!parseDeviceId(deviceId)}>{pending ? <LoadingState>creating…</LoadingState> : "create pairing key"}</button></div>
       </fieldset>
-      <div class="fleet-actions"><button class="ibtn" type="button" onClick={onClose}>cancel</button></div>
+      <div class="fleet-actions"><button class="fleet-text-action" type="button" onClick={onClose}>cancel</button></div>
     </form> : <>
       {known?.online ? <p class="note is-on" role="status">{known.label || label} is connected.</p> : <p class="note" role="status">Waiting for {issued.label || label} to connect. This key is shown once and expires in 30 days.</p>}
       {platform === "browser" ? <>
         <p class="note">Download and unzip the extension. In <code>chrome://extensions</code>, enable developer mode and load its folder. Apply this configuration in the extension’s connection settings.</p>
-        <div class="fleet-actions"><a class="ibtn" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
+        <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
       </> : <>
         <p class="note">1 · Install GSV on that computer.</p>
         <SetupCommand text={buildMachineInstallCommand(platform, release)} label="copy install command" />
@@ -104,8 +104,8 @@ export function ConnectPlace({ account, targets, ready, onClose, onConnected }: 
       </>}
       <SetupCommand text={setup} label={platform === "browser" ? "copy configuration" : "copy connect command"} />
       <div class="fleet-actions">
-        <button class="ibtn is-primary" type="button" disabled={pending} onClick={() => known?.online ? onConnected(known.deviceId) : onClose()}>{known?.online ? "view place" : "done"}</button>
-        {!known?.online && <button class="ibtn" type="button" disabled={!connected || pending} onClick={() => void revoke()}>{pending ? <LoadingState>cancelling…</LoadingState> : "cancel and revoke key"}</button>}
+        <button class="fleet-text-action is-primary" type="button" disabled={pending} onClick={() => known?.online ? onConnected(known.deviceId) : onClose()}>{known?.online ? "view place" : "done"}</button>
+        {!known?.online && <button class="fleet-text-action is-danger" type="button" disabled={!connected || pending} onClick={() => void revoke()}>{pending ? <LoadingState>cancelling…</LoadingState> : "cancel and revoke key"}</button>}
       </div>
     </>}
     {error && <p class="error" role="alert">{error}</p>}
@@ -117,7 +117,7 @@ export function SetupCommand({ text, label }: { text: string; label: string }) {
   useEffect(() => { setStatus(""); }, [text]);
   return <div class="fleet-setup-command">
     <pre class="fleet-setup">{text}</pre>
-    <div class="fleet-actions"><button class="ibtn" type="button" onClick={() => {
+    <div class="fleet-actions"><button class="fleet-text-action" type="button" onClick={() => {
       void navigator.clipboard.writeText(text).then(() => setStatus("copied"), () => setStatus("Select and copy the text above."));
     }}>{label}</button><span role="status">{status}</span></div>
   </div>;

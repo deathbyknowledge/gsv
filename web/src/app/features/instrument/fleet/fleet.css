@@ -255,10 +255,17 @@
 }
 .fleet-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
   margin-top: 18px;
 }
+.fleet-text-action { border: 0; padding: 2px 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; cursor: pointer; text-underline-offset: 5px; }
+.fleet-text-action:hover, .fleet-text-action[aria-pressed="true"] { color: var(--accent); }
+.fleet-text-action:hover, .fleet-text-action[aria-pressed="true"], .fleet-text-action:focus-visible { text-decoration: underline; }
+.fleet-text-action.is-primary { color: var(--accent); }
+.fleet-text-action.is-danger { color: var(--error); }
+.fleet-text-action:disabled { opacity: .45; cursor: not-allowed; }
 .fleet-actions .ibtn[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
@@ -323,7 +330,7 @@
 .fleet td.id { font-family: var(--gsv-font-mono); color: var(--faint); font-size: 11px; letter-spacing: 0.04em; }
 .fleet .dot { border-radius: 0; box-shadow: none; }
 .fleet .dot.is-idle { background: var(--idle); box-shadow: none; }
-.fleet .actions, .fleet .fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.fleet .actions, .fleet .fleet-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
 .fleet .inspector .full-id { font-size: 11px; color: var(--faint); letter-spacing: 0.04em; word-break: break-all; margin-top: 4px; }
 
 /* the inspector's facts: label and value pairs, as the prototype drew them */
@@ -379,10 +386,6 @@
 
 /* Contact conversations stay beside the relationship they belong to. */
 .fleet-contact-tabs { display: flex; gap: 18px; margin-bottom: 22px; }
-.contact-link { border: 0; padding: 2px 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; cursor: pointer; text-underline-offset: 5px; }
-.contact-link:hover, .contact-link[aria-pressed="true"] { color: var(--accent); }
-.contact-link[aria-pressed="true"], .contact-link:focus-visible { text-decoration: underline; }
-.contact-link:disabled { opacity: .45; cursor: not-allowed; }
 .fleet-contact-history { max-height: 48vh; min-height: 8rem; overflow-y: auto; overflow-anchor: none; padding-right: 8px; }
 .fleet-contact-message { margin: 18px 0 24px; }
 .fleet-contact-message header { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--faint); }
@@ -447,7 +450,7 @@
 .fleet-work-form .fleet-work-checkbox { display: flex; align-items: center; }
 .fleet-work-form .fleet-work-checkbox input, .fleet-work-source input { width: 14px; height: 14px; accent-color: var(--accent); }
 .fleet-work-interval { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.fleet-work-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.fleet-work-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
 .fleet-work-source { border-top: 1px solid var(--rule-inner); padding: 16px 0 6px; }
 .fleet-work-source label { display: flex; justify-content: space-between; align-items: center; gap: 14px; font-size: 13px; }
 .fleet-work-source p { color: var(--text-dim); font-size: 12px; line-height: 1.6; }

@@ -280,7 +280,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
         event.preventDefault();
         setProcessLimit(shownProcesses.length < processes.length ? shownProcesses.length + 20 : PROCESS_PAGE);
       } else if (event.key === "Enter") {
-        const primary = inspectorRef.current?.querySelector<HTMLButtonElement>(".ibtn.is-primary");
+        const primary = inspectorRef.current?.querySelector<HTMLButtonElement>("button.is-primary");
         if (primary) {
           event.preventDefault();
           primary.focus();
@@ -744,14 +744,14 @@ function FileInspector({
         {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
       </div>
       <div class="fleet-actions">
-        <button type="button" class="ibtn" onClick={onExpand}>expand</button>
-        <button type="button" class="ibtn is-primary" onClick={() => onZen(`${reference} `)}>
+        <button type="button" class="fleet-text-action" onClick={onExpand}>expand</button>
+        <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(`${reference} `)}>
           talk about it
         </button>
-        <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(file.path)}>
+        <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(file.path)}>
           copy path
         </button>
-        <button type="button" class="ibtn" onClick={onClose}>
+        <button type="button" class="fleet-text-action" onClick={onClose}>
           close
         </button>
       </div>
@@ -796,13 +796,13 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
         ) : null}
       </dl>
       <div class="fleet-actions">
-        <button type="button" class="ibtn is-primary" onClick={onRun} disabled={!place.online}>
+        <button type="button" class="fleet-text-action is-primary" onClick={onRun} disabled={!place.online}>
           run a command
         </button>
-        <button type="button" class="ibtn" onClick={onBrowse}>
+        <button type="button" class="fleet-text-action" onClick={onBrowse}>
           browse files
         </button>
-        <button type="button" class="ibtn" onClick={() => onZen()}>
+        <button type="button" class="fleet-text-action" onClick={() => onZen()}>
           talk about it
         </button>
       </div>
@@ -868,10 +868,10 @@ function ProcessInspector({ process, requestedApprovalId, model, cost, responsib
       </dl>
       {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"} pid={process.pid} requestId={requestedApprovalId} /> : null}
       <div class="fleet-actions">
-          <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
             open conversation
           </button>
-        <button type="button" class="ibtn" onClick={() => stop.mutate()} disabled={process.state !== "running" || stop.isPending}>
+        <button type="button" class="fleet-text-action is-danger" onClick={() => stop.mutate()} disabled={process.state !== "running" || stop.isPending}>
           stop
         </button>
       </div>
@@ -937,11 +937,11 @@ function LineInspector({
       <details class="fleet-work-technical"><summary>Request details</summary><dl class="fleet-work-details"><div><dt>Call</dt><dd>{line.syscall}</dd></div><div><dt>Target</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>Run</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
       <div class="fleet-actions">
         {line.processId !== "you" ? (
-          <button type="button" class="ibtn is-primary" onClick={() => onZen(undefined, line.processId)}>
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, line.processId)}>
             open the conversation
           </button>
         ) : null}
-        {(technical || line.detail) && <button type="button" class="ibtn" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>
+        {(technical || line.detail) && <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>
           copy
         </button>}
       </div>

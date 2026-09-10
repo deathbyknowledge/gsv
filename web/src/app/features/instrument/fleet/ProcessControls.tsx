@@ -76,7 +76,7 @@ export function NewProcess({ onCreated, onCancel }: { onCreated: (pid: string) =
           <p class="note">Defaults inherit your account settings. Choosing a model puts it first; the rest of your fallback stack still applies.</p>
           <div class="fleet-actions">
             <button class="ibtn is-primary" type="submit">{create.isPending ? <LoadingState>creating…</LoadingState> : "open conversation"}</button>
-            <button class="ibtn" type="button" onClick={onCancel}>cancel</button>
+            <button class="fleet-text-action" type="button" onClick={onCancel}>cancel</button>
           </div>
         </fieldset>
         {models.isPending ? <p class="note"><LoadingState>loading models…</LoadingState></p> : null}
@@ -129,7 +129,7 @@ export function ProcessAiControls({ pid, canEdit }: { pid: string; canEdit: bool
             <p class="note">Applies to this process from its next run. Your normal model fallbacks still apply.</p>
             {canEdit ? <div class="fleet-actions">
               <button class="ibtn is-primary" type="submit" disabled={!dirty}>{apply.isPending ? <LoadingState>saving…</LoadingState> : "apply settings"}</button>
-              <button class="ibtn" type="button" onClick={() => setDraft(INHERIT)} disabled={!value.modelId && !value.reasoning}>use defaults</button>
+              <button class="fleet-text-action" type="button" onClick={() => setDraft(INHERIT)} disabled={!value.modelId && !value.reasoning}>use defaults</button>
             </div> : null}
           </fieldset>
           {apply.isSuccess && !dirty ? <p class="note" role="status">Settings saved.</p> : null}

@@ -73,8 +73,8 @@ export function AddContact({ account, onClose, onAdded }: {
             <SetupCommand text={issued.code} label="copy invite" />
           </>}
         <div class="fleet-actions">
-          {currentInvite?.state === "pending" && <button type="button" class="ibtn" disabled={!allowed("contact.invite.cancel") || pending} onClick={() => cancel.mutate(issued.inviteId)}>cancel invitation</button>}
-          <button type="button" class="ibtn" disabled={pending} onClick={() => setIssued(null)}>invite another person</button>
+          {currentInvite?.state === "pending" && <button type="button" class="fleet-text-action is-danger" disabled={!allowed("contact.invite.cancel") || pending} onClick={() => cancel.mutate(issued.inviteId)}>cancel invitation</button>}
+          <button type="button" class="fleet-text-action" disabled={pending} onClick={() => setIssued(null)}>invite another person</button>
         </div>
       </> : <div class="fleet-actions"><button type="button" class="ibtn is-primary" disabled={!allowed("contact.invite.create") || pending} onClick={() => create.mutate()}>{create.isPending ? <LoadingState>creating…</LoadingState> : "create invite"}</button></div>}
     </div>
@@ -87,11 +87,11 @@ export function AddContact({ account, onClose, onAdded }: {
       <h4>Pending invitations</h4>
       <ul class="fleet-invites">{pendingInvites.map((invite) => <li key={invite.inviteId}>
         <span>Expires {new Date(invite.expiresAtMs).toLocaleString()}</span>
-        <button type="button" class="ibtn" disabled={!allowed("contact.invite.cancel") || pending} onClick={() => cancel.mutate(invite.inviteId)}>cancel invitation</button>
+        <button type="button" class="fleet-text-action is-danger" disabled={!allowed("contact.invite.cancel") || pending} onClick={() => cancel.mutate(invite.inviteId)}>cancel invitation</button>
       </li>)}</ul>
     </div>}
     {error && <p class="error" role="alert">{error.message}</p>}
-    <div class="fleet-actions"><button class="ibtn" type="button" disabled={pending} onClick={onClose}>done</button></div>
+    <div class="fleet-actions"><button class="fleet-text-action" type="button" disabled={pending} onClick={onClose}>done</button></div>
   </section>;
 }
 
@@ -117,7 +117,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
   return <section class="fleet-connection" aria-label="Contact details">
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">contact · {contact.state}</div>
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="contact-link" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
     {section === "messages" ? <ContactConversation contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
       : <>
@@ -129,8 +129,8 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
     {contact.state === "active" && <div class="fleet-place-form">
       {confirm ? <>
         <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>
-        <div class="fleet-actions"><button class="ibtn is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => revoke.mutate()}>{revoke.isPending ? <LoadingState>revoking…</LoadingState> : "confirm revoke"}</button><button class="ibtn" disabled={pending} onClick={() => setConfirm(false)}>keep contact</button></div>
-      </> : <div class="fleet-actions"><button class="ibtn is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => setConfirm(true)}>revoke contact</button></div>}
+        <div class="fleet-actions"><button class="fleet-text-action is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => revoke.mutate()}>{revoke.isPending ? <LoadingState>revoking…</LoadingState> : "confirm revoke"}</button><button class="fleet-text-action" disabled={pending} onClick={() => setConfirm(false)}>keep contact</button></div>
+      </> : <div class="fleet-actions"><button class="fleet-text-action is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => setConfirm(true)}>revoke contact</button></div>}
     </div>}
     {error && <p class="error" role="alert">{error.message}</p>}
     </>}

@@ -65,6 +65,6 @@ function RoutineEditorForm({ original, onSaved, onCancel, onDirty, timezone }: R
       <label class="fleet-work-checkbox"><input type="checkbox" checked={draft.enabled} onChange={(event) => field("enabled", event.currentTarget.checked)} />Enabled</label>
     </fieldset>
     {save.error && <p class="error" role="alert">{save.error.message}</p>}
-    <div class="fleet-work-actions"><button class="ibtn" type="button" disabled={save.isPending} onClick={() => { if (!dirty || window.confirm("Discard this unsaved routine?")) onCancel(); }}>cancel</button><button class="ibtn is-primary" type="submit" disabled={!connected || save.isPending || (Boolean(original) && !dirty)}>{save.isPending ? <LoadingState>saving…</LoadingState> : original ? "save routine" : "create routine"}</button></div>
+    <div class="fleet-work-actions"><button class="fleet-text-action" type="button" disabled={save.isPending} onClick={() => { if (!dirty || window.confirm("Discard this unsaved routine?")) onCancel(); }}>cancel</button><button class="ibtn is-primary" type="submit" disabled={!connected || save.isPending || (Boolean(original) && !dirty)}>{save.isPending ? <LoadingState>saving…</LoadingState> : original ? "save routine" : "create routine"}</button></div>
   </form>;
 }

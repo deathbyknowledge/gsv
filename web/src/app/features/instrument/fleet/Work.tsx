@@ -102,7 +102,7 @@ export function ResponsibilityInspector({ record, account, processName, onProces
   const terminal = record.state === "resolved" || record.state === "cancelled";
   return <>
     <h3>{record.title}</h3><p class="inspector-sub">{record.state} · {record.priority} priority</p>
-    <dl class="fleet-work-details"><div><dt>Assignee</dt><dd><button class="ibtn" onClick={() => onProcess(record.assignee.kind === "process" ? record.assignee.processId : undefined)}>{record.assignee.kind === "ship" ? "ship" : processName(record.assignee.processId)}</button></dd></div>
+    <dl class="fleet-work-details"><div><dt>Assignee</dt><dd><button class="fleet-text-action" onClick={() => onProcess(record.assignee.kind === "process" ? record.assignee.processId : undefined)}>{record.assignee.kind === "ship" ? "ship" : processName(record.assignee.processId)}</button></dd></div>
       {record.blocker && <div><dt>Waiting for</dt><dd>{record.blocker}</dd></div>}
       {record.dueAtMs && <div><dt>Due</dt><dd><WorkDate value={record.dueAtMs} /></dd></div>}
       {record.nextCheckAtMs && <div><dt>Next check</dt><dd><WorkDate value={record.nextCheckAtMs} /></dd></div>}
@@ -110,7 +110,7 @@ export function ResponsibilityInspector({ record, account, processName, onProces
     {record.details && <><h4>Details</h4><DetailValue value={record.details} /></>}
     {record.resolution && <><h4>Resolution</h4><DetailValue value={record.resolution} /></>}
     <p class="dim">Updated <WorkDate value={record.updatedAtMs} /></p>
-    {!terminal && account && canConfigure(account, "r12y.update") && (confirm ? <div><p>Cancel this responsibility? Work already running continues until it stops or yields.</p><div class="fleet-work-actions"><button class="ibtn" disabled={cancel.isPending} onClick={() => setConfirm(false)}>keep it</button><button class="ibtn" disabled={!connected || cancel.isPending} onClick={() => cancel.mutate()}>cancel responsibility</button></div></div> : <button class="ibtn" onClick={() => setConfirm(true)}>cancel responsibility</button>)}
+    {!terminal && account && canConfigure(account, "r12y.update") && (confirm ? <div><p>Cancel this responsibility? Work already running continues until it stops or yields.</p><div class="fleet-work-actions"><button class="fleet-text-action" disabled={cancel.isPending} onClick={() => setConfirm(false)}>keep it</button><button class="fleet-text-action is-danger" disabled={!connected || cancel.isPending} onClick={() => cancel.mutate()}>cancel responsibility</button></div></div> : <button class="fleet-text-action is-danger" onClick={() => setConfirm(true)}>cancel responsibility</button>)}
     {cancel.error && <p class="error" role="alert">{cancel.error.message}</p>}
     <details class="fleet-work-technical"><summary>Record</summary><dl class="fleet-work-details"><div><dt>Id</dt><dd>{record.id}</dd></div><div><dt>Source</dt><dd><DetailValue value={record.source} /></dd></div>{record.parentId && <div><dt>Parent</dt><dd>{record.parentId}</dd></div>}</dl></details>
   </>;
@@ -129,7 +129,7 @@ export function RoutineInspector({ schedule, account, onDirty, onSelect }: { sch
     <dl class="fleet-work-details"><div><dt>State</dt><dd>{schedule.enabled ? "enabled" : "paused"}</dd></div><div><dt>Next run</dt><dd><WorkDate value={schedule.state.nextRunAtMs} /></dd></div><div><dt>Last run</dt><dd><WorkDate value={schedule.state.lastRunAtMs} />{schedule.state.lastStatus ? ` · ${schedule.state.lastStatus}` : ""}</dd></div><div><dt>Times run</dt><dd>{schedule.state.runCount}</dd></div></dl>
     {schedule.state.lastError && <p class="error">{schedule.state.lastError}</p>}
     {update.error && <p class="error" role="alert">{update.error.message}</p>}
-    {account && canConfigure(account, "sched.update") && <div class="fleet-work-actions">{routineEditable(schedule) && <button class="ibtn" disabled={!connected || update.isPending} onClick={() => setEditing(schedule)}>edit routine</button>}<button class="ibtn" disabled={!connected || update.isPending} onClick={() => update.mutate()}>{update.isPending ? "saving…" : schedule.enabled ? "pause routine" : "enable routine"}</button></div>}
+    {account && canConfigure(account, "sched.update") && <div class="fleet-work-actions">{routineEditable(schedule) && <button class="fleet-text-action" disabled={!connected || update.isPending} onClick={() => setEditing(schedule)}>edit routine</button>}<button class="fleet-text-action" disabled={!connected || update.isPending} onClick={() => update.mutate()}>{update.isPending ? "saving…" : schedule.enabled ? "pause routine" : "enable routine"}</button></div>}
     {!routineEditable(schedule) && <p class="dim">This scheduled task can be inspected and paused here. Its definition is managed through the command interface.</p>}
   </>;
 }

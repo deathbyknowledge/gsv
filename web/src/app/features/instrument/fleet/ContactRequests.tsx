@@ -39,7 +39,7 @@ function RequestRow({ request, editable }: { request: ContactRequestRecord; edit
     <h4>{request.title}</h4>
     <p class="note">{request.kind.replaceAll("_", " ")}</p>
     {request.details && <details><summary>details</summary><RequestDetails value={request.details} /></details>}
-    {actions.length > 0 && <div class="fleet-actions">{actions.map((state) => <button key={state} class="contact-link" disabled={!editable || mutation.isPending} onClick={() => mutation.mutate(state)}>{mutation.isPending && mutation.variables === state ? <LoadingState>{LABELS[state]}…</LoadingState> : LABELS[state]}</button>)}</div>}
+    {actions.length > 0 && <div class="fleet-actions">{actions.map((state) => <button key={state} class="fleet-text-action" disabled={!editable || mutation.isPending} onClick={() => mutation.mutate(state)}>{mutation.isPending && mutation.variables === state ? <LoadingState>{LABELS[state]}…</LoadingState> : LABELS[state]}</button>)}</div>}
     {mutation.error && <p class="error" role="alert">{mutation.error.message}</p>}
   </article>;
 }
@@ -60,7 +60,7 @@ export function ContactRequests({ contact, account }: { contact: ContactSummary;
   return <section class="fleet-contact-requests" aria-label="Contact requests">
     {!mayRead && <p class="note">Your account cannot read requests.</p>}
     {query.isPending && mayRead && connected && <LoadingState variant="panel">Loading requests…</LoadingState>}
-    {query.error && <p class="error" role="alert">{query.error.message} <button class="contact-link" disabled={!connected} onClick={() => void query.refetch()}>retry</button></p>}
+    {query.error && <p class="error" role="alert">{query.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void query.refetch()}>retry</button></p>}
     {query.data && open.length === 0 && <p class="note">No open requests.</p>}
     {open.map((request) => <RequestRow key={request.id} request={request} editable={editable} />)}
     {closed.length > 0 && <details class="fleet-contact-closed"><summary>{closed.length} past {closed.length === 1 ? "request" : "requests"}</summary>{closed.map((request) => <RequestRow key={request.id} request={request} editable={false} />)}</details>}

@@ -70,12 +70,12 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       const element = event.currentTarget;
       follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
     }}>
-      {history.hasNextPage && <button class="contact-link" type="button" disabled={!connected || history.isFetching} onClick={() => {
+      {history.hasNextPage && <button class="fleet-text-action" type="button" disabled={!connected || history.isFetching} onClick={() => {
         olderHeight.current = scroll.current?.scrollHeight ?? null;
         void history.fetchNextPage().then((result) => { if (result.isError) olderHeight.current = null; });
       }}>{history.isFetchingNextPage ? "loading earlier messages…" : "earlier messages"}</button>}
       {history.isPending && connected && <LoadingState variant="panel">Loading messages…</LoadingState>}
-      {history.error && <p class="error" role="alert">{history.error.message} <button class="contact-link" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
+      {history.error && <p class="error" role="alert">{history.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
       {history.data && messages.length === 0 && <p class="note">No messages yet.</p>}
       {messages.map((message) => <article key={message.id} class="fleet-contact-message">
         <header><span>{message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "Ship" : "you"}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
@@ -96,9 +96,9 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={draft.pending} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
       <div class="fleet-actions">
-        <button class="contact-link" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
+        <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
         {draft.status && <span class="note" role="status">{draft.status}</span>}
-        <button class="contact-link" type="submit" disabled={disabled || (!draft.text.trim() && !draft.media.length)}>{draft.pending ? <LoadingState>sending…</LoadingState> : "send"}</button>
+        <button class="fleet-text-action" type="submit" disabled={disabled || (!draft.text.trim() && !draft.media.length)}>{draft.pending ? <LoadingState>sending…</LoadingState> : "send"}</button>
       </div>
       {draft.error && <p class="error" role="alert">{draft.error}</p>}
       {!connected ? <p class="note">Reconnecting… Your draft is kept here.</p> : contact.state !== "active" ? <p class="note">This connection is revoked. Previous messages remain available.</p> : !maySend && <p class="note">Your account cannot send messages to this contact.</p>}

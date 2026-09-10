@@ -100,8 +100,8 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
       }
     }}>
       <div class="fleet-actions">
-        {allowed.pair ? <button ref={pairButton} type="button" class="ibtn" disabled={!connected || creating || mode !== null} onClick={() => { setError(null); setMode("pair"); }}>pair again</button> : null}
-        {allowed.forget ? <button type="button" class="ibtn is-danger" disabled={!connected || creating || mode !== null} onClick={() => { setError(null); setConfirmation(""); setMode("forget"); }}>forget place</button> : null}
+        {allowed.pair ? <button ref={pairButton} type="button" class="fleet-text-action" disabled={!connected || creating || mode !== null} onClick={() => { setError(null); setMode("pair"); }}>pair again</button> : null}
+        {allowed.forget ? <button type="button" class="fleet-text-action is-danger" disabled={!connected || creating || mode !== null} onClick={() => { setError(null); setConfirmation(""); setMode("forget"); }}>forget place</button> : null}
       </div>
       {mode === "pair" ? (
         <div class="fleet-place-form">
@@ -116,15 +116,15 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
             <p class="note">{platform === "browser" ? "Apply these values in the extension’s connection settings." : "With the GSV CLI installed, run this on the computer."} The key expires in 30 days. Copy the setup before leaving; this key is only displayed here.</p>
             <pre class="fleet-setup">{setup}</pre>
             <div class="fleet-actions">
-              <button type="button" class="ibtn is-primary" onClick={() => {
+              <button type="button" class="fleet-text-action is-primary" onClick={() => {
                 void navigator.clipboard.writeText(setup).then(() => { if (mounted.current) setCopied(true); }, () => { if (mounted.current) setError("Could not copy the setup. Select and copy it above."); });
               }}>{copied ? "copied" : "copy setup"}</button>
-              <button type="button" class="ibtn" disabled={revoking} onClick={() => { setIssued(null); setCopied(false); setMode(null); }}>done</button>
-              <button type="button" class="ibtn" disabled={revoking} onClick={() => void cancel()}>{revoking ? "cancelling…" : "cancel and revoke key"}</button>
+              <button type="button" class="fleet-text-action" disabled={revoking} onClick={() => { setIssued(null); setCopied(false); setMode(null); }}>done</button>
+              <button type="button" class="fleet-text-action is-danger" disabled={revoking} onClick={() => void cancel()}>{revoking ? "cancelling…" : "cancel and revoke key"}</button>
             </div>
           </> : <div class="fleet-actions">
             <button type="button" class="ibtn is-primary" disabled={!connected || creating || !allowed.pair} onClick={() => void create()}>{creating ? "creating key…" : "create pairing key"}</button>
-            <button type="button" class="ibtn" onClick={() => void cancel()}>cancel</button>
+            <button type="button" class="fleet-text-action" onClick={() => void cancel()}>cancel</button>
           </div>}
         </div>
       ) : mode === "forget" ? (
@@ -138,7 +138,7 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
           <label>Type <code>{place.id}</code> to confirm <input ref={confirmInput} value={confirmation} disabled={remove.isPending} onInput={(event) => setConfirmation(event.currentTarget.value)} autoComplete="off" spellcheck={false} /></label>
           <div class="fleet-actions">
             <button type="submit" class="ibtn is-danger" disabled={!connected || confirmation !== place.id || remove.isPending}>{remove.isPending ? "forgetting…" : "forget place"}</button>
-            <button type="button" class="ibtn" disabled={remove.isPending} onClick={() => setMode(null)}>cancel</button>
+            <button type="button" class="fleet-text-action" disabled={remove.isPending} onClick={() => setMode(null)}>cancel</button>
           </div>
           {remove.error ? <p class="error" role="alert">Could not forget this place: {remove.error.message}</p> : null}
         </form>
