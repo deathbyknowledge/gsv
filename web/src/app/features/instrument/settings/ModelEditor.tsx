@@ -13,6 +13,7 @@ import {
   saveConsoleConfigEntries,
   startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
+  type ValidateConsoleModelConfigInput,
 } from "../../../services/system/consoleService";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import {
@@ -108,10 +109,11 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   const save = useMutation({
     mutationFn: async (draft: { name: string; values: Record<string, string>; first: boolean; clearApiKey: boolean }) => {
       const cleared = new Set(draft.clearApiKey ? ["config/ai/api_key"] : []);
-      if (testRequired) await validateConsoleModelConfig(client, {
-        values: modelValidationValuesFromProfileDrafts(draft.values, cleared),
-        ...(initial.profile && !connectionChanged && !draft.clearApiKey ? { modelId: initial.profile.id } : {}),
-      });
+      if (testRequired) {
+        const validation: ValidateConsoleModelConfigInput = { values: modelValidationValuesFromProfileDrafts(draft.values, cleared) };
+        if (initial.profile && !connectionChanged && !draft.clearApiKey) validation.modelId = initial.profile.id;
+        await validateConsoleModelConfig(client, validation);
+      }
       const [latestConfig, latestModels] = await Promise.all([loadConsoleConfig(client), loadConsoleModels(client)]);
       let entries: ConsoleConfigWrite[];
       if (initial.profile) {

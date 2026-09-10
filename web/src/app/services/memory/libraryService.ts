@@ -3,6 +3,7 @@ import { z } from "zod";
 import { lexer } from "marked";
 import type {
   RepoApplyOp,
+  RepoApplyArgs,
   RepoReadResult,
 } from "@humansandmachines/gsv/protocol";
 import {
@@ -185,12 +186,13 @@ export async function saveLibraryPage(
     ops.push(indexOp);
   }
 
-  await client.call("repo.apply", {
+  const write: RepoApplyArgs = {
     repo: collection.repo,
     message: `wiki: update ${path}`,
-    ...(expectedHead ? { expectedHead } : {}),
     ops,
-  });
+  };
+  if (expectedHead) write.expectedHead = expectedHead;
+  await client.call("repo.apply", write);
 
   return {
     db,

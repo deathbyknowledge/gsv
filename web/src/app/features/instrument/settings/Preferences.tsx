@@ -94,7 +94,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
         const expanded = expandedModel === model.id;
         const draggable = rows.length > 1 && stackEditable && !saving;
         return <li key={model.id} data-model-id={model.id} class={`${draggable ? "is-draggable" : ""}${dragging === model.id ? " is-dragging" : ""}${dropTarget === model.id ? " is-drop-target" : ""}`} onPointerDown={(event) => {
-          if (!draggable || event.button !== 0 || (event.target as Element).closest("button, a, input, .settings-model-inspector")) return;
+          if (!draggable || event.button !== 0 || (event.target instanceof Element && event.target.closest("button, a, input, .settings-model-inspector"))) return;
           drag.current = { id: model.id, x: event.clientX, y: event.clientY, moved: false, to: null };
           event.currentTarget.setPointerCapture(event.pointerId);
         }} onPointerMove={(event) => {

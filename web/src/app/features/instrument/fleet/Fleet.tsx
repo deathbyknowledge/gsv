@@ -46,6 +46,7 @@ import {
   ledgerRow,
   fleetReferenceRow,
   isApprovalReference,
+  isConnectReference,
   type FleetReference,
 } from "./fleetModel";
 import { PlaceActions } from "./PlaceActions";
@@ -99,7 +100,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   const { client, connected } = useGateway();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
-  const initialConnect = typeof initialReference === "object" && initialReference?.kind === "connect" ? initialReference.to : null;
+  const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
 
   const targetsQuery = useQuery({

@@ -6,6 +6,7 @@ export function resolveLibraryLink(rawHref: string, selectedDb: string, selected
   if (!href || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(href)) return null;
   try {
     const path = decodeURIComponent(href.split(/[?#]/)[0]);
+    // eslint-disable-next-line no-control-regex -- Reject control bytes in decoded memory links.
     if (!path || /[\\\x00-\x1f]/.test(path)) return null;
     const trimmed = path.replace(/^\.\//, "").replace(/^\//, "");
     let scoped: string;

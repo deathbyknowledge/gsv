@@ -27,7 +27,10 @@ export function ZenText({ text, markdown, progress, tick, onClick }: {
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       let last: Text | undefined;
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (node.textContent?.trim()) last = node as Text;
+        if (node.textContent?.trim()) {
+          // SAFETY: This walker only returns Text nodes because it uses SHOW_TEXT.
+          last = node as Text;
+        }
       }
       if (last) last.after(caret);
       else element.append(caret);

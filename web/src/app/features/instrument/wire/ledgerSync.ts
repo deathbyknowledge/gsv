@@ -7,8 +7,10 @@ import { ledgerSequence, mergeLedgerChanges, type LedgerPages } from "./wireMode
 const KEY = [...INSTRUMENT_LEDGER_KEY, "sys"] as const;
 export const LEDGER_PENDING_LIMIT = 256;
 
+type LedgerSync = { changed: (lines: SysLedgerLine[]) => void; stop: () => void };
+
 /** Keep patches received during a page fetch until its snapshot is committed. */
-export function createLedgerSync(cache: QueryClient): { changed: (lines: SysLedgerLine[]) => void; stop: () => void } {
+export function createLedgerSync(cache: QueryClient): LedgerSync {
   const currentQuery = () => cache.getQueryCache().find<LedgerPages>({ queryKey: KEY, exact: true });
   let query = currentQuery();
   let snapshotHead = ledgerSequence(query?.state.data?.pages[0]?.lines[0]);

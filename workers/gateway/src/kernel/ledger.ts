@@ -199,9 +199,9 @@ export function outcomeOfResponse(frame: ResponseFrame): LedgerOutcome {
 export function errorOfResponse(frame: ResponseFrame): string | null {
   if (!frame.ok) return capField(frame.error.message, LEDGER_ERROR_LIMIT);
   if (!failedResultSchema.safeParse(frame.data).success) return null;
-  const parsed = z.object({ error: z.union([z.string(), z.object({ message: z.string() })]) }).safeParse(frame.data);
+  const parsed = z.object({ error: z.union([z.string().transform((message) => ({ message })), z.object({ message: z.string() })]) }).safeParse(frame.data);
   if (!parsed.success) return null;
-  return capField(typeof parsed.data.error === "string" ? parsed.data.error : parsed.data.error.message, LEDGER_ERROR_LIMIT);
+  return capField(parsed.data.error.message, LEDGER_ERROR_LIMIT);
 }
 
 /** The usage an ai.text.generate result carries: on its assistant message, with cost in USD. */

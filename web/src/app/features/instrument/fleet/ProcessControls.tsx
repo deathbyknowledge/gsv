@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
+import type { ProcSpawnArgs } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { reasoningOptions } from "../../../domain/reasoning";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -51,14 +52,16 @@ export function NewProcess({ onCreated, onCancel }: { onCreated: (pid: string) =
     enabled: connected,
   });
   const create = useMutation({
-    mutationFn: () => spawnChatProcess(client, {
-      interactive: true,
-      ...(label.trim() ? { label: label.trim() } : {}),
-      ...(ai.modelId || ai.reasoning ? { ai: {
-        ...(ai.modelId ? { modelId: ai.modelId } : {}),
-        ...(ai.reasoning ? { reasoning: ai.reasoning } : {}),
-      } } : {}),
-    }),
+    mutationFn: () => {
+      const args: ProcSpawnArgs = { interactive: true };
+      if (label.trim()) args.label = label.trim();
+      if (ai.modelId || ai.reasoning) {
+        args.ai = {};
+        if (ai.modelId) args.ai.modelId = ai.modelId;
+        if (ai.reasoning) args.ai.reasoning = ai.reasoning;
+      }
+      return spawnChatProcess(client, args);
+    },
     onSuccess: ({ pid }) => {
       void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
       onCreated(pid);

@@ -81,10 +81,14 @@ export function WorkSections({ work, account, processes, selected, onSelect, onC
   </>;
 }
 
+function isDetailRecord(value: JsonValue): value is { [key: string]: JsonValue } {
+  return value !== null && !Array.isArray(value) && typeof value === "object";
+}
+
 function DetailValue({ value }: { value: JsonValue }) {
   if (value === null) return <>-</>;
   if (Array.isArray(value)) return <ul>{value.map((entry, index) => <li key={index}><DetailValue value={entry} /></li>)}</ul>;
-  if (typeof value === "object") return <dl class="fleet-work-details">{Object.entries(value).map(([key, entry]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><DetailValue value={entry} /></dd></div>)}</dl>;
+  if (isDetailRecord(value)) return <dl class="fleet-work-details">{Object.entries(value).map(([key, entry]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><DetailValue value={entry} /></dd></div>)}</dl>;
   return <span class="fleet-work-text">{String(value)}</span>;
 }
 
@@ -122,10 +126,12 @@ export function RoutineInspector({ schedule, account, onDirty, onSelect }: { sch
   const [editing, setEditing] = useState<ScheduleRecord | null>(null);
   const update = useMutation({ mutationFn: () => client.sched.update({ id: schedule.id, patch: { enabled: !schedule.enabled } }), onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_ROUTINES_KEY }) });
   if (editing) return <RoutineEditor original={editing} onDirty={onDirty} onSaved={(id) => { setEditing(null); onSelect(id); }} onCancel={() => setEditing(null)} />;
+  // SAFETY: A schedule target comes from the parsed JSON syscall response.
+  const targetDetails = schedule.target as JsonValue;
   return <>
     <h3>{schedule.name}</h3><p class="inspector-sub">{cadenceLabel(schedule.expression)}</p>
     {schedule.description && <p>{schedule.description}</p>}
-    {schedule.target.kind === "responsibility" ? <p class="fleet-work-text">{schedule.target.message}</p> : <DetailValue value={schedule.target as unknown as JsonValue} />}
+    {schedule.target.kind === "responsibility" ? <p class="fleet-work-text">{schedule.target.message}</p> : <DetailValue value={targetDetails} />}
     <dl class="fleet-work-details"><div><dt>State</dt><dd>{schedule.enabled ? "enabled" : "paused"}</dd></div><div><dt>Next run</dt><dd><WorkDate value={schedule.state.nextRunAtMs} /></dd></div><div><dt>Last run</dt><dd><WorkDate value={schedule.state.lastRunAtMs} />{schedule.state.lastStatus ? ` · ${schedule.state.lastStatus}` : ""}</dd></div><div><dt>Times run</dt><dd>{schedule.state.runCount}</dd></div></dl>
     {schedule.state.lastError && <p class="error">{schedule.state.lastError}</p>}
     {update.error && <p class="error" role="alert">{update.error.message}</p>}

@@ -45,7 +45,8 @@ export function routineInput(draft: RoutineDraft, original?: ScheduleRecord): Sc
   if (draft.cadence === "every") {
     const everyMs = Number(draft.interval) * Number(draft.unit);
     if (!Number.isSafeInteger(everyMs) || everyMs < 1000) throw new Error("Choose an interval of at least one second.");
-    expression = { kind: "every", everyMs, ...(original?.expression.kind === "every" && original.expression.anchorMs !== undefined ? { anchorMs: original.expression.anchorMs } : {}) };
+    expression = { kind: "every", everyMs };
+    if (original?.expression.kind === "every" && original.expression.anchorMs !== undefined) expression.anchorMs = original.expression.anchorMs;
   } else {
     const timezone = draft.timezone.trim();
     try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); } catch { throw new Error("Choose a valid timezone, such as Europe/Amsterdam."); }
@@ -58,7 +59,8 @@ export function routineInput(draft: RoutineDraft, original?: ScheduleRecord): Sc
     if (expr.split(/\s+/).length !== 5) throw new Error("A custom schedule needs five cron fields.");
     expression = { kind: "cron", expr, timezone };
   }
-  return { name, enabled: draft.enabled, expression, target: { ...(original?.target.kind === "responsibility" ? original.target : {}), kind: "responsibility", message } };
+  const target = original?.target.kind === "responsibility" ? { ...original.target, message } : { kind: "responsibility" as const, message };
+  return { name, enabled: draft.enabled, expression, target };
 }
 
 export function routineEditable(schedule: ScheduleRecord): boolean {

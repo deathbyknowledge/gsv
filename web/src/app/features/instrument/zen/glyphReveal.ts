@@ -17,7 +17,7 @@ export type GlyphReveal = { paint(progress: number): void; dispose(): void };
 
 /** Paint over native text ranges; Markdown, wrapping, selection and link targets stay intact. */
 export function createGlyphReveal(container: HTMLElement, content: HTMLElement): GlyphReveal | null {
-  if (typeof Highlight === "undefined" || !CSS.highlights || typeof Intl.Segmenter === "undefined") return null;
+  if (!("Highlight" in globalThis) || !CSS.highlights || !("Segmenter" in Intl)) return null;
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -28,6 +28,7 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
   const glyphs: Glyph[] = [];
   const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    // SAFETY: SHOW_TEXT restricts this walker to Text nodes.
     const text = node as Text;
     for (const part of segmenter.segment(text.data)) {
       // Choose once per reveal so the other letters stay readable throughout.

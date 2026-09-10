@@ -46,6 +46,7 @@ export function instructionPath(name: string): string {
 
 export function newInstructionName(value: string): string {
   const stem = value.trim().replace(/\.md$/i, "");
+  // eslint-disable-next-line no-control-regex -- File names must reject ASCII control bytes.
   if (!stem.trim() || stem === "." || stem === ".." || /[\x00-\x1f\x7f]/.test(stem)) {
     throw new Error("Give your instruction a file name");
   }

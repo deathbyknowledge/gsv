@@ -907,7 +907,7 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const accountUids = resolveAiConfigAccountUids(uid, owner);
   const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
   // Layered order on purpose: clients re-serialize a layer from this listing.
-  return {
+  const result: AiModelsResult = {
     models: effective.map((item) => ({
       ...item.entry,
       source: item.source,
@@ -920,8 +920,9 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
         ),
     })),
     preferredModelId,
-    ...(modelOrder ? { modelOrder } : {}),
   };
+  if (modelOrder) result.modelOrder = modelOrder;
+  return result;
 }
 
 async function resolveStoredAiTextModelStack(

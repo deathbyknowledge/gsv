@@ -140,5 +140,6 @@ const labels = {
 } satisfies Record<SyscallName, string>;
 
 export function ledgerLabel(syscall: string): string {
+  // SAFETY: labels is checked against every SyscallName; hasOwn proves this key belongs to it.
   return Object.hasOwn(labels, syscall) ? labels[syscall as SyscallName] : "used another capability";
 }

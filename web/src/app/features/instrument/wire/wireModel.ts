@@ -37,6 +37,7 @@ export const procSignalSchema = z.object({
   }).nullable().optional(),
 });
 
+// eslint-disable-next-line anti-slop/no-shape-in-symbol-names -- shape is Zod's public schema accessor.
 export const ledgerChangedSignalSchema = z.object({ lines: sysLedgerListResultSchema.shape.lines.max(32) }) satisfies z.ZodType<SysLedgerChangedSignal>;
 
 export type Patch<T> = { next: T; known: boolean };

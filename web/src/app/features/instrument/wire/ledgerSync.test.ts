@@ -117,8 +117,10 @@ describe("live ledger patches", () => {
     cache.setQueryData(KEY, pages([10, 9]));
     const sync = createLedgerSync(cache); cleanup.push(sync.stop);
     const load = vi.fn(() => older.promise);
+    // SAFETY: The initial cursor is null; subsequent pages use the server's string cursor.
+    const initialPageParam = null as string | null;
     const observer = new InfiniteQueryObserver(cache, {
-      queryKey: KEY, queryFn: load, initialPageParam: null as string | null, getNextPageParam: (page) => page.nextCursor,
+      queryKey: KEY, queryFn: load, initialPageParam, getNextPageParam: (page) => page.nextCursor,
     });
     cleanup.push(observer.subscribe(() => undefined));
     sync.changed(lines([13]));

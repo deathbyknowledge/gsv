@@ -18,8 +18,12 @@ export function isApprovalReference(reference: FleetReference | null): reference
   return reference !== null && typeof reference === "object" && reference.kind === "approval";
 }
 
+export function isConnectReference(reference: FleetReference | null): reference is FleetConnectReference {
+  return reference !== null && typeof reference === "object" && reference.kind === "connect";
+}
+
 export function fleetReferenceRow(reference: FleetReference | null): FleetRow | null {
-  return isApprovalReference(reference) ? processRow(reference.pid) : typeof reference === "object" ? null : reference;
+  return isApprovalReference(reference) ? processRow(reference.pid) : isConnectReference(reference) ? null : reference;
 }
 
 /** A link must never authorize a different request that subsequently occupies the same process. */
