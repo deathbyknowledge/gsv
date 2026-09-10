@@ -1,7 +1,7 @@
 .settings { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .settings-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 12rem minmax(0, 1fr); }
 .settings-sections { display: flex; flex-direction: column; align-items: stretch; gap: 1rem; padding: calc(var(--instrument-header-height) + 2rem) 1.5rem 2rem; border-right: 1px solid var(--border); overflow-y: auto; }
-.settings-sections button { width: 100%; text-align: left; }
+.settings-sections button { width: 100%; text-align: center; }
 .settings-sections .active { color: var(--accent); }
 .settings-content { overflow: auto; min-height: 0; padding: calc(var(--instrument-header-height) + 2rem) clamp(1.25rem, 4cqw, 4rem) 5rem; }
 .settings-content:has(> .gsv-loading-state.is-panel) { flex: 1; padding: var(--instrument-header-height) 0 0; }
