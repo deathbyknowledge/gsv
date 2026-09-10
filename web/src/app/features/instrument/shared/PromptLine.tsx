@@ -56,6 +56,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const [command, setCommand] = useState(false);
   const revision = useRef(0);
   const submitting = useRef(false);
+  const autoFocusHandled = useRef(false);
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
   const [focused, setFocused] = useState(false);
   const [caret, setCaret] = useState({ x: 0, y: 0, visible: true });
@@ -102,6 +103,11 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const input = inputRef.current;
     if (input && document.activeElement === input) setFocused(true);
   }, [measure, disabled]);
+  useLayoutEffect(() => {
+    if (!autoFocus || disabled || autoFocusHandled.current) return;
+    autoFocusHandled.current = true;
+    if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus();
+  }, [autoFocus, disabled]);
   useEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
@@ -218,7 +224,6 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
             setFocused(false);
             onFocusChange?.(false);
           }}
-          autoFocus={autoFocus}
         />
         <span class="mirror" ref={mirrorRef} aria-hidden="true" />
         {focused && !disabled && caret.visible ? <span class="block-caret" style={{ transform: `translate(${caret.x}px, ${caret.y}px)` }} aria-hidden="true" /> : null}

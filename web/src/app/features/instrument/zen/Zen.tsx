@@ -303,7 +303,8 @@ export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, o
   const [openActivities, setOpenActivities] = useState<ReadonlySet<string>>(() => new Set());
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
-  const [browse, setBrowse] = useState<number | null>(null);
+  const [promptFocused, setPromptFocused] = useState(false);
+  const [browsePosition, setBrowse] = useState<number | null>(null);
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
@@ -471,6 +472,7 @@ export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, o
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
 
+  const browse = promptFocused || moments.length === 0 ? null : Math.min(browsePosition ?? moments.length - 1, moments.length - 1);
   const hasMemoryRead = moments.some((moment) => moment.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
@@ -692,6 +694,7 @@ export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, o
   }, []);
   const onPromptFocus = useCallback(
     (focused: boolean) => {
+      setPromptFocused(focused);
       if (focused) {
         browseRef.current = null;
         setBrowse(null);
@@ -717,7 +720,7 @@ export function Zen({ onFleet, onMemory, prefill, onPrefillUsed, pid: pidProp, o
     else if (bottom + margin > container.scrollTop + container.clientHeight) container.scrollTop = bottom + margin - container.clientHeight;
   }, [browse]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
