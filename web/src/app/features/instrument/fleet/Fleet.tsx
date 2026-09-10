@@ -525,7 +525,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           ) : workPanel === "sources" ? (
             <StandingResponsibilities account={viewer} />
           ) : selectedWork && !openFile ? (
-            <ResponsibilityInspector key={selectedWork.id} record={selectedWork} account={viewer} processName={processNameFor} onProcess={(pid) => onZen(undefined, pid)} />
+            <ResponsibilityInspector key={selectedWork.id} record={selectedWork} account={viewer} processName={processNameFor} onProcess={(pid) => pid ? selectRow(processRow(pid)) : onZen()} />
           ) : selectedRoutine && !openFile ? (
             <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
           ) : connecting === "place" ? (
@@ -540,7 +540,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
           ) : selectedLine && !openFile ? (
-            <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onZen={onZen} />
+            <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onProcess={(pid) => selectRow(processRow(pid))} />
           ) : openFile ? (
             <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
@@ -871,9 +871,11 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
       </dl>
       {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"} pid={process.pid} requestId={requestedApprovalId} /> : null}
       <div class="fleet-actions">
+        {process.interactive && (
           <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
             open conversation
           </button>
+        )}
         <button type="button" class="fleet-text-action is-danger" onClick={() => stop.mutate()} disabled={!process.activeRunId || stop.isPending}>
           stop
         </button>
@@ -897,20 +899,20 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
 
 
 /** One line of the ledger, in full: everything the row truncated, and the way to the run it belongs to. */
-function LineInspector({
+export function LineInspector({
   line,
   placeLabelFor,
   processName,
   now,
   technical,
-  onZen,
+  onProcess,
 }: {
   line: LedgerLine;
   placeLabelFor: (placeId: string) => string;
   processName: string;
   now: number;
   technical: boolean;
-  onZen: (prefill?: string, pid?: string) => void;
+  onProcess: (pid: string) => void;
 }) {
   const failed = line.outcome === "failed" || line.outcome === "denied";
   return (
@@ -940,8 +942,8 @@ function LineInspector({
       <details class="fleet-work-technical"><summary>Request details</summary><dl class="fleet-work-details"><div><dt>Call</dt><dd>{line.syscall}</dd></div><div><dt>Target</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>Run</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
       <div class="fleet-actions">
         {line.processId !== "you" ? (
-          <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, line.processId)}>
-            open the conversation
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onProcess(line.processId)}>
+            inspect process
           </button>
         ) : null}
         {(technical || line.detail) && <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>

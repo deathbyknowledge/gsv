@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GSVClient } from "@humansandmachines/gsv/client";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
-import { ProcessInspector } from "./Fleet";
+import { LineInspector, ProcessInspector } from "./Fleet";
 
 const abort = vi.fn<GSVClient["proc"]["abort"]>();
 
@@ -27,9 +27,10 @@ async function inspector() {
     interactive: true, personal: true, activeRunId: "approval-run", queuedCount: 0, createdAt: 1, lastActiveAt: 1,
   };
   let tree: ComponentChildren;
+  const onZen = vi.fn();
   function Harness() {
     tree = ProcessInspector({ client, process, model: null, cost: null, responsibilities: 0, canEditAi: false,
-      now: 1, onZen: () => undefined, lines: [], placeLabelFor: (target) => target });
+      now: 1, onZen, lines: [], placeLabelFor: (target) => target });
     return null;
   }
   const render = () => root.render(<QueryClientProvider client={cache}><Harness /></QueryClientProvider>);
@@ -37,6 +38,8 @@ async function inspector() {
   await render();
   return {
     text: () => collectText(tree),
+    onZen,
+    conversation: () => collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "open conversation")?.props,
     stop: () => {
       const button = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "stop");
       if (!button) throw new Error("Stop action is missing");
@@ -75,5 +78,33 @@ describe("Fleet process cancellation", () => {
     await act(async () => { await view.stop().onClick?.(); });
     await vi.waitFor(() => expect(view.text()).not.toContain("Abort unavailable"));
     expect(abort).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Fleet process navigation", () => {
+  it("only opens conversations for interactive processes, with Ship retaining its default route", async () => {
+    const view = await inspector();
+    await view.conversation()?.onClick?.();
+    expect(view.onZen).toHaveBeenLastCalledWith(undefined, undefined);
+    await view.update({ personal: false });
+    await view.conversation()?.onClick?.();
+    expect(view.onZen).toHaveBeenLastCalledWith(undefined, "approval-process");
+    await view.update({ interactive: false });
+    expect(view.conversation()).toBeUndefined();
+    expect(view.stop().disabled).toBe(false);
+    expect(view.onZen).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the owning process inspector from a ledger entry", async () => {
+    const onProcess = vi.fn();
+    const tree = LineInspector({
+      line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
+        what: "read a file", detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
+      placeLabelFor: (target) => target, processName: "worker", now: 1, technical: false, onProcess,
+    });
+    const action = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "inspect process");
+    expect(action).toBeDefined();
+    await action?.props.onClick?.();
+    expect(onProcess).toHaveBeenCalledWith("worker");
   });
 });
