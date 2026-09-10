@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { GlyphStars } from "../session/backgrounds/GlyphStars";
 import { SessionScreens } from "../session/SessionScreens";
@@ -122,6 +122,18 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     [distance, settingsDirty, zenDirty],
   );
 
+  useLayoutEffect(() => {
+    if (!help) return;
+    const dismissHelp = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setHelp(false);
+    };
+    window.addEventListener("keydown", dismissHelp, true);
+    return () => window.removeEventListener("keydown", dismissHelp, true);
+  }, [help]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
@@ -154,13 +166,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         setHelp((open) => !open);
       }
-      if (event.key === "Escape" && help) {
-        setHelp(false);
-      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, distance, help, move, toggleTheme]);
+  }, [cycleScale, distance, move, toggleTheme]);
 
   const phaseClass = phase === "leaving" ? " is-leaving" : phase === "arriving" ? " is-arriving" : "";
 
