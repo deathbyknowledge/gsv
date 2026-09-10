@@ -116,18 +116,23 @@
   text-overflow: ellipsis;
 }
 .memory-page {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   padding-top: var(--instrument-header-height);
+  overflow: hidden;
+}
+.memory-page .page-content {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
 }
-.memory-page::-webkit-scrollbar { display: none; }
+.memory-page .page-content::-webkit-scrollbar { display: none; }
 .memory-page .page-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex-shrink: 0;
   background: var(--void);
   display: flex;
   justify-content: space-between;
@@ -141,12 +146,14 @@
   text-transform: uppercase;
   color: var(--text-dim);
 }
-.memory-page .page-head .path { color: var(--path); text-transform: none; letter-spacing: 0.02em; }
-.memory-page .page-head .actions { display: flex; align-items: center; gap: 10px; }
+.memory-page .page-head .path { min-width: 0; overflow-wrap: anywhere; color: var(--path); text-transform: none; letter-spacing: 0.02em; }
+.memory-page .page-head .actions { display: flex; align-items: center; flex-shrink: 0; flex-wrap: wrap; gap: 16px; max-width: 100%; }
 .memory-page .page-head .status { color: var(--online); }
 .memory-page .page-head .status.is-error { color: var(--error); }
 .memory-page .page-head .ibtn { padding: 5px 10px; }
-.memory-page .page-head .ibtn kbd { margin-right: 6px; }
+.memory-page .page-head .page-action { padding: 3px 0; border: 0; background: none; color: var(--text-dim); font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.memory-page .page-head .page-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 0.25em; }
+.memory-page .page-head :is(.ibtn, .page-action) kbd { margin-right: 6px; }
 .memory-page .prose {
   padding: 5vh 40px 10vh;
   max-width: var(--measure-prose);
@@ -159,7 +166,7 @@
 .memory-page .prose h1:first-child, .memory-page .prose h2:first-child { margin-top: 0; }
 .memory-page .prose p { margin: 0 0 0.8em; }
 .memory-page .prose a { color: var(--path); }
-.memory-page .prose [id] { scroll-margin-top: calc(var(--instrument-header-height) + 64px); }
+.memory-page .prose [id] { scroll-margin-top: 24px; }
 .memory-page .prose code { font-family: var(--gsv-font-mono); font-size: 0.85em; color: var(--path); }
 .memory-page .prose pre { font-family: var(--gsv-font-mono); font-size: 12px; overflow-x: auto; padding: 10px 12px; border: 1px solid var(--border); }
 .memory-page .prose ul, .memory-page .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
@@ -181,8 +188,7 @@
   line-height: 1.6;
   caret-color: var(--accent);
 }
-.memory-page.is-editing { display: flex; flex-direction: column; overflow: hidden; }
-.memory-page.is-editing .page-head { flex-shrink: 0; }
+.memory-page.is-editing .page-content { display: flex; flex-direction: column; overflow: hidden; }
 .memory-none, .memory-empty {
   padding: 8vh 40px;
   font-family: var(--gsv-font-prose);
@@ -199,7 +205,6 @@
   .memory-rail { border-right: 0; border-bottom: 1px solid var(--border); }
   .memory-tools { position: static; }
   .memory-page { padding-top: 0; }
-  .memory-page .page-head { top: 0; padding: 10px 18px; flex-wrap: wrap; }
-  .memory-page .page-head .actions { flex-wrap: wrap; }
+  .memory-page .page-head { padding: 10px 18px; flex-wrap: wrap; }
   .memory-page .prose, .memory-page .editor { padding-inline: 18px; }
 }

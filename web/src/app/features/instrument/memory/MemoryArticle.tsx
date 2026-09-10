@@ -7,7 +7,7 @@ import { memoryLinkFromUrl, memoryLinkHref, resolveMemoryLink, type MemoryLink }
 function scrollToHeading(article: HTMLElement, fragment: string): void {
   const heading = fragment ? [...article.querySelectorAll<HTMLElement>("[id]")].find((node) => node.id === fragment) : null;
   if (heading) heading.scrollIntoView({ block: "start" });
-  else article.closest(".memory-page")?.scrollTo({ top: 0 });
+  else article.closest(".page-content")?.scrollTo({ top: 0 });
 }
 
 export function MemoryArticle({ note, db, fragment, onOpen }: {

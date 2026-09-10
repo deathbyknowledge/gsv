@@ -276,7 +276,7 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                   <span class="path">{note.path}</span>
                   <span class="actions">
                     {pageStatus ? <span class={`status${pageStatus.error ? " is-error" : ""}`} role={pageStatus.error ? "alert" : "status"}>{pageStatus.text}</span> : null}
-                    {!editing && collection ? <button type="button" class="ibtn" onClick={() => onAsk(
+                    {!editing && collection ? <button type="button" class="page-action" onClick={() => onAsk(
                       { db: selectedDb, path: note.path },
                       `Tell me about the memory page “${note.title}” (gsv:/src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}). `,
                     )}>ask about this</button> : null}
@@ -290,29 +290,31 @@ export function Memory({ initialPage, onAsk }: MemoryProps) {
                         </button>
                       </>
                     ) : writable ? (
-                      <button type="button" class="ibtn" onClick={beginEdit}>
+                      <button type="button" class="page-action" onClick={beginEdit}>
                         <kbd>e</kbd>correct this
                       </button>
                     ) : null}
                   </span>
                 </div>
-                {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
-                {editing ? (
-                  <textarea
-                    ref={editorRef}
-                    class="editor"
-                    value={editor?.markdown ?? ""}
-                    spellcheck={true}
-                    aria-label="Page text"
-                    onInput={(event) => {
-                      const markdown = event.currentTarget.value;
-                      setEditor((current) => current ? { ...current, markdown } : current);
-                    }}
-                    onKeyDown={onEditorKey}
-                  />
-                ) : (
-                  <MemoryArticle note={note} db={selectedDb} fragment={fragment} onOpen={openLink} />
-                )}
+                <div class="page-content">
+                  {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
+                  {editing ? (
+                    <textarea
+                      ref={editorRef}
+                      class="editor"
+                      value={editor?.markdown ?? ""}
+                      spellcheck={true}
+                      aria-label="Page text"
+                      onInput={(event) => {
+                        const markdown = event.currentTarget.value;
+                        setEditor((current) => current ? { ...current, markdown } : current);
+                      }}
+                      onKeyDown={onEditorKey}
+                    />
+                  ) : (
+                    <MemoryArticle note={note} db={selectedDb} fragment={fragment} onOpen={openLink} />
+                  )}
+                </div>
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (
               <div class="memory-none memory-loading"><LoadingState variant="panel">Loading memory…</LoadingState></div>
