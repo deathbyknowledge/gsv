@@ -1,11 +1,11 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { ListTemplate, type ListTemplateRow } from "../app/features/gsv-console/list-template/ListTemplate";
-import { CardListTemplate } from "../app/features/gsv-console/card-template/CardListTemplate";
-import { ConsolePage } from "../app/features/gsv-console/components/ConsolePageTemplate";
-import { ConsoleDetailPage } from "../app/features/gsv-console/components/ConsoleDetailPage";
+import { ListTemplate, type ListTemplateRow } from "./examples/system/list-template/ListTemplate";
+import { CardListTemplate } from "./examples/system/card-template/CardListTemplate";
+import { ConsolePage } from "./examples/system/components/ConsolePageTemplate";
+import { ConsoleDetailPage } from "../app/components/detail/ConsoleDetailPage";
 import { Button } from "../app/components/ui/Button";
-import { SettingsOverviewDashboard } from "../app/features/gsv-console/pages/ConsoleOverviewPanels";
+import { SettingsOverviewDashboard } from "./examples/system/pages/ConsoleOverviewPanels";
 import type {
   ConsoleAccount,
   ConsoleAdapter,
@@ -15,10 +15,10 @@ import type {
   ConsoleOverviewData,
   ConsoleProcess,
   ConsoleTarget,
-} from "../app/features/gsv-console/domain/consoleModels";
+} from "../app/domain/system/consoleModels";
 import { AgentCard } from "../app/components/ui/AgentCard";
 import { Surface } from "../app/components/ui/Surface";
-import { agentImageSrcForIndex } from "../app/features/gsv-console/domain/agentPresentation";
+import { agentImageSrcForIndex } from "../app/domain/system/agentPresentation";
 import { AgentEditor } from "../app/components/ui/AgentEditor";
 import { AuthLayout } from "../app/features/session/AuthLayout";
 

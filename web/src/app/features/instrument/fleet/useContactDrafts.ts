@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { sendContactMessage } from "../../gsv-console/contacts/contactsService";
-import { selectContactSendIntent, type ContactDraftSendIntent } from "../../gsv-console/contacts/contactSendIntent";
+import { sendContactMessage } from "../../../services/contacts/contactsService";
+import { selectContactSendIntent, type ContactDraftSendIntent } from "../../../services/contacts/contactSendIntent";
 import type { ZenAttachment } from "../zen/zenAttachments";
 
 export type ContactDraft = {

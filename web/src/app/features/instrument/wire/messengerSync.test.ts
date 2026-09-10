@@ -1,6 +1,6 @@
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
+import { deferred } from "../../../testing/testHarness";
 import { refreshMessengerConnections } from "./messengerSync";
 import { INSTRUMENT_MESSENGERS_KEY, INSTRUMENT_LEDGER_KEY } from "./queryKeys";
 

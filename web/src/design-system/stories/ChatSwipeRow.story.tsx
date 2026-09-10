@@ -3,7 +3,7 @@ import { CopyIconButton, MessageMeta } from "../../app/components/ui/MessageMeta
 import { ReasoningGlyph } from "../../app/components/ui/ReasoningGlyph";
 import { SystemMessage } from "../../app/components/ui/SystemMessage";
 import { Hint } from "../../app/components/ui/Tooltip";
-import { ActionRail, SwipeRow, TranscriptMobileContext } from "../../app/features/chat/components/SwipeRow";
+import { ActionRail, SwipeRow, TranscriptMobileContext } from "../examples/chat/components/SwipeRow";
 import type { Story } from "../story";
 
 /** Mobile swipe-to-reveal message actions: each row is a horizontal

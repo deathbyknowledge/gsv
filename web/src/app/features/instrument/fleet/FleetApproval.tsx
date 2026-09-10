@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { decideChatHil, getChatHistory } from "../../chat/backend/chatService";
+import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
 

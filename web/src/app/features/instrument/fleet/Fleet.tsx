@@ -15,9 +15,9 @@ import {
   loadConsoleProcesses,
   loadConsoleTargets,
   runConsoleProcessAction,
-} from "../../gsv-console/backend/consoleService";
-import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
-import { readFilesPath } from "../../files/backend/filesService";
+} from "../../../services/system/consoleService";
+import type { ConsoleProcess } from "../../../domain/system/consoleModels";
+import { readFilesPath } from "../../../services/files/backend/filesService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {

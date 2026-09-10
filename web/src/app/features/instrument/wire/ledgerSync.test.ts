@@ -1,7 +1,7 @@
 import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/preact-query";
 import type { SysLedgerLine } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
+import { deferred } from "../../../testing/testHarness";
 import { ledgerFromSysLines } from "../fleet/fleetModel";
 import { createLedgerSync, LEDGER_PENDING_LIMIT } from "./ledgerSync";
 import { INSTRUMENT_LEDGER_KEY } from "./queryKeys";

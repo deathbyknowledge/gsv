@@ -1,6 +1,6 @@
 import { LoadingState } from "../../../components/ui/Spinner";
-import { chatMediaKind, formatChatMediaSize, parseChatMedia } from "../../chat/domain/media";
-import { useChatMediaSource, useMediaObjectUrl } from "../../chat/hooks/useChatMediaSource";
+import { chatMediaKind, formatChatMediaSize, parseChatMedia } from "../../../services/chat/domain/media";
+import { useChatMediaSource, useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
 import type { ZenAttachment } from "./zenAttachments";
 
 export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachment: ZenAttachment; onRemove: () => void; disabled?: boolean }) {

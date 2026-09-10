@@ -3,7 +3,7 @@ import type { Story } from "../../story";
 import { AsciiPlanet } from "../../../app/components/ui/AsciiPlanet";
 import { AsciiGalaxyScan } from "../../../app/components/ui/AsciiGalaxyScan";
 import { AuthBackground } from "../../../app/features/session/backgrounds/AuthBackground";
-import { TemplateEmptyState } from "../../../app/features/gsv-console/list-template/TemplateEmptyState";
+import { TemplateEmptyState } from "../../examples/system/list-template/TemplateEmptyState";
 import "../../assets.css";
 
 /**

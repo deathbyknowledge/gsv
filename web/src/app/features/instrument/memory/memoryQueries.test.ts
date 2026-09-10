@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
-import type { LibraryEntry, LibraryNote } from "../../gsv-console/library/libraryTypes";
+import type { LibraryEntry, LibraryNote } from "../../../services/memory/libraryTypes";
 import { INSTRUMENT_MEMORY_KEY } from "../wire/queryKeys";
 import { refreshSavedMemoryPage } from "./memoryQueries";
 import type { MemorySearchResult } from "./memoryService";

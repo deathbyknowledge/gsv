@@ -4,27 +4,27 @@ import { useQuery } from "@tanstack/preact-query";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { loadConsoleTargets, type IssuedMachineNodeToken } from "../../gsv-console/backend/consoleService";
-import type { ConnectFlowShellProps } from "../../gsv-console/connect-flows/ConnectFlowShell";
-import { mutateContactsWorkspace } from "../../gsv-console/contacts/contactsService";
+import { loadConsoleTargets, type IssuedMachineNodeToken } from "../../../services/system/consoleService";
+import type { ConnectFlowShellProps } from "../../../components/connect-flow/ConnectFlowShell";
+import { mutateContactsWorkspace } from "../../../services/contacts/contactsService";
 import {
   useConfirmConsoleAdapterPairing,
   useConsoleAdapterPairingInfo,
   useConsoleIdentityLinks,
   useCreateMachineNodeToken,
   useInspectConsoleAdapterPairing,
-} from "../../gsv-console/hooks/useConsoleData";
+} from "../../../services/system/useConsoleData";
 import {
   buildMachineBootstrapCommand,
   buildMachineInstallCommand,
   defaultMachineName,
   expiresAtFromDays,
   machineDeviceIdFromName,
-} from "../../gsv-console/machines/machineProvision";
+} from "../../../services/machines/machineProvision";
 import {
   ManagedTelegramOnboardingFlow,
   type ManagedTelegramDependencies,
-} from "../../gsv-console/messengers/ManagedTelegramOnboardingFlow";
+} from "../settings/messengers/ManagedTelegramOnboardingFlow";
 import { INSTRUMENT_CONTACTS_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {
   derivePlaces,

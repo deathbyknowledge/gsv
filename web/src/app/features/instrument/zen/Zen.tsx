@@ -5,20 +5,20 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../chat/domain/processes";
+import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
   decideChatHil,
   listChatProcesses,
   sendChatMessage,
   spawnChatProcess,
-} from "../../chat/backend/chatService";
-import { useChatConversation } from "../../chat/hooks/useChatConversation";
-import { useChatRuntime } from "../../chat/hooks/useChatRuntime";
-import { loadConsoleTargets } from "../../gsv-console/backend/consoleService";
-import { listLibraryCollections } from "../../gsv-console/library/libraryService";
-import { libraryTitleFromPath } from "../../gsv-console/library/libraryModel";
-import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
-import { executeTerminalCommand } from "../../terminal/backend/terminalService";
+} from "../../../services/chat/backend/chatService";
+import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
+import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
+import { loadConsoleTargets } from "../../../services/system/consoleService";
+import { listLibraryCollections } from "../../../services/memory/libraryService";
+import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
+import type { LibraryCollection } from "../../../services/memory/libraryTypes";
+import { executeTerminalCommand } from "../../../services/terminal/backend/terminalService";
 import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";

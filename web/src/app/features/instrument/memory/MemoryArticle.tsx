@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "preact/hooks";
-import type { LibraryNote } from "../../gsv-console/library/libraryTypes";
-import { assignLibraryHeadingIds } from "../../gsv-console/library/libraryLinks";
+import type { LibraryNote } from "../../../services/memory/libraryTypes";
+import { assignLibraryHeadingIds } from "../../../services/memory/libraryLinks";
 import { renderMarkdownHtml } from "../shared/markdown";
 import { memoryLinkFromUrl, memoryLinkHref, resolveMemoryLink, type MemoryLink } from "./memoryLinks";
 

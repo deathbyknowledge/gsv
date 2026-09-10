@@ -1,7 +1,7 @@
 import { instrumentContactConversationKey, instrumentContactRequestsKey } from "./queryKeys";
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
+import { deferred } from "../../../testing/testHarness";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { INSTRUMENT_CONTACTS_KEY as KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES } from "./queryKeys";
 

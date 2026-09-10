@@ -145,8 +145,9 @@ and `web/src/app/features/instrument/settings/README.md`.
   loopback MCP server in the disposable UI test environment on 2026-09-10.
 - [ ] Verify the complete new-user and returning-user flows: onboarding/login,
   chat and media, approvals, models, connections, Memory, and live Fleet state.
-- [ ] Make Instrument the default, then remove the old UI and presentation code
-  once the workflow inventory is complete. Existing deep links need no mapping.
+- [x] Make Instrument the default and remove the old UI and presentation code.
+  Existing deep links have no mapping; retained services and catalog examples
+  have moved out of the retired feature directories.
 - [ ] Validate and release the web change before starting the hosting cutover.
 
 These are release requirements, not claims that the work is already complete.
@@ -156,10 +157,10 @@ into the remaining UI batches.
 
 ## Old UI retirement inventory
 
-Audit of the actual route and component implementations on 2026-09-10. The old
-shell remains reachable while the retained controls are reviewed. The maintainer
-approved the scope below; final smoke testing and removal remain separate work
-after this review. Existing deep-link compatibility is explicitly out of scope.
+Retained workflow inventory for the 2026-09-10 cutover. Instrument is now the
+default and the old shell and workspaces have been removed. Existing deep-link
+compatibility is explicitly out of scope. Final integrated validation remains
+the release gate.
 
 | Workflow | Instrument status | Work before retiring the old surface |
 | --- | --- | --- |
@@ -175,19 +176,17 @@ after this review. Existing deep-link compatibility is explicitly out of scope.
 | Responsibilities, standing-source switches and scheduled routines | Fleet has current/history, details/blockers/next checks, process filters, cancellation, standing switches and routine create/edit/pause | Review controls and live updates |
 | Repository import, refs, history and comparison | Maintainer approved keeping dedicated repository UI out | Native `rgit` commands are available through `gsv shell`/Zen; removal remains a syscall/CodeMode operation |
 | Image, transcription, speech, shell and server configuration | Maintainer explicitly rejected these extra controls; use good defaults | Timezone is the only added preference; existing model stack and effort controls remain |
-| Agent account creation and account-specific defaults | Processes have creation and preference controls; `proc accounts` lists runnable accounts | Explicit CLI gap: account creation is currently a syscall/SDK/CodeMode operation, not a native account-management command; settle before deleting the old route |
+| Agent account creation and account-specific defaults | Processes have creation and preference controls; additional agent accounts use `account.create` through Ship/CodeMode | Dedicated native account-management commands remain follow-up work |
 | Standalone terminal workspace and detailed runtime traces | Fleet command opens Zen on the chosen target; ledger inspection adds bounded failure reasons, duration and request details; full tool output stays in Zen | Maintainer agreed to one terminal and useful inspection, without a separate trace chart |
 
-Source inventory: `web/src/app/features/gsv-shell/routing/shellRoutes.ts`,
-`web/src/app/features/gsv-console/components/GsvConsole.tsx`, and their referenced
-workspaces. The old `AgentToolsPanel` accepts a capabilities prop but does not edit
-grants. Runtime approval compatibility reads legacy `when.target`; it does not
-implement arbitrary conditions. The new UI must not imply otherwise.
+Current ownership: `web/src/app/App.tsx`, `web/src/app/features/instrument/`,
+`web/src/app/services/`, and `web/src/app/domain/`. Grant inspection remains
+read-only. Runtime approval compatibility reads legacy `when.target`; it does
+not implement arbitrary conditions. The UI must not imply otherwise.
 
-Removal must keep genuinely shared domain and service code used by Instrument,
-move it out of the obsolete presentation namespace where appropriate, and remove
-obsolete pages after retained workflows are tested through Instrument. Design
-catalog routes are a separate development surface.
+The cutover preserves shared domain and service code used by Instrument and
+moves it out of the obsolete presentation namespace. Design catalog routes and
+their examples remain a separate development surface, loaded on demand.
 
 
 ## Review batch: responsibilities, routines, Memory and files

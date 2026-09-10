@@ -1,6 +1,6 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
-import type { ConsoleAdapter, ConsoleIdentityLink } from "../../gsv-console/domain/consoleModels";
-import { normalizeAdapterInventoryPayload, normalizeIdentityLinksPayload } from "../../gsv-console/domain/consoleNormalization";
+import type { ConsoleAdapter, ConsoleIdentityLink } from "../../../domain/system/consoleModels";
+import { normalizeAdapterInventoryPayload, normalizeIdentityLinksPayload } from "../../../domain/system/consoleNormalization";
 
 export type MessengerConnections = {
   adapters: ConsoleAdapter[];

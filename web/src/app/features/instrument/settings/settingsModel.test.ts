@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure, instructionPath, newInstructionName, readSettingsPolicy, signInUrl } from "./settingsModel";
 
 const account: ConsoleAccount = { uid: 1001, username: "viewer", displayName: "Viewer", relation: "self", runnable: false, gecos: "", capabilities: ["fs.*", "sys.mcp.list"] };

@@ -3,7 +3,7 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { useQuery } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { loadConsoleAccounts } from "../../gsv-console/backend/consoleService";
+import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
 import { Preferences } from "./Preferences";
 import { Permissions } from "./Permissions";

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createTestRoot,
   deferred,
-} from "../features/gsv-console/messengers/messengerTestHarness";
+} from "../testing/testHarness";
 import type { SessionPhase, SessionSnapshot } from "../services/session/sessionService";
 
 import {

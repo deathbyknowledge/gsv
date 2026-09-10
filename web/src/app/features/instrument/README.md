@@ -1,6 +1,8 @@
 # Instrument surfaces
 
-Zen owns the conversation. A fresh conversation shows the first-day introduction inline, with its original four connection rows and inline panels. Helpers have a simple empty conversation state. There is no first-day navigation destination; existing `/first-day` links open Zen.
+Instrument is the default web UI at `/`. Its views use `/zen`, `/fleet`, `/memory` and `/zen/settings`. The former desktop shell, console and standalone workspaces are retired; old deep links have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+
+Zen owns the conversation. A fresh conversation shows the first-day introduction inline, with its original four connection rows and inline panels. Helpers have a simple empty conversation state. There is no first-day navigation destination.
 
 Fleet owns places, contacts, processes, activity, and their inspectors. Places always offers Connect, and Contacts always offers Add contact, subject to the signed-in account's permissions. A new place can be a computer or browser. A contact is another Ship and has its own list and inspector, separate from execution targets. Opening a connection form never creates a credential or invitation.
 

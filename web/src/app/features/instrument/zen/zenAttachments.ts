@@ -1,5 +1,5 @@
-import type { ChatMediaUpload } from "../../chat/domain/processes";
-import { chatMediaKind } from "../../chat/domain/media";
+import type { ChatMediaUpload } from "../../../services/chat/domain/processes";
+import { chatMediaKind } from "../../../services/chat/domain/media";
 import { randomId } from "../../../services/ids";
 
 export type ZenAttachment = ChatMediaUpload & { id: string };

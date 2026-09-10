@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SysTokenCreateResult } from "@humansandmachines/gsv";
-import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
+import { deferred } from "../../../testing/testHarness";
 import { issuePlacePairing, pairingOrigin } from "./placePairing";
 
 function issued(): SysTokenCreateResult {

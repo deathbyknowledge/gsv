@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
-import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
+import type { ConsoleProcess } from "../../../domain/system/consoleModels";
+import { deferred } from "../../../testing/testHarness";
 import { syncProcessSignal } from "./processSync";
 import { INSTRUMENT_PROCESSES_KEY as KEY } from "./queryKeys";
 

@@ -6,7 +6,7 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { INSTRUMENT_ROUTINES_KEY } from "../wire/queryKeys";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { routineDraft, routineInput, routinePatch, routineSettings } from "./routineModel";
-import { loadConsoleConfig, loadConsoleAccounts } from "../../gsv-console/backend/consoleService";
+import { loadConsoleConfig, loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SETTINGS_CONFIG_KEY } from "../settings/settingsModel";
 
 type RoutineEditorProps = {

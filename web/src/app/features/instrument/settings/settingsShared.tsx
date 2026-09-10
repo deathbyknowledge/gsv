@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "preact/hooks";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 
 export type SettingsSectionProps = {
   account: ConsoleAccount;

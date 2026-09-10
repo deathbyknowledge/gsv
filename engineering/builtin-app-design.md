@@ -1,6 +1,6 @@
 # GSV App Surface Design
 
-GSV app surfaces are operational tools inside the desktop environment. They should make important system state and actions obvious, avoid generic dashboard behavior, and avoid raw data dumps unless the surface is explicitly an advanced/debug surface.
+GSV's web UI is Instrument: Zen, Fleet, Memory and Settings share one shell. These surfaces should make important state and actions obvious, avoid generic dashboard behavior, and expose raw data only for a specific inspection or recovery job. The native Desktop client is a separate surface.
 
 ## Start With The App Job
 
@@ -15,10 +15,10 @@ Write down:
 If you cannot state the app's job clearly, stop and design first.
 
 Examples:
-- `Files` is for browsing and editing target filesystems, not for process management
-- `Processes` is for inspecting and controlling process lifecycle, not for raw system config
-- `Devices` should manage execution targets, health, trust, and routing, not be a metadata dump
-- `Control` is for system settings and access, with raw config only as an escape hatch
+- `Zen` owns conversation, messages, run activity, approvals and direct shell commands
+- `Fleet` owns places, processes, contacts, responsibilities, routines, the ledger and files
+- `Memory` owns reading, finding, creating and correcting pages
+- `Settings` owns model preferences, instructions, permissions, connections and timezone
 
 ## Design From Decisions
 
@@ -35,7 +35,7 @@ Bad pattern:
 
 Good pattern:
 - surface the curated settings people actually need
-- keep unknown or low-confidence data in an `Advanced` escape hatch
+- leave low-value implementation controls to Ship or commands
 
 ## Prefer Task-Oriented Surfaces
 
@@ -63,24 +63,24 @@ Ask:
 - what deserves a dedicated summary instead of being buried in detail?
 
 Examples:
-- `Devices`: online/offline, platform, owner, last seen, capability readiness
-- `Processes`: running/completed/error, label, owner, workspace, last activity
-- `Files`: current target, current path, dirty state, preview type
+- Fleet places: online/offline, platform, owner and reachability
+- Fleet processes: running/completed/error, label, owner and last activity
+- Fleet files: current target, path, dirty state and preview type
 
 ## Keep Scope Boundaries
 
 Do not casually merge responsibilities because the data is nearby. If a concern belongs to another app, link to that app instead of re-implementing it.
 
 Examples:
-- `Devices` can link to `Files`, `Shell`, or `Processes`, but should not replace them
-- `Control` can expose token and access flows, but should not become a device fleet manager
-- `Processes` can open a conversation in `Chat`, but should not become the chat app
+- a place inspector can open its files or a command in Zen
+- Settings manages preferences and connections; Fleet inspects live work
+- a process inspector can open its visibly labelled conversation in Zen
 
 A GSV app surface should have a clear center of gravity.
 
-## Use Desktop Patterns
+## Use The Shared Instrument Shell
 
-GSV apps live inside a desktop shell. Design them like operational desktop tools.
+The star field and header persist while changing views. Each surface owns its content and scrolling area. Use the shared navigation and keep the surface focused on its operational job.
 
 Prefer:
 - split panes
@@ -98,22 +98,19 @@ Avoid by default:
 
 The app should feel like a serious workstation tool.
 
-## Follow The GSV Console Contract
+## Follow The Instrument Contract
 
-The consolidated `GSV` builtin is the system console for operating and configuring a GSV installation. It should feel like system software inside the desktop shell, not like a responsive website.
+Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Use `docs/gsv-system-console.md` as the product and navigation contract.
+Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Zen's empty state. The design catalog remains a separate development surface and loads only when opened.
 
 Core rules:
-- global navigation chooses the kind of work; local navigation chooses object state
-- desktop uses persistent grouped navigation
-- mobile uses a focused screen, top bar/back/action chrome, and grouped bottom navigation
-- `Overview` is an attention inbox, not a dashboard
-- prefer native-feeling lists, panes, inspectors, queues, and navigation stacks
-- avoid hero sections, large stat-card grids, decorative gradients, and marketing spacing
-- keep `Chat`, `Files`, `Shell`, and `Wiki` as standalone work surfaces
-- keep `Processes`, `Devices`, and message adapter management inside `GSV`
-- show permission state before actions, especially because `GSV` is a high-privilege first-party console
+- global navigation chooses the kind of work; tables and inspectors choose the object
+- retain one header and background across views, including narrow layouts
+- use lists, panes, inspectors and queues; avoid decorative dashboards
+- apply the documented text/block button policy consistently
+- show permission state before actions
+- keep shared gateway, history, file, contact and model logic in browser services and domain modules, independent of presentation
 
 ## Match Controls To Data
 
@@ -127,7 +124,7 @@ Examples:
 - structured but advanced policy: dedicated JSON editor only when needed
 - destructive action: explicit button with clear label
 
-If a field is important but hard to understand, add a short description. If a field is low-confidence or too raw, move it to `Advanced`.
+If a field is important but hard to understand, add a short description. Expose implementation settings only when the user has a meaningful decision to make.
 
 ## Keep Raw Power In Advanced
 

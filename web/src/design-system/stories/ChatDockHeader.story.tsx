@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { ChatDockHeader } from "../../app/features/chat/components/ChatDockHeader";
-import type { ChatAgentViewModel } from "../../app/features/chat/domain/agent";
+import { ChatDockHeader } from "../examples/chat/components/ChatDockHeader";
+import type { ChatAgentViewModel } from "../examples/chat/domain/agent";
 import type { Story } from "../story";
 
 /** Mobile chat header — the two-view layout behind the ⋮/← toggle. Staged

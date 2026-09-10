@@ -1,5 +1,5 @@
-import { buildLibraryTree } from "../../gsv-console/library/libraryModel";
-import type { LibraryEntry, LibraryTreeNode } from "../../gsv-console/library/libraryTypes";
+import { buildLibraryTree } from "../../../services/memory/libraryModel";
+import type { LibraryEntry, LibraryTreeNode } from "../../../services/memory/libraryTypes";
 
 /** The collection is the root: show its overview and the folders inside pages/. */
 export function buildMemoryTree(entries: readonly LibraryEntry[], db: string): LibraryTreeNode[] {

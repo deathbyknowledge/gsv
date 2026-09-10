@@ -62,9 +62,6 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
-  useEffect(() => {
-    if (initialPath === "/first-day") history.replaceState(null, "", "/zen");
-  }, [initialPath]);
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);

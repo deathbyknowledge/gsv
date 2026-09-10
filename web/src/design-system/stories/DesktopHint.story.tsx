@@ -1,5 +1,5 @@
 import type { Story } from "../story";
-import { DesktopHint } from "../../app/features/gsv-shell/desktop/DesktopHint";
+import { DesktopHint } from "../examples/desktop/desktop/DesktopHint";
 
 /**
  * Desktop hint — HUD terminal readout below the desktop nodes. On landing it

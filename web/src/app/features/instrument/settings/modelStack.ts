@@ -1,6 +1,6 @@
 import { orderAiModelIds, type AiModelListEntry, type AiModelsResult } from "@humansandmachines/gsv/protocol";
-import type { ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
-import { preferredModelSaveEntry, type ConsoleConfigWrite } from "../../gsv-console/domain/consoleSettings";
+import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
+import { preferredModelSaveEntry, type ConsoleConfigWrite } from "../../../domain/system/consoleSettings";
 
 export type ModelStackDraft = { ids: string[]; customized: boolean };
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { RepoReadResult, RepoTreeEntry } from "@humansandmachines/gsv/protocol";
-import { listLibraryCollections } from "../../gsv-console/library/libraryService";
-import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
+import { listLibraryCollections } from "../../../services/memory/libraryService";
+import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import { listMemoryPages, readMemoryPage, searchMemory } from "./memoryService";
 
 const collection: LibraryCollection = {

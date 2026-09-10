@@ -1,6 +1,6 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
-import { extractLibraryTitle, libraryPathInDb, libraryTitleFromPath, normalizeLibraryPath } from "../../gsv-console/library/libraryModel";
-import type { LibraryCollection, LibraryEntry, LibraryNote } from "../../gsv-console/library/libraryTypes";
+import { extractLibraryTitle, libraryPathInDb, libraryTitleFromPath, normalizeLibraryPath } from "../../../services/memory/libraryModel";
+import type { LibraryCollection, LibraryEntry, LibraryNote } from "../../../services/memory/libraryTypes";
 
 type MemoryClient = Pick<GSVClient, "call">;
 

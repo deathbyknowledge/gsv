@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
-import type { ConnectFlowShellProps } from "../../gsv-console/connect-flows/ConnectFlowShell";
-import { useConsoleAdapterPairingInfo, useInspectConsoleAdapterPairing, useConfirmConsoleAdapterPairing } from "../../gsv-console/hooks/useConsoleData";
-import { ManagedSlackOnboardingFlow, ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "../../gsv-console/messengers/ManagedTelegramOnboardingFlow";
+import type { ConnectFlowShellProps } from "../../../components/connect-flow/ConnectFlowShell";
+import { useConsoleAdapterPairingInfo, useInspectConsoleAdapterPairing, useConfirmConsoleAdapterPairing } from "../../../services/system/useConsoleData";
+import { ManagedSlackOnboardingFlow, ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "./messengers/ManagedTelegramOnboardingFlow";
 
 /** Renders one step of a console connect flow inside our panel, without the console's page chrome. */
 function CompactFlowShell({ flow, current, onStep }: ConnectFlowShellProps): ComponentChildren {

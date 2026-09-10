@@ -4,8 +4,8 @@ import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { parseDeviceId } from "../../../domain/deviceId";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { createMachineNodeToken, type IssuedMachineNodeToken } from "../../gsv-console/backend/consoleService";
-import type { ConsoleAccount, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import { createMachineNodeToken, type IssuedMachineNodeToken } from "../../../services/system/consoleService";
+import type { ConsoleAccount, ConsoleTarget } from "../../../domain/system/consoleModels";
 import {
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
@@ -14,7 +14,7 @@ import {
   expiresAtFromDays,
   machineDeviceIdFromName,
   type MachineProvisionPlatform,
-} from "../../gsv-console/machines/machineProvision";
+} from "../../../services/machines/machineProvision";
 import { uniqueDeviceId } from "../firstday/firstdayModel";
 import { canConfigure } from "../settings/settingsModel";
 

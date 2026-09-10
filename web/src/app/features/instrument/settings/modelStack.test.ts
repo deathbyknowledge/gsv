@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiModelListEntry, AiModelsResult } from "@humansandmachines/gsv/protocol";
-import type { ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import { configuredModelOrder, modelOrderWrites, moveModel, moveModelTo, orderedModels, useModelFirst } from "./modelStack";
 
 const model = (id: string, source: AiModelListEntry["source"] = "personal"): AiModelListEntry => ({

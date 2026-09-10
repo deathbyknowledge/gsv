@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { instrumentContactConversationKey } from "../wire/queryKeys";
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";

@@ -92,7 +92,7 @@ Process history uses typed message, note, call, result, and event records. Stora
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
 - `workers/gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
-- `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
+- `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
@@ -180,7 +180,7 @@ gsv/
 │   ├── adapters/  # External-platform Worker implementations and test channel
 │   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
-├── web/           # Desktop shell and embedded app host
+├── web/           # Instrument web UI and browser-side gateway integration
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes

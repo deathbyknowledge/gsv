@@ -1,5 +1,5 @@
-import { normalizeLibraryDbId, normalizeLibraryPath } from "../../gsv-console/library/libraryModel";
-import { resolveLibraryLink } from "../../gsv-console/library/libraryLinks";
+import { normalizeLibraryDbId, normalizeLibraryPath } from "../../../services/memory/libraryModel";
+import { resolveLibraryLink } from "../../../services/memory/libraryLinks";
 import type { MemoryPageRef } from "../shared/navigation";
 
 export type MemoryLink = MemoryPageRef & { fragment: string };

@@ -1,5 +1,5 @@
 import type { AiModelsResult } from "@humansandmachines/gsv/protocol";
-import type { ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import {
   deleteModelProfile,
   editableModelSource,
@@ -12,7 +12,7 @@ import {
   writableModelProfiles,
   type ConsoleConfigWrite,
   type ConsoleModelProfile,
-} from "../../gsv-console/domain/consoleSettings";
+} from "../../../domain/system/consoleSettings";
 
 type ModelChange =
   | { kind: "edit"; name: string; values: Record<string, string>; clearApiKey: boolean }

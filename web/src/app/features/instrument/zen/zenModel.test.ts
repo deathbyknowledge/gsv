@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
-import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
-import { mergeTranscriptRows } from "../../chat/domain/transcriptMerge";
-import { transcriptRowsFromRecords } from "../../chat/domain/typedHistory";
-import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
+import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
+import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
+import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import {
   activitiesForRows,
   answerAttribution,

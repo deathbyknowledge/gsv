@@ -1,5 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv";
-import { createMachineNodeToken, type CreateMachineNodeTokenInput, type IssuedMachineNodeToken } from "../../gsv-console/backend/consoleService";
+import { createMachineNodeToken, type CreateMachineNodeTokenInput, type IssuedMachineNodeToken } from "../../../services/system/consoleService";
 
 /** A cancelled, undisplayed credential remains this operation's responsibility. */
 export async function issuePlacePairing(

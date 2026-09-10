@@ -1,3 +1,4 @@
+import "./catalog.css";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
 import { Search } from "../app/components/ui/Search";

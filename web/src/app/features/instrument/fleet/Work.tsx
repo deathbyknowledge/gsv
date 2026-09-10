@@ -3,7 +3,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import type { ConsoleAccount, ConsoleProcess } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount, ConsoleProcess } from "../../../domain/system/consoleModels";
 import type { FleetRow } from "../Instrument";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY, INSTRUMENT_SOURCES_KEY } from "../wire/queryKeys";

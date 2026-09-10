@@ -2,8 +2,8 @@ import { z } from "zod";
 import { ledgerLabel } from "./ledgerLabels";
 import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { AsciiPlanetVariant } from "../../../components/ui/AsciiPlanet";
-import type { ChatTranscriptValue } from "../../chat/domain/transcript";
-import type { ConsoleProcess, ConsoleProcessState, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import type { ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import type { ConsoleProcess, ConsoleProcessState, ConsoleTarget } from "../../../domain/system/consoleModels";
 import type { FleetRow } from "../Instrument";
 
 /** The cloud home is a place too; the target list does not carry it, so Fleet adds it. */

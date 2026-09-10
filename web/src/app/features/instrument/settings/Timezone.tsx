@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { saveConsoleConfig } from "../../gsv-console/backend/consoleService";
+import { saveConsoleConfig } from "../../../services/system/consoleService";
 import { SETTINGS_CONFIG_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty } from "./settingsShared";
 

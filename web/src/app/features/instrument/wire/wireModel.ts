@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
-import { normalizeProcessState } from "../../gsv-console/domain/consoleNormalization";
+import type { ConsoleProcess, ConsoleTarget } from "../../../domain/system/consoleModels";
+import { normalizeProcessState } from "../../../domain/system/consoleNormalization";
 import type { LedgerLine } from "../fleet/fleetModel";
 import { sysLedgerListResultSchema } from "../fleet/fleetModel";
 import type { SysLedgerChangedSignal } from "@humansandmachines/gsv/protocol";

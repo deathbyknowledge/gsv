@@ -1,11 +1,11 @@
 import { z } from "zod";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 
 export {
   consoleConfigQueryKey as SETTINGS_CONFIG_KEY,
   consoleModelsQueryKey as SETTINGS_MODELS_KEY,
   consoleMcpServersQueryKey as SETTINGS_MCP_KEY,
-} from "../../gsv-console/hooks/useConsoleData";
+} from "../../../services/system/useConsoleData";
 export const SETTINGS_INSTRUCTIONS_KEY = ["instrument", "settings", "instructions"] as const;
 
 export function canConfigure(account: ConsoleAccount, syscall: string): boolean {

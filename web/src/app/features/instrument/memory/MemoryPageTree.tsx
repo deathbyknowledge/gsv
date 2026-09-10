@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
-import { ancestorFolderPaths } from "../../gsv-console/library/libraryModel";
-import type { LibraryEntry, LibraryTreeNode } from "../../gsv-console/library/libraryTypes";
+import { ancestorFolderPaths } from "../../../services/memory/libraryModel";
+import type { LibraryEntry, LibraryTreeNode } from "../../../services/memory/libraryTypes";
 
 export function MemoryPageTree({ nodes, db, selectedPath, hidden, onOpen }: {
   nodes: readonly LibraryTreeNode[];

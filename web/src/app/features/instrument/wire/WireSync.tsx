@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import type { ConsoleTarget } from "../../gsv-console/domain/consoleModels";
-import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
+import type { ConsoleTarget } from "../../../domain/system/consoleModels";
+import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";

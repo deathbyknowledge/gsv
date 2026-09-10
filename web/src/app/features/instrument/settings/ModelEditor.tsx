@@ -13,8 +13,8 @@ import {
   saveConsoleConfigEntries,
   startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
-} from "../../gsv-console/backend/consoleService";
-import type { ConsoleAccount, ConsoleConfigEntry } from "../../gsv-console/domain/consoleModels";
+} from "../../../services/system/consoleService";
+import type { ConsoleAccount, ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import {
   createModelProfile,
   editableModelSource,
@@ -28,7 +28,7 @@ import {
   type ConsoleModelListing,
   type ConsoleModelProfile,
   type ConsoleConfigWrite,
-} from "../../gsv-console/domain/consoleSettings";
+} from "../../../domain/system/consoleSettings";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY, signInUrl } from "./settingsModel";
 import { modelConnectionChanged, modelProfileChangeWrites } from "./modelProfiles";

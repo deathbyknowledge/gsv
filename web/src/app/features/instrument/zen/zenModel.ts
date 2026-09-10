@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
-import type { ChatTranscriptRow, ChatTranscriptValue } from "../../chat/domain/transcript";
-import type { LibraryCollection } from "../../gsv-console/library/libraryTypes";
+import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import type { MemoryPageRef } from "../shared/navigation";
 
 /* ---------- the prompt line ---------- */

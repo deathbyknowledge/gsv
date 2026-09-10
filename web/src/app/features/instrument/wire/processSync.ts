@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/preact-query";
 import type { z } from "zod";
-import type { ConsoleProcess } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { INSTRUMENT_PROCESSES_KEY } from "./queryKeys";
 import { patchProcesses, type ProcessSignalName, type procSignalSchema } from "./wireModel";
 

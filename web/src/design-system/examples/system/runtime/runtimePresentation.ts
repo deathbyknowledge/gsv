@@ -1,0 +1,103 @@
+import type { StatusTone } from "../../../../app/components/ui/StatusDot";
+import {
+  detailRow,
+  listRowStatusForTone,
+  liveRows,
+} from "../../../../app/components/detail/consoleDetailRows";
+import type { ConsoleDetailSection } from "../../../../app/components/detail/ConsoleDetailPage";
+import { compactText, formatAge, uidLabel } from "../../../../app/domain/system/consoleFormat";
+import type { ConsoleProcess } from "../../../../app/domain/system/consoleModels";
+
+function isQueuedProcess(process: ConsoleProcess): boolean {
+  return process.state === "queued" || process.queuedCount > 0;
+}
+
+/** Running or queued — the tasks that count toward the "N/M ACTIVE" header.
+ *  Normalization already maps a set `activeRunId` to `state === "running"`, but
+ *  spell out the `activeRunId` check too so this matches the other runtime
+ *  "active/abortable" predicates and stays correct for any un-normalized input. */
+export function isActiveProcess(process: ConsoleProcess): boolean {
+  return process.state === "running"
+    || process.state === "waiting_hil"
+    || process.activeRunId !== null
+    || isQueuedProcess(process);
+}
+
+export function toneForProcess(process: ConsoleProcess): StatusTone {
+  if (process.state === "waiting_hil") return "warn";
+  if (process.state === "running") return "live";
+  if (isQueuedProcess(process)) return "update";
+  if (process.state === "unknown") return "warn";
+  return "idle";
+}
+
+export function statusForProcess(process: ConsoleProcess): string {
+  if (process.state === "waiting_hil") return "APPROVAL";
+  if (process.state === "running") return "RUNNING";
+  if (isQueuedProcess(process)) return "QUEUED";
+  if (process.state === "unknown") return "UNKNOWN";
+  return "IDLE";
+}
+
+export function iconForProcess(process: ConsoleProcess): string {
+  return process.interactive ? "chat" : "list";
+}
+
+export function processSub(process: ConsoleProcess): string {
+  return compactText(
+    [process.username || uidLabel(process.uid), process.cwd],
+    process.pid,
+  );
+}
+
+export function processBlurb(process: ConsoleProcess): string {
+  const owner = process.username || uidLabel(process.uid) || "unknown owner";
+  if (process.personal) {
+    return compactText(
+      [`${statusForProcess(process).toLowerCase()} Ship process`, owner, process.profile, process.cwd],
+      "The personal intelligence process and its inspectable durable activity.",
+    );
+  }
+  return compactText(
+    [`${statusForProcess(process).toLowerCase()} work`, owner, process.profile, process.cwd],
+    "Process-backed work with durable history and runtime controls.",
+  );
+}
+
+export function processDetailSections(process: ConsoleProcess): ConsoleDetailSection[] {
+  return [
+    {
+      title: "STATE",
+      meta: statusForProcess(process),
+      metaTone: toneForProcess(process),
+      rows: liveRows([
+        detailRow("state", "CURRENT STATE", process.rawState || statusForProcess(process), {
+          status: listRowStatusForTone(toneForProcess(process)),
+          statusLabel: statusForProcess(process),
+        }),
+        detailRow("active-run", "ACTIVE RUN", process.activeRunId),
+        detailRow("queued", "QUEUED MESSAGES", process.queuedCount),
+        detailRow("last-active", "LAST ACTIVE", process.lastActiveAt === null ? "" : formatAge(process.lastActiveAt)),
+        detailRow("created", "CREATED", process.createdAt === null ? "" : formatAge(process.createdAt)),
+      ]),
+    },
+    {
+      title: "OWNER",
+      meta: process.username || uidLabel(process.uid),
+      rows: liveRows([
+        detailRow("owner", "RUN AS", process.username || uidLabel(process.uid)),
+        detailRow("profile", "PROFILE", process.profile),
+        detailRow("interactive", "DIRECT CONVERSATION", process.interactive),
+        detailRow("parent", "PARENT WORK", process.parentPid),
+      ]),
+    },
+    {
+      title: "WORKSPACE",
+      meta: "CONTEXT",
+      rows: liveRows([
+        detailRow("workspace", "WORKSPACE", process.cwd),
+        detailRow("pid", "PROCESS ID", process.pid),
+      ]),
+    },
+  ];
+}

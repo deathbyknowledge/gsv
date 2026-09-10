@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHilRequest } from "@humansandmachines/gsv";
-import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleProcess, ConsoleTarget } from "../../../domain/system/consoleModels";
 import {
   CLOUD_TARGET_ID,
   describeToolCall,

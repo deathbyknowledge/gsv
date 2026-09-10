@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryEntry } from "../../gsv-console/library/libraryTypes";
+import type { LibraryEntry } from "../../../services/memory/libraryTypes";
 import { buildMemoryTree, memoryTreePages } from "./memoryTree";
 
 describe("Memory folder hierarchy", () => {

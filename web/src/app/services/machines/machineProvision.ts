@@ -1,0 +1,203 @@
+import { buildCliInstallCommand } from "../../domain/cliInstall";
+import {
+  DEVICE_ID_FORMAT_DESCRIPTION,
+  DEVICE_ID_MAX_LENGTH,
+  parseDeviceId,
+} from "../../domain/deviceId";
+
+export type MachineProvisionPlatform = "mac" | "windows" | "linux" | "browser";
+
+export type MachineProvisionStep = "platform" | "details" | "install" | "connect" | "success";
+
+export type MachineProvisionPlatformOption = {
+  id: MachineProvisionPlatform;
+  label: string;
+  meta: string;
+  commandLabel: string;
+  dotIcon: string;
+};
+
+export const MACHINE_PROVISION_STEPS: MachineProvisionStep[] = [
+  "platform",
+  "details",
+  "install",
+  "connect",
+  "success",
+];
+
+export const MACHINE_PROVISION_STEP_LABELS = [
+  "PLATFORM",
+  "DETAILS",
+  "INSTALL",
+  "CONNECT",
+  "SUCCESS",
+] as const;
+
+export const MACHINE_PLATFORM_OPTIONS: MachineProvisionPlatformOption[] = [
+  {
+    id: "mac",
+    label: "MAC",
+    meta: "Apple desktop or laptop",
+    commandLabel: "macOS / zsh",
+    dotIcon: "apple",
+  },
+  {
+    id: "windows",
+    label: "WINDOWS",
+    meta: "PowerShell target",
+    commandLabel: "Windows / PowerShell",
+    dotIcon: "windows",
+  },
+  {
+    id: "linux",
+    label: "LINUX",
+    meta: "Server or workstation",
+    commandLabel: "Linux / bash",
+    dotIcon: "redhat",
+  },
+  {
+    id: "browser",
+    label: "BROWSER",
+    meta: "Browser extension",
+    commandLabel: "Extension options",
+    dotIcon: "chrome",
+  },
+];
+
+const DEFAULT_EXPIRES_DAYS = 30;
+
+export function stepIndex(step: MachineProvisionStep): number {
+  return MACHINE_PROVISION_STEPS.indexOf(step);
+}
+
+export function platformOption(platform: MachineProvisionPlatform): MachineProvisionPlatformOption {
+  return MACHINE_PLATFORM_OPTIONS.find((option) => option.id === platform) ?? MACHINE_PLATFORM_OPTIONS[0];
+}
+
+export function defaultMachineName(platform: MachineProvisionPlatform): string {
+  if (platform === "mac") {
+    return "Mac workstation";
+  }
+  if (platform === "windows") {
+    return "Windows workstation";
+  }
+  if (platform === "browser") {
+    return "Chrome";
+  }
+  return "Linux machine";
+}
+
+export function machineDeviceIdFromName(name: string): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, DEVICE_ID_MAX_LENGTH);
+
+  return base || "machine";
+}
+
+export function normalizeExpiresDays(value: string): number {
+  const parsed = Number(value.trim() || String(DEFAULT_EXPIRES_DAYS));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_EXPIRES_DAYS;
+  }
+  return Math.max(1, Math.min(365, Math.floor(parsed)));
+}
+
+export function expiresAtFromDays(days: number, now = Date.now()): number {
+  return now + normalizeExpiresDays(String(days)) * 24 * 60 * 60 * 1000;
+}
+
+export function buildMachineInstallCommand(platform: MachineProvisionPlatform, release: string): string {
+  if (platform === "browser") {
+    return "";
+  }
+  return buildCliInstallCommand(platform === "windows" ? "windows" : "unix", release);
+}
+
+export function buildBrowserExtensionConfig(input: {
+  origin: string;
+  username: string;
+  deviceId: string;
+  token: string;
+}) {
+  const deviceId = requireDeviceId(input.deviceId);
+  return {
+    gatewayUrl: buildGatewayWsUrl(input.origin),
+    username: input.username.trim() || "root",
+    token: input.token.trim(),
+    deviceId,
+  };
+}
+
+export function buildMachineBootstrapCommand(input: {
+  origin: string;
+  platform: MachineProvisionPlatform;
+  username: string;
+  deviceId: string;
+  token: string;
+}): string {
+  const gatewayWs = escapeCliValue(buildGatewayWsUrl(input.origin));
+  const username = escapeCliValue(input.username.trim() || "root");
+  const deviceId = requireDeviceId(input.deviceId);
+  const token = escapeCliValue(input.token.trim());
+  const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
+  const cli = cliExecutableName(input.platform);
+
+  return [
+    `${cli} config --local set gateway.url "${gatewayWs}"`,
+    `${cli} config --local set gateway.username "${username}"`,
+    `${cli} config --local set node.token "${token}"`,
+    `${cli} daemon install --id "${deviceId}" --workspace ${workspace}`,
+  ].join("\n");
+}
+
+export function buildMachineRunCommand(input: {
+  origin: string;
+  platform: MachineProvisionPlatform;
+  username: string;
+  deviceId: string;
+  token: string;
+}): string {
+  const gatewayWs = escapeCliValue(buildGatewayWsUrl(input.origin));
+  const username = escapeCliValue(input.username.trim() || "root");
+  const deviceId = requireDeviceId(input.deviceId);
+  const token = escapeCliValue(input.token.trim());
+  const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
+  const cli = cliExecutableName(input.platform);
+
+  return `${cli} --url "${gatewayWs}" --user "${username}" --token "${token}" device run --id "${deviceId}" --workspace ${workspace}`;
+}
+
+function cliExecutableName(platform: MachineProvisionPlatform): string {
+  return platform === "windows" ? "gsv.exe" : "gsv";
+}
+
+function buildGatewayWsUrl(origin: string): string {
+  const normalizedOrigin = trimTrailingSlash(origin);
+  if (normalizedOrigin.startsWith("https://")) {
+    return `wss://${normalizedOrigin.slice("https://".length)}/ws`;
+  }
+  if (normalizedOrigin.startsWith("http://")) {
+    return `ws://${normalizedOrigin.slice("http://".length)}/ws`;
+  }
+  return `${normalizedOrigin}/ws`;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.trim().replace(/\/+$/g, "");
+}
+
+function escapeCliValue(value: string): string {
+  return value.replaceAll("\"", "\\\"");
+}
+
+function requireDeviceId(value: string): string {
+  const deviceId = parseDeviceId(value);
+  if (!deviceId) {
+    throw new Error(`Invalid device ID. ${DEVICE_ID_FORMAT_DESCRIPTION}`);
+  }
+  return deviceId;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ConsoleProcess, ConsoleTarget } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleProcess, ConsoleTarget } from "../../../domain/system/consoleModels";
 import type { LedgerLine } from "../fleet/fleetModel";
 import { isProcessSignal, patchProcesses, patchTargets, prependLedger } from "./wireModel";
 

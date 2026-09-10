@@ -1,32 +1,25 @@
+import { lazy, Suspense } from "preact/compat";
 import { AppProviders } from "./providers/AppProviders";
-import { DesktopShell } from "./features/desktop/DesktopShell";
-import { Catalog } from "../design-system/catalog";
-import { TemplatePreview } from "../design-system/previews";
+import { LoadingState } from "./components/ui/Spinner";
 import { Instrument } from "./features/instrument/Instrument";
 
+const Catalog = lazy(() => import("../design-system/catalog").then(({ Catalog }) => ({ default: Catalog })));
+const TemplatePreview = lazy(() => import("../design-system/previews").then(({ TemplatePreview }) => ({ default: TemplatePreview })));
 const DESIGN_SYSTEM_PATHS = new Set(["/design", "/design.html", "/design-system"]);
 const TEMPLATE_PREVIEW_PREFIX = "/design/preview/";
-const INSTRUMENT_PATHS = new Set(["/zen", "/fleet", "/first-day", "/memory", "/zen/settings"]);
 
 export function App() {
   const { pathname } = window.location;
   if (pathname.startsWith(TEMPLATE_PREVIEW_PREFIX)) {
-    return <TemplatePreview id={pathname.slice(TEMPLATE_PREVIEW_PREFIX.length)} />;
+    return <Suspense fallback={<LoadingState>Loading preview…</LoadingState>}><TemplatePreview id={pathname.slice(TEMPLATE_PREVIEW_PREFIX.length)} /></Suspense>;
   }
   if (DESIGN_SYSTEM_PATHS.has(pathname)) {
-    return <Catalog />;
-  }
-  if (INSTRUMENT_PATHS.has(pathname)) {
-    return (
-      <AppProviders>
-        <Instrument initialPath={pathname} />
-      </AppProviders>
-    );
+    return <Suspense fallback={<LoadingState>Loading catalog…</LoadingState>}><Catalog /></Suspense>;
   }
 
   return (
     <AppProviders>
-      <DesktopShell />
+      <Instrument initialPath={pathname} />
     </AppProviders>
   );
 }

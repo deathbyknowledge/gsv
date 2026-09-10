@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/preact-query";
-import { extractLibraryTitle } from "../../gsv-console/library/libraryModel";
-import type { LibrarySavePageInput } from "../../gsv-console/library/libraryTypes";
+import { extractLibraryTitle } from "../../../services/memory/libraryModel";
+import type { LibrarySavePageInput } from "../../../services/memory/libraryTypes";
 import { INSTRUMENT_MEMORY_KEY } from "../wire/queryKeys";
 
 export async function refreshSavedMemoryPage(queryClient: QueryClient, input: LibrarySavePageInput): Promise<void> {

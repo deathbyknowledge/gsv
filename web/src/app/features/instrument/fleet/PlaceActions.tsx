@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { useQueryClient } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import type { IssuedMachineNodeToken } from "../../gsv-console/backend/consoleService";
-import { useDeleteConsoleMachine } from "../../gsv-console/hooks/useConsoleData";
+import type { IssuedMachineNodeToken } from "../../../services/system/consoleService";
+import { useDeleteConsoleMachine } from "../../../services/system/useConsoleData";
 import {
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
   expiresAtFromDays,
   type MachineProvisionPlatform,
-} from "../../gsv-console/machines/machineProvision";
+} from "../../../services/machines/machineProvision";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { placeActions, type Place } from "./fleetModel";
 import { issuePlacePairing, pairingOrigin } from "./placePairing";

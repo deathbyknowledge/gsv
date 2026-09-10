@@ -3,11 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { readChatResource } from "../../chat/backend/chatService";
-import { useMediaObjectUrl } from "../../chat/hooks/useChatMediaSource";
-import { deleteFilesPath, writeFilesPath } from "../../files/backend/filesService";
+import { readChatResource } from "../../../services/chat/backend/chatService";
+import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
+import { deleteFilesPath, writeFilesPath } from "../../../services/files/backend/filesService";
 import { canConfigure } from "../settings/settingsModel";
-import type { ConsoleAccount } from "../../gsv-console/domain/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { useDraftGuard } from "../shared/useDraftGuard";
 
 export type FleetFile = { target: string; path: string; name: string };

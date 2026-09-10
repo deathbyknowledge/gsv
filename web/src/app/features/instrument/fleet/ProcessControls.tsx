@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
 import { z } from "zod";
-import { reasoningOptions } from "../../../components/ui/AgentEditor";
+import { reasoningOptions } from "../../../domain/reasoning";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { requestFsRead } from "../../../services/gateway/fsRead";
-import { getChatProcessAiConfig, setChatProcessAiConfig, spawnChatProcess } from "../../chat/backend/chatService";
-import { loadConsoleModels } from "../../gsv-console/backend/consoleService";
+import { getChatProcessAiConfig, setChatProcessAiConfig, spawnChatProcess } from "../../../services/chat/backend/chatService";
+import { loadConsoleModels } from "../../../services/system/consoleService";
 import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 
 const modelChoicesSchema = z.array(z.object({ id: z.string(), name: z.string() }));
