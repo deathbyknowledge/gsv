@@ -131,7 +131,7 @@ export function Instructions({ account, active, onDirty }: SettingsSectionProps)
         <div class="settings-actions">
           {newDraft ? <button class="ibtn" type="submit" disabled={!canCreate}>{create.isPending ? <LoadingState>creating…</LoadingState> : "create instruction"}</button>
             : <button class="ibtn" type="submit" disabled={!editable || !draft || draft.content === draft.original}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save instructions"}</button>}
-          {!newDraft && name && draft && draft.content !== draft.original && <button class="ibtn" type="button" disabled={pending} onClick={() => { forgetDraft(name); save.reset(); }}>discard changes</button>}
+          {!newDraft && name && draft && draft.content !== draft.original && <button class="settings-text-action" type="button" disabled={pending} onClick={() => { forgetDraft(name); save.reset(); }}>discard changes</button>}
           {!newDraft && saved === name && <span role="status">saved</span>}
         </div>
       </>}

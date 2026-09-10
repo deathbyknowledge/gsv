@@ -55,13 +55,13 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
         <small>{server.tools.length} tools · {server.resourceCount} resources · {server.promptCount} prompts{!own ? " · read only" : ""}</small>
         {server.error && <p class="settings-error">{server.error}</p>}
         <div class="settings-actions">
-          {own && auth && <a class="ibtn" href={auth} target="_blank" rel="noopener noreferrer">sign in</a>}
-          <button class="ibtn" disabled={!connected || !own || !canConfigure(account, "sys.mcp.refresh") || change.isPending} onClick={() => change.mutate({ id: server.serverId, action: "refresh" })}>refresh</button>
+          {own && auth && <a class="settings-text-action" href={auth} target="_blank" rel="noopener noreferrer">sign in</a>}
+          <button class="settings-text-action" disabled={!connected || !own || !canConfigure(account, "sys.mcp.refresh") || change.isPending} onClick={() => change.mutate({ id: server.serverId, action: "refresh" })}>refresh</button>
           {removeId === server.serverId ? <>
             <span>Remove this MCP server?</span>
-            <button class="ibtn" disabled={!connected || change.isPending || !own || !canConfigure(account, "sys.mcp.remove")} onClick={() => change.mutate({ id: server.serverId, action: "remove" })}>confirm remove</button>
-            <button class="ibtn" disabled={change.isPending} onClick={() => setRemoveId(null)}>keep</button>
-          </> : <button class="ibtn" disabled={!connected || !own || !canConfigure(account, "sys.mcp.remove") || change.isPending} onClick={() => setRemoveId(server.serverId)}>remove</button>}
+            <button class="settings-text-action settings-danger" disabled={!connected || change.isPending || !own || !canConfigure(account, "sys.mcp.remove")} onClick={() => change.mutate({ id: server.serverId, action: "remove" })}>confirm remove</button>
+            <button class="settings-text-action" disabled={change.isPending} onClick={() => setRemoveId(null)}>keep</button>
+          </> : <button class="settings-text-action settings-danger" disabled={!connected || !own || !canConfigure(account, "sys.mcp.remove") || change.isPending} onClick={() => setRemoveId(server.serverId)}>remove</button>}
         </div>
       </li>;
     })}</ul>

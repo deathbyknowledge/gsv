@@ -82,15 +82,15 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
             }}>{options.targets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>{rule.target && <small>{rule.target}</small>}</label>
             <label>Action<select aria-label={`Rule ${index + 1} action`} value={rule.action} disabled={usesDefault} onChange={(event) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(event.currentTarget.value) } : entry) })}>{APPROVAL_ACTIONS.map((action) => <option key={action} value={action}>{actionLabel(action)}</option>)}</select></label>
             <div class="settings-actions">
-              <button class="ibtn" type="button" disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>move up</button>
-              <button class="ibtn" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>remove</button>
+              <button class="settings-text-action" type="button" disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>move up</button>
+              <button class="settings-text-action" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>remove</button>
             </div>
           </li>;
           })}</ol>
           <div class="settings-actions">
-            <button class="ibtn" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: [...policy.rules, { match: "", action: "ask" }] })}>add rule</button>
+            <button class="settings-text-action" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: [...policy.rules, { match: "", action: "ask" }] })}>add rule</button>
             <button class="ibtn" type="submit" disabled={!dirty}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save policy"}</button>
-            {dirty && <button class="ibtn" type="button" onClick={() => { setDraft(null); setError(null); save.reset(); }}>discard changes</button>}
+            {dirty && <button class="settings-text-action" type="button" onClick={() => { setDraft(null); setError(null); save.reset(); }}>discard changes</button>}
             {saved && <span role="status">saved</span>}
           </div>
         </>}

@@ -34,6 +34,7 @@
 .settings-model-details strong { color: var(--text); font-weight: 500; }
 .settings-model-details > span { color: var(--text-dim); font-size: .75rem; }
 .settings-model-stack .settings-actions { justify-content: flex-end; }
+.settings-model-move { min-width: 2rem; min-height: 2rem; }
 .settings-model-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5rem; margin-top: 2.5rem; }
 .settings-model-heading h2 { margin: 0; }
 .settings-model-stack > li.is-draggable { cursor: grab; touch-action: none; user-select: none; }
@@ -50,7 +51,7 @@
 .settings-model-inspector dt { min-width: 10rem; color: var(--text-dim); }
 .settings-model-inspector dd { margin: 0; overflow-wrap: anywhere; }
 .settings-model-inspector .settings-actions { justify-content: flex-start; }
-.settings .settings-danger { color: var(--error); }
+.settings .settings-danger, .settings .settings-danger:hover { color: var(--error); }
 .settings-add-model { max-width: 34rem; padding-top: 1.5rem; }
 .settings-add-model label { gap: .5rem; }
 .settings-add-model label small { font-size: .7rem; }
@@ -68,7 +69,6 @@
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
-.settings-messenger-heading .ibtn { font-size: .75rem; }
 .settings-messenger-links { margin: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }
 .settings-messenger-status i { width: .4rem; height: .4rem; background: var(--text-dim); flex-shrink: 0; }

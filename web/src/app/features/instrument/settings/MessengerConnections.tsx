@@ -40,7 +40,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {!canList && <p class="settings-muted">Your account cannot view messaging connections.</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">Loading messaging connections…</LoadingState>}
-    {connections.isError && <button class="ibtn" disabled={!connected || connections.isFetching} onClick={() => void connections.refetch()}>try again</button>}
+    {connections.isError && <button class="settings-text-action" disabled={!connected || connections.isFetching} onClick={() => void connections.refetch()}>try again</button>}
     {connections.data && MESSENGERS.map(({ id, name }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
@@ -49,7 +49,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
           <h2>{name}</h2>
-          <button class="ibtn" disabled={pairing === id ? unlink.isPending : !canConnect} onClick={() => { setRemoving(null); setPairing(pairing === id ? null : id); }}>
+          <button class="settings-text-action" disabled={pairing === id ? unlink.isPending : !canConnect} onClick={() => { setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? "close setup" : links.length ? "connect another" : `connect ${name}`}
           </button>
         </div>
@@ -68,11 +68,11 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             <div class="settings-actions">
               {isRemoving ? <>
                 <span>Unlink this identity from your Ship?</span>
-                <button class="ibtn settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>unlinking…</LoadingState> : "confirm unlink"}</button>
-                <button class="ibtn" disabled={unlink.isPending} onClick={() => setRemoving(null)}>keep linked</button>
+                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>unlinking…</LoadingState> : "confirm unlink"}</button>
+                <button class="settings-text-action" disabled={unlink.isPending} onClick={() => setRemoving(null)}>keep linked</button>
               </> : <>
-                <button class="ibtn" disabled={!canConnect} onClick={() => { setRemoving(null); setPairing(id); }}>reconnect</button>
-                <button class="ibtn" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => { unlink.reset(); setRemoving(link); setPairing(null); }}>unlink</button>
+                <button class="settings-text-action" disabled={!canConnect} onClick={() => { setRemoving(null); setPairing(id); }}>reconnect</button>
+                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => { unlink.reset(); setRemoving(link); setPairing(null); }}>unlink</button>
               </>}
             </div>
           </li>;

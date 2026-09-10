@@ -78,7 +78,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     {modelEditor && models.data && config.data ? <ModelEditor key={modelEditor.profile?.id ?? "new"} account={account} config={config.data} models={models.data} profile={modelEditor.profile} active={active} onDirty={setModelDraftDirty} onCancel={() => {
       if (!modelDraftDirty || window.confirm("Discard these unsaved model changes?")) { setModelDraftDirty(false); setModelEditor(null); }
     }} onSaved={() => { setModelDraftDirty(false); setModelEditor(null); setSaved(modelEditor.profile ? "model-updated" : "model-added"); }} /> : <>
-    <div class="settings-model-heading"><h2>Model order</h2><button class="ibtn" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setModelEditor({}); }}>add model</button></div>
+    <div class="settings-model-heading"><h2>Model order</h2><button class="settings-text-action" type="button" disabled={!stackEditable || saving || orderDirty} onClick={() => { setSaved(null); setModelEditor({}); }}>add model</button></div>
     {orderDirty && <p class="settings-muted">Save or discard your order changes before adding, editing or removing a model.</p>}
     {saved === "model-added" && <p role="status">Model added to your stack.</p>}
     {saved === "model-updated" && <p role="status">Model updated.</p>}
@@ -126,10 +126,10 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
             <button class="settings-text-action settings-model-disclosure" type="button" aria-expanded={expanded} aria-controls={`model-details-${model.id}`} aria-label={`Details for ${model.name}`} disabled={saving} onClick={() => { setExpandedModel(expanded ? null : model.id); setRemovingModel(null); removeModel.reset(); }}>{expanded ? "close details" : "details"}</button>
           </div>
           <div class="settings-actions">
-            {index > 0 && <button class="ibtn" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, model.id)); }}>use first</button>}
+            {index > 0 && <button class="settings-text-action" type="button" aria-label={`Use ${model.name} first`} disabled={!stackEditable || saving} onClick={() => { if (models.data && order) updateOrder(useModelFirst(models.data, order, model.id)); }}>use first</button>}
             {rows.length > 1 && <>
-              <button class="ibtn" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || index === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, -1)); }}>↑</button>
-              <button class="ibtn" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || index === rows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, 1)); }}>↓</button>
+              <button class="settings-text-action settings-model-move" type="button" aria-label={`Move ${model.name} up`} disabled={!stackEditable || saving || index === 0} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, -1)); }}>↑</button>
+              <button class="settings-text-action settings-model-move" type="button" aria-label={`Move ${model.name} down`} disabled={!stackEditable || saving || index === rows.length - 1} onClick={() => { if (models.data && order) updateOrder(moveModel(models.data, order, model.id, 1)); }}>↓</button>
             </>}
           </div>
           {expanded && <div class="settings-model-inspector" id={`model-details-${model.id}`}>
@@ -156,8 +156,8 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       {rows.length > 1 && <p class="settings-muted">Drag a model or use the arrows to change your fallback order.</p>}
       <div class="settings-actions">
         <button class="ibtn" disabled={!stackEditable || saving || !orderDirty} type="submit">{saveOrder.isPending ? <LoadingState>saving…</LoadingState> : "save model order"}</button>
-        {orderDirty && <button class="ibtn" type="button" disabled={saving} onClick={() => { setOrderDraft(null); saveOrder.reset(); }}>discard changes</button>}
-        {order?.customized && <button class="ibtn" type="button" disabled={!stackEditable || saving} onClick={() => { if (models.data) updateOrder({ ids: models.data.models.map((model) => model.id), customized: false }); }}>use configured order</button>}
+        {orderDirty && <button class="settings-text-action" type="button" disabled={saving} onClick={() => { setOrderDraft(null); saveOrder.reset(); }}>discard changes</button>}
+        {order?.customized && <button class="settings-text-action" type="button" disabled={!stackEditable || saving} onClick={() => { if (models.data) updateOrder({ ids: models.data.models.map((model) => model.id), customized: false }); }}>use configured order</button>}
         {saved === "models" && <span role="status">saved</span>}
       </div>
     </form>
