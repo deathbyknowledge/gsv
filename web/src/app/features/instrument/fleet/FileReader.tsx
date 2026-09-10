@@ -110,8 +110,8 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
           <button class="file-reader-action is-primary" disabled={!connected || busy || !dirty} onClick={() => save.mutate(draft)}>{save.isPending ? "saving…" : "save"}</button>
           <button class="file-reader-action" disabled={busy} onClick={() => { if (!dirty || window.confirm("Discard your unsaved file changes?")) { setDraft(null); save.reset(); } }}>cancel</button>
         </> : <>
-          {writable && text !== null && complete && <button class="file-reader-action" onClick={() => { save.reset(); setDraft({ original: text, text }); }}>edit</button>}
-          {resource && (downloadUrl ? <a class="file-reader-action" href={downloadUrl} download={file.name}>download again</a> : <button class="file-reader-action" disabled={download.isPending} onClick={() => download.mutate()}>{download.isPending ? "preparing…" : "download"}</button>)}
+          {writable && text !== null && complete && <button class="file-reader-action" disabled={busy} onClick={() => { save.reset(); setDraft({ original: text, text }); }}>edit</button>}
+          {resource && (downloadUrl && !busy ? <a class="file-reader-action" href={downloadUrl} download={file.name}>download again</a> : <button class="file-reader-action" disabled={busy || download.isPending} onClick={() => download.mutate()}>{download.isPending ? "preparing…" : "download"}</button>)}
           {removable && <button class="file-reader-action is-danger" type="button" disabled={busy} onClick={() => setRemoving(true)}>delete</button>}
         </>}
       </div>
