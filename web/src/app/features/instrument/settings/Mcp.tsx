@@ -1,4 +1,3 @@
-import { MessengerConnections } from "./MessengerConnections";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
@@ -9,9 +8,10 @@ import { canConfigure, SETTINGS_MCP_KEY, signInUrl } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { parseMcpHeaders, type McpHeaderDraft } from "./mcpHeaders";
 
-export function Integrations({ account, active, onDirty }: SettingsSectionProps) {
+export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
+  const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [transport, setTransport] = useState<ConsoleMcpTransport>("auto");
@@ -20,33 +20,32 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
   const [removeId, setRemoveId] = useState<string | null>(null);
   const canList = canConfigure(account, "sys.mcp.list");
   const servers = useQuery({ queryKey: SETTINGS_MCP_KEY, queryFn: () => loadConsoleMcpServers(client), enabled: connected && active && canList });
-  useSettingsDirty(name !== "" || url !== "" || transport !== "auto" || headers.some((header) => header.name !== "" || header.value !== ""), onDirty);
+  const dirty = name !== "" || url !== "" || transport !== "auto" || headers.some((header) => header.name !== "" || header.value !== "");
+  useSettingsDirty(dirty, onDirty);
   const add = useMutation({
     mutationFn: () => {
       if (!parsedHeaders.ok) throw new Error(parsedHeaders.error);
       return addConsoleMcpServer(client, { name, url, transport, headers: parsedHeaders.headers });
     },
-    onSuccess: async () => { setName(""); setUrl(""); setTransport("auto"); setHeaders([]); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
+    onSuccess: async () => { setName(""); setUrl(""); setTransport("auto"); setHeaders([]); setAdding(false); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
   });
   const change = useMutation({
     mutationFn: async (input: { id: string; action: "remove" | "refresh" }) => {
       if (input.action === "remove") {
         const result = await removeConsoleMcpServer(client, input.id);
-        if (!result.removed) throw new Error("The integration was not removed. Refresh and try again.");
+        if (!result.removed) throw new Error("The MCP server was not removed. Refresh and try again.");
       } else {
         await refreshConsoleMcpServer(client, input.id);
       }
     },
     onSuccess: async () => { setRemoveId(null); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
   });
-  return <section aria-labelledby="settings-integrations-title">
-    <h1 id="settings-integrations-title">Integrations</h1>
-    <p class="settings-intro">Connect messaging and tools to your Ship.</p>
-    <MessengerConnections account={account} active={active} />
-    <h2>MCP servers</h2>
-    {!canList && <p class="settings-muted">Your account cannot list integrations.</p>}
+  return <section aria-labelledby="settings-mcp-title">
+    <h1 id="settings-mcp-title">MCP servers</h1>
+    <p class="settings-intro">Connect tools and resources to your Ship.</p>
+    {!canList && <p class="settings-muted">Your account cannot list MCP servers.</p>}
     <SettingsError error={servers.error ?? change.error} />
-    {servers.isPending && connected && canList && <LoadingState variant="panel">Loading integrations…</LoadingState>}
+    {servers.isPending && connected && canList && <LoadingState variant="panel">Loading MCP servers…</LoadingState>}
     <ul class="settings-list">{servers.data?.map((server) => {
       const own = account.uid === 0 || server.uid === account.uid;
       const auth = signInUrl(server.authUrl);
@@ -59,7 +58,7 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
           {own && auth && <a class="ibtn" href={auth} target="_blank" rel="noopener noreferrer">sign in</a>}
           <button class="ibtn" disabled={!connected || !own || !canConfigure(account, "sys.mcp.refresh") || change.isPending} onClick={() => change.mutate({ id: server.serverId, action: "refresh" })}>refresh</button>
           {removeId === server.serverId ? <>
-            <span>Remove this integration?</span>
+            <span>Remove this MCP server?</span>
             <button class="ibtn" disabled={!connected || change.isPending || !own || !canConfigure(account, "sys.mcp.remove")} onClick={() => change.mutate({ id: server.serverId, action: "remove" })}>confirm remove</button>
             <button class="ibtn" disabled={change.isPending} onClick={() => setRemoveId(null)}>keep</button>
           </> : <button class="ibtn" disabled={!connected || !own || !canConfigure(account, "sys.mcp.remove") || change.isPending} onClick={() => setRemoveId(server.serverId)}>remove</button>}
@@ -67,12 +66,16 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
       </li>;
     })}</ul>
     {servers.data?.length === 0 && <p>No MCP servers are connected.</p>}
-    <h2>Add an MCP server</h2>
-    {!canConfigure(account, "sys.mcp.add") && <p class="settings-muted">Your account cannot add integrations.</p>}
+    {!canConfigure(account, "sys.mcp.add") && <p class="settings-muted">Your account cannot add MCP servers.</p>}
+    {!adding ? <button class="settings-text-action" type="button" disabled={!connected || !canConfigure(account, "sys.mcp.add")} onClick={() => { add.reset(); setAdding(true); }}>add MCP server</button> : <div class="settings-mcp-create">
+    <div class="settings-instruction-heading"><h2>New MCP server</h2><button class="settings-text-action" type="button" disabled={add.isPending} onClick={() => {
+      if (dirty && !window.confirm("Discard this new MCP server?")) return;
+      setName(""); setUrl(""); setTransport("auto"); setHeaders([]); setAdding(false); add.reset();
+    }}>cancel</button></div>
     <SettingsError error={add.error} />
-    <form onSubmit={(event) => { event.preventDefault(); if (connected && canConfigure(account, "sys.mcp.add")) add.mutate(); }}>
+    <form aria-label="New MCP server" onSubmit={(event) => { event.preventDefault(); if (connected && !add.isPending && canConfigure(account, "sys.mcp.add")) add.mutate(); }}>
       <fieldset disabled={!connected || !canConfigure(account, "sys.mcp.add") || add.isPending}>
-        <label>Name<input value={name} required onInput={(event) => setName(event.currentTarget.value)} placeholder="My tools" /></label>
+        <label>Name<input autoFocus value={name} required onInput={(event) => setName(event.currentTarget.value)} placeholder="My tools" /></label>
         <label>Server URL<input type="url" value={url} required onInput={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/mcp" /></label>
         <label>Transport<select value={transport} onChange={(event) => {
           const value = event.currentTarget.value;
@@ -92,5 +95,6 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
         <button class="ibtn" type="submit" disabled={!name.trim() || !signInUrl(url) || !parsedHeaders.ok}>{add.isPending ? <LoadingState>adding…</LoadingState> : "add server"}</button>
       </fieldset>
     </form>
+    </div>}
   </section>;
 }

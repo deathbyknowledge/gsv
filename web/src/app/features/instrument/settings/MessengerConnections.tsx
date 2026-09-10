@@ -34,7 +34,9 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     },
   });
 
-  return <section class="settings-messengers" aria-label="Messaging connections">
+  return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
+    <h1 id="settings-messengers-title">Messengers</h1>
+    <p class="settings-intro">Choose where you talk to your Ship.</p>
     {!canList && <p class="settings-muted">Your account cannot view messaging connections.</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">Loading messaging connections…</LoadingState>}
