@@ -103,7 +103,6 @@
 }
 .memory-folder > summary::-webkit-details-marker { display: none; }
 .memory-folder > summary:hover { background: var(--hover); }
-.memory-folder > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .memory-folder .tri { width: 1ch; flex: none; color: var(--faint); }
 .memory-folder.has-current > summary { color: var(--accent); }
 .memory-folder-pages { margin-left: 16px; border-left: 1px solid var(--border); }

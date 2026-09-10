@@ -4,7 +4,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   /* header · body · the command line (absent while closed) · status; no fixed slot that can go empty */
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  /* The header is now shared; command feedback lives in the conditional command line. */
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -59,7 +60,6 @@
 .fleet-block h2 .fleet-heading-action ~ .count { margin-left: 0; }
 .fleet-heading-action { border: 0; background: none; padding: 3px 0; color: var(--text-dim); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: lowercase; cursor: pointer; }
 .fleet-heading-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-.fleet-heading-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .fleet-heading-action:disabled { opacity: .45; cursor: default; }
 .fleet-heading-action.is-icon { font-size: 16px; line-height: 1; padding-inline: 3px; }
 .fleet-block .note {
@@ -111,9 +111,9 @@
 .fleet tr[data-row].is-sel td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
 }
-.fleet tr[data-row]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.fleet tr[data-row]:focus-visible td:first-child {
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
 }
 .fleet .dot {
   display: inline-block;
@@ -342,26 +342,13 @@
 .fleet-cmdline input:focus {
   text-shadow: var(--glow-focus);
 }
-.fleet-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 24px;
-  row-gap: 6px;
-  padding: 0 var(--space-5);
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  min-height: 30px;
-}
-.fleet-status .right {
-  margin-left: auto;
-}
-.fleet-status .is-live {
+.fleet-cmdline .progress {
   color: var(--live);
+}
+.fleet-cmdline .error {
+  color: var(--error);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* tables never widen the page: each one scrolls inside its own wrapper, long cells truncate */
@@ -423,7 +410,7 @@
 .fleet-ledger .row:hover { background: var(--hover); }
 .fleet-ledger .row.is-sel { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 .fleet-ledger .row > span { padding: 1px 0; }
-.fleet .fleet-ledger .row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fleet-ledger .row:focus-visible .what { text-decoration: underline; text-underline-offset: 0.25em; }
 .fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }
 
 .fleet tr.more.is-sel td { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }

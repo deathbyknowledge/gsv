@@ -420,7 +420,6 @@
 .zen-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; font-size: .7rem; color: var(--text-dim); }
 .zen-compose-actions button, .zen-draft-attachment button, .zen-media button { padding: .2rem 0; border: 0; background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
 .zen-compose-actions button:hover, .zen-draft-attachment button:hover, .zen-media button:hover { color: var(--accent); }
-.zen-compose-actions button:focus-visible, .zen-draft-attachment button:focus-visible, .zen-media a:focus-visible, .zen-media button:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
 .zen-compose-actions button:disabled, .zen-draft-attachment button:disabled { opacity: .45; cursor: not-allowed; }
 .zen-draft-attachments { display: flex; flex-wrap: wrap; gap: .75rem; padding: 0; margin: 0 0 1rem; list-style: none; max-height: 22vh; overflow: auto; }
 .zen-draft-attachment { display: flex; align-items: center; gap: .65rem; max-width: 100%; padding: .5rem .75rem; border: 1px solid var(--border); font-size: .75rem; }

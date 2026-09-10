@@ -55,7 +55,6 @@
 .settings-add-model label small { font-size: .7rem; }
 .settings-text-action { border: 0; padding: .25rem 0; background: none; color: var(--text-dim); font: inherit; font-size: .75rem; cursor: pointer; }
 .settings-text-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-.settings-text-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .settings-model-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; }
 .settings-model-options summary { cursor: pointer; font-size: .8rem; color: var(--text-dim); }
 .settings-model-options[open] summary { margin-bottom: 1.5rem; }

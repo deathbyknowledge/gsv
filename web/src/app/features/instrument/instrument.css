@@ -30,9 +30,12 @@
   padding: 0;
   cursor: pointer;
 }
-.instrument :is(button, a, [tabindex]):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.instrument :is(button, a, summary, [tabindex]):focus {
+  outline: none;
+}
+.instrument :is(button, a, summary):focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
 }
 :where(.instrument) a {
   color: var(--accent);
@@ -129,7 +132,6 @@
 }
 .instrument-header > * {
   pointer-events: auto;
-  background: var(--void);
   padding: 4px 8px;
   min-width: 0;
 }

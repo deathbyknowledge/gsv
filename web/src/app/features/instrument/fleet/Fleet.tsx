@@ -588,32 +588,13 @@ export function Fleet({ initialReference, onZen }: FleetProps) {
         </aside>
       </div>
 
-      <form class={`fleet-cmdline${cmdOpen ? " is-open" : ""}`} onSubmit={submitCommand}>
+      <form class={`fleet-cmdline${cmdOpen || runCommand.isPending || runCommand.error ? " is-open" : ""}`} onSubmit={submitCommand}>
         <span class="s">›</span>
         <span class="place">{cmdPlace?.label ?? "your cloud home"}</span>
-        <input ref={cmdInputRef} type="text" placeholder="run a command on this place" aria-label="Fleet command" spellcheck={false} />
+        <input ref={cmdInputRef} hidden={!cmdOpen} type="text" placeholder="run a command on this place" aria-label="Fleet command" spellcheck={false} />
+        {runCommand.isPending ? <span class="progress" role="status"><LoadingState>running…</LoadingState></span> : null}
+        {runCommand.error ? <span class="error" role="alert">{String(runCommand.error)}</span> : null}
       </form>
-
-      <div class="fleet-status">
-        <span>
-          <kbd>j</kbd>
-          <kbd>k</kbd>move
-        </span>
-        <span>
-          <kbd>enter</kbd>open
-        </span>
-        <span>
-          <kbd>/</kbd>command</span><span><kbd>t</kbd>{technical ? "plain words" : "technical"}
-        </span>
-        <span>
-          <kbd>z</kbd>zen
-        </span>
-        {runCommand.isPending ? <span class="is-live"><LoadingState>running…</LoadingState></span> : null}
-        {runCommand.error ? <span style="color: var(--error)">{String(runCommand.error)}</span> : null}
-        <span class="right">
-          {clockTime(now)} · {ledgerState}
-        </span>
-      </div>
     </main>
   );
 }
