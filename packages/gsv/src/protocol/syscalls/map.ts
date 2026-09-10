@@ -18,7 +18,7 @@ import type {
   FsWriteArgs,
   FsWriteResult,
 } from "./fs";
-import type { ShellExecArgs, ShellExecResult } from "./shell";
+import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
 import type {
   CodeModeExecArgs,
@@ -305,6 +305,7 @@ export type SyscallDomains = {
   "fs.transfer.receive": { args: FsTransferReceiveArgs; result: FsTransferReceiveResult };
 
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+  "shell.cancel": { args: ShellCancelArgs; result: ShellCancelResult };
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
 

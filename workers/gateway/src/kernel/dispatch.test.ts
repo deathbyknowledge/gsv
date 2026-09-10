@@ -487,7 +487,7 @@ describe("dispatch", () => {
     expect(cancelRoute).toHaveBeenCalledOnce();
   });
 
-  it("returns cached failed shell sessions instead of rerouting to the device", async () => {
+  it("treats a disconnected shell target as unavailable instead of a command exit", async () => {
     const registerRoute = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
@@ -528,16 +528,40 @@ describe("dispatch", () => {
       response: {
         type: "res",
         id: "req_1",
-        ok: true,
-        data: {
-          status: "failed",
-          output: "",
-          error: "Device disconnected",
-          sessionId: "sh_1",
-        },
+        ok: false,
+        error: { code: 503, message: "Target offline: macbook" },
       },
     });
     expect(registerRoute).not.toHaveBeenCalled();
+  });
+
+  it.each(["shell.exec", "shell.cancel"] as const)("routes %s back to the owning session target after reconnect", async (call) => {
+    const send = vi.fn();
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+    // SAFETY: this fixture implements the dispatch dependencies used for target routing.
+    const deps = {
+      connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+      sendFrame, registerRoute: vi.fn(async () => ({ cancel: vi.fn() })),
+      shellSessions: { get: () => ({ sessionId: "sh_1", targetId: "macbook", status: "failed", error: "Device disconnected" }) },
+    } as DispatchDeps;
+    const frame: RequestFrame = call === "shell.exec"
+      ? { type: "req", id: "resume", call, args: { sessionId: "sh_1", input: "" } }
+      : { type: "req", id: "resume", call, args: { sessionId: "sh_1" } };
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toEqual({ handled: false });
+    expect(send).toHaveBeenCalledWith(JSON.stringify(frame));
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(false);
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 403 } } });
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(true);
+    frame.args.target = "different-device";
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400 } } });
+    expect(send).toHaveBeenCalledTimes(1);
+    delete frame.args.target;
+    if (call === "shell.cancel") {
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true, ["shell.exec"]));
+      expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400, message: "Target macbook does not implement shell.cancel" } } });
+    }
   });
 
   it("runs gsv target syscalls through the native target provider", async () => {

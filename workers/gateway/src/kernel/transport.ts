@@ -887,7 +887,6 @@ createPendingKernelResponse(id: string): PendingKernelResponse {
   }
 
 failRoutesForTarget(targetId: string): void {
-    this.host.shellSessions.failForDevice(targetId, "Device disconnected");
     this.failTargetRoutes(this.host.routes.failForDevice(targetId));
   }
 

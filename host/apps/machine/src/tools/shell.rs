@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const DEFAULT_TIMEOUT_MS: u64 = 2 * 60 * 1000;
@@ -27,6 +28,7 @@ const COMPLETED_SESSION_RETENTION_MS: u64 = 10 * 60 * 1000;
 struct ProcessHandle {
     state: Arc<AsyncMutex<ProcessState>>,
     stdin: Arc<AsyncMutex<Option<ChildStdin>>>,
+    cancellation: CancellationToken,
 }
 
 #[derive(Clone)]
@@ -528,14 +530,24 @@ async fn launch_managed_process(
     let handle = ProcessHandle {
         state: state.clone(),
         stdin: Arc::new(AsyncMutex::new(stdin)),
+        cancellation: CancellationToken::new(),
     };
     let foreground = ForegroundProcessGuard::new(pid, session_id);
 
+    let mut output_tasks = Vec::new();
     if let Some(stdout) = stdout {
-        tokio::spawn(pump_stream(stdout, state.clone(), OutputStream::Stdout));
+        output_tasks.push(tokio::spawn(pump_stream(
+            stdout,
+            state.clone(),
+            OutputStream::Stdout,
+        )));
     }
     if let Some(stderr) = stderr {
-        tokio::spawn(pump_stream(stderr, state.clone(), OutputStream::Stderr));
+        output_tasks.push(tokio::spawn(pump_stream(
+            stderr,
+            state.clone(),
+            OutputStream::Stderr,
+        )));
     }
 
     if timeout_ms > 0 {
@@ -557,8 +569,24 @@ async fn launch_managed_process(
         });
     }
 
+    let handle_for_wait = handle.clone();
     tokio::spawn(async move {
-        let wait_result = child.wait().await;
+        let wait_result = tokio::select! {
+            result = child.wait() => result,
+            _ = handle_for_wait.cancellation.cancelled() => {
+                terminate_process(&handle_for_wait).await;
+                child.wait().await
+            }
+        };
+        for mut task in output_tasks {
+            if tokio::time::timeout(Duration::from_secs(1), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                state.lock().await.truncated = true;
+            }
+        }
 
         let (snapshot, should_emit_event, event_name) = {
             let mut lock = state.lock().await;
@@ -633,6 +661,60 @@ pub struct ShellTool {
     workspace: PathBuf,
 }
 
+pub struct ShellCancelTool;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellCancelArgs {
+    session_id: String,
+}
+
+#[async_trait]
+impl Tool for ShellCancelTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "CancelShell".to_string(),
+            description: "Stop a running shell session and its process tree.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "sessionId": { "type": "string" } },
+                "required": ["sessionId"]
+            }),
+        }
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
+        let args: ShellCancelArgs = serde_json::from_value(args)
+            .map_err(|error| format!("Invalid arguments: {}", error))?;
+        let session_id = args.session_id.trim();
+        let handle = get_process(session_id)
+            .await
+            .ok_or_else(|| format!("Unknown shell session: {}", session_id))?;
+        let cancelled = {
+            let state = handle.state.lock().await;
+            if state.ended_at.is_some() {
+                false
+            } else {
+                // The process waiter owns termination even if this request disconnects.
+                handle.cancellation.cancel();
+                true
+            }
+        };
+        if cancelled {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while handle.state.lock().await.ended_at.is_none() {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .map_err(|_| "Shell cancellation has not completed yet".to_string())?;
+        }
+        Ok(ToolOutput::json(
+            json!({ "sessionId": session_id, "cancelled": cancelled }),
+        ))
+    }
+}
+
 async fn wait_for_shell_result(handle: &ProcessHandle, yield_ms: u64) -> Value {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(yield_ms);
     loop {
@@ -643,7 +725,6 @@ async fn wait_for_shell_result(handle: &ProcessHandle, yield_ms: u64) -> Value {
 
         if snapshot.ended_at.is_some() {
             let drained = snapshot_and_drain(handle).await;
-            remove_process(&drained.session_id).await;
             return completed_result(&drained);
         }
 
@@ -853,6 +934,84 @@ mod result_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn session_input_preserves_newlines_and_terminal_polls_only_return_new_output() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let started = tool
+            .execute(json!({
+                "input": "printf first; IFS= read -r line; printf '<%s>' \"$line\"",
+                "background": true,
+            }))
+            .await
+            .unwrap();
+        let session_id = started.data["sessionId"].as_str().unwrap();
+        let first = tool
+            .execute(json!({ "sessionId": session_id, "input": "", "yieldMs": 250 }))
+            .await
+            .unwrap();
+        let finished = tool
+            .execute(json!({ "sessionId": session_id, "input": " yes \n" }))
+            .await
+            .unwrap();
+        assert_eq!(finished.data["status"], "completed");
+        let output = format!(
+            "{}{}{}",
+            started.data["output"].as_str().unwrap(),
+            first.data["output"].as_str().unwrap(),
+            finished.data["output"].as_str().unwrap()
+        );
+        assert_eq!(output, "first< yes >");
+        let repeated = tool
+            .execute(json!({ "sessionId": session_id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(repeated.data["status"], "completed");
+        assert_eq!(repeated.data["output"], "");
+        let cancelled = ShellCancelTool
+            .execute(json!({ "sessionId": session_id }))
+            .await
+            .unwrap();
+        assert_eq!(cancelled.data["cancelled"], false);
+    }
+
+    #[tokio::test]
+    async fn explicit_session_cancellation_survives_the_cancel_request_disconnecting() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let started = tool
+            .execute(json!({ "input": "trap '' TERM; sleep 30 & wait", "background": true }))
+            .await
+            .unwrap();
+        let session_id = started.data["sessionId"].as_str().unwrap().to_string();
+        let handle = get_process(&session_id).await.unwrap();
+        let pid = handle.state.lock().await.pid.unwrap();
+        let cancel_id = session_id.clone();
+        let request = tokio::spawn(async move {
+            ShellCancelTool
+                .execute(json!({ "sessionId": cancel_id }))
+                .await
+        });
+        handle.cancellation.cancelled().await;
+        request.abort();
+        let _ = request.await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while handle.state.lock().await.ended_at.is_none() {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("cancelled request left the shell running");
+        assert!(!process_exists(pid));
+        let terminal = tool
+            .execute(json!({ "sessionId": session_id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(terminal.data["status"], "failed");
+        assert!(ShellCancelTool
+            .execute(json!({ "sessionId": "unknown" }))
+            .await
+            .is_err());
+    }
 
     fn process_exists(pid: u32) -> bool {
         let Ok(pid) = i32::try_from(pid) else {

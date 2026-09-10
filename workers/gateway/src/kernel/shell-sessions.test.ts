@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ShellSessionStore } from "./shell-sessions";
+import { runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import type { Kernel } from "./do";
 
 describe("ShellSessionStore", () => {
   afterEach(() => {
@@ -35,17 +38,12 @@ describe("ShellSessionStore", () => {
     });
   });
 
-  it("marks active sessions failed when a device disconnects", async () => {
-    await runWithRealKernelSql((sql) => {
-      const store = new ShellSessionStore(sql);
-      store.rememberDeviceSession("sh_1", "macbook");
-
-      store.failForDevice("macbook", "Device disconnected");
-
-      expect(store.get("sh_1")).toMatchObject({
-        status: "failed",
-        error: "Device disconnected",
-      });
+  it("retains a disconnected device session so a new connection can check it", async () => {
+    const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (kernel: Kernel) => {
+      kernel.shellSessions.rememberDeviceSession("sh_1", "macbook");
+      kernel.transport.failRoutesForTarget("macbook");
+      expect(kernel.shellSessions.get("sh_1")).toMatchObject({ status: "running", error: null });
     });
   });
 });

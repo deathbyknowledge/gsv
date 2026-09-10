@@ -233,9 +233,14 @@ as a transport timeout.
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `cp`, `dd`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.cancel` | Owning device | Stop the session's process tree. The gateway resolves its target from the retained session and enforces ordinary target and syscall grants. Cancellation survives a disconnected caller; output remains available through `shell.exec`. Older machines must be updated to expose this operation. |
 
 ```ts
 type ShellSyscalls = {
+  "shell.cancel": {
+    args: { sessionId: string; target?: string };
+    result: { sessionId: string; cancelled: boolean };
+  };
   "shell.exec": {
     args: {
       target?: string;
@@ -270,6 +275,13 @@ Write stdin to a running command:
 ```json
 { "sessionId": "sh_01JZTEST", "input": "y\n" }
 ```
+
+`shell.cancel` returns `cancelled: true` after stopping a running command, or
+`false` if it had already ended. It does not consume output. Poll with
+`shell.exec` afterwards to read the terminal result. Session output is incremental;
+the optional final `stdout`/`stderr` fields are cumulative summaries. Disconnecting
+or cancelling a poll does not stop a durable session. A reconnect can resume polling
+the same session; completed device sessions remain available for ten minutes.
 
 CodeMode wrappers expose the same result shape:
 

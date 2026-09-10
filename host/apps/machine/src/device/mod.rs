@@ -29,7 +29,39 @@ const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
 /// How often a connected daemon re-checks whether machine work has finished
 /// so a waiting update can start.
 const UPDATE_RECHECK_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(300);
-const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "net.fetch"];
+const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "shell.cancel", "net.fetch"];
+
+/// The gateway can route work as soon as it accepts sys.connect, before the
+/// daemon has received that response and installed its connection-bound handler.
+#[derive(Default)]
+struct DriverFrameHandler {
+    pending: Vec<Frame>,
+    handler: Option<Box<dyn Fn(Frame) + Send + Sync>>,
+    overflowed: bool,
+}
+
+impl DriverFrameHandler {
+    fn receive(&mut self, frame: Frame) {
+        if let Some(handler) = &self.handler {
+            handler(frame);
+        } else if self.pending.len() < 256 {
+            self.pending.push(frame);
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    fn install(&mut self, handler: impl Fn(Frame) + Send + Sync + 'static) -> bool {
+        if self.overflowed {
+            return false;
+        }
+        for frame in self.pending.drain(..) {
+            handler(frame);
+        }
+        self.handler = Some(Box::new(handler));
+        true
+    }
+}
 
 #[derive(Default)]
 struct ActiveRequestState {
@@ -368,6 +400,7 @@ fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
         "fs.search" => Some("Search"),
         "fs.delete" => Some("Delete"),
         "shell.exec" => Some("Shell"),
+        "shell.cancel" => Some("CancelShell"),
         "net.fetch" => Some("Fetch"),
         _ => None,
     }
@@ -648,6 +681,8 @@ pub async fn run(
                 all_tools_with_workspace_for_device(workspace.clone(), device_id.clone()),
             );
 
+            let frame_handler = Arc::new(Mutex::new(DriverFrameHandler::default()));
+            let incoming_frames = frame_handler.clone();
             let conn_attempt = tokio::time::timeout(
                 CONNECT_TIMEOUT,
                 Connection::connect_with_options(
@@ -663,7 +698,12 @@ pub async fn run(
                         auth_token: auth.token.clone(),
                         limits: daemon_body_limits(),
                     },
-                    |_frame| {},
+                    move |frame| {
+                        incoming_frames
+                            .lock()
+                            .expect("driver frame mutex poisoned")
+                            .receive(frame);
+                    },
                 ),
             );
             let conn_attempt = tokio::select! {
@@ -806,7 +846,10 @@ pub async fn run(
 
             // In the new OS architecture, the kernel sends req frames directly to
             // the driver. We dispatch based on `call` and respond with a res frame.
-            conn.set_frame_handler(move |frame| match frame {
+            let installed = frame_handler
+                .lock()
+                .expect("driver frame mutex poisoned")
+                .install(move |frame| match frame {
                 Frame::Req(req) => {
                     let Some(conn) = conn_for_handler.upgrade() else {
                         return;
@@ -870,8 +913,12 @@ pub async fn run(
                     }
                 }
                 _ => {}
-            })
-            .await;
+            });
+            if !installed {
+                conn.close();
+                warn!(event = "connect.frame_overflow");
+                continue;
+            }
 
             // The handler is serving requests now; the update decision runs
             // beside it so a slow installer download never delays a route.
@@ -2405,6 +2452,46 @@ mod tests {
         .await
         .expect("request did not finish promptly")
         .unwrap_err()
+    }
+
+    #[test]
+    fn requests_and_cancellation_arriving_during_handshake_are_delivered_in_order() {
+        let mut frames = DriverFrameHandler::default();
+        let request = RequestFrame::new("shell.exec", None);
+        frames.receive(Frame::Req(request.clone()));
+        frames.receive(Frame::Sig(SignalFrame {
+            signal: REQUEST_CANCEL_SIGNAL.to_string(),
+            payload: Some(json!({ "id": request.id })),
+            seq: None,
+        }));
+        let requests = ActiveRequests::default();
+        let tokens = Arc::new(Mutex::new(Vec::new()));
+        let delivered = tokens.clone();
+        assert!(frames.install(move |frame| match frame {
+            Frame::Req(request) => delivered.lock().unwrap().push(requests.register(&request)),
+            Frame::Sig(signal) => {
+                assert!(requests.cancel(serde_json::from_value(signal.payload.unwrap()).unwrap()));
+            }
+            _ => {}
+        }));
+        frames.receive(Frame::Req(RequestFrame::new("shell.exec", None)));
+        let tokens = tokens.lock().unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert!(tokens[0].is_cancelled());
+        assert!(!tokens[1].is_cancelled());
+    }
+
+    #[test]
+    fn an_overfull_handshake_queue_admits_no_partial_work() {
+        let mut frames = DriverFrameHandler::default();
+        for _ in 0..257 {
+            frames.receive(Frame::Req(RequestFrame::new("shell.exec", None)));
+        }
+        assert_eq!(frames.pending.len(), 256);
+        let delivered = Arc::new(Mutex::new(0));
+        let count = delivered.clone();
+        assert!(!frames.install(move |_| *count.lock().unwrap() += 1));
+        assert_eq!(*delivered.lock().unwrap(), 0);
     }
 
     #[test]

@@ -21,7 +21,7 @@ import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
-import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
+import type { ShellSessionStore } from "./shell-sessions";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import {
@@ -229,9 +229,13 @@ export async function dispatch(
     : routingArgs?.target;
   const contactResourceTarget = (frame.call === "fs.read" || frame.call === "fs.transfer.send")
     && target?.startsWith("contact:") === true;
-  const sessionId = frame.call === "shell.exec"
+  const sessionId = frame.call === "shell.exec" || frame.call === "shell.cancel"
     ? frame.args.sessionId?.trim() ?? ""
     : "";
+
+  if (frame.call === "shell.cancel" && !sessionId) {
+    return { handled: true, response: errFrame(frame.id, 400, "Shell session ID is required") };
+  }
 
   if (sessionId) {
     const session = deps.shellSessions.get(sessionId);
@@ -245,19 +249,6 @@ export async function dispatch(
       return {
         handled: true,
         response: errFrame(frame.id, 400, "Shell session target does not match the requested target"),
-      };
-    }
-    if (session.status === "failed" && session.error) {
-      const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
-      if (!sessionTarget) {
-        return {
-          handled: true,
-          response: errFrame(frame.id, 403, `Access denied to device: ${session.targetId}`),
-        };
-      }
-      return {
-        handled: true,
-        response: failedShellSessionFrame(frame.id, session),
       };
     }
     if (routingArgs) delete routingArgs.target;
@@ -869,25 +860,6 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 
 function requestCancelMessage(signal: AbortSignal): string {
   return signal.reason instanceof Error ? signal.reason.message : "Request cancelled";
-}
-
-function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {
-  const data: Extract<
-    NonNullable<ResponseOkFrame<"shell.exec">["data"]>,
-    { status: "failed" }
-  > = {
-    status: "failed",
-    output: "",
-    error: session.error ?? "Shell session failed",
-    sessionId: session.sessionId,
-  };
-  if (session.exitCode !== null) data.exitCode = session.exitCode;
-  return {
-    type: "res",
-    id,
-    ok: true,
-    data,
-  };
 }
 
 function routableFrameArgs(frame: RequestFrame): RoutingTargetArgs | null {

@@ -267,6 +267,7 @@ const SYSCALL_NAMES = [
   "fs.copy",
   "fs.transfer.stat",
   "shell.exec",
+  "shell.cancel",
   "codemode.exec",
   "codemode.run",
   "mail.send",

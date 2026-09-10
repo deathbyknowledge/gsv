@@ -1,5 +1,16 @@
 export const DEFAULT_SHELL_EXEC_TIMEOUT_MS = 120_000;
 
+export type ShellCancelArgs = {
+  target?: string;
+  sessionId: string;
+};
+
+export type ShellCancelResult = {
+  sessionId: string;
+  /** True when this request stopped a running command; false if it had already ended. */
+  cancelled: boolean;
+};
+
 export type ShellExecArgs = {
   target?: string;
   input: string;
