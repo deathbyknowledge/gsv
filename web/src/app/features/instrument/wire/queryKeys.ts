@@ -11,3 +11,5 @@ export const INSTRUMENT_MEMORY_KEY = ["instrument", "memory"] as const;
 /** Contact lists are reread only after an owner-scoped change notification. */
 export const INSTRUMENT_CONTACTS_KEY = ["instrument", "contacts"] as const;
 export const INSTRUMENT_CONTACT_INVITES_KEY = ["instrument", "contact-invites"] as const;
+
+export const INSTRUMENT_MESSENGERS_KEY = ["instrument", "messengers"] as const;

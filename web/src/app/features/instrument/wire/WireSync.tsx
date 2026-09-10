@@ -5,6 +5,7 @@ import type { ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery } from "./contactSync";
+import { refreshMessengerConnections } from "./messengerSync";
 import { syncProcessSignal } from "./processSync";
 import { createLedgerSync } from "./ledgerSync";
 import {
@@ -53,6 +54,10 @@ export function WireSync(): null {
       }
       if (signal === "mcp.changed") {
         void queryClient.invalidateQueries({ queryKey: consoleMcpServersQueryKey });
+        return;
+      }
+      if (signal === "adapter.status") {
+        void refreshMessengerConnections(queryClient);
         return;
       }
       if (signal === "target.status") {

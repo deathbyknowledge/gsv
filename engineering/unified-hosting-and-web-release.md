@@ -129,8 +129,9 @@ reproducing obsolete per-user provider-application setup. Existing completed UI
 work and detailed behavior are recorded in `web/src/app/features/instrument/README.md`
 and `web/src/app/features/instrument/settings/README.md`.
 
-- [ ] Finish adapter connection management: durable linked identity/status,
-  reconnect and unlink, starting with Telegram; check existing managed Slack.
+- [x] Finish adapter connection management for current managed Telegram and Slack:
+  durable linked identity/status, reconnect and unlink. Implemented in the local
+  preview on 2026-09-10 and verified with a disposable managed adapter fixture.
 - [ ] Complete contact conversations and cross-Ship request management in the
   appropriate Instrument surfaces.
 - [ ] Finish retained permissions/account-grant controls and MCP custom headers.

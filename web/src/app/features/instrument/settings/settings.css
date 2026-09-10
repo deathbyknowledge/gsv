@@ -64,6 +64,16 @@
 .settings-telegram { padding-bottom: 1rem; }
 .settings-telegram-flow { margin-top: 1.5rem; }
 .settings-telegram-step { font-size: .8rem; color: var(--text-dim); margin-bottom: 1rem; }
+.settings-messenger { padding-bottom: 1rem; }
+.settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
+.settings-messenger-heading h2 { margin: 0; }
+.settings-messenger-heading .ibtn { font-size: .75rem; }
+.settings-messenger-links { margin: 0; }
+.settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }
+.settings-messenger-status i { width: .4rem; height: .4rem; background: var(--text-dim); flex-shrink: 0; }
+.settings-messenger-links .settings-messenger-status.is-connected { color: var(--online); }
+.settings-messenger-status.is-connected i { background: currentColor; }
+.settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
 .settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .settings-rules { padding-left: 1.6rem; }
 .settings-rules > li { padding: 1rem 0; border-top: 1px solid var(--border); }

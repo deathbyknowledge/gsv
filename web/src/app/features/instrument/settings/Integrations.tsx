@@ -1,4 +1,4 @@
-import { Telegram } from "./Telegram";
+import { MessengerConnections } from "./MessengerConnections";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
@@ -36,7 +36,7 @@ export function Integrations({ account, active, onDirty }: SettingsSectionProps)
   return <section aria-labelledby="settings-integrations-title">
     <h1 id="settings-integrations-title">Integrations</h1>
     <p class="settings-intro">Connect messaging and tools to your Ship.</p>
-    <Telegram />
+    <MessengerConnections account={account} active={active} />
     <h2>MCP servers</h2>
     {!canList && <p class="settings-muted">Your account cannot list integrations.</p>}
     <SettingsError error={servers.error ?? change.error} />

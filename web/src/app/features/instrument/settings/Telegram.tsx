@@ -1,8 +1,7 @@
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
 import type { ConnectFlowShellProps } from "../../gsv-console/connect-flows/ConnectFlowShell";
 import { useConsoleAdapterPairingInfo, useInspectConsoleAdapterPairing, useConfirmConsoleAdapterPairing } from "../../gsv-console/hooks/useConsoleData";
-import { ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "../../gsv-console/messengers/ManagedTelegramOnboardingFlow";
+import { ManagedSlackOnboardingFlow, ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "../../gsv-console/messengers/ManagedTelegramOnboardingFlow";
 
 /** Renders one step of a console connect flow inside our panel, without the console's page chrome. */
 function CompactFlowShell({ flow, current, onStep }: ConnectFlowShellProps): ComponentChildren {
@@ -33,14 +32,11 @@ const compactTelegramDependencies: ManagedTelegramDependencies = {
   useConfirmConsoleAdapterPairing: () => useConfirmConsoleAdapterPairing(),
 };
 
-export function Telegram() {
-  const [open, setOpen] = useState(false);
-  const [paired, setPaired] = useState(false);
-  return <section class="settings-telegram" aria-label="Telegram">
-    <h2>Telegram</h2>
-    <p class="settings-muted">Talk to your Ship from Telegram.</p>
-    {paired && <p role="status">Telegram is connected.</p>}
-    <div class="settings-actions"><button class="ibtn" type="button" onClick={() => setOpen((value) => !value)}>{open ? "close setup" : "connect Telegram"}</button></div>
-    {open && <ManagedTelegramOnboardingFlow dependencies={compactTelegramDependencies} onBack={() => setOpen(false)} onConnected={() => { setPaired(true); setOpen(false); }} />}
-  </section>;
+export function MessengerPairing({ adapter, onClose, onConnected }: {
+  adapter: "telegram" | "slack";
+  onClose: () => void;
+  onConnected: () => void;
+}) {
+  const Flow = adapter === "telegram" ? ManagedTelegramOnboardingFlow : ManagedSlackOnboardingFlow;
+  return <Flow dependencies={compactTelegramDependencies} onBack={onClose} onConnected={onConnected} />;
 }
