@@ -1,4 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import { GsvClientError } from "@humansandmachines/gsv/client";
 import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "../domain/models";
 import {
   normalizeCommandInput,
@@ -6,7 +7,7 @@ import {
   normalizeTranscriptEntry,
 } from "../domain/normalization";
 
-export type TerminalClient = Pick<GSVClient, "call">;
+export type TerminalClient = Pick<GSVClient, "call" | "request">;
 
 type TerminalRequestArgs = {
   input: string;
@@ -26,6 +27,7 @@ export async function listTerminalTargets(client: TerminalClient): Promise<Termi
 export async function executeTerminalCommand(
   client: TerminalClient,
   command: TerminalCommandInput,
+  signal?: AbortSignal,
 ): Promise<TerminalTranscriptEntry> {
   const input = normalizeCommandInput(command);
   if (!input.input && !input.sessionId) {
@@ -46,12 +48,21 @@ export async function executeTerminalCommand(
   }
   if (!input.sessionId && input.background) {
     requestArgs.background = true;
-    if (input.yieldMs !== null) {
-      requestArgs.yieldMs = input.yieldMs;
-    }
   }
+  if (input.yieldMs !== null) requestArgs.yieldMs = input.yieldMs;
 
   const startedAt = Date.now();
-  const payload = await client.call<unknown>("shell.exec", requestArgs);
-  return normalizeTranscriptEntry(payload, startedAt, input);
+  const response = await client.request("shell.exec", requestArgs, { signal });
+  return normalizeTranscriptEntry(response.data, startedAt, input);
+}
+
+export async function cancelTerminalCommand(client: TerminalClient, sessionId: string, signal?: AbortSignal) {
+  try {
+    return (await client.request("shell.cancel", { sessionId }, { signal })).data;
+  } catch (error) {
+    if (error instanceof GsvClientError && error.code === 400 && error.message.endsWith("does not implement shell.cancel")) {
+      throw new Error("Update GSV on this computer to use Stop.");
+    }
+    throw error;
+  }
 }

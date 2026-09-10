@@ -3,6 +3,7 @@ import { useColorTheme } from "../../components/ui/useColorTheme";
 import { GlyphStars } from "../session/backgrounds/GlyphStars";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
+import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { Zen } from "./zen/Zen";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
@@ -57,7 +58,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
-  return <InstrumentReady initialPath={initialPath} />;
+  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><InstrumentReady initialPath={initialPath} /></TerminalProvider>;
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {

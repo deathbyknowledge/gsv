@@ -51,7 +51,7 @@ const terminalTranscriptSchema = z.object({
   error: terminalStringSchema,
   exitCode: terminalNumberSchema,
   stdout: terminalStringSchema,
-  output: terminalStringSchema,
+  output: z.string().optional(),
   stderr: terminalStringSchema,
   ok: terminalBooleanSchema,
   backgrounded: terminalBooleanSchema,
@@ -111,7 +111,7 @@ export function normalizeCommandInput(input: TerminalCommandInput): Required<Pic
   background: boolean;
 } {
   return {
-    input: input.input.trim(),
+    input: input.sessionId?.trim() ? input.input : input.input.trim(),
     target: normalizeTerminalTarget(input.target),
     sessionId: String(input.sessionId ?? "").trim(),
     cwd: String(input.cwd ?? "").trim(),
@@ -142,6 +142,7 @@ export function normalizeTranscriptEntry<T>(
       completedAt,
       status: "completed",
       stdout: prettyJson(payload),
+      output: prettyJson(payload),
       stderr: "",
       exitCode: null,
       sessionId: null,
@@ -153,7 +154,7 @@ export function normalizeTranscriptEntry<T>(
   const statusText = record.status.toLowerCase();
   const errorText = record.error || null;
   const exitCode = record.exitCode;
-  const stdout = record.stdout || record.output;
+  const stdout = record.stdout || record.output || "";
   let stderr = record.stderr;
   const backgrounded = input.background || record.backgrounded === true || record.background === true;
   const failed = record.ok === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
@@ -175,6 +176,7 @@ export function normalizeTranscriptEntry<T>(
     status: statusText === "running" ? "running" : failed ? "failed" : "completed",
     stdout,
     stderr,
+    output: record.output ?? [stdout, stderr].filter(Boolean).join("\n"),
     exitCode,
     sessionId: record.sessionId || input.sessionId || null,
     truncated: record.truncated === true,

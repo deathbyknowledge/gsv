@@ -455,3 +455,12 @@
 .zen-media-error { color: var(--error); }
 .zen-media details { margin-top: .5rem; }
 .zen-media details p { font-family: var(--gsv-font-prose); white-space: pre-wrap; }
+.terminal-controls { margin-top: 8px; }
+.terminal-actions, .terminal-input { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.terminal-controls button { border: 0; background: transparent; padding: 4px 0; color: var(--text-dim); font: inherit; cursor: pointer; }
+.terminal-controls button:hover { color: var(--text); }
+.terminal-controls button.is-danger, .terminal-error { color: var(--error); }
+.terminal-controls button:disabled { opacity: 0.45; cursor: default; }
+.terminal-input input { min-width: 0; flex: 1; background: transparent; color: var(--text); border: 0; border-bottom: 1px solid var(--rule-inner); font: inherit; padding: 4px 0; }
+.terminal-input input:focus { outline: none; border-bottom-color: var(--accent); caret-color: var(--accent); }
+.terminal-note { color: var(--text-dim); }

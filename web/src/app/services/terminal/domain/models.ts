@@ -29,6 +29,7 @@ export type TerminalTranscriptEntry = {
   status: "completed" | "running" | "failed";
   stdout: string;
   stderr: string;
+  output: string;
   exitCode: number | null;
   sessionId: string | null;
   truncated: boolean;

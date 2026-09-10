@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
 import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
@@ -28,6 +29,7 @@ import {
  */
 export function WireSync(): null {
   const { client, connected } = useGateway();
+  const { sessions } = useTerminalSessions();
   const queryClient = useQueryClient();
   const dropped = useRef(false);
   const connectedBefore = useRef(connected);
@@ -72,6 +74,7 @@ export function WireSync(): null {
       if (signal === "target.status") {
         const parsed = targetStatusSignalSchema.safeParse(payload);
         if (!parsed.success) return;
+        if (parsed.data.event === "connected") sessions.targetConnected(parsed.data.target.targetId);
         const current = queryClient.getQueryData<ConsoleTarget[]>(INSTRUMENT_TARGETS_KEY);
         if (!current) return;
         const patch = patchTargets(current, parsed.data, Date.now());
@@ -100,7 +103,7 @@ export function WireSync(): null {
       }
     });
     return () => { unsubscribe(); ledger.stop(); };
-  }, [client, connected, queryClient]);
+  }, [client, connected, queryClient, sessions]);
 
   return null;
 }

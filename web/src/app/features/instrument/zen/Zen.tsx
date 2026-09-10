@@ -18,7 +18,9 @@ import { loadConsoleTargets } from "../../../services/system/consoleService";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
-import { executeTerminalCommand } from "../../../services/terminal/backend/terminalService";
+import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
+import { terminalFinished } from "../../../services/terminal/terminalSessions";
+import { TerminalControls } from "./TerminalControls";
 import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
@@ -44,7 +46,6 @@ import {
   PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
-  trimOutput,
   noteSummary,
   receiptDuration,
   receiptTargets,
@@ -67,17 +68,6 @@ export type ZenProps = {
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
-};
-
-type LocalRun = {
-  id: string;
-  target: string;
-  command: string;
-  output: string;
-  failed: boolean;
-  startedAt: number;
-  endedAt: number;
-  pending: boolean;
 };
 
 const HISTORY_LIMIT = 400;
@@ -113,10 +103,21 @@ function ActivityLine({
 }) {
   const label = activity.target === null ? "process working" : placeLabel(activity.target, places);
   const running = activity.calls.find((call) => !call.finished);
+  const unavailable = activity.terminal?.status === "unavailable";
+  const [now, setNow] = useState(Date.now);
+  const timing = !!activity.terminal && activity.live && !unavailable;
+  useEffect(() => {
+    if (!timing) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [timing]);
   const head = activity.live && running ? (
     <>
-      <span class="pulse blink" />
-      {activity.you ? "you are using" : "using"} <span class="place">{label}</span>
+      {!unavailable && <span class="pulse blink" />}
+      {activity.you ? unavailable ? "you started a command on" : "you are using" : "using"} <span class="place">{label}</span>
+      {unavailable && <span class="n"> · status unavailable</span>}
+      {timing && activity.startedAt !== null && <span class="n"> · {Math.max(0, Math.floor((now - activity.startedAt) / 1000))}s</span>}
     </>
   ) : (
     <>
@@ -125,6 +126,7 @@ function ActivityLine({
         · {countLabel(activity.calls.length, "command")}
         {activityDuration(activity) ? ` · ${activityDuration(activity)}` : ""}
         {activity.you ? " · no model" : ""}
+        {activity.terminal?.status === "stopped" ? " · stopped" : activity.terminal?.status === "failed" ? " · failed" : ""}
       </span>
     </>
   );
@@ -150,6 +152,7 @@ function ActivityLine({
         <div class="detail">
           {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
           <ActivityWorking activity={activity} />
+          {activity.terminal && <TerminalControls session={activity.terminal} />}
         </div>
       ) : null}
     </div>
@@ -303,7 +306,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
-  const [localRuns, setLocalRuns] = useState<LocalRun[]>([]);
+  const { sessions, rows: terminalRows } = useTerminalSessions();
+  const localRuns = useMemo(() => terminalRows.filter((run) => run.scope === (pidProp ?? "ship")), [terminalRows, pidProp]);
   const [openActivities, setOpenActivities] = useState<ReadonlySet<string>>(() => new Set());
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
@@ -460,11 +464,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               syscall: "shell.exec",
               summary: run.command,
               output: run.output,
-              finished: !run.pending,
-              failed: run.failed,
+              finished: terminalFinished(run),
+              failed: run.status === "failed",
             },
           ],
-          live: run.pending,
+          live: !terminalFinished(run),
+          terminal: run,
           you: true,
           startedAt: run.startedAt,
           endedAt: run.endedAt,
@@ -607,29 +612,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   const runDirectly = useCallback(
-    async (command: string) => {
-      const target = where ?? defaultPlace(places);
-      const id = `you:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-      const startedAt = Date.now();
-      scrolling.follow();
-      setLocalRuns((current) => [...current, { id, target, command, output: "", failed: false, startedAt, endedAt: startedAt, pending: true }]);
-      setOpenActivities((current) => new Set([...current, id]));
+    (command: string) => {
       try {
-        const entry = await executeTerminalCommand(client, { input: command, target: target === "gsv" ? null : target });
-        const output = trimOutput([entry.stdout, entry.stderr].filter((part) => part.trim()).join("\n"));
-        setLocalRuns((current) =>
-          current.map((run) =>
-            run.id === id
-              ? { ...run, output: output || (entry.exitCode === 0 ? "(no output)" : ""), failed: entry.status === "failed" || (entry.exitCode ?? 0) !== 0, endedAt: Date.now(), pending: false }
-              : run,
-          ),
-        );
+        const id = sessions.start(command, where ?? defaultPlace(places), pidProp ?? "ship");
+        scrolling.follow();
+        setOpenActivities((current) => new Set([...current, id]));
       } catch (error) {
-        const message = error instanceof Error ? error.message : "The command did not run.";
-        setLocalRuns((current) => current.map((run) => (run.id === id ? { ...run, output: message, failed: true, endedAt: Date.now(), pending: false } : run)));
+        setNote(error instanceof Error ? error.message : "The command did not run.");
       }
     },
-    [client, places, where, scrolling.follow],
+    [sessions, places, where, pidProp, scrolling.follow],
   );
 
   const onSubmit = useCallback(

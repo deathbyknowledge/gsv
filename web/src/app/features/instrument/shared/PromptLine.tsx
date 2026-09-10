@@ -102,7 +102,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     measure(true);
     const input = inputRef.current;
     if (input && document.activeElement === input) setFocused(true);
-  }, [measure, disabled]);
+  }, [measure, disabled, command, place.label, place.online, dir]);
   useLayoutEffect(() => {
     if (!autoFocus || disabled || autoFocusHandled.current) return;
     autoFocusHandled.current = true;

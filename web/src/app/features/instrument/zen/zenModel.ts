@@ -1,3 +1,4 @@
+import type { TerminalSession } from "../../../services/terminal/terminalSessions";
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
@@ -73,6 +74,7 @@ export type ActivityCall = {
 };
 
 export type Activity = {
+  terminal?: TerminalSession;
   key: string;
   target: string | null;
   calls: ActivityCall[];

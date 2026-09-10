@@ -12,6 +12,7 @@ const labels = {
   "fs.transfer.send": "sent a file to another place",
   "fs.transfer.receive": "received a file from another place",
   "shell.exec": "ran a command",
+  "shell.cancel": "stopped a command",
   "net.fetch": "fetched from the web",
   "codemode.exec": "ran a script",
   "codemode.run": "ran a script",

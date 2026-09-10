@@ -7,7 +7,10 @@ export function ActivityWorking({ activity }: { activity: Activity }) {
         const shell = call.syscall === "shell.exec";
         const code = call.syscall === "codemode.exec" || call.syscall === "codemode.run" || call.syscall === "CodeMode";
         const subject = call.operation?.subject ?? (call.summary === call.syscall ? "" : call.summary);
-        const state = call.failed ? "failed" : !call.finished && !call.operation ? "running…" : "";
+        const state = activity.terminal ? activity.terminal.action === "stop" ? "stopping…"
+          : activity.terminal.status === "unavailable" ? "status unavailable"
+          : activity.terminal.status === "completed" ? "" : activity.terminal.status
+          : call.failed ? "failed" : !call.finished && !call.operation ? "running…" : "";
         return (
           <div key={call.callId} class={`work-call${shell ? " work-shell" : code ? " work-code" : " work-operation"}${call.failed ? " is-failed" : ""}`}>
             {shell ? (
