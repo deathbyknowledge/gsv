@@ -4,6 +4,7 @@ import { RoutineEditor } from "./RoutineEditor";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
 import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -560,6 +561,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           ) : selectedProcess ? (
             <ProcessInspector
               key={selectedProcess.pid}
+              client={client}
               process={selectedProcess}
               requestedApprovalId={approvalReference?.pid === selectedProcess.pid ? approvalReference.requestId : undefined}
               model={modelFor(selectedProcess.pid)}
@@ -816,6 +818,7 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
 }
 
 type ProcessInspectorProps = {
+  client: Pick<GSVClient, "proc">;
   process: ConsoleProcess;
   requestedApprovalId?: string;
   model: string | null;
@@ -828,15 +831,14 @@ type ProcessInspectorProps = {
   placeLabelFor: (placeId: string) => string;
 };
 
-function ProcessInspector({ process, requestedApprovalId, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
-  const { client } = useGateway();
+export function ProcessInspector({ client, process, requestedApprovalId, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
     void queryClient.invalidateQueries({ queryKey: LEDGER_QUERY_KEY });
   };
   const stop = useMutation({
-    mutationFn: () => runConsoleProcessAction(client, { pid: process.pid, action: "abort" }),
+    mutationFn: () => runConsoleProcessAction(client, { pid: process.pid, runId: process.activeRunId ?? undefined, action: "abort" }),
     onSuccess: invalidate,
   });
   const error = stop.error;
@@ -872,7 +874,7 @@ function ProcessInspector({ process, requestedApprovalId, model, cost, responsib
           <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
             open conversation
           </button>
-        <button type="button" class="fleet-text-action is-danger" onClick={() => stop.mutate()} disabled={process.state !== "running" || stop.isPending}>
+        <button type="button" class="fleet-text-action is-danger" onClick={() => stop.mutate()} disabled={!process.activeRunId || stop.isPending}>
           stop
         </button>
       </div>
