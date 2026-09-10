@@ -136,6 +136,9 @@ and `web/src/app/features/instrument/settings/README.md`.
   preview on 2026-09-10 and verified with a disposable managed adapter fixture.
 - [x] Complete contact conversations and cross-Ship request management in the
   appropriate Instrument surfaces.
+- [x] Remove the temporary contact demo before release. Stopped and deleted the
+  in-memory proxy and restored the LAN preview on port 5174 directly to gateway
+  8787. Synthetic contacts, messages and requests were never gateway records.
 - [x] Finish approval-policy recovery, account-grant inspection, and sign-out.
   The old UI has no richer conditional-policy or grant editor to migrate.
 - [x] Support custom MCP headers in the add-server form. Verified with a real
