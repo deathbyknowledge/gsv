@@ -209,15 +209,14 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <h4>Zen · browse</h4>
             <dl>
               <dt>i</dt><dd>Start typing in the prompt</dd>
-              <dt>j / ↓</dt><dd>Next message or activity</dd>
-              <dt>k / ↑</dt><dd>Previous message or activity</dd>
+              <dt>j / k</dt><dd>Next / previous message or activity</dd>
+              <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
             </dl>
             <h4>Zen · input</h4>
             <dl>
               <dt>Enter</dt><dd>Send the message or run the command</dd>
-              <dt>Shift + Enter</dt><dd>New line</dd>
               <dt>Esc</dt><dd>Return to browse; closes the place picker first</dd>
               <dt>↑</dt><dd>Recall the last input when the prompt is empty</dd>
               <dt>@place</dt><dd>Choose a target with ↑ ↓ and Enter</dd>
@@ -252,7 +251,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <h4>Contact messages</h4>
             <dl>
               <dt>Enter</dt><dd>Send the message</dd>
-              <dt>Shift + Enter</dt><dd>New line</dd>
             </dl>
           </>}
           {distance === "settings" && <>

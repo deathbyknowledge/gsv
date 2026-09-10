@@ -42,16 +42,24 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  padding: calc(var(--instrument-header-height) + 5vh) 0 6vh;
   scroll-padding-top: calc(var(--instrument-header-height) + 12px);
-  display: flex;
-  flex-direction: column;
+  overflow-anchor: none;
   min-height: 0;
 }
+.zen-content {
+  position: relative;
+  min-height: 100%;
+  padding: calc(var(--instrument-header-height) + 5vh) 0 6vh;
+  display: flex;
+  flex-direction: column;
+}
 /* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
-.zen-moments > :first-child { margin-top: auto; }
+.zen-content > :first-child { margin-top: auto; }
 .zen-moments::-webkit-scrollbar { display: none; }
+.zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
+.zen-history-status.is-err { color: var(--error); }
 .zen-moment {
+  flex-shrink: 0;
   max-width: min(var(--measure-response), 92%);
   margin: 0 auto;
   width: 100%;
@@ -282,7 +290,15 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-.zen-feedback .zen-run-status { color: var(--text); }
+.zen-run-status {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding-left: 2px;
+}
+.zen-run-status .is-live { color: var(--live); }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }

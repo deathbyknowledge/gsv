@@ -155,10 +155,11 @@ export function useChatConversationRuntime(
   runtimeRef.current = runtime;
 
   useEffect(() => {
-    if (!enabled) {
+    if (input.enabled === false || !processId) {
       setRuntime(EMPTY_RUNTIME);
       return;
     }
+    if (!connected) return;
     const history = historyQuery.data;
     if (!history) return;
     setRuntime((current) => ({
@@ -167,12 +168,15 @@ export function useChatConversationRuntime(
         (rows, message) => upsertRow(rows, conversationMessageRow(message)),
         current.conversation?.id === history.conversation.id ? current.rows : [],
       ),
-      hasMore: history.hasMore,
+      hasMore: current.conversation?.id === history.conversation.id
+        && current.rows.some((row) => row.conversationSequence !== undefined
+          && row.conversationSequence < Math.min(...history.messages.map((message) => message.sequence)))
+        ? current.hasMore : history.hasMore,
       loadingOlder: false,
       loaded: true,
       error: "",
     }));
-  }, [enabled, historyQuery.data]);
+  }, [connected, historyQuery.data, input.enabled, processId]);
   useEffect(() => {
     if (!enabled || !historyQuery.isError) return;
     setRuntime((current) => (current.loaded ? current : { ...current, loaded: true }));

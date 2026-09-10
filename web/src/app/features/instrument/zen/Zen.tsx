@@ -25,6 +25,8 @@ import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
+import { RunFeedback } from "./RunFeedback";
+import { useZenScroll } from "./useZenScroll";
 import { ZenText } from "./ZenText";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
@@ -254,6 +256,7 @@ function NoteMoment({
   return (
     <div
       data-index={index}
+      data-moment-id={moment.id}
       class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
     >
       <div class="who">{moment.event && moment.event.kind !== "history.compacted" ? moment.event.severity === "error" ? "error" : "event" : "memory"}</div>
@@ -305,7 +308,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
   const [promptFocused, setPromptFocused] = useState(false);
-  const [browsePosition, setBrowse] = useState<number | null>(null);
+  const firstGoKey = useRef<number | null>(null);
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
@@ -368,12 +371,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     },
     [pickPlace, pickerIndex, pickerPlaces, pickerQuery],
   );
-  const browseRef = useRef<number | null>(null);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const [note, setNote] = useState<string | null>(null);
-  const momentsRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<PromptLineHandle>(null);
 
   /* the personal process, spawned if the account has none yet */
@@ -473,7 +474,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
 
-  const browse = promptFocused || moments.length === 0 ? null : Math.min(browsePosition ?? moments.length - 1, moments.length - 1);
+  const loadOlder = useCallback(async () => {
+    await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
+  }, [conversation.loadOlder, processRuntime.loadOlderHistory]);
+  const scrolling = useZenScroll({ moments, ready, promptFocused,
+    hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
+    loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
+  const { browse, viewport: momentsRef, content: contentRef } = scrolling;
   const hasMemoryRead = moments.some((moment) => moment.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
@@ -541,12 +548,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return Math.max(0, progress);
   };
 
-  useEffect(() => {
-    if (browseRef.current !== null) return;
-    const element = momentsRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [moments, tick]);
-
   const latest = moments[moments.length - 1];
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
 
@@ -574,6 +575,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         return false;
       }
       const intent = zenSendIntent(retryIntent.current, pid, text, attachments);
+      scrolling.follow();
       retryIntent.current = intent;
       const pending = { intent, controller: new AbortController() };
       pendingSend.current = pending;
@@ -601,7 +603,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (mounted.current) setSending(null);
       }
     },
-    [attachments, client, conversation, pid],
+    [attachments, client, conversation, pid, scrolling.follow],
   );
 
   const runDirectly = useCallback(
@@ -609,6 +611,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       const target = where ?? defaultPlace(places);
       const id = `you:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
       const startedAt = Date.now();
+      scrolling.follow();
       setLocalRuns((current) => [...current, { id, target, command, output: "", failed: false, startedAt, endedAt: startedAt, pending: true }]);
       setOpenActivities((current) => new Set([...current, id]));
       try {
@@ -626,7 +629,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         setLocalRuns((current) => current.map((run) => (run.id === id ? { ...run, output: message, failed: true, endedAt: Date.now(), pending: false } : run)));
       }
     },
-    [client, places, where],
+    [client, places, where, scrolling.follow],
   );
 
   const onSubmit = useCallback(
@@ -696,30 +699,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const onPromptFocus = useCallback(
     (focused: boolean) => {
       setPromptFocused(focused);
-      if (focused) {
-        browseRef.current = null;
-        setBrowse(null);
-      } else {
-        const index = moments.length > 0 ? moments.length - 1 : null;
-        browseRef.current = index;
-        setBrowse(index);
-      }
     },
-    [moments.length],
+    [],
   );
-  useEffect(() => {
-    browseRef.current = browse;
-    if (browse === null) return;
-    const container = momentsRef.current;
-    const focused = container?.querySelector<HTMLElement>(`[data-index="${browse}"]`);
-    if (!container || !focused) return;
-    // keep the focused moment inside the reading area with a margin, scrolling the container itself
-    const margin = 48;
-    const top = focused.offsetTop - container.offsetTop;
-    const bottom = top + focused.offsetHeight;
-    if (top - margin < container.scrollTop) container.scrollTop = Math.max(0, top - margin);
-    else if (bottom + margin > container.scrollTop + container.clientHeight) container.scrollTop = bottom + margin - container.clientHeight;
-  }, [browse]);
 
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -732,29 +714,52 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         target.blur();
         return;
       }
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.metaKey || event.altKey) return;
+      if (event.ctrlKey) {
+        firstGoKey.current = null;
+        if (!typing && (event.key === "u" || event.key === "d")) {
+          event.preventDefault();
+          scrolling.page(event.key === "u" ? "up" : "down");
+        }
+        return;
+      }
       if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
         void decide(event.key === "y" ? "approve" : "deny");
         return;
       }
       if (typing) return;
+      if (event.key === "g") {
+        event.preventDefault();
+        if (firstGoKey.current !== null && event.timeStamp - firstGoKey.current < 700) {
+          scrolling.page("start");
+          firstGoKey.current = null;
+        } else firstGoKey.current = event.timeStamp;
+        return;
+      }
+      firstGoKey.current = null;
+      if (event.key === "G") {
+        event.preventDefault();
+        scrolling.page("end");
+        return;
+      }
       const focused = browse !== null ? moments[browse] : latest;
       if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
         event.preventDefault();
+        scrolling.stopFollowing();
         const yours = focused.activities.filter((activity) => activity.you);
         const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration || focused.attribution);
         toggleActivity(worked ? `receipt:${focused.id}` : yours[yours.length - 1].key);
         return;
       }
-      if (browse !== null && (event.key === "j" || event.key === "ArrowDown")) {
+      if (browse !== null && event.key === "j") {
         event.preventDefault();
-        setBrowse(Math.min(moments.length - 1, browse + 1));
+        scrolling.select(Math.min(moments.length - 1, browse + 1));
         return;
       }
-      if (browse !== null && (event.key === "k" || event.key === "ArrowUp")) {
+      if (browse !== null && event.key === "k") {
         event.preventDefault();
-        setBrowse(Math.max(0, browse - 1));
+        scrolling.select(Math.max(0, browse - 1));
         return;
       }
       if (event.key === "i") {
@@ -764,7 +769,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, focusPrompt, latest, moments, pendingHil, toggleActivity]);
+  }, [browse, decide, focusPrompt, latest, moments, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -780,13 +785,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   /* the status line */
-  const runFeedback = !connected ? null
-    : runtime.runState === "awaiting_hil" ? "waiting for your approval"
-    : runtime.runState === "running" ? "working…"
-    : runtime.runState === "queued" ? "queued…"
-    : localRuns.some((run) => run.pending) ? "running your command…"
-    : null;
-  const showFeedback = !connected || !currentPlace.online || note !== null || runFeedback !== null;
+  const activeRun = connected ? runtime.activeRunId : null;
+  const runStartedAt = useMemo(() => runtime.rows.reduce<number | null>((first, row) =>
+    row.runId === activeRun && row.timestamp !== null ? Math.min(first ?? row.timestamp, row.timestamp) : first,
+  null), [activeRun, runtime.rows]);
+  const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
+  const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
@@ -816,98 +820,103 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           <div class="zen-moments" ref={momentsRef} />
         ) : (
           <div class="zen-moments" ref={momentsRef}>
-            {moments.map((moment, index) => {
-              const isLatest = index === moments.length - 1;
-              const settleStart = settling.get(moment.id);
-              const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
-              const materialising = !cascadeUnset && settleStart !== undefined && !pending;
-              if (moment.role === "note") {
-                return (
-                  <NoteMoment
-                    key={moment.id}
-                    moment={moment}
-                    index={index}
-                    phase={pending ? "pending" : materialising ? "materialising" : "settled"}
-                    focus={browse === index}
-                    open={openNotes.has(moment.id)}
-                    onToggle={() =>
-                      setOpenNotes((current) => {
-                        const next = new Set(current);
-                        if (next.has(moment.id)) next.delete(moment.id);
-                        else next.add(moment.id);
-                        return next;
-                      })
-                    }
-                  />
-                );
-              }
-              return (
-                <div key={moment.id} data-index={index} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
-                  {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-                    {moment.role === "human" ? who : "ship"}
-                  </div> : null}
-                  {moment.activities
-                    .filter((activity) => activity.you)
-                    .map((activity) => (
-                      <ActivityLine
-                        key={activity.key}
-                        activity={activity}
-                        places={places}
-                        open={openActivities.has(activity.key)}
-                        onToggle={() => toggleActivity(activity.key)}
-                        onFleet={onFleet}
-                      />
-                    ))}
-                  {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration || moment.attribution) ? (
-                    <Receipt
+            <div class="zen-content" ref={contentRef}>
+              {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
+              {(conversation.error || processRuntime.historyError) && <div class="zen-history-status is-err" role="alert">
+                {conversation.error || processRuntime.historyError}
+                <button type="button" onClick={scrolling.readOlder}>retry</button>
+              </div>}
+              {moments.map((moment, index) => {
+                const isLatest = index === moments.length - 1;
+                const settleStart = settling.get(moment.id);
+                const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
+                const materialising = !cascadeUnset && settleStart !== undefined && !pending;
+                if (moment.role === "note") {
+                  return (
+                    <NoteMoment
+                      key={moment.id}
                       moment={moment}
-                      places={places}
-                      collections={memoryCollections.data ?? []}
-                      onMemory={onMemory}
-                      onFleet={onFleet}
-                      open={openActivities.has(`receipt:${moment.id}`)}
-                      onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                      index={index}
+                      phase={pending ? "pending" : materialising ? "materialising" : "settled"}
+                      focus={browse === index}
+                      open={openNotes.has(moment.id)}
+                      onToggle={() =>
+                        setOpenNotes((current) => {
+                          const next = new Set(current);
+                          if (next.has(moment.id)) next.delete(moment.id);
+                          else next.add(moment.id);
+                          return next;
+                        })
+                      }
                     />
-                  ) : null}
-                  {moment.role === "human" ? (
-                    <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
-                  ) : moment.text ? (
-                    <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
-                  ) : moment.thinking ? (
-                    <div class="text">
-                      <span class="zen-caret blink" />
-                    </div>
-                  ) : null}
-                  {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} onReady={() => {
-                    if (browseRef.current === null && momentsRef.current) momentsRef.current.scrollTop = momentsRef.current.scrollHeight;
-                  }} />)}
-                  {isLatest && pendingHil ? (
-                    <div class="zen-approval">
-                      <div class="q">
-                        <button type="button" onClick={() => {
-                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                        }} title="Inspect this approval in Fleet">approval · {placeLabel(pendingHil.target, places)}</button>
+                  );
+                }
+                return (
+                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
+                    {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
+                      {moment.role === "human" ? who : "ship"}
+                    </div> : null}
+                    {moment.activities
+                      .filter((activity) => activity.you)
+                      .map((activity) => (
+                        <ActivityLine
+                          key={activity.key}
+                          activity={activity}
+                          places={places}
+                          open={openActivities.has(activity.key)}
+                          onToggle={() => toggleActivity(activity.key)}
+                          onFleet={onFleet}
+                        />
+                      ))}
+                    {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration || moment.attribution) ? (
+                      <Receipt
+                        moment={moment}
+                        places={places}
+                        collections={memoryCollections.data ?? []}
+                        onMemory={onMemory}
+                        onFleet={onFleet}
+                        open={openActivities.has(`receipt:${moment.id}`)}
+                        onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                      />
+                    ) : null}
+                    {moment.role === "human" ? (
+                      <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
+                    ) : moment.text ? (
+                      <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
+                    ) : moment.thinking ? (
+                      <div class="text">
+                        <span class="zen-caret blink" />
                       </div>
-                      <div class="machine-rail">
-                        <span class="cmd">
-                          <span class="who">{who}</span>@<span class="where">{pendingHil.target}</span> $ {pendingHil.syscall}{" "}
-                          {describeHilArgs(pendingHil)}
-                        </span>
+                    ) : null}
+                    {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+                    {isLatest && pendingHil ? (
+                      <div class="zen-approval">
+                        <div class="q">
+                          <button type="button" onClick={() => {
+                            if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                          }} title="Inspect this approval in Fleet">approval · {placeLabel(pendingHil.target, places)}</button>
+                        </div>
+                        <div class="machine-rail">
+                          <span class="cmd">
+                            <span class="who">{who}</span>@<span class="where">{pendingHil.target}</span> $ {pendingHil.syscall}{" "}
+                            {describeHilArgs(pendingHil)}
+                          </span>
+                        </div>
+                        <div class="keys">
+                          <button type="button" class="ibtn is-primary" onClick={() => void decide("approve")}>
+                            <kbd>y</kbd> run it
+                          </button>
+                          <button type="button" class="ibtn" onClick={() => void decide("deny")}>
+                            <kbd>n</kbd> don't
+                          </button>
+                          <span>nothing runs until you answer</span>
+                        </div>
                       </div>
-                      <div class="keys">
-                        <button type="button" class="ibtn is-primary" onClick={() => void decide("approve")}>
-                          <kbd>y</kbd> run it
-                        </button>
-                        <button type="button" class="ibtn" onClick={() => void decide("deny")}>
-                          <kbd>n</kbd> don't
-                        </button>
-                        <span>nothing runs until you answer</span>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
         <div />
@@ -915,7 +924,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
       <div class="zen-bottom">
         {showFeedback && <div class="zen-feedback">
-          {runFeedback && <span class="zen-run-status" role="status">{runFeedback}</span>}
+          {activeRun && <RunFeedback key={activeRun} startedAt={runStartedAt} model={attemptedModel}
+            place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
           {!connected && <span role="status">Not connected</span>}
           {connected && !currentPlace.online ? (
             <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
