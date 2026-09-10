@@ -16,6 +16,11 @@ export type ShellExecArgs = {
   input: string;
   cwd?: string;
   sessionId?: string;
+  /**
+   * Start under a fresh caller-persisted UUID instead of resuming sessionId. Never replay a start.
+   * Machine starts detach immediately; the first poll consumes output, not the start acknowledgement.
+   */
+  start?: boolean;
   /** Maximum runtime in milliseconds for a new command. */
   timeout?: number;
   background?: boolean;

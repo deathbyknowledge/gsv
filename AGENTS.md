@@ -115,6 +115,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Cancellation must propagate to the component that owns the active operation.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
 - `shell.cancel` explicitly stops a durable device session and its process tree. The device owns termination independently of the caller connection; polling remains available for the terminal result. Device disconnects leave session identity available for a status check after reconnect.
+- Recoverable shell starts use `shell.exec` with `start: true` and a caller-persisted fresh `sessionId`. The Kernel persists its target before dispatch and the machine claims that exact identity before spawning. Recovery only polls or cancels; it must never replay a start or uncertain stdin.
 - `proc.abort` stops the active run, `proc.reset` resets history while preserving the process, and `proc.kill` tears the process down.
 - A successfully killed pid remains terminal across Durable Object eviction and must never be reused for a replacement process.
 - Archive and media cleanup must remain coherent across reset and kill.

@@ -232,12 +232,17 @@ export async function dispatch(
   const sessionId = frame.call === "shell.exec" || frame.call === "shell.cancel"
     ? frame.args.sessionId?.trim() ?? ""
     : "";
+  const startSession = frame.call === "shell.exec" && frame.args.start === true;
+
+  if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
+    return { handled: true, response: errFrame(frame.id, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
+  }
 
   if (frame.call === "shell.cancel" && !sessionId) {
     return { handled: true, response: errFrame(frame.id, 400, "Shell session ID is required") };
   }
 
-  if (sessionId) {
+  if (sessionId && !startSession) {
     const session = deps.shellSessions.get(sessionId);
     if (!session) {
       return {
@@ -755,6 +760,15 @@ async function routeToTarget(
       handled: true,
       response: errFrame(frame.id, 400, `Target ${target.targetId} does not implement ${frame.call}`),
     };
+  }
+
+  if (frame.call === "shell.exec" && frame.args.start === true) {
+    const sessionId = frame.args.sessionId!.trim();
+    if (deps.shellSessions.get(sessionId)) {
+      return { handled: true, response: errFrame(frame.id, 409, "Shell session already exists; poll it instead of starting it again") };
+    }
+    // Persist the target before any outbound work. This check and write cannot interleave.
+    deps.shellSessions.rememberDeviceSession(sessionId, target.targetId);
   }
 
   const ttlMs = routedFrameTtlMs(frame);

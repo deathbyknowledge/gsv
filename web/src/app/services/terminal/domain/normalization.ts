@@ -105,15 +105,17 @@ export function parseOptionalPositiveInt<T>(value: T): number | null {
 export function normalizeCommandInput(input: TerminalCommandInput): Required<Pick<TerminalCommandInput, "input">> & {
   target: string;
   sessionId: string;
+  start: boolean;
   cwd: string;
   timeoutMs: number | null;
   yieldMs: number | null;
   background: boolean;
 } {
   return {
-    input: input.sessionId?.trim() ? input.input : input.input.trim(),
+    input: input.sessionId?.trim() && !input.start ? input.input : input.input.trim(),
     target: normalizeTerminalTarget(input.target),
     sessionId: String(input.sessionId ?? "").trim(),
+    start: input.start === true,
     cwd: String(input.cwd ?? "").trim(),
     timeoutMs: parseOptionalPositiveInt(input.timeoutMs),
     yieldMs: parseOptionalPositiveInt(input.yieldMs),

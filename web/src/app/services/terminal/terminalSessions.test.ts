@@ -193,7 +193,7 @@ describe("direct shell session ownership", () => {
     restored.setConnected(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(restored.snapshot()[0]).toMatchObject({ scope: "helper", command: "long command", sessionId: "shell-session", status: "running" });
-    expect(execute.mock.calls.filter(([input]) => !input.sessionId)).toHaveLength(1);
+    expect(execute.mock.calls.filter(([input]) => input.start)).toHaveLength(1);
     expect(cancel).not.toHaveBeenCalled();
   });
 
@@ -211,5 +211,56 @@ describe("direct shell session ownership", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(owner.snapshot()[1].output).toHaveLength(32_000);
     expect(owner.snapshot()[1].truncated).toBe(true);
+  });
+
+  it("persists the start identity before dispatch and recovers when its response is lost", async () => {
+    const { owner, execute, cancel, storage, row } = harness();
+    execute.mockImplementationOnce((input, signal) => {
+      expect(JSON.parse(storage.read()!)[0].sessionId).toBe(input.sessionId);
+      expect(input).toMatchObject({ start: true, target: "macbook", input: "run once" });
+      return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    });
+    const id = owner.start("run once", "macbook", "ship");
+    const sessionId = row().sessionId;
+    expect(sessionId).toEqual(expect.any(String));
+    await vi.advanceTimersByTimeAsync(0);
+    owner.dispose();
+
+    execute.mockResolvedValue({ ...result("recovered"), sessionId });
+    const restored = new TerminalSessions({ execute, cancel }, storage);
+    owners.push(restored);
+    restored.setConnected(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(execute.mock.calls[1][0]).toEqual({ sessionId, input: "", yieldMs: 1_000 });
+    expect(restored.snapshot()[0]).toMatchObject({ sessionId, status: "running", output: "recovered" });
+    execute.mockResolvedValue({ ...result("", "failed"), sessionId });
+    await restored.stop(id);
+    expect(cancel.mock.calls[0][0]).toBe(sessionId);
+    expect(restored.snapshot()[0].status).toBe("stopped");
+    expect(execute.mock.calls.filter(([input]) => input.start)).toHaveLength(1);
+  });
+
+  it("does not launch a device command when its recovery handle cannot be saved", async () => {
+    const { owner, execute, storage } = harness();
+    vi.spyOn(storage, "write").mockImplementation(() => { throw new Error("Quota exceeded"); });
+    expect(() => owner.start("must not run", "macbook", "ship")).toThrow("Could not save the command’s recovery handle");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(execute).not.toHaveBeenCalled();
+    expect(owner.snapshot()).toEqual([]);
+  });
+
+  it("can stop the known session before its initial acknowledgement arrives", async () => {
+    const { owner, execute, cancel, row } = harness();
+    execute.mockImplementationOnce((_, signal) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    const id = owner.start("slow acknowledgement", "macbook", "ship");
+    const sessionId = row().sessionId;
+    await vi.advanceTimersByTimeAsync(0);
+    execute.mockResolvedValue({ ...result("", "failed"), sessionId });
+    await owner.stop(id);
+    expect(cancel.mock.calls[0][0]).toBe(sessionId);
+    expect(row()).toMatchObject({ status: "stopped", sessionId });
+    expect(execute.mock.calls.filter(([input]) => input.start)).toHaveLength(1);
   });
 });

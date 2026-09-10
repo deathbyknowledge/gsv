@@ -247,6 +247,7 @@ type ShellSyscalls = {
       cwd?: string;
       input: string;
       sessionId?: string;
+      start?: boolean;
       timeout?: number;
     };
     result:
@@ -262,6 +263,21 @@ Start a command:
 
 ```json
 { "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
+```
+
+Clients that must recover across a lost start response first persist a fresh
+lowercase UUID v4, then send `start: true` with that `sessionId` and an explicit
+remote `target`. The Kernel records its target before forwarding the command and
+rejects reuse of an existing ID. Machines start under that exact ID and detach
+immediately. The start acknowledgement consumes no output; the first poll owns it.
+Recovery polls or cancels the saved ID and never replays the start or stdin.
+Older machines reject the unknown session before executing the command and must
+be updated. Browser targets can accept a named start but remain foreground-only;
+disconnecting their request cancels the operation. The native `gsv` shell also
+remains foreground-only and does not accept named sessions.
+
+```json
+{ "target": "macbook", "sessionId": "73c8fcce-fd24-4ebe-8c85-42f2c2befcf9", "start": true, "input": "npm test" }
 ```
 
 Poll a running command:

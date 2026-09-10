@@ -24,7 +24,7 @@ export const terminalFinished = (session: TerminalSession) => session.endedAt !=
 export class TerminalSessions {
   private rows: TerminalSession[] = [];
   private readonly listeners = new Set<() => void>();
-  private readonly jobs = new Map<string, { controller: AbortController; done: Promise<boolean> }>();
+  private readonly jobs = new Map<string, { controller: AbortController; done: Promise<boolean>; starting: boolean }>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private connected = false;
   private connectionVersion = 0;
@@ -71,10 +71,22 @@ export class TerminalSessions {
   start(command: string, target: string, scope: string): string {
     if (!this.connected || this.disposed) throw new Error("Connect before running a command.");
     const id = `you:${crypto.randomUUID()}`;
-    this.rows = [...this.rows, { id, scope, target, command, sessionId: null, startedAt: Date.now(), endedAt: null,
+    const sessionId = target === "gsv" ? null : crypto.randomUUID();
+    const rows: TerminalSession[] = [...this.rows, { id, scope, target, command, sessionId, startedAt: Date.now(), endedAt: null,
       status: "starting", output: "", truncated: false, error: "", actionError: "", draft: "", inputOpen: false, action: null, stopRequested: false }];
+    if (sessionId) {
+      try {
+        if (!this.storage) throw new Error("No session journal");
+        this.storage.write(JSON.stringify(rows));
+      } catch {
+        throw new Error("Could not save the command’s recovery handle. Free browser storage and try again.");
+      }
+    }
+    this.rows = rows;
     this.publish();
-    void this.execute(id, { input: command, target, background: target !== "gsv", yieldMs: 1_000 });
+    const input: TerminalCommandInput = { input: command, target, background: target !== "gsv", yieldMs: 1_000 };
+    if (sessionId) { input.sessionId = sessionId; input.start = true; }
+    void this.execute(id, input);
     return id;
   }
 
@@ -119,7 +131,7 @@ export class TerminalSessions {
         if (row && !terminalFinished(row) && !row.action && (row.status === "running" || connectionVersion !== this.connectionVersion)) this.schedule(id);
       }
     });
-    this.jobs.set(id, { controller, done });
+    this.jobs.set(id, { controller, done, starting: input.start === true });
     return done;
   }
 
@@ -164,7 +176,8 @@ export class TerminalSessions {
     let row = this.find(id);
     if (!row || terminalFinished(row) || row.action === "stop" || !this.connected) return;
     this.patch(id, { action: "stop", actionError: "" });
-    if (row.action === "input") this.jobs.get(id)?.controller.abort(new Error("Stopping the command"));
+    const job = this.jobs.get(id);
+    if (row.action === "input" || job?.starting) job?.controller.abort(new Error("Stopping the command"));
     if (!row.sessionId && row.target === "gsv") {
       this.patch(id, { stopRequested: true });
       this.jobs.get(id)?.controller.abort(new Error("Command stopped"));

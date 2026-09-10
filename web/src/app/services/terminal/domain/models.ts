@@ -10,6 +10,7 @@ export type TerminalCommandInput = {
   input: string;
   target?: string | null;
   sessionId?: string | null;
+  start?: boolean;
   cwd?: string | null;
   timeoutMs?: number | string | null;
   yieldMs?: number | string | null;

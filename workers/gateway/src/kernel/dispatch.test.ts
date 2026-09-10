@@ -5,6 +5,8 @@ import { testPeer } from "../test-support/peers";
 import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
+import { ShellSessionStore } from "./shell-sessions";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 function deviceRecord(targetId: string, online: boolean, implementsList = ["fs.*", "shell.*"]) {
   return {
@@ -69,6 +71,9 @@ function makeContext(): KernelContext {
     auth: {
       getPasswdByUid: vi.fn(() => null),
     },
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+    },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
@@ -95,6 +100,58 @@ function sendFrame(connection: { send(message: string): void }, frame: KernelTes
 }
 
 describe("dispatch", () => {
+  it("persists a named session before forwarding and recovers it without the start response", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const sessionId = crypto.randomUUID();
+      const store = new ShellSessionStore(sql);
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const send = vi.fn(() => {
+        expect(new ShellSessionStore(sql).get(sessionId)?.targetId).toBe("macbook");
+      });
+      // SAFETY: fixture provides the target routing dependencies exercised by these requests.
+      const deps = {
+        connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute: vi.fn(async () => ({ cancel: vi.fn() })), shellSessions: store,
+      } as DispatchDeps;
+      const start = (): RequestFrame<"shell.exec"> => ({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { target: "macbook", sessionId, start: true, input: "run once" } });
+      const admissions = await Promise.all([dispatch(start(), { type: "app", id: "tab" }, ctx, deps), dispatch(start(), { type: "app", id: "tab" }, ctx, deps)]);
+      expect(admissions.filter((result) => !result.handled)).toHaveLength(1);
+      expect(admissions.find((result) => result.handled)).toMatchObject({ response: { ok: false, error: { code: 409 } } });
+      expect(send).toHaveBeenCalledTimes(1);
+
+      // Recreate the store without ever delivering a start response or exec.status signal.
+      deps.shellSessions = new ShellSessionStore(sql);
+      for (const call of ["shell.exec", "shell.cancel"] as const) {
+        const frame: RequestFrame = call === "shell.exec"
+          ? { type: "req", id: call, call, args: { sessionId, input: "" } }
+          : { type: "req", id: call, call, args: { sessionId } };
+        expect(await dispatch(frame, { type: "app", id: "reloaded-tab" }, ctx, deps)).toEqual({ handled: false });
+      }
+      expect(send).toHaveBeenCalledTimes(3);
+      vi.mocked(ctx.targets.canAccess).mockReturnValue(false);
+      expect(await dispatch(start(), { type: "app", id: "stranger" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 403 } } });
+      expect(send).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("rejects malformed named starts before allocating or routing work", async () => {
+    const registerRoute = vi.fn();
+    const get = vi.fn();
+    // SAFETY: validation returns before other dispatch dependencies are used.
+    const deps = { registerRoute, shellSessions: { get } } as DispatchDeps;
+    for (const args of [
+      { input: "run", start: true, target: "macbook" },
+      { input: "run", start: true, target: "macbook", sessionId: "bad" },
+      { input: "run", start: true, target: "gsv", sessionId: crypto.randomUUID() },
+      { input: "run", start: true, sessionId: crypto.randomUUID() },
+    ]) {
+      expect(await dispatch({ type: "req", id: "invalid", call: "shell.exec", args }, { type: "app", id: "tab" }, makeContext(), deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400 } } });
+    }
+    expect(registerRoute).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("routes target syscalls to connected human endpoints", async () => {
     const send = vi.fn();
     const cancelRoute = vi.fn();

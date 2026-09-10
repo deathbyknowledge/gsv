@@ -3,6 +3,17 @@ import { GSVClient, GsvClientError } from "@humansandmachines/gsv/client";
 import { cancelTerminalCommand, executeTerminalCommand } from "./terminalService";
 
 describe("terminal service", () => {
+  it("starts under the journaled identity with command options and never falls back to an unsafe start", async () => {
+    const client = new GSVClient();
+    const sessionId = crypto.randomUUID();
+    const request = vi.spyOn(client, "request").mockResolvedValue({ data: { status: "running", sessionId, output: "" } });
+    const command = { input: "  run once  ", target: "macbook", sessionId, start: true, cwd: "/tmp", timeoutMs: 20_000, background: true, yieldMs: 1_000 };
+    await executeTerminalCommand(client, command);
+    expect(request).toHaveBeenCalledWith("shell.exec", { input: "run once", target: "macbook", sessionId, start: true, cwd: "/tmp", timeout: 20_000, background: true, yieldMs: 1_000 }, { signal: undefined });
+    request.mockRejectedValue(new GsvClientError({ code: 500, message: `Unknown shell session: ${sessionId}` }));
+    await expect(executeTerminalCommand(client, command)).rejects.toThrow("Update GSV on this computer");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
   it("sends stdin verbatim and consumes the incremental output field on terminal polls", async () => {
     const client = new GSVClient();
     const request = vi.spyOn(client, "request").mockResolvedValue({ data: {

@@ -51,6 +51,18 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
+  it("accepts a named start but keeps browser execution tied to its request", async () => {
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
+    const sessionId = crypto.randomUUID();
+    await expect(shell.exec({ input: "help", sessionId, start: true })).resolves.toMatchObject({ status: "completed" });
+    const controller = new AbortController();
+    const execution = shell.exec({ input: "sleep 300", sessionId, start: true }, { abortSignal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort(new Error("Caller disconnected"));
+    await expect(within(execution)).resolves.toMatchObject({ status: "failed" });
+    await expect(shell.exec({ input: "", sessionId })).resolves.toMatchObject({ status: "failed", error: "Browser shell sessions are not supported yet" });
+  });
+
   it("drops a cancelled queued command without bypassing the active command", async () => {
     const running = deferred<void>();
     const started = deferred<void>();

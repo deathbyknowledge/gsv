@@ -89,15 +89,6 @@ fn process_registry() -> &'static Arc<AsyncMutex<HashMap<String, ProcessHandle>>
     PROCESS_REGISTRY.get_or_init(|| Arc::new(AsyncMutex::new(HashMap::new())))
 }
 
-async fn store_process(handle: ProcessHandle) {
-    let session_id = {
-        let state = handle.state.lock().await;
-        state.session_id.clone()
-    };
-    let mut registry = process_registry().lock().await;
-    registry.insert(session_id, handle);
-}
-
 /// How many shell sessions still have a live process, foreground or
 /// backgrounded. Machine work that a service stop would kill.
 pub async fn running_process_count() -> usize {
@@ -459,7 +450,11 @@ where
     }
 }
 
-async fn mark_backgrounded(handle: &ProcessHandle, call_id: Option<String>) -> ProcessSnapshot {
+async fn mark_backgrounded(
+    handle: &ProcessHandle,
+    call_id: Option<String>,
+    consume_output: bool,
+) -> ProcessSnapshot {
     let mut state = handle.state.lock().await;
     state.backgrounded = true;
     if !state.started_notified {
@@ -480,14 +475,30 @@ async fn mark_backgrounded(handle: &ProcessHandle, call_id: Option<String>) -> P
             ended_at: None,
         });
     }
-    snapshot_and_drain_from_state(&mut state)
+    if consume_output {
+        snapshot_and_drain_from_state(&mut state)
+    } else {
+        // A named start only acknowledges admission. Its first poll owns the output,
+        // including when the caller never receives this acknowledgement.
+        let mut snapshot = snapshot_from_state(&state);
+        snapshot.output.clear();
+        snapshot
+    }
 }
 
 async fn launch_managed_process(
     command: String,
     cwd: PathBuf,
     timeout_ms: u64,
+    session_id: Option<String>,
 ) -> Result<(ProcessHandle, ForegroundProcessGuard), String> {
+    let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let mut registry = process_registry().lock().await;
+    if registry.contains_key(&session_id) {
+        return Err(
+            "Shell session already exists; poll it instead of starting it again".to_string(),
+        );
+    }
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
     cmd.args(&shell.launch_args).arg(&command);
@@ -506,7 +517,6 @@ async fn launch_managed_process(
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let session_id = Uuid::new_v4().to_string();
     let started_at = now_ms();
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
@@ -532,7 +542,7 @@ async fn launch_managed_process(
         stdin: Arc::new(AsyncMutex::new(stdin)),
         cancellation: CancellationToken::new(),
     };
-    let foreground = ForegroundProcessGuard::new(pid, session_id);
+    let foreground = ForegroundProcessGuard::new(pid, session_id.clone());
 
     let mut output_tasks = Vec::new();
     if let Some(stdout) = stdout {
@@ -652,7 +662,7 @@ async fn launch_managed_process(
         );
     });
 
-    store_process(handle.clone()).await;
+    registry.insert(session_id, handle.clone());
 
     Ok((handle, foreground))
 }
@@ -729,7 +739,7 @@ async fn wait_for_shell_result(handle: &ProcessHandle, yield_ms: u64) -> Value {
         }
 
         if tokio::time::Instant::now() >= deadline {
-            let running = mark_backgrounded(handle, None).await;
+            let running = mark_backgrounded(handle, None, true).await;
             return running_result(&running);
         }
 
@@ -767,6 +777,8 @@ struct ShellArgs {
     cwd: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    start: bool,
     #[serde(default)]
     timeout: Option<u64>,
     #[serde(default)]
@@ -806,12 +818,19 @@ impl Tool for ShellTool {
         let args: ShellArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
-        if let Some(session_id) = args
+        let session_id = args
             .session_id
             .as_deref()
             .map(str::trim)
-            .filter(|id| !id.is_empty())
-        {
+            .filter(|id| !id.is_empty());
+        if args.start {
+            let id = session_id.ok_or("Starting a named shell session requires a fresh UUID")?;
+            let uuid = Uuid::parse_str(id)
+                .map_err(|_| "Starting a named shell session requires a fresh UUID")?;
+            if uuid.get_version_num() != 4 || uuid.to_string() != id {
+                return Err("Starting a named shell session requires a fresh UUID".to_string());
+            }
+        } else if let Some(session_id) = session_id {
             let handle = get_process(session_id)
                 .await
                 .ok_or_else(|| format!("Unknown shell session: {}", session_id))?;
@@ -847,10 +866,20 @@ impl Tool for ShellTool {
             .unwrap_or_else(|| self.workspace.clone());
 
         let timeout_ms = args.timeout.unwrap_or(DEFAULT_TIMEOUT_MS);
-        let (handle, mut foreground) = launch_managed_process(command, cwd, timeout_ms).await?;
+        let (handle, mut foreground) = launch_managed_process(
+            command,
+            cwd,
+            timeout_ms,
+            if args.start {
+                session_id.map(str::to_string)
+            } else {
+                None
+            },
+        )
+        .await?;
 
-        if args.background == Some(true) {
-            let snapshot = mark_backgrounded(&handle, None).await;
+        if args.background == Some(true) || args.start {
+            let snapshot = mark_backgrounded(&handle, None, !args.start).await;
             foreground.disarm();
             return Ok(ToolOutput::json(running_result(&snapshot)));
         }
@@ -934,6 +963,65 @@ mod result_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn named_start_remains_pollable_and_cancellable_without_its_response() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let session_id = Uuid::new_v4().to_string();
+        let args = json!({
+            "sessionId": session_id, "start": true,
+            "input": "printf recoverable; IFS= read -r line; printf '<%s>' \"$line\"",
+        });
+        // Race duplicate admission; exactly one command may acquire this identity.
+        let (first, second) = tokio::join!(tool.execute(args.clone()), tool.execute(args));
+        assert_ne!(first.is_ok(), second.is_ok());
+        let acknowledgement = first.or(second).unwrap();
+        assert_eq!(acknowledgement.data["sessionId"], session_id);
+        assert_eq!(acknowledgement.data["output"], "");
+        drop(acknowledgement);
+
+        let recovered = tool
+            .execute(json!({ "sessionId": session_id, "input": "", "yieldMs": 250 }))
+            .await
+            .unwrap();
+        assert_eq!(recovered.data["status"], "running");
+        assert_eq!(recovered.data["output"], "recoverable");
+        ShellCancelTool
+            .execute(json!({ "sessionId": session_id }))
+            .await
+            .unwrap();
+        let terminal = tool
+            .execute(json!({ "sessionId": session_id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(terminal.data["status"], "failed");
+        assert!(tool
+            .execute(json!({ "sessionId": session_id, "start": true, "input": "echo duplicate" }))
+            .await
+            .unwrap_err()
+            .contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn named_start_requires_a_fresh_uuid_and_unknown_polls_never_execute_input() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        for session_id in [None, Some(""), Some("not-a-uuid")] {
+            assert!(tool
+                .execute(
+                    json!({ "sessionId": session_id, "start": true, "input": "echo forbidden" })
+                )
+                .await
+                .unwrap_err()
+                .contains("fresh UUID"));
+        }
+        let session_id = Uuid::new_v4().to_string();
+        assert!(tool
+            .execute(json!({ "sessionId": session_id, "input": "echo forbidden" }))
+            .await
+            .unwrap_err()
+            .contains("Unknown shell session"));
+        assert!(get_process(&session_id).await.is_none());
+    }
 
     #[tokio::test]
     async fn session_input_preserves_newlines_and_terminal_polls_only_return_new_output() {
@@ -1072,7 +1160,7 @@ mod tests {
             pid_file.display()
         );
         let (handle, mut foreground) =
-            launch_managed_process(command, std::env::temp_dir(), 30_000)
+            launch_managed_process(command, std::env::temp_dir(), 30_000, None)
                 .await
                 .unwrap();
         foreground.disarm();

@@ -12,6 +12,7 @@ export type TerminalClient = Pick<GSVClient, "call" | "request">;
 type TerminalRequestArgs = {
   input: string;
   sessionId?: string;
+  start?: boolean;
   target?: string;
   cwd?: string;
   timeout?: number;
@@ -30,30 +31,40 @@ export async function executeTerminalCommand(
   signal?: AbortSignal,
 ): Promise<TerminalTranscriptEntry> {
   const input = normalizeCommandInput(command);
-  if (!input.input && !input.sessionId) {
+  if (!input.input && (!input.sessionId || input.start)) {
     throw new Error("Command is required.");
   }
 
   const requestArgs: TerminalRequestArgs = { input: input.input };
   if (input.sessionId) {
     requestArgs.sessionId = input.sessionId;
-  } else if (input.target !== "gsv") {
+  }
+  if (input.start) requestArgs.start = true;
+  const starting = input.start || !input.sessionId;
+  if (starting && input.target !== "gsv") {
     requestArgs.target = input.target;
   }
-  if (!input.sessionId && input.cwd) {
+  if (starting && input.cwd) {
     requestArgs.cwd = input.cwd;
   }
-  if (!input.sessionId && input.timeoutMs !== null) {
+  if (starting && input.timeoutMs !== null) {
     requestArgs.timeout = input.timeoutMs;
   }
-  if (!input.sessionId && input.background) {
+  if (starting && input.background) {
     requestArgs.background = true;
   }
   if (input.yieldMs !== null) requestArgs.yieldMs = input.yieldMs;
 
   const startedAt = Date.now();
-  const response = await client.request("shell.exec", requestArgs, { signal });
-  return normalizeTranscriptEntry(response.data, startedAt, input);
+  try {
+    const response = await client.request("shell.exec", requestArgs, { signal });
+    return normalizeTranscriptEntry(response.data, startedAt, input);
+  } catch (error) {
+    if (input.start && error instanceof GsvClientError && error.message === `Unknown shell session: ${input.sessionId}`) {
+      throw new Error("Update GSV on this computer before running commands here.");
+    }
+    throw error;
+  }
 }
 
 export async function cancelTerminalCommand(client: TerminalClient, sessionId: string, signal?: AbortSignal) {
