@@ -13,3 +13,6 @@ export const INSTRUMENT_CONTACTS_KEY = ["instrument", "contacts"] as const;
 export const INSTRUMENT_CONTACT_INVITES_KEY = ["instrument", "contact-invites"] as const;
 
 export const INSTRUMENT_MESSENGERS_KEY = ["instrument", "messengers"] as const;
+
+export const instrumentContactConversationKey = (conversationId: string) => ["instrument", "contact-conversation", conversationId] as const;
+export const instrumentContactRequestsKey = (contactId: string) => ["instrument", "contact-requests", contactId] as const;

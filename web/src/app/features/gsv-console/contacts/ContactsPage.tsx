@@ -20,7 +20,9 @@ import {
 } from "../../../services/gateway/stagedResources";
 import { ChatMediaAttachment } from "../../chat/components/ChatMediaAttachment";
 import { ConsolePage, ConsolePageState } from "../components/ConsolePageTemplate";
-import type { ContactSendIntent, ContactsWorkspaceMutation } from "./contactsService";
+import type { ContactsWorkspaceMutation } from "./contactsService";
+import { selectContactSendIntent, type ContactDraftSendIntent as DraftIntent } from "./contactSendIntent";
+export { selectContactSendIntent } from "./contactSendIntent";
 import { useContactConversation, useContactsWorkspace } from "./useContactsWorkspace";
 import "./ContactsPage.css";
 import { randomId } from "../../../services/ids";
@@ -397,32 +399,7 @@ function contactMessageAuthor(message: ConversationMessage): string {
 }
 
 type ContactDraftAttachment = StagedResourceUpload & MessageInputAttachment;
-type ContactDraftSendIntent = Omit<ContactSendIntent, "media"> & {
-  contactId: string;
-  media: readonly ContactDraftAttachment[];
-};
-
-export function selectContactSendIntent(
-  previous: ContactDraftSendIntent | null,
-  contactId: string,
-  text: string,
-  media: readonly ContactDraftAttachment[],
-): ContactDraftSendIntent {
-  if (
-    previous?.contactId === contactId
-    && previous.text === text
-    && previous.media.length === media.length
-    && previous.media.every((attachment, index) => attachment.id === media[index]?.id)
-  ) {
-    return previous;
-  }
-  return {
-    contactId,
-    idempotencyKey: randomId(),
-    text,
-    media,
-  };
-}
+type ContactDraftSendIntent = DraftIntent<ContactDraftAttachment>;
 
 function contactDraftAttachment(file: File): ContactDraftAttachment {
   const mimeType = file.type || "application/octet-stream";

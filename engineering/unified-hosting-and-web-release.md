@@ -132,7 +132,7 @@ and `web/src/app/features/instrument/settings/README.md`.
 - [x] Finish adapter connection management for current managed Telegram and Slack:
   durable linked identity/status, reconnect and unlink. Implemented in the local
   preview on 2026-09-10 and verified with a disposable managed adapter fixture.
-- [ ] Complete contact conversations and cross-Ship request management in the
+- [x] Complete contact conversations and cross-Ship request management in the
   appropriate Instrument surfaces.
 - [ ] Finish retained permissions/account-grant controls.
 - [x] Support custom MCP headers in the add-server form. Verified with a real

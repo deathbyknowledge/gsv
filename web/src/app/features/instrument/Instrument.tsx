@@ -71,6 +71,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
+  const [fleetDirty, setFleetDirty] = useState(false);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
   const [scale, setScale] = useState<Scale>(() => storedScale());
@@ -98,8 +99,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       }
       if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return;
       if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
+      if (fleetDirty && !window.confirm("Discard your unsent contact messages and attachments?")) return;
       setSettingsDirty(false);
       setZenDirty(false);
+      setFleetDirty(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
@@ -119,7 +122,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         );
       }, MOVE_MS);
     },
-    [distance, settingsDirty, zenDirty],
+    [distance, settingsDirty, zenDirty, fleetDirty],
   );
 
   useLayoutEffect(() => {
@@ -238,6 +241,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <Settings onDirtyChange={setSettingsDirty} />
         ) : (
           <Fleet
+            onDirtyChange={setFleetDirty}
             initialReference={fleetReference}
             onZen={(prefill, pid) => {
               if (prefill) setZenPrefill(prefill);

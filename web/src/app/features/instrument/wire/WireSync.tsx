@@ -4,7 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleTarget } from "../../gsv-console/domain/consoleModels";
 import { consoleMcpServersQueryKey } from "../../gsv-console/hooks/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
-import { refreshContactQuery } from "./contactSync";
+import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
 import { syncProcessSignal } from "./processSync";
 import { createLedgerSync } from "./ledgerSync";
@@ -50,6 +50,10 @@ export function WireSync(): null {
       // Contacts carry invalidations, so invitation codes and private records stay out of signals.
       if (signal === "contact.changed" || signal === "contact.invite.changed") {
         void refreshContactQuery(queryClient, signal === "contact.changed" ? INSTRUMENT_CONTACTS_KEY : INSTRUMENT_CONTACT_INVITES_KEY);
+        return;
+      }
+      if (signal === "contact.request.changed" || signal === "conversation.changed") {
+        void syncContactDetailSignal(queryClient, signal, payload);
         return;
       }
       if (signal === "mcp.changed") {

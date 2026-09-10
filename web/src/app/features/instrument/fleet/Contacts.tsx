@@ -1,3 +1,5 @@
+import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
+import { ContactRequests } from "./ContactRequests";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useState } from "preact/hooks";
 import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
@@ -93,7 +95,8 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account }: { contact: ContactSummary; account: ConsoleAccount | undefined }) {
+export function ContactInspector({ contact, account, draft, onDraft, onSend }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests">(draft.text || draft.media.length ? "messages" : "details");
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";
@@ -114,6 +117,10 @@ export function ContactInspector({ contact, account }: { contact: ContactSummary
   return <section class="fleet-connection" aria-label="Contact details">
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">contact · {contact.state}</div>
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="contact-link" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
+    {section === "messages" ? <ContactConversation contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
+      : section === "requests" ? <ContactRequests contact={contact} account={account} />
+      : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
     <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); if (allowed("contact.alias.set") && !pending) save.mutate(alias.trim()); }}>
       <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
@@ -126,5 +133,6 @@ export function ContactInspector({ contact, account }: { contact: ContactSummary
       </> : <div class="fleet-actions"><button class="ibtn is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => setConfirm(true)}>revoke contact</button></div>}
     </div>}
     {error && <p class="error" role="alert">{error.message}</p>}
+    </>}
   </section>;
 }

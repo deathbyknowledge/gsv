@@ -1,7 +1,8 @@
+import { instrumentContactConversationKey, instrumentContactRequestsKey } from "./queryKeys";
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../gsv-console/messengers/messengerTestHarness";
-import { refreshContactQuery } from "./contactSync";
+import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { INSTRUMENT_CONTACTS_KEY as KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES } from "./queryKeys";
 
 const cleanup: (() => void)[] = [];
@@ -48,5 +49,37 @@ describe("contact change notifications", () => {
     await refreshContactQuery(cache, KEY);
     expect(load).not.toHaveBeenCalled();
     expect(cache.getQueryState(KEY)?.isInvalidated).toBe(true);
+  });
+});
+
+
+describe("contact detail notifications", () => {
+  it.each([
+    ["conversation.changed", instrumentContactConversationKey("one"), { conversationId: "one", latestSequence: 2 }],
+    ["contact.request.changed", instrumentContactRequestsKey("one"), { contactId: "one" }],
+  ] as const)("refreshes only an observed detail on %s and defers closed ones", async (signal, key, payload) => {
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cleanup.push(() => cache.clear());
+    const older = deferred<string[]>();
+    const load = vi.fn().mockImplementationOnce(() => older.promise).mockResolvedValue(["new record"]);
+    const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
+    const unsubscribe = observer.subscribe(() => undefined);
+    cleanup.push(unsubscribe);
+    const unrelated = [...key.slice(0, -1), "two"];
+    cache.setQueryData(unrelated, ["other"]);
+    await syncContactDetailSignal(cache, signal, payload);
+    older.resolve(["stale"]);
+    await Promise.resolve();
+    expect(cache.getQueryData(key)).toEqual(["new record"]);
+    expect(cache.getQueryState(unrelated)?.isInvalidated).toBe(false);
+    expect(load).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    await syncContactDetailSignal(cache, signal, payload);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(cache.getQueryState(key)?.isInvalidated).toBe(true);
+    const count = cache.getQueryCache().getAll().length;
+    await syncContactDetailSignal(cache, signal, { contactId: "unopened", conversationId: "unopened" });
+    await syncContactDetailSignal(cache, signal, { contactId: 12, conversationId: null });
+    expect(cache.getQueryCache().getAll()).toHaveLength(count);
   });
 });

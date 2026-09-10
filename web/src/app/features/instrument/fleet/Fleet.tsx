@@ -1,3 +1,4 @@
+import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import { ConnectPlace } from "./ConnectPlace";
 import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
@@ -52,6 +53,7 @@ import { canConfigure } from "../settings/settingsModel";
 import "./fleet.css";
 
 export type FleetProps = {
+  onDirtyChange?: (dirty: boolean) => void;
   /** The row to land on, when Zen sent us here from a reference. */
   initialReference: FleetReference | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
@@ -85,7 +87,8 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialReference, onZen }: FleetProps) {
+export function Fleet({ initialReference, onZen, onDirtyChange }: FleetProps) {
+  const contactDrafts = useContactDrafts(onDirtyChange);
   const { client, connected } = useGateway();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
@@ -537,7 +540,10 @@ export function Fleet({ initialReference, onZen }: FleetProps) {
           ) : connecting === "contact" ? (
             <AddContact account={viewer} onClose={() => setConnecting(null)} onAdded={(id) => selectConnected(`contact:${id}`)} />
           ) : selectedContact && !openFile ? (
-            <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer} />
+            <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer}
+                  draft={contactDrafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT}
+                  onDraft={(change) => contactDrafts.update(selectedContact.id, change)}
+                  onSend={() => void contactDrafts.send(selectedContact.id)} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
           ) : selectedLine && !openFile ? (

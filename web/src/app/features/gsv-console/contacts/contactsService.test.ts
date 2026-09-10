@@ -99,6 +99,16 @@ describe("contactsService", () => {
     }));
   });
 
+  it("does not admit a send after its composer has cancelled staging", async () => {
+    const send = vi.fn<GSVClient["contact"]["send"]>();
+    const controller = new AbortController();
+    controller.abort(new Error("Composer closed"));
+    await expect(sendContactMessage(contactClient({ send }), "contact:one", {
+      idempotencyKey: "cancelled", text: "draft", media: [],
+    }, controller.signal)).rejects.toThrow("Composer closed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("reuses one send identity and staging path across attachment retries", async () => {
     const request = vi.fn(async (
       call: string,

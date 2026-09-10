@@ -109,11 +109,12 @@ export function sendContactMessage(
   client: ContactsClient,
   contactId: string,
   intent: ContactSendIntent,
+  signal?: AbortSignal,
 ): Promise<ContactSendResult> {
   return withStagedResources(client, intent.media, (media) => client.contact.send({
     contactId,
     text: intent.text,
     ...(media.length > 0 ? { media } : undefined),
     idempotencyKey: intent.idempotencyKey,
-  }), intent.idempotencyKey);
+  }), intent.idempotencyKey, signal);
 }
