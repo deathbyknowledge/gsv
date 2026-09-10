@@ -9,6 +9,7 @@ import {
 } from "./responsibility-store";
 
 const OWNER_UID = 1000;
+const DAY_MS = 24 * 60 * 60_000;
 const SHIP_ACTOR = {
   kind: "process" as const,
   processId: "proc:ship",
@@ -51,6 +52,78 @@ async function withStore<Result>(
 }
 
 describe("ResponsibilityStore", () => {
+  it("persists a waiting check, wakes for review, and rearms only after another waiting decision", async () => {
+    await withStore((store) => {
+      const created = store.create(createInput({ actor: SHIP_ACTOR, observedByShip: true })).record;
+      const input = { ownerUid: OWNER_UID, id: created.id, actor: SHIP_ACTOR, observedByShip: true };
+      const waiting = store.update({ ...input, patch: { state: "waiting", blocker: "Waiting for your answer" }, now: 2_000 });
+      const checkAt = 2_000 + DAY_MS;
+      expect(store.get(OWNER_UID, created.id)).toMatchObject({ state: "waiting", nextCheckAtMs: checkAt });
+      expect(store.changes(OWNER_UID, created.revision).transitions[0]).toMatchObject({
+        changedFields: expect.arrayContaining(["state", "blocker", "nextCheckAtMs"]),
+        record: waiting.record,
+      });
+      store.update({ ...input, patch: { title: "Still awaiting your answer" }, now: 3_000 });
+      const noOp = store.update({ ...input, patch: { state: "waiting" }, now: 4_000 });
+      expect(noOp.changed).toBe(false);
+      expect(store.nextWakeAt(OWNER_UID, 4_000)).toBe(checkAt);
+      expect(store.createReadyBatch(OWNER_UID, checkAt - 1)).toBeNull();
+      const batch = store.createReadyBatch(OWNER_UID, checkAt);
+      expect(batch?.responsibilities.map(({ id }) => id)).toEqual([created.id]);
+      expect(store.createReadyBatch(OWNER_UID, checkAt)).toEqual(batch);
+      store.markBatchDelivered(batch!.id);
+      expect(store.nextWakeAt(OWNER_UID, checkAt)).toBe(checkAt + 5 * 60_000);
+      store.update({ ...input, patch: { state: "waiting" }, now: checkAt + 1 });
+      expect(store.nextWakeAt(OWNER_UID, checkAt + 1)).toBe(checkAt + 1 + DAY_MS);
+      store.update({ ...input, patch: { state: "resolved" }, now: checkAt + 2 });
+      expect(store.nextWakeAt(OWNER_UID, checkAt + 2)).toBeNull();
+    });
+  });
+
+  it("preserves explicit check times, including an intentional clear", async () => {
+    await withStore((store) => {
+      const created = store.create(createInput({ nextCheckAtMs: 3 * DAY_MS, observedByShip: true })).record;
+      const input = { ownerUid: OWNER_UID, id: created.id, actor: SHIP_ACTOR, observedByShip: true };
+      store.update({ ...input, patch: { state: "waiting", blocker: "Waiting for a decision" }, now: 2_000 });
+      expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(3 * DAY_MS);
+      const explicit = store.update({ ...input, patch: { state: "waiting", nextCheckAtMs: 5_000 }, now: 3_000 });
+      expect(explicit.record.nextCheckAtMs).toBe(5_000);
+      const past = store.update({ ...input, patch: { state: "waiting", nextCheckAtMs: 1_000 }, now: 4_000 });
+      expect(past.record.nextCheckAtMs).toBe(1_000);
+      const cleared = store.update({ ...input, patch: { state: "waiting", nextCheckAtMs: null }, now: 4_001 });
+      expect(cleared.record.nextCheckAtMs).toBeUndefined();
+      expect(store.nextWakeAt(OWNER_UID, 4_001)).toBeNull();
+      store.update({ ...input, patch: { title: "Still waiting" }, now: 4_002 });
+      expect(store.nextWakeAt(OWNER_UID, 4_002)).toBeNull();
+    });
+  });
+
+  it("brings the default forward to a future deadline and preserves revision conflicts", async () => {
+    await withStore((store) => {
+      const created = store.create(createInput({ dueAtMs: 20_000, observedByShip: true })).record;
+      const input = { ownerUid: OWNER_UID, id: created.id, actor: SHIP_ACTOR, observedByShip: true };
+      expect(() => store.update({ ...input, expectedRevision: 0, patch: { state: "waiting" }, now: 2_000 })).toThrow("revision conflict");
+      expect(store.get(OWNER_UID, created.id)?.nextCheckAtMs).toBeUndefined();
+      const waiting = store.update({ ...input, expectedRevision: created.revision, patch: { state: "waiting" }, now: 2_000 });
+      expect(waiting.record.nextCheckAtMs).toBe(20_000);
+      expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(20_000);
+    });
+  });
+
+  it("leaves system and delegated waits alone until a person returns the assignment to Ship", async () => {
+    await withStore((store) => {
+      const systemActor = { kind: "system" as const, component: "fixture" };
+      const created = store.create(createInput({ state: "waiting", blocker: "External event", actor: systemActor, observedByShip: true })).record;
+      const input = { ownerUid: OWNER_UID, id: created.id, observedByShip: true };
+      store.update({ ...input, actor: systemActor, patch: { state: "waiting", blocker: "Another external event" }, now: 2_000 });
+      expect(store.nextWakeAt(OWNER_UID, 2_000)).toBeNull();
+      store.update({ ...input, actor: SHIP_ACTOR, patch: { assignee: { kind: "process", processId: "proc:worker" }, state: "waiting" }, now: 3_000 });
+      expect(store.get(OWNER_UID, created.id)?.nextCheckAtMs).toBeUndefined();
+      store.update({ ...input, actor: USER_ACTOR, patch: { assignee: { kind: "ship" } }, now: 4_000 });
+      expect(store.get(OWNER_UID, created.id)?.nextCheckAtMs).toBe(4_000 + DAY_MS);
+    });
+  });
+
   it("announces committed owner changes but not no-ops, deduplication or revision conflicts", async () => {
     const changes: { uid: number; revision: number }[] = [];
     let observed: ResponsibilityStore;
@@ -180,7 +253,7 @@ describe("ResponsibilityStore", () => {
         observedByShip: true,
         now: dueAtMs + 1,
       });
-      expect(store.nextWakeAt(OWNER_UID, dueAtMs + 1)).toBeNull();
+      expect(store.nextWakeAt(OWNER_UID, dueAtMs + 1)).toBe(dueAtMs + 1 + DAY_MS);
     });
   });
 
@@ -241,7 +314,7 @@ describe("ResponsibilityStore", () => {
         observedByShip: true,
         now: leaseExpiresAtMs + 1,
       });
-      expect(store.nextWakeAt(OWNER_UID, leaseExpiresAtMs + 1)).toBeNull();
+      expect(store.nextWakeAt(OWNER_UID, leaseExpiresAtMs + 1)).toBe(leaseExpiresAtMs + 1 + DAY_MS);
     });
   });
 

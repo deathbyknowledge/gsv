@@ -1075,6 +1075,13 @@ and their ancestor records, and may update only its own assignment.
 | `r12y.source.list` | Lists Kernel-defined required contracts and configurable responsibility sources for the caller owner. |
 | `r12y.source.update` | Enables or disables one configurable source for the caller owner. Required contracts are immutable, and source payload storage remains owned by its subsystem. |
 
+Setting a Ship-assigned responsibility to `waiting` defaults `nextCheckAtMs` to
+24 hours later, or an earlier future deadline, when no future check exists. The
+same applies when explicitly returning a waiting assignment to Ship. An explicit
+`patch.nextCheckAtMs` is respected; `null` clears the check. Other metadata edits
+do not renew it. At the check, Ship must review the work before yielding, even if
+its blocker is unchanged. Reasserting `waiting` renews an elapsed default check.
+
 ```ts
 type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
 type ResponsibilityAssignee =
