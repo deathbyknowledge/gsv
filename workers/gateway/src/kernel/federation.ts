@@ -801,6 +801,7 @@ export async function handleContactRequestCreate(
       now,
     });
   });
+  ctx.broadcastToUserUid(ownerUid, "contact.request.changed", { contactId: contact.id });
   await ctx.scheduleFederationDelivery(deliveryId, now, true);
   await ctx.reconcileResponsibilityWake(ownerUid);
   return { request: ctx.federation.request(request.id)!, deliveryId };
@@ -891,6 +892,7 @@ export async function handleContactRequestUpdate(
     });
     return next;
   });
+  ctx.broadcastToUserUid(ownerUid, "contact.request.changed", { contactId: contact.id });
   await ctx.scheduleFederationDelivery(deliveryId, now, true);
   await ctx.reconcileResponsibilityWake(ownerUid);
   return { request: updated, deliveryId };
@@ -1771,6 +1773,7 @@ async function commitInboundRequest(
     [contact.id, contact.generation, wire.id],
   );
   const conversation = await ensureContactConversation(contact, ctx);
+  const existed = ctx.federation.request(localId);
   let request: ContactRequestRecord;
   try {
     request = ctx.federation.transaction(() => {
@@ -1812,6 +1815,7 @@ async function commitInboundRequest(
     }
     throw error;
   }
+  if (!existed) ctx.broadcastToUserUid(contact.ownerUid, "contact.request.changed", { contactId: contact.id });
   await appendContactSystemMessage(
     contact,
     conversation.id,
@@ -1889,6 +1893,9 @@ async function commitInboundRequestUpdate(
     }, ctx);
     return next;
   });
+  if (updated.revision !== current.revision) {
+    ctx.broadcastToUserUid(contact.ownerUid, "contact.request.changed", { contactId: contact.id });
+  }
   await appendContactSystemMessage(
     contact,
     conversation.id,

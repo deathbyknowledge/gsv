@@ -74,6 +74,7 @@ describe("ConnectionRuntime contact notifications", () => {
   it.each([
     ["contact.changed", "contact.list"],
     ["contact.invite.changed", "contact.invite.list"],
+    ["contact.request.changed", "contact.request.list"],
   ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {
     const socket = (uid = 1000, calls = [call], signals = [signal], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({
       step, protocol: 4,

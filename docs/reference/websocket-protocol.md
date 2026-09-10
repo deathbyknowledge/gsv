@@ -378,6 +378,11 @@ Current principal defaults from `buildSignalList()`:
     the signal grant, and the corresponding `contact.list` or
     `contact.invite.list` capability. Clients reread on reconnect to recover
     changes missed while disconnected.
+- `contact.request.changed`
+  - Carries only `{ contactId }` after a request is saved locally or received
+    from another Ship. Requires the exact owner’s connected human session, the
+    signal grant, and `contact.request.list`. Clients refresh that contact’s
+    requests and recover missed notifications on reconnect.
 - `peer.pong`
 
 ### Machine peers

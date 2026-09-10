@@ -24,6 +24,7 @@ export const USER_CONNECTION_SIGNALS = [
   "ledger.changed",
   "contact.changed",
   "contact.invite.changed",
+  "contact.request.changed",
 ] as const;
 
 const USER_PROCESS_SIGNAL_SET = new Set<string>(USER_PROCESS_SIGNALS);

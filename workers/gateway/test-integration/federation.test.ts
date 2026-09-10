@@ -58,6 +58,10 @@ describe("cross-GSV federation integration", () => {
   });
 
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
+    const firstRequestSignals: (JsonValue | undefined)[] = [];
+    const secondRequestSignals: (JsonValue | undefined)[] = [];
+    first.onSignal((signal, payload) => { if (signal === "contact.request.changed") firstRequestSignals.push(payload); });
+    second.onSignal((signal, payload) => { if (signal === "contact.request.changed") secondRequestSignals.push(payload); });
     const firstSignals: { signal: string; payload: JsonValue | undefined }[] = [];
     const secondSignals: typeof firstSignals = [];
     for (const [client, events] of [[first, firstSignals], [second, secondSignals]] as const) {
@@ -280,6 +284,17 @@ describe("cross-GSV federation integration", () => {
       idempotencyKey: "integration-request-first-completes",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "completed" });
+
+    await expect.poll(() => firstRequestSignals.length).toBe(5);
+    await expect.poll(() => secondRequestSignals.length).toBe(5);
+    expect(firstRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: firstContact.id })));
+    expect(secondRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: secondContact.id })));
+    await expect(first.contact.request.update({
+      requestId: reverseIncoming.id,
+      expectedRevision: 1,
+      state: "active",
+    })).rejects.toThrow("revision changed");
+    expect(firstRequestSignals).toHaveLength(5);
 
     const resourceBytes = Uint8Array.from([
       137, 80, 78, 71, 13, 10, 26, 10,

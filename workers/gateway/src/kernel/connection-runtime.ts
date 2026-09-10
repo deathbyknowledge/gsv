@@ -289,7 +289,8 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     };
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
-      : signal === "contact.invite.changed" ? "contact.invite.list" : null;
+      : signal === "contact.invite.changed" ? "contact.invite.list"
+      : signal === "contact.request.changed" ? "contact.request.list" : null;
     const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
 
     for (const [, conn] of this.host.connections) {
