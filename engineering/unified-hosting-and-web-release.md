@@ -143,7 +143,7 @@ and `web/src/app/features/instrument/settings/README.md`.
   The old UI has no richer conditional-policy or grant editor to migrate.
 - [x] Support custom MCP headers in the add-server form. Verified with a real
   loopback MCP server in the disposable UI test environment on 2026-09-10.
-- [ ] Verify the complete new-user and returning-user flows: onboarding/login,
+- [x] Verify the complete new-user and returning-user flows: onboarding/login,
   chat and media, approvals, models, connections, Memory, and live Fleet state.
 - [x] Make Instrument the default and remove the old UI and presentation code.
   Existing deep links have no mapping; retained services and catalog examples
@@ -159,18 +159,18 @@ into the remaining UI batches.
 
 Retained workflow inventory for the 2026-09-10 cutover. Instrument is now the
 default and the old shell and workspaces have been removed. Existing deep-link
-compatibility is explicitly out of scope. Final integrated validation remains
-the release gate.
+compatibility is explicitly out of scope. Integrated validation passed; final
+maintainer review and deployment remain.
 
 | Workflow | Instrument status | Work before retiring the old surface |
 | --- | --- | --- |
-| Personal chat, process messages, attachments, tool inspection and approvals | Implemented in Zen and Fleet | Final integrated smoke |
-| Models, fallback order, process choices and personal instructions | Implemented in Settings and Fleet | Final integrated smoke |
-| Computers and browser connections | Implemented in Fleet | Final integrated smoke |
+| Personal chat, process messages, attachments, tool inspection and approvals | Implemented in Zen and Fleet | Completed browser validation |
+| Models, fallback order, process choices and personal instructions | Implemented in Settings and Fleet | Completed browser validation |
+| Computers and browser connections | Implemented in Fleet | Completed browser validation |
 | Managed Telegram/Slack links, reconnect and unlink | Implemented in Settings | Completed browser validation |
 | Contact invitations, identities, messages/media and requests | Implemented in Fleet | Completed two-Ship browser validation |
 | Simple approval rules, stored-policy inspection/replacement and sign-out | Implemented in Settings | Completed browser validation |
-| Memory reading, search, links and correcting existing pages | Implemented in Memory | Final integrated smoke using Instrument routes |
+| Memory reading, search, links and correcting existing pages | Implemented in Memory | Completed browser validation using Instrument routes |
 | New Memory pages | Quiet new-page action uses the existing editor, checks name collisions and preserves concurrent edits | Review with the reader; collection setup/capture/build stay with Ship or commands |
 | File reading, editing, download and deletion | Preview expands to a wide reader/editor; return restores selection and scroll | Review; general file creation remains in Zen commands/Ship |
 | Responsibilities, standing-source switches and scheduled routines | Fleet has current/history, details/blockers/next checks, process filters, cancellation, standing switches and routine create/edit/pause | Review controls and live updates |
@@ -217,3 +217,20 @@ the default route, delete the old UI, merge, or deploy production.
 Maintainer-authored comments about Fleet's former command line and the old
 AI/UI-only config prefix list were preserved; the implementation now routes the
 command to Zen and additionally allows locale preferences.
+
+## Cutover validation — 2026-09-10
+
+Web typecheck, 64 test files / 571 tests, and the production asset build pass.
+Disposable gateway instances and Chromium cover standalone and managed browser
+onboarding, returning login/sign-out, chat/media, actual Shell approval and
+cancellation, model editing, managed Telegram/Slack pairing and MCP headers,
+two-Ship contacts/requests, permissions, Memory read/search/edit/prefill and
+errors, Fleet files/responsibilities/routines/live state, and keyboard modes.
+The design catalog and template preview still load independently.
+
+The old UI cutover removes 49,153 net lines, including obsolete tests and styles;
+retained domain/service modules and catalog examples were moved. The header
+galaxy trial was reverted at the maintainer's request because it was too faint
+at that size. The original text wordmark remains, alongside the newly restored
+Zen run-feedback line. The local-network preview is on port 5174; these changes
+have not been deployed to production.
