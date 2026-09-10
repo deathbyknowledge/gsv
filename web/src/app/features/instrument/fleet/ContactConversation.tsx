@@ -88,7 +88,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       addFiles(Array.from(event.dataTransfer?.files ?? []));
     }}>
       <label>Message<textarea aria-label="Message to contact" placeholder="Write a message…" value={draft.text} disabled={disabled} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
-        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); if (!disabled) onSend(); }
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!disabled && !event.repeat) onSend(); }
       }} onPaste={(event) => {
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length) { event.preventDefault(); addFiles(files); }
