@@ -290,7 +290,10 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
       : signal === "contact.invite.changed" ? "contact.invite.list"
-      : signal === "contact.request.changed" ? "contact.request.list" : null;
+      : signal === "contact.request.changed" ? "contact.request.list"
+      : signal === "r12y.changed" ? "r12y.list"
+      : signal === "r12y.source.changed" ? "r12y.source.list"
+      : signal === "sched.changed" ? "sched.list" : null;
     const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
 
     for (const [, conn] of this.host.connections) {

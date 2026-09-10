@@ -12,6 +12,7 @@
  */
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { ownerTimezone } from "./timezone";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
@@ -220,7 +221,7 @@ export async function handleAiContext(
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
-      timezone: config.get("config/server/timezone") ?? "UTC",
+      timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
     },
     skillIndexMode,
   };
@@ -266,7 +267,7 @@ export async function handleAiConfig(
     config,
     accountConfigUids,
   );
-  const timezone = config.get("config/server/timezone") ?? "UTC";
+  const timezone = principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC";
   await builtinSkillsReady;
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"

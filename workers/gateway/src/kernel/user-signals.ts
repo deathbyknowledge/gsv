@@ -25,6 +25,9 @@ export const USER_CONNECTION_SIGNALS = [
   "contact.changed",
   "contact.invite.changed",
   "contact.request.changed",
+  "r12y.changed",
+  "r12y.source.changed",
+  "sched.changed",
 ] as const;
 
 const USER_PROCESS_SIGNAL_SET = new Set<string>(USER_PROCESS_SIGNALS);

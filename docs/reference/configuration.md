@@ -16,7 +16,9 @@ Root (`uid 0`) can read and write all configuration. Non-root users can read the
 
 Sensitive final path segments include `api_key`, `secret`, `token`, `password`, `access_token`, `refresh_token`, and `client_secret`. Suffixes such as `_api_key`, `_secret`, `_token`, and `_password` are also treated as sensitive.
 
-`sys.config.set` lets non-root users write only their own `users/{uid}/ai/*` keys. System writes under `/sys/config/*` require root.
+`sys.config.set` lets non-root users write `ai/*`, `ui/*`, and `locale/*` preferences for their own or delegated accounts. System writes under `/sys/config/*` require root.
+
+`users/{ownerUid}/locale/timezone` is the human's IANA timezone, for example `Europe/Amsterdam`. Ship's context and new schedules without an explicit timezone use this preference, falling back to `config/server/timezone` and then UTC. Existing schedules retain their saved timezone, and system crontabs retain their system/`CRON_TZ` semantics. Invalid personal timezones are rejected; clearing the preference restores the installation default. The Instrument preference does not change the browser's formatting timezone.
 
 ## Reading and Writing
 

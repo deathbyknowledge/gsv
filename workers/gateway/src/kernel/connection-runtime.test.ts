@@ -73,6 +73,9 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
 describe("ConnectionRuntime contact notifications", () => {
   it.each([
     ["contact.changed", "contact.list"],
+    ["r12y.changed", "r12y.list"],
+    ["r12y.source.changed", "r12y.source.list"],
+    ["sched.changed", "sched.list"],
     ["contact.invite.changed", "contact.invite.list"],
     ["contact.request.changed", "contact.request.list"],
   ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {
@@ -81,7 +84,7 @@ describe("ConnectionRuntime contact notifications", () => {
       peer: { ...MACHINE_PEER, principal: { kind, account: { ...MACHINE_PEER.principal.account, uid } }, grant: { calls, signals, implements: [] } },
     });
     const owner = socket();
-    const wildcard = socket(1000, ["contact.*"]);
+    const wildcard = socket(1000, [`${call.split(".")[0]}.*`]);
     const rejected = [socket(1001), socket(0, ["*"]), socket(1000, []), socket(1000, ["*"], []), socket(1000, ["*"], [signal], "machine"), socket(1000, ["*"], [signal], "human", "superseded")];
     const { runtime } = runtimeWith([owner, wildcard, ...rejected]);
     runtime.rehydrateConnections();

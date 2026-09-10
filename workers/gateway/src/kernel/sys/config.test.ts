@@ -73,6 +73,12 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
 }
 
 describe("sys.config.get", () => {
+  it("lets humans change only their own timezone without system write access", () => {
+    const ctx = makeContext(1000, {});
+    expect(handleSysConfigSet({ key: "users/1000/locale/timezone", value: "Europe/Amsterdam" }, ctx)).toEqual({ ok: true });
+    expect(() => handleSysConfigSet({ key: "users/1001/locale/timezone", value: "UTC" }, ctx)).toThrow("another user's");
+    expect(() => handleSysConfigSet({ key: "config/server/timezone", value: "UTC" }, ctx)).toThrow("only root");
+  });
   const baseEntries = {
     "config/ai/models": JSON.stringify({
       version: 1,

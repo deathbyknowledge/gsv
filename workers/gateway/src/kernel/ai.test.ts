@@ -431,6 +431,16 @@ describe("handleAiConfig", () => {
     ].join(".");
   }
 
+  it("uses the owner's timezone for both standing context and live context facts", async () => {
+    const ctx = makeAiConfigContext({
+      "config/server/timezone": "UTC",
+      "users/1000/locale/timezone": "Europe/Amsterdam",
+      "users/2000/locale/timezone": "America/New_York",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+  });
+
   it("resolves the generation streaming switch", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext()))
       .resolves.toMatchObject({ generationStreaming: "auto", system: { timezone: "UTC" } });

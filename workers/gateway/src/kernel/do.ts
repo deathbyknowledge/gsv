@@ -117,7 +117,7 @@ import {
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
@@ -465,12 +465,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.ipcCalls = new IpcCallStore(sql);
 
-    this.schedules = new ScheduleStore(sql);
+    this.schedules = new ScheduleStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "sched.changed"));
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage);
-    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
+    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
@@ -1509,7 +1509,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   /** Closes the line for a response, whether it came back inline or over a route. Idempotent. */
   completeLedger(frame: ResponseFrame): void {
     try {
-      this.ledger.complete(frame.id, { outcome: outcomeOfResponse(frame), ...usageOfResponse(frame) });
+      this.ledger.complete(frame.id, { outcome: outcomeOfResponse(frame), error: errorOfResponse(frame), ...usageOfResponse(frame) });
     } catch (error) {
       console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
     }

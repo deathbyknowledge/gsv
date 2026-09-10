@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ownerTimezone } from "./timezone";
 
 describe("ConfigStore", () => {
+  it("validates personal timezones and preserves the installation default for other owners", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new ConfigStore(sql);
+      store.set("config/server/timezone", "UTC");
+      store.set("users/1000/locale/timezone", " Europe/Amsterdam ");
+      expect(ownerTimezone(store, 1000)).toBe("Europe/Amsterdam");
+      expect(ownerTimezone(store, 1001)).toBe("UTC");
+      expect(() => store.set("users/1000/locale/timezone", "Invalid/Zone")).toThrow("timezone");
+      expect(ownerTimezone(store, 1000)).toBe("Europe/Amsterdam");
+      store.set("users/1000/locale/timezone", "");
+      expect(ownerTimezone(store, 1000)).toBe("UTC");
+    });
+  });
   it("defaults image reading to its supported output budget", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/image/read/max_tokens"])
       .toBe("28672");

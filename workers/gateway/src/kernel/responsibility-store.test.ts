@@ -39,17 +39,32 @@ function createInput(
 
 async function withStore<Result>(
   callback: (store: ResponsibilityStore) => Result | Promise<Result>,
+  onChange?: (uid: number) => void,
 ): Promise<Result> {
   const kernel = await getDurableObjectByName<Env, Kernel>(
     env.KERNEL,
     `responsibility-store-${crypto.randomUUID()}`,
   );
   return await runInDurableObject(kernel, async (_instance: Kernel, state) => {
-    return await callback(new ResponsibilityStore(state.storage));
+    return await callback(new ResponsibilityStore(state.storage, onChange));
   });
 }
 
 describe("ResponsibilityStore", () => {
+  it("announces committed owner changes but not no-ops, deduplication or revision conflicts", async () => {
+    const changes: { uid: number; revision: number }[] = [];
+    let observed: ResponsibilityStore;
+    await withStore((store) => {
+      observed = store;
+      const first = store.create(createInput({ dedupeKey: "once" }));
+      store.create(createInput({ dedupeKey: "once" }));
+      const input = { ownerUid: OWNER_UID, id: first.record.id, actor: USER_ACTOR, observedByShip: false, now: 2000 };
+      store.update({ ...input, patch: { state: "open" } });
+      expect(() => store.update({ ...input, expectedRevision: 0, patch: { state: "active" } })).toThrow();
+      store.update({ ...input, expectedRevision: first.record.revision, patch: { state: "waiting", blocker: "An answer" } });
+    }, (uid) => changes.push({ uid, revision: observed.list({ ownerUid: uid }).revision }));
+    expect(changes).toEqual([{ uid: OWNER_UID, revision: 1 }, { uid: OWNER_UID, revision: 2 }]);
+  });
   it("records one deduplicated responsibility and an ordered transition", async () => {
     await withStore((store) => {
       const first = store.create(createInput({

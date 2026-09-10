@@ -39,6 +39,9 @@ describe("user-facing signal policy", () => {
       "mcp.changed",
       "ledger.changed",
       "contact.changed",
+      "r12y.changed",
+      "r12y.source.changed",
+      "sched.changed",
       "contact.invite.changed",
       "contact.request.changed",
     ]));

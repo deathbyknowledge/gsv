@@ -30,6 +30,7 @@ export const LEDGER_INDEX_BATCH = 32;
 const REPAIR_STEP_MS = 24 * 60 * 60 * 1000;
 /** Characters of JSON text a line keeps of its arguments; the cut is marked. */
 export const LEDGER_ARGS_LIMIT = 16_384;
+export const LEDGER_ERROR_LIMIT = 4096;
 export const LEDGER_ID_LIMIT = 128;
 export const LEDGER_LIST_MAX = 200;
 export const LEDGER_SEGMENTS_PER_READ = 4;
@@ -57,6 +58,7 @@ export type LedgerAppend = {
 
 export type LedgerCompletion = {
   outcome: LedgerOutcome;
+  error?: string | null;
   tokens?: number | null;
   costNanoUsd?: number | null;
 };
@@ -105,6 +107,7 @@ type WindowRow = {
   call: string;
   args: string;
   outcome: string | null;
+  error: string | null;
   duration_ms: number | null;
   tokens: number | null;
   cost_nano_usd: number | null;
@@ -140,6 +143,7 @@ const storedLineSchema = z.object({
   call: z.string(),
   args: z.string(),
   outcome: outcomeSchema.nullable(),
+  error: z.string().nullable().optional(),
   durationMs: z.number().nullable(),
   tokens: z.number().nullable().optional(),
   costNanoUsd: z.number().nullable().optional(),
@@ -191,6 +195,15 @@ export function outcomeOfResponse(frame: ResponseFrame): LedgerOutcome {
   return "failed";
 }
 
+/** Keep the reason itself, never an arbitrary provider metadata object or a response body. */
+export function errorOfResponse(frame: ResponseFrame): string | null {
+  if (!frame.ok) return capField(frame.error.message, LEDGER_ERROR_LIMIT);
+  if (!failedResultSchema.safeParse(frame.data).success) return null;
+  const parsed = z.object({ error: z.union([z.string(), z.object({ message: z.string() })]) }).safeParse(frame.data);
+  if (!parsed.success) return null;
+  return capField(typeof parsed.data.error === "string" ? parsed.data.error : parsed.data.error.message, LEDGER_ERROR_LIMIT);
+}
+
 /** The usage an ai.text.generate result carries: on its assistant message, with cost in USD. */
 const aiResultUsageSchema = z.object({
   message: z.object({
@@ -237,6 +250,7 @@ function rowToStored(row: WindowRow): StoredLine {
     call: row.call,
     args: row.args,
     outcome: outcome.success ? outcome.data : null,
+    error: row.error ?? null,
     durationMs: row.duration_ms,
     tokens: row.tokens,
     costNanoUsd: row.cost_nano_usd,
@@ -371,7 +385,7 @@ export class LedgerStore {
     const known = this.open.get(requestId);
     this.open.delete(requestId);
     const [row] = [...this.sql.exec<WindowRow>(
-      `UPDATE ledger_window SET outcome = ?, duration_ms = MAX(0, ? - ts), tokens = ?, cost_nano_usd = ?
+      `UPDATE ledger_window SET outcome = ?, duration_ms = MAX(0, ? - ts), tokens = ?, cost_nano_usd = ?, error = ?
        WHERE seq = ${known === undefined
          ? "(SELECT seq FROM ledger_window WHERE request_id = ? AND outcome IS NULL ORDER BY seq DESC LIMIT 1)"
          : "?"} AND outcome IS NULL RETURNING *`,
@@ -379,6 +393,7 @@ export class LedgerStore {
       now,
       completion.tokens ?? null,
       completion.costNanoUsd ?? null,
+      completion.error ? capField(completion.error, LEDGER_ERROR_LIMIT) : null,
       known ?? capField(requestId, LEDGER_ID_LIMIT),
     )];
     if (!row) return false;

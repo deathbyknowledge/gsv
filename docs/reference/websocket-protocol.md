@@ -350,6 +350,8 @@ Current principal defaults from `buildSignalList()`:
 - `process.exit`
   - Carries `{ pid }` to the owner after a terminated Process is removed from
     the registry. Clients remove that row; a repeated cleanup emits no new exit.
+- `r12y.changed`, `r12y.source.changed`, `sched.changed`
+  - Payload-free notices after saved responsibility, standing-source, and schedule changes, including schedule run state. Only connected human peers of the exact owner with the signal and corresponding `r12y.list`, `r12y.source.list`, or `sched.list` capability receive them. Clients invalidate only the affected list; closed lists wait until opened. Deduplicated or unchanged responsibility records do not emit another change. Reconnect rereads missed changes.
 - `conversation.changed`
   - Announces that canonical conversation history has advanced. Clients use
     `conversation.history` to synchronize the durable record.

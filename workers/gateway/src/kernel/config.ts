@@ -21,6 +21,7 @@ import {
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
 import { MAIL_SEND } from "../syscalls/constants";
+import { normalizeTimezone } from "./timezone";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
@@ -131,7 +132,8 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
 // "config/ai/models" and the deployment base.
 // Only AI config and UI presentation prefs (e.g. "users/{uid}/ui/avatar") are
 // user-overridable; server/shell/process config is system-only.
-export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
+// Locale preferences additionally follow the human across clients and owned processes.
+export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/", "locale/"] as const;
 
 export class ConfigStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -149,6 +151,10 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    if (/^users\/\d+\/locale\/timezone$/.test(key)) {
+      if (!value.trim()) { this.delete(key); return; }
+      value = normalizeTimezone(value);
+    }
     if (/^users\/\d+\/ai\/model_order$/.test(key)) {
       if (!value.trim()) { this.delete(key); return; }
       const order = parseAiModelOrder(value);
