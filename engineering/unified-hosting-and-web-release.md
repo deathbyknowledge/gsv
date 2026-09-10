@@ -11,6 +11,8 @@ engineering contract and architecture references when the cutover is implemented
 - Finish and release the new Instrument web UI first, against the current managed
   runtime. Retire the old desktop UI once retained workflows have replacements.
   Keep UI batches small and check in with the maintainer before expanding them.
+- Use Instrument's routes for the web cutover. The maintainer explicitly waived
+  compatibility for existing deep links; no legacy route mapping is required.
 - Then make one hosting model: an operator deploys GSV to their own Cloudflare
   account and can create one or several isolated installations. H&M runs the same
   public core. Multiple installations do not imply open public registration.
@@ -140,8 +142,8 @@ and `web/src/app/features/instrument/settings/README.md`.
   loopback MCP server in the disposable UI test environment on 2026-09-10.
 - [ ] Verify the complete new-user and returning-user flows: onboarding/login,
   chat and media, approvals, models, connections, Memory, and live Fleet state.
-- [ ] Make Instrument the default and migrate supported deep links, then remove
-  the old UI and presentation code once the workflow inventory is complete.
+- [ ] Make Instrument the default, then remove the old UI and presentation code
+  once the workflow inventory is complete. Existing deep links need no mapping.
 - [ ] Validate and release the web change before starting the hosting cutover.
 
 These are release requirements, not claims that the work is already complete.
@@ -153,18 +155,18 @@ into the remaining UI batches.
 
 Audit of the actual route and component implementations on 2026-09-10. The old
 shell remains reachable while the retained controls are reviewed. The maintainer
-approved the scope below; old-route mapping, final smoke testing and removal
-remain separate work after this review.
+approved the scope below; final smoke testing and removal remain separate work
+after this review. Existing deep-link compatibility is explicitly out of scope.
 
 | Workflow | Instrument status | Work before retiring the old surface |
 | --- | --- | --- |
-| Personal chat, process messages, attachments, tool inspection and approvals | Implemented in Zen and Fleet | Final integrated smoke and deep-link mapping |
+| Personal chat, process messages, attachments, tool inspection and approvals | Implemented in Zen and Fleet | Final integrated smoke |
 | Models, fallback order, process choices and personal instructions | Implemented in Settings and Fleet | Final integrated smoke |
 | Computers and browser connections | Implemented in Fleet | Final integrated smoke |
 | Managed Telegram/Slack links, reconnect and unlink | Implemented in Settings | Completed browser validation |
 | Contact invitations, identities, messages/media and requests | Implemented in Fleet | Completed two-Ship browser validation |
 | Simple approval rules, stored-policy inspection/replacement and sign-out | Implemented in Settings | Completed browser validation |
-| Memory reading, search, links and correcting existing pages | Implemented in Memory | Map existing reader/editor deep links |
+| Memory reading, search, links and correcting existing pages | Implemented in Memory | Final integrated smoke using Instrument routes |
 | New Memory pages | Quiet new-page action uses the existing editor, checks name collisions and preserves concurrent edits | Review with the reader; collection setup/capture/build stay with Ship or commands |
 | File reading, editing, download and deletion | Preview expands to a wide reader/editor; return restores selection and scroll | Review; general file creation remains in Zen commands/Ship |
 | Responsibilities, standing-source switches and scheduled routines | Fleet has current/history, details/blockers/next checks, process filters, cancellation, standing switches and routine create/edit/pause | Review controls and live updates |
@@ -181,8 +183,8 @@ implement arbitrary conditions. The new UI must not imply otherwise.
 
 Removal must keep genuinely shared domain and service code used by Instrument,
 move it out of the obsolete presentation namespace where appropriate, and remove
-obsolete pages only after retained routes are mapped and tested. Design catalog
-routes are a separate development surface.
+obsolete pages after retained workflows are tested through Instrument. Design
+catalog routes are a separate development surface.
 
 
 ## Review batch: responsibilities, routines, Memory and files
