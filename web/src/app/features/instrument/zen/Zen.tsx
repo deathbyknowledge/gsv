@@ -794,6 +794,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
+  const historyFailure = conversation.historyError ? (
+    <div class="zen-history-status is-err" role="alert">
+      <span>Could not load your conversation: {conversation.historyError.message}</span>
+      <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
+    </div>
+  ) : null;
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
@@ -817,10 +823,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         {empty ? (
           pidProp ? <div class="zen-empty"><p>This helper has no messages yet.</p></div> : <FirstDay />
         ) : !ready ? (
-          <div class="zen-moments" ref={momentsRef} />
+          <div class="zen-moments" ref={momentsRef}>
+            <div class="zen-content" ref={contentRef}>{historyFailure}</div>
+          </div>
         ) : (
           <div class="zen-moments" ref={momentsRef}>
             <div class="zen-content" ref={contentRef}>
+              {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
               {(conversation.error || processRuntime.historyError) && <div class="zen-history-status is-err" role="alert">
                 {conversation.error || processRuntime.historyError}

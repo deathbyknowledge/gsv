@@ -299,20 +299,34 @@ export function useChatConversationRuntime(
     ? runtime
     : EMPTY_RUNTIME;
 
+  const retryHistory = useCallback(async () => {
+    if (!enabled) return;
+    if (conversationQuery.isError || !conversationId) {
+      await conversationQuery.refetch();
+    } else {
+      await historyQuery.refetch();
+    }
+  }, [enabled, conversationQuery.isError, conversationQuery.refetch, conversationId, historyQuery.refetch]);
+
   return useMemo(() => ({
     ...visibleRuntime,
     appendOptimistic,
     acceptMessage,
     historyLoading: conversationQuery.isLoading || historyQuery.isLoading,
+    historyFetching: conversationQuery.isFetching || historyQuery.isFetching,
     historyError: conversationQuery.error ?? historyQuery.error,
+    retryHistory,
     loadOlder,
   }), [
     appendOptimistic,
     acceptMessage,
     conversationQuery.error,
     conversationQuery.isLoading,
+    conversationQuery.isFetching,
     historyQuery.error,
     historyQuery.isLoading,
+    historyQuery.isFetching,
+    retryHistory,
     loadOlder,
     visibleRuntime,
   ]);

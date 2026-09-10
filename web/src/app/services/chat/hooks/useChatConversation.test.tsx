@@ -55,6 +55,90 @@ function history(
 }
 
 describe("chat conversation pagination", () => {
+  it.each(["lookup", "history"] as const)("retries the failed initial %s query and then loads the conversation", async (stage) => {
+    vi.stubGlobal("document", {});
+    const summary = conversation("conversation:retry", "proc:retry");
+    const failure = new Error(`${stage} unavailable`);
+    let failing = true;
+    const forProcess = vi.fn(async () => {
+      if (failing && stage === "lookup") throw failure;
+      return { conversation: summary };
+    });
+    const getHistory = vi.fn(async () => {
+      if (failing && stage === "history") throw failure;
+      return history(summary, 1, "recovered message", false);
+    });
+    const gateway: ChatConversationRuntimeGateway = {
+      connected: true,
+      client: { conversation: { forProcess, history: getHistory }, onSignal: () => () => undefined },
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createTestRoot("Initial conversation recovery");
+    const observed: ObservedHook = {};
+    function Harness() { observed.current = useChatConversationRuntime({ processId: summary.handlerPid }, gateway); return null; }
+    try {
+      await root.render(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+      await vi.waitFor(() => expect(observed.current?.historyError).toBe(failure));
+      expect(observed.current?.loaded).toBe(false);
+      expect(observed.current?.error).toBe("");
+      expect(observed.current?.historyFetching).toBe(false);
+      failing = false;
+      await act(async () => { await observed.current?.retryHistory(); });
+      await vi.waitFor(() => expect(observed.current?.rows.map((row) => row.text)).toEqual(["recovered message"]));
+      expect(observed.current?.loaded).toBe(true);
+      expect(observed.current?.historyError).toBeNull();
+      expect(forProcess).toHaveBeenCalledTimes(stage === "lookup" ? 2 : 1);
+      expect(getHistory).toHaveBeenCalledTimes(stage === "history" ? 2 : 1);
+    } finally {
+      await root.unmount();
+      queryClient.clear();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps loaded messages and older pages while retrying a failed history refresh", async () => {
+    vi.stubGlobal("document", {});
+    const summary = conversation("conversation:refresh", "proc:refresh");
+    let failing = false;
+    const failure = new Error("refresh unavailable");
+    const gateway: ChatConversationRuntimeGateway = {
+      connected: true,
+      client: {
+        conversation: {
+          forProcess: async () => ({ conversation: summary }),
+          history: async ({ beforeSequence }) => {
+            if (failing) throw failure;
+            return beforeSequence === undefined ? history(summary, 2, "latest", true) : history(summary, 1, "older", false);
+          },
+        },
+        onSignal: () => () => undefined,
+      },
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createTestRoot("Conversation refresh recovery");
+    const observed: ObservedHook = {};
+    function Harness() { observed.current = useChatConversationRuntime({ processId: summary.handlerPid }, gateway); return null; }
+    try {
+      await root.render(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+      await vi.waitFor(() => expect(observed.current?.loaded).toBe(true));
+      await act(async () => { await observed.current?.loadOlder(); });
+      failing = true;
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: ["conversation", "history", summary.id] }); });
+      await vi.waitFor(() => expect(observed.current?.historyError).toBe(failure));
+      expect(observed.current?.rows.map((row) => row.text)).toEqual(["older", "latest"]);
+      expect(observed.current?.loaded).toBe(true);
+      failing = false;
+      await act(async () => { await observed.current?.retryHistory(); });
+      await vi.waitFor(() => expect(observed.current?.historyError).toBeNull());
+      expect(observed.current?.rows.map((row) => row.text)).toEqual(["older", "latest"]);
+      expect(observed.current?.hasMore).toBe(false);
+    } finally {
+      await root.unmount();
+      queryClient.clear();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("retains older pages and the exhausted cursor through disconnect and tail refresh", async () => {
     vi.stubGlobal("document", {});
     const summary = conversation("conversation:retained", "proc:retained");
