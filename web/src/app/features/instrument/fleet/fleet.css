@@ -412,6 +412,10 @@
 .file-reader-head { display: flex; align-items: baseline; gap: 20px; padding: 22px 0 18px; border-bottom: 1px solid var(--border); }
 .file-reader-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--path); font-size: 12px; }
 .file-reader-actions { display: flex; gap: 18px; align-items: baseline; }
+.file-reader-action { border: 0; padding: 3px 0; background: none; color: var(--text-dim); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; text-decoration: none; cursor: pointer; }
+.file-reader-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.file-reader-action:disabled { opacity: .45; cursor: default; }
+.file-reader-action.is-primary { color: var(--accent); }
 .file-reader-content { flex: 1; min-height: 0; overflow: auto; padding-top: 22px; }
 .file-reader-content pre { margin: 0; font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; color: var(--text); }
 .file-reader-content img { max-width: 100%; }
@@ -422,6 +426,7 @@
 .file-reader-more[open] button { position: absolute; right: 0; top: 24px; white-space: nowrap; padding: 10px; background: var(--void); }
 .file-reader-confirm { padding: 12px 0; color: var(--error); }
 .file-reader-confirm button { margin-right: 18px; }
+.file-reader-confirm .file-reader-action:first-of-type { color: var(--error); }
 @media (max-width: 720px) { .fleet-file-reader { padding-left: 16px; padding-right: 16px; } .file-reader-head { flex-wrap: wrap; gap: 14px; } .file-reader-path { flex-basis: 60%; } }
 
 .fleet-work-filters { display: flex; gap: 16px; margin: 6px 0 12px; }

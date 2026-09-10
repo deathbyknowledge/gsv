@@ -103,22 +103,22 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && draft && !busy && dirty) { event.preventDefault(); save.mutate(draft); }
   }}>
     <header class="file-reader-head">
-      <button class="ibtn" type="button" disabled={busy} onClick={close}>← back to fleet</button>
+      <button class="file-reader-action" type="button" disabled={busy} onClick={close}>← back to fleet</button>
       <span class="file-reader-path">{file.target} · {file.path}</span>
       <div class="file-reader-actions">
         {draft ? <>
-          <button class="ibtn is-primary" disabled={!connected || busy || !dirty} onClick={() => save.mutate(draft)}>{save.isPending ? "saving…" : "save"}</button>
-          <button class="ibtn" disabled={busy} onClick={() => { if (!dirty || window.confirm("Discard your unsaved file changes?")) { setDraft(null); save.reset(); } }}>cancel</button>
+          <button class="file-reader-action is-primary" disabled={!connected || busy || !dirty} onClick={() => save.mutate(draft)}>{save.isPending ? "saving…" : "save"}</button>
+          <button class="file-reader-action" disabled={busy} onClick={() => { if (!dirty || window.confirm("Discard your unsaved file changes?")) { setDraft(null); save.reset(); } }}>cancel</button>
         </> : <>
-          {writable && text !== null && complete && <button class="ibtn" onClick={() => { save.reset(); setDraft({ original: text, text }); }}>edit</button>}
-          {resource && (downloadUrl ? <a class="ibtn" href={downloadUrl} download={file.name}>download again</a> : <button class="ibtn" disabled={download.isPending} onClick={() => download.mutate()}>{download.isPending ? "preparing…" : "download"}</button>)}
-          {removable && <details class="file-reader-more"><summary aria-label="More file actions">···</summary><button class="ibtn" onClick={() => setRemoving(true)}>delete file</button></details>}
+          {writable && text !== null && complete && <button class="file-reader-action" onClick={() => { save.reset(); setDraft({ original: text, text }); }}>edit</button>}
+          {resource && (downloadUrl ? <a class="file-reader-action" href={downloadUrl} download={file.name}>download again</a> : <button class="file-reader-action" disabled={download.isPending} onClick={() => download.mutate()}>{download.isPending ? "preparing…" : "download"}</button>)}
+          {removable && <details class="file-reader-more"><summary class="file-reader-action" aria-label="More file actions">more</summary><button class="file-reader-action" onClick={() => setRemoving(true)}>delete file</button></details>}
         </>}
       </div>
     </header>
     {error && <p class="error" role="alert">{error.message}</p>}
     {!connected && <p class="note">Reconnect to read or save this file.</p>}
-    {removing && <div class="file-reader-confirm"><p>Delete {file.name} from {file.target}?</p><button class="ibtn" disabled={busy} onClick={() => remove.mutate()}>delete permanently</button><button class="ibtn" disabled={busy} onClick={() => setRemoving(false)}>cancel</button></div>}
+    {removing && <div class="file-reader-confirm"><p>Delete {file.name} from {file.target}?</p><button class="file-reader-action" disabled={busy} onClick={() => remove.mutate()}>delete permanently</button><button class="file-reader-action" disabled={busy} onClick={() => setRemoving(false)}>cancel</button></div>}
     {read.isPending && connected ? <LoadingState variant="panel">Reading file…</LoadingState> : draft ? (
       <textarea autoFocus class="file-reader-editor" aria-label="File text" spellcheck={false} disabled={busy} value={draft.text} onInput={(event) => setDraft({ ...draft, text: event.currentTarget.value })} />
     ) : <div class="file-reader-content">
