@@ -50,6 +50,19 @@ function gatewayWithEnv(
 }
 
 describe("AdapterGatewayEntrypoint", () => {
+  it.each(["unlinkManagedAdapterIdentity", "unlinkAdapterIdentity"] as const)("retains binding authority through %s", async (method) => {
+    const unlinkManagedAdapterIdentity = vi.fn(async () => ({ removed: true }));
+    const getByName = vi.fn(() => ({ unlinkManagedAdapterIdentity }));
+    const resolveInstallation = vi.fn(async () => ({ found: true, installationId: "inst_alias", state: "retained" }));
+    const gateway = gatewayWithEnv({ KERNEL: { getByName }, INSTALLATION_DIRECTORY: { resolveInstallation } });
+    const request = { operationId: "operation-alias", accountId: "managed", actorId: "actor", surfaceId: "surface",
+      expectedLocalUid: 1000, expectedGeneration: "old-generation" };
+    expect(await gateway[method]({ installationId: "inst_alias" }, request)).toEqual({ removed: true });
+    expect(getByName).toHaveBeenCalledWith("inst_alias");
+    expect(unlinkManagedAdapterIdentity).toHaveBeenCalledWith("telegram", request);
+    expect("unlinkAdapterIdentity" in GatewayEntrypoint.prototype).toBe(false);
+  });
+
   it("keeps adapter RPC off the generic Gateway entrypoint", () => {
     const gateway = gatewayWithEnv({});
 

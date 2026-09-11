@@ -29,6 +29,15 @@ method must be exposed by the deployed server before its callers change. The
 same rule applies to encoded stream events: preserve their captured payload and
 ordering contract even when the function or type gets a neutral name.
 
+The alias implementation now exposes `unlinkAdapterIdentity` on the attenuated
+adapter entrypoint; `acceptInboundMail`, `completeInboundMail`,
+`claimOutboundMail`, and `completeOutboundMail` on the mail Gateway entrypoint;
+and `getInferencePolicy` / `recordInferenceUsage` on H&M Accounts. The old names
+remain callable and the current consumers still use them. These methods share
+the existing admission, body ownership, route-generation, and idempotency paths.
+This records the source checkpoint, not deployment evidence. The next consumer
+batch must follow verification of the alias release on staging.
+
 ## Resource identities retained by the H&M overlay
 
 The current overlay is `infrastructure/src/gsv/managed.ts`; the private wrapper

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { GatewayEntrypoint } from "./index";
 
-describe("managed mail Gateway routing", () => {
+describe.each([
+  { accept: "acceptManagedInboundMail", complete: "completeManagedOutboundMail", claim: "claimManagedOutboundMail" },
+  { accept: "acceptInboundMail", complete: "completeOutboundMail", claim: "claimOutboundMail" },
+] as const)("mail Gateway routing through $accept", ({ accept, complete, claim }) => {
   it("checks the installation directory before addressing a Kernel and cancels the body", async () => {
     const resolveInstallation = vi.fn(async () => ({ found: false as const }));
     const getByName = vi.fn(() => {
@@ -21,7 +24,7 @@ describe("managed mail Gateway routing", () => {
       length: 1,
     };
 
-    await expect(gateway.acceptManagedInboundMail(
+    await expect(gateway[accept](
       { installationId: "installation-unknown" },
       // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
@@ -46,7 +49,7 @@ describe("managed mail Gateway routing", () => {
     });
     const cancel = vi.fn();
 
-    await expect(gateway.acceptManagedInboundMail(
+    await expect(gateway[accept](
       { installationId: "../not-an-installation" },
       // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
@@ -88,11 +91,11 @@ describe("managed mail Gateway routing", () => {
       fingerprint: `sha256:${"a".repeat(64)}`,
     };
 
-    await expect(gateway.claimManagedOutboundMail(
+    await expect(gateway[claim](
       { installationId: "installation-hank" },
       reference,
     )).rejects.toThrow("suspended");
-    await expect(gateway.completeManagedOutboundMail(
+    await expect(gateway[complete](
       { installationId: "installation-hank" },
       { ...reference, state: "failed", errorCode: "installation_inactive" },
     )).resolves.toBeUndefined();
@@ -126,7 +129,7 @@ describe("managed mail Gateway routing", () => {
       errorCode: "installation_inactive",
     };
 
-    await expect(gateway.completeManagedOutboundMail(
+    await expect(gateway[complete](
       { installationId: "installation-missing" },
       completion,
     )).resolves.toBeUndefined();
@@ -153,7 +156,7 @@ describe("managed mail Gateway routing", () => {
       },
     });
 
-    await expect(gateway.completeManagedOutboundMail(
+    await expect(gateway[complete](
       { installationId: "installation-missing" },
       {
         version: 1,
@@ -181,7 +184,7 @@ describe("managed mail Gateway routing", () => {
       },
     });
 
-    await expect(gateway.completeManagedOutboundMail(
+    await expect(gateway[complete](
       { installationId: "installation-missing" },
       {
         version: 1,
