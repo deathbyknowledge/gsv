@@ -1,4 +1,5 @@
 import * as z from "zod/mini";
+import { unstable_splitSqlQuery } from "wrangler";
 import { ADOPTION_STATE_TABLE, adoptionDigest, quoteAdoptionIdentifier as quote } from "./installation-migration-adoption-state.ts";
 import { assertMigrationFreeze, readMigrationFreeze, readMigrationSchema } from "./installation-migration-freeze.ts";
 import { migrationD1Read, type MigrationD1Database, type MigrationD1Statement } from "./installation-migration-d1.ts";
@@ -108,9 +109,10 @@ export async function runOwnedInstallationMigrations(input: {
     pending.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     const next = pending[0];
     if (next) {
-      // D1 accepts multiple SQL statements inside one batch item. Keeping the
-      // complete migration intact preserves trigger bodies and SQL comments.
-      statements.push({ sql: next.sql }, {
+      // REST emits one result per SQL statement, while D1 bindings emit one per
+      // batch item. Wrangler's parser preserves trigger bodies and quoted/comment
+      // semicolons while giving both transports the same statement boundaries.
+      statements.push(...unstable_splitSqlQuery(next.sql).map((sql) => ({ sql })), {
         sql: `INSERT INTO ${quote(ledgers[next.owner])} (id, name, applied_at) VALUES (?, ?, datetime('now'))`,
         params: [nextIds.get(next.owner)!, next.name],
       }, { sql: `INSERT INTO ${SOURCE_TABLE} (owner, name, sha256) VALUES (?, ?, ?)`,

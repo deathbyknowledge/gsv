@@ -7,9 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { Miniflare } from "miniflare";
+import { unstable_splitSqlQuery } from "wrangler";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HistoricalResetProof, MigrationAdoptionContext } from "../src/installation-migration-adoption.ts";
-import type { MigrationD1Database, MigrationD1Row } from "../src/installation-migration-d1.ts";
+import { cloudflareMigrationD1, type MigrationD1Database, type MigrationD1Row } from "../src/installation-migration-d1.ts";
 import { cancelRemoteInstallationMigrationAdoption, executeRemoteInstallationMigrationAdoption, prepareRemoteInstallationMigrationAdoption } from "../src/installation-migration-adoption-remote.ts";
 import { runInstallationMigrationCommand, readMigrationCommandRequest } from "../src/installation-migration-command.ts";
 import { runOwnedInstallationMigrations } from "../src/installation-migration-runner.ts";
@@ -200,6 +201,40 @@ describe.skipIf(!privateMigrations)("remote adoption with actual private migrati
     expect(await runOwnedInstallationMigrations(input)).toEqual({ applied: [] });
     sources[sources.length - 1].sql = "CREATE TABLE forward_fixture (different TEXT)";
     await expect(runOwnedInstallationMigrations(input)).rejects.toThrow(/source changed/);
+  });
+
+  it("keeps REST result cardinality exact for forward files containing triggers and multiple statements", async () => {
+    const state = await complete();
+    const identity = { accountId: "a".repeat(32), databaseId: "11111111-1111-4111-8111-111111111111" };
+    const adoption = { ...state.input, database: { ...state.database, identity }, context: { ...context, ...identity } };
+    const prepared = await prepareRemoteInstallationMigrationAdoption(adoption);
+    prepared.snapshot.close();
+    await executeRemoteInstallationMigrationAdoption({ ...adoption, approvedPreconditionSha256: prepared.plan.preconditionSha256 });
+    const sources = state.input.sources.map((source) => ({ ...source,
+      owner: installationMigrationInventory.find((entry) => entry.name === source.name)!.owner }));
+    sources.push({ owner: "directory", name: "0013_rest_fixture.sql", sql: `
+      CREATE TABLE rest_fixture (id TEXT);
+      CREATE TABLE rest_audit (value TEXT);
+      CREATE TRIGGER rest_insert AFTER INSERT ON rest_fixture BEGIN
+        INSERT INTO rest_audit VALUES (new.id || '; first');
+        INSERT INTO rest_audit VALUES (new.id || '; second');
+      END;
+      -- A comment with a semicolon; is not a statement boundary.
+      INSERT INTO rest_fixture VALUES ('one;value');` });
+    const requestSchema = z.object({ batch: z.array(z.object({ sql: z.string(), params: z.optional(z.array(z.string())) })) });
+    const database = cloudflareMigrationD1({ ...identity, apiToken: "fixture-never-sent", async fetch(_url, init) {
+      const { batch } = requestSchema.parse(JSON.parse(String(init?.body)));
+      // The REST endpoint returns results for each SQL statement, unlike the
+      // local D1 binding's result grouping for a multi-statement batch item.
+      const expanded = batch.flatMap(({ sql, params }) => unstable_splitSqlQuery(sql).map((query) => state.db.prepare(query).bind(...params ?? [])));
+      const result = await state.db.batch<MigrationD1Row>(expanded);
+      return Response.json({ success: true, result: result.map((entry) => ({ success: entry.success, results: entry.results })) });
+    } });
+    const input = { database, operationId: context.operationId, sources };
+    expect(await runOwnedInstallationMigrations(input)).toEqual({ applied: ["0013_rest_fixture.sql"] });
+    expect((await state.db.prepare("SELECT value FROM rest_audit ORDER BY value").all()).results)
+      .toEqual([{ value: "one;value; first" }, { value: "one;value; second" }]);
+    expect(await runOwnedInstallationMigrations(input)).toEqual({ applied: [] });
   });
 
   it("rolls back a failed forward migration and recovers its lost successful reply", async () => {

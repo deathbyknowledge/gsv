@@ -22,7 +22,8 @@
   "dependencies": {
     "alchemy": "2.0.0-beta.72",
     "effect": "4.0.0-beta.107",
-    "zod": "4.1.13"
+    "zod": "4.1.13",
+    "wrangler": "4.127.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260823.1",
