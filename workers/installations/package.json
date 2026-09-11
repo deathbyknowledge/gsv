@@ -16,7 +16,11 @@
     "./domain": "./src/domain.ts",
     "./tokens": "./src/tokens.ts",
     "./onboarding": "./src/onboarding.ts",
-    "./reset-preparation": "./src/reset-preparation.ts"
+    "./reset-preparation": "./src/reset-preparation.ts",
+    "./owner-store": "./src/owner-store.ts",
+    "./owner-identity": "./src/owner-identity.ts",
+    "./owner-http": "./src/owner-http.ts",
+    "./owner-service": "./src/owner-service.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -25,7 +29,9 @@
   },
   "dependencies": {
     "@humansandmachines/gsv": "0.0.6",
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "oauth4webapi": "^3.8.8",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",

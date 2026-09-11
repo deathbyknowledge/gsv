@@ -1,4 +1,4 @@
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@humansandmachines/gsv/services/inference-context";
 import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
 import {

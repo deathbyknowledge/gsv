@@ -1,7 +1,6 @@
 import { createModels, type Context } from "@earendil-works/pi-ai";
 import {
   encodeManagedInferenceStreamEvent,
-  GSV_INFERENCE_FEATURE,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -15,9 +14,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createGsvInferenceProviderFactory,
-  gsvInferenceFeaturesFromEnv,
-  gsvInferenceProviderFactoryFromEnv,
-} from "./gsv-provider";
+} from "../../src/text/gsv-provider";
 
 const ATTRIBUTION = {
   installationId: "inst_test",
@@ -61,63 +58,6 @@ describe("GSV inference provider", () => {
 
     expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
       .toBe(32_768);
-  });
-
-  it("registers when either managed inference binding is present", () => {
-    const service: ManagedInferenceService = {
-      getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
-    };
-
-    // SAFETY: The fixture implements the Env binding consumed by provider registration.
-    expect(gsvInferenceProviderFactoryFromEnv({
-      MANAGED_INFERENCE: service,
-    } as Env)).toMatchObject({ id: "gsv" });
-    // SAFETY: The fixture implements the Env binding consumed by provider registration.
-    expect(gsvInferenceFeaturesFromEnv({
-      MANAGED_INFERENCE: service,
-    } as Env)).toEqual([GSV_INFERENCE_FEATURE]);
-    // SAFETY: The fixture implements the direct namespace binding consumed by registration.
-    expect(gsvInferenceProviderFactoryFromEnv({
-      MANAGED_INFERENCE_INSTALLATIONS: { getByName: vi.fn() },
-    } as Env)).toMatchObject({ id: "gsv" });
-    // SAFETY: The fixture implements the direct namespace binding consumed by registration.
-    expect(gsvInferenceFeaturesFromEnv({
-      MANAGED_INFERENCE_INSTALLATIONS: { getByName: vi.fn() },
-    } as Env)).toEqual([GSV_INFERENCE_FEATURE]);
-    // SAFETY: An empty Env fixture represents an absent optional binding.
-    expect(gsvInferenceProviderFactoryFromEnv({} as Env)).toBeUndefined();
-    // SAFETY: An empty Env fixture represents an absent optional binding.
-    expect(gsvInferenceFeaturesFromEnv({} as Env)).toEqual([]);
-  });
-
-  it("prefers the direct installation namespace over the service fallback", async () => {
-    const { service, target, dispose } = managedService(
-      vi.fn(async () => eventStream({
-        type: "done",
-        reason: "stop",
-        message: RESULT,
-      })),
-    );
-    const getByName = vi.fn(() => target);
-    // SAFETY: The fixture implements both optional managed inference bindings.
-    const factory = gsvInferenceProviderFactoryFromEnv({
-      MANAGED_INFERENCE_INSTALLATIONS: { getByName },
-      MANAGED_INFERENCE: service,
-    } as Env);
-    if (!factory) throw new Error("managed inference provider was not registered");
-
-    await expect(providerStreamFromFactory(
-      factory,
-      new AbortController().signal,
-    ).result()).resolves.toMatchObject({ stopReason: "stop" });
-
-    expect(getByName).toHaveBeenCalledWith(ATTRIBUTION.installationId);
-    expect(service.getInstallation).not.toHaveBeenCalled();
-    expect(target.generateStream).toHaveBeenCalledOnce();
-    expect(target.generateStream).toHaveBeenCalledWith(
-      expect.objectContaining({ workload: "ipc" }),
-    );
-    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("forwards deltas before the managed result completes", async () => {

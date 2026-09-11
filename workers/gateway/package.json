@@ -25,11 +25,11 @@
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@cloudflare/codemode": "^0.3.4",
-    "@earendil-works/pi-ai": "0.85.1",
     "@humansandmachines/gsv": "file:../../packages/gsv",
     "@modelcontextprotocol/sdk": "1.29.0",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@simplewebauthn/server": "^14.0.1"
   }
 }

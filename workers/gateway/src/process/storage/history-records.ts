@@ -1,4 +1,4 @@
-import type { ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type { ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import {
   jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema,
   type JsonObject, type JsonValue, type ProcHistoryEventKind, type ProcHistoryRecordData,

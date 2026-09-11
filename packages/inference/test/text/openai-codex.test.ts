@@ -3,11 +3,11 @@ import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
-import { createGenerationService } from "./service";
+import { createGenerationService } from "../../src/text/service";
 import {
   completeWithOpenAiCodexFetch,
   streamWithOpenAiCodexFetch,
-} from "./openai-codex";
+} from "../../src/text/openai-codex";
 
 function codexToken(accountId = "acct-test"): string {
   return jwtToken({
@@ -135,6 +135,8 @@ describe("OpenAI Codex routed fetch transport", () => {
     const config = {
       executor: { kind: "kernel" as const }, provider: "openai-codex", model: modelName,
       apiKey: codexToken(), reasoning: "high", maxTokens: 4096, maxContextBytes: 32768,
+      contextWindowTokens: 200000, contextWindowSource: "model" as const,
+      capabilities: [], generationTimeoutMs: 180000,
     };
     const context: Context = {
       systemPrompt: "Inspect a file, then report the result.",
@@ -268,7 +270,7 @@ describe("OpenAI Codex routed fetch transport", () => {
       model: codexModel(),
       context: {
         systemPrompt: "Reply briefly.",
-        messages: [{ role: "user", content: "Say ok" }],
+        messages: [{ role: "user", content: "Say ok", timestamp: 0 }],
       },
       fetch: fetchMock,
       options: {
@@ -313,7 +315,7 @@ describe("OpenAI Codex routed fetch transport", () => {
       model: codexModel(),
       context: {
         systemPrompt: "Reply briefly.",
-        messages: [{ role: "user", content: "Say ok" }],
+        messages: [{ role: "user", content: "Say ok", timestamp: 0 }],
       },
       fetch: fetchMock,
       options: {
@@ -336,7 +338,7 @@ describe("OpenAI Codex routed fetch transport", () => {
       model: codexModel(),
       context: {
         systemPrompt: "Reply briefly.",
-        messages: [{ role: "user", content: "Say ok" }],
+        messages: [{ role: "user", content: "Say ok", timestamp: 0 }],
       },
       fetch: fetchMock,
       options: {
@@ -378,7 +380,7 @@ describe("OpenAI Codex routed fetch transport", () => {
       model: codexModel(),
       context: {
         systemPrompt: "Reply briefly.",
-        messages: [{ role: "user", content: "Say ok" }],
+        messages: [{ role: "user", content: "Say ok", timestamp: 0 }],
       },
       fetch: fetchMock,
       options: {
@@ -410,7 +412,7 @@ describe("OpenAI Codex routed fetch transport", () => {
 
     const result = await streamWithOpenAiCodexFetch({
       model: codexModel(),
-      context: { systemPrompt: "", messages: [{ role: "user", content: "hi" }] },
+      context: { systemPrompt: "", messages: [{ role: "user", content: "hi", timestamp: 0 }] },
       fetch: fetchMock,
       options: {
         apiKey: codexToken(),

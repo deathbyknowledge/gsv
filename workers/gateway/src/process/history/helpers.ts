@@ -5,7 +5,7 @@ import {
   CONTEXT_RUNWAY_ALERT_BUDGET_RATIO_BEFORE_BOUNDARY, CONTEXT_RUNWAY_ALERT_MAX_TOKENS_BEFORE_BOUNDARY,
 } from "../internal/lifecycle";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../../prompts/compaction";
-import type { Context } from "@earendil-works/pi-ai";
+import type { Context } from "@humansandmachines/gsv/services/inference-context";
 import {
   type InteractionOrigin, type JsonObject, type ProcHistoryRecordData, type ProcHistoryContextPolicy,
   type ResourceBlock, jsonObjectSchema,

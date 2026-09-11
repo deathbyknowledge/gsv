@@ -1,4 +1,4 @@
-import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context } from "@humansandmachines/gsv/services/inference-context";
 import { describe, expect, it } from "vitest";
 import {
   assistantContextEpochId,

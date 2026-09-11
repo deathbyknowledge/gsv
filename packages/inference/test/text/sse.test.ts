@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSse } from "./sse";
+import { parseSse } from "../../src/text/sse";
 
 function streamOf(chunks: string[]): Response {
   const encoder = new TextEncoder();

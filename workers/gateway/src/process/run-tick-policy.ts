@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
-import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import {
   parseRunControlCommand, type RunControlCommand, type RunControlCommandParseResult,
 } from "./run-control-command";

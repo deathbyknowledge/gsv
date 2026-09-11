@@ -1,6 +1,6 @@
 import { Kernel } from "../kernel/do";
 import { getKernelPtr } from "../shared/utils";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@humansandmachines/gsv/services/inference-context";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {

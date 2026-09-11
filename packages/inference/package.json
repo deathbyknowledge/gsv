@@ -6,19 +6,25 @@
   "exports": {
     "./workers-ai": "./src/workers-ai.ts",
     "./failure": "./src/failure.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./text/*": "./src/text/*.ts",
+    "./media": "./src/media/index.ts",
+    "./transport": "./src/transport.ts",
+    "./executor": "./src/executor/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@humansandmachines/gsv": "0.0.6"
+    "@earendil-works/pi-ai": "0.85.1",
+    "@humansandmachines/gsv": "0.0.6",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
     "vitest": "^4.1.9",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "@cloudflare/workers-types": "5.20260901.1"
   }
 }

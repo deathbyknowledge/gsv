@@ -1,7 +1,7 @@
 import type { AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { streamWithCustomProvider } from "./custom-provider";
+import { streamWithCustomProvider } from "../../src/text/custom-provider";
 
 const CONTEXT: Context = {
   systemPrompt: "",

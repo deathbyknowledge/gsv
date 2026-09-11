@@ -11,7 +11,7 @@ import {
   extractGeneratedText,
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
-} from "./service";
+} from "../../src/text/service";
 
 function createGenerationService(
   options: Parameters<typeof createProductionGenerationService>[0] = {},
@@ -44,7 +44,7 @@ import type {
   InferenceTarget as ManagedInferenceTarget,
 } from "@humansandmachines/gsv/services/inference";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
-import { createGsvInferenceProviderFactory } from "./gsv-provider";
+import { createGsvInferenceProviderFactory } from "../../src/text/gsv-provider";
 
 function managedResultStream(
   message: ManagedInferenceResult,
@@ -82,6 +82,7 @@ function assistantMessage(content: AssistantMessage["content"]): AssistantMessag
 }
 
 const CONFIG: AiConfigResult = {
+  capabilities: [],
   executor: { kind: "kernel" },
   provider: "anthropic",
   model: "claude-sonnet-4-6",
@@ -392,7 +393,7 @@ describe("createGenerationService", () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
     completePiAiSimpleMock.mockResolvedValueOnce(message);
 
-    await createGenerationService().generate({
+    await createGenerationService({ workersAi: { aiGatewayLogId: null, fetch: makeFetchFixture() } }).generate({
       config: {
         ...CONFIG,
         provider: "workers-ai",

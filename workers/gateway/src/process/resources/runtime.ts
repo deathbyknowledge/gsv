@@ -1,3 +1,4 @@
+import { createMediaExecutor } from "../../inference/media-client";
 /** Owns Process resource admission, storage, retention, and hydration. */
 
 import type { Process } from "../do";
@@ -27,7 +28,7 @@ import type {
 } from "../../protocol/process-frames";
 import type { MessageRecord } from "../store";
 import { storedHistoryMedia } from "../storage/history-media";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent } from "@humansandmachines/gsv/services/inference-context";
 import {
   MAX_PROCESS_MEDIA_READ_BYTES, retainedResourceBlock, type ArchivedMediaRewrite, type ResourceRetentionOptions,
   type ResourceRetentionResult,
@@ -544,12 +545,18 @@ export class ProcessResources {
     media: ProcMediaInput[] | undefined,
   ): Promise<StoreIncomingProcessMediaOptions> {
     if (!media || media.length === 0) {
-      return { ai: this.host.env.AI };
+      return {};
     }
 
     const config = await this.host.settings.resolveAiConfig();
+    const runId = this.host.runs.active?.runId;
     return {
-      ai: this.host.env.AI,
+      execute: createMediaExecutor(this.host.env, async () => ({
+        installationId: this.host.installationId,
+        logicalRequestId: crypto.randomUUID(),
+        actor: { localUid: this.host.identity.uid, processId: this.host.pid, runId },
+        workload: "interactive",
+      })),
       audioTranscriptionProvider: config.media?.transcriptionProvider,
       audioTranscriptionModel: config.media?.transcriptionModel,
       audioTranscriptionApiKey: config.media?.transcriptionApiKey,

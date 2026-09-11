@@ -5,7 +5,7 @@ import {
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import type { MessageMetadata, MessageRole } from "../store";
-import type { ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type { ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 
 export const PROCESS_KILLED_TOMBSTONE_KEY = "__gsv_process_killed__";
 

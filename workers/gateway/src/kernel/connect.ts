@@ -26,7 +26,7 @@ import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
-import { gsvInferenceFeaturesFromEnv } from "../inference/gsv-provider";
+import { gsvInferenceFeaturesFromEnv } from "../inference/features";
 
 export type ConnectOutcome =
   | {

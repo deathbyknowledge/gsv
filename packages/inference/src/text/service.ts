@@ -17,9 +17,10 @@ import {
   isWorkersAiProvider,
   prepareWorkersAiGatewayPayload,
   workersAiBindingFetch,
-  workersAiProvider,
+  createWorkersAiProvider,
+  type WorkersAiBinding,
 } from "./workers-ai";
-import { createGenerationAbort, generationTimeoutMessage, withTimeout } from "./timeout";
+import { createGenerationAbort, generationTimeoutMessage, withTimeout } from "../shared/timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
 import {
   completePiAiSimple,
@@ -59,6 +60,7 @@ type GenerateRequest = {
   fetch?: typeof fetch;
   sessionAffinityKey?: string;
   signal?: AbortSignal;
+  deadlineAt?: number;
   attribution?: InferenceAttribution;
 };
 
@@ -69,6 +71,8 @@ type GenerationService = {
 };
 
 type GenerationServiceOptions = {
+  workersAi?: WorkersAiBinding;
+  workersAiGatewayId?: string;
   fetch?: typeof fetch;
   providers?: readonly InferenceProviderFactory[];
   transports?: Partial<GenerationTransports>;
@@ -127,7 +131,7 @@ export function createGenerationService(
         providerStyle: options.providerStyle,
       })
     ) {
-      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs, request.deadlineAt);
       const result = streamWithCustomProvider({
         provider: options.modelProvider,
         model: options.modelName,
@@ -153,8 +157,8 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const deadlineAt = Date.now() + generationTimeoutMs;
-    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt);
+    const deadlineAt = Math.min(Date.now() + generationTimeoutMs, request.deadlineAt ?? Infinity);
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt, serviceOptions);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs, deadlineAt);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
@@ -182,7 +186,7 @@ export function createGenerationService(
     }
     const result = transports.streamPiAiSimple(piAi.model, request.context, {
       apiKey: options.apiKey,
-      fetch: workersAi ? workersAiBindingFetch : generationFetch,
+      fetch: workersAi ? workersAiBindingFetch(serviceOptions.workersAi) : generationFetch,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
       signal: abort.signal,
@@ -219,7 +223,7 @@ export function createGenerationService(
         providerStyle: options.providerStyle,
       })
     ) {
-      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs, request.deadlineAt);
       try {
         return await withTimeout(
           completeWithCustomProvider({
@@ -248,8 +252,8 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const deadlineAt = Date.now() + generationTimeoutMs;
-    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt);
+    const deadlineAt = Math.min(Date.now() + generationTimeoutMs, request.deadlineAt ?? Infinity);
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt, serviceOptions);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs, deadlineAt);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
@@ -278,7 +282,7 @@ export function createGenerationService(
       return await withTimeout(
         transports.completePiAiSimple(piAi.model, request.context, {
           apiKey: options.apiKey,
-          fetch: workersAi ? workersAiBindingFetch : generationFetch,
+          fetch: workersAi ? workersAiBindingFetch(serviceOptions.workersAi) : generationFetch,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: abort.signal,
@@ -338,8 +342,10 @@ function resolvePiAiProviderModel(
   request: GenerateRequest,
   options: ResolvedGenerationOptions,
   deadlineAt: number,
+  serviceOptions: GenerationServiceOptions,
 ): PiAiProviderModel {
   if (isWorkersAiProvider(options.modelProvider)) {
+    const workersAiProvider = createWorkersAiProvider(serviceOptions.workersAi, serviceOptions.workersAiGatewayId);
     const models = modelsWithProviders([workersAiProvider]);
     const model = models.getModel(workersAiProvider.id, options.modelName);
     if (!model) {

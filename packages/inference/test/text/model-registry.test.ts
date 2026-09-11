@@ -4,7 +4,7 @@ import {
   resolveModelMetadata,
   resolveModelThinkingLevel,
   resolvePiAiModel,
-} from "./model-registry";
+} from "../../src/text/model-registry";
 
 describe("model registry metadata", () => {
   it.each(["gpt-6-astra", "gpt-5.6-sol"])("resolves %s from the upstream Codex catalog", (modelName) => {

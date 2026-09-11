@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { createModels, type Context } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -8,8 +7,8 @@ import {
   prepareWorkersAiGatewayPayload,
   resolveWorkersAiModelMetadata,
   workersAiBindingFetch,
-  workersAiProvider,
-} from "./workers-ai";
+  createWorkersAiProvider,
+} from "../../src/text/workers-ai";
 
 type TestAi = {
   aiGatewayLogId: string | null;
@@ -17,10 +16,6 @@ type TestAi = {
   models(): Promise<never[]>;
 };
 
-function installAi(ai: TestAi): void {
-  // SAFETY: The Workers test environment permits replacing bindings with fixtures.
-  (env as typeof env & { AI: TestAi }).AI = ai;
-}
 
 function completionStream(): Response {
   const chunks = [
@@ -69,14 +64,14 @@ describe("Workers AI provider", () => {
 
   it("routes pi-ai's OpenAI-compatible request through the binding", async () => {
     const bindingFetch = vi.fn<typeof fetch>(async () => completionStream());
-    installAi({
+    const binding: TestAi = {
       aiGatewayLogId: null,
       fetch: bindingFetch,
       models: vi.fn(async () => []),
-    });
+    };
 
     const models = createModels();
-    models.setProvider(workersAiProvider);
+    models.setProvider(createWorkersAiProvider(binding));
     const model = models.getModel("workers-ai", DEFAULT_WORKERS_AI_MODEL);
     expect(model).toBeDefined();
     if (!model) return;
@@ -87,7 +82,7 @@ describe("Workers AI provider", () => {
       tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: {} } }],
     };
     const result = await models.completeSimple(model, context, {
-      fetch: workersAiBindingFetch,
+      fetch: workersAiBindingFetch(binding),
       maxTokens: 64,
       reasoning: "high",
       onPayload: prepareWorkersAiGatewayPayload,

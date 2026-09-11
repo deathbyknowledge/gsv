@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import {
   createProvider,
   type Api,
@@ -10,6 +9,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
   createAiBindingFetch,
+  type AiBinding,
 } from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
@@ -21,9 +21,6 @@ export { DEFAULT_WORKERS_AI_MODEL };
 
 const PI_WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
 const WORKERS_AI_GATEWAY_ID = "default";
-const WORKERS_AI_GATEWAY_BASE_URL =
-  `https://workers-binding.ai/ai-gateway/gateways/${WORKERS_AI_GATEWAY_ID}`;
-const WORKERS_AI_GATEWAY_COMPAT_URL = `${WORKERS_AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_GATEWAY_MODEL_PREFIX = "workers-ai/";
 
 // The 0.84.2 note below is historical: GSV now uses pi-ai 0.85.1's direct binding.
@@ -68,7 +65,9 @@ type WorkersAiCatalogModel = {
   properties?: WorkersAiCatalogProperty[];
 };
 
-const workersAiContextWindowCache = new Map<string, Promise<number | null>>();
+export type WorkersAiBinding = AiBinding & {
+  models?(options: { search: string; per_page: number }): Promise<WorkersAiCatalogModel[]>;
+};
 const workersAiGatewayPayloadSchema = z.looseObject({});
 type WorkersAiGatewayPayload = z.infer<typeof workersAiGatewayPayloadSchema>;
 type PiAiPayload = Parameters<NonNullable<SimpleStreamOptions["onPayload"]>>[0];
@@ -78,8 +77,12 @@ if (!workersAiCatalog.some((model) => model.id === GLM_5_3_FLASH.id)) {
   workersAiCatalog.push(GLM_5_3_FLASH);
 }
 
-export const workersAiProvider: Provider<"openai-completions"> =
-  createProvider<"openai-completions">({
+export function createWorkersAiProvider(
+  binding: WorkersAiBinding | undefined,
+  gatewayId = WORKERS_AI_GATEWAY_ID,
+): Provider<"openai-completions"> {
+  const baseUrl = `https://workers-binding.ai/ai-gateway/gateways/${encodeURIComponent(gatewayId)}/compat`;
+  return createProvider<"openai-completions">({
     id: WORKERS_AI_PROVIDER,
     name: "Cloudflare Workers AI",
     auth: {
@@ -87,7 +90,7 @@ export const workersAiProvider: Provider<"openai-completions"> =
         name: "Workers AI binding",
         resolve: async ({ signal }) => {
           signal.throwIfAborted();
-          if (!getWorkersAiBinding()) return undefined;
+          if (!binding) return undefined;
           return {
             auth: {
               headers: {
@@ -108,7 +111,7 @@ export const workersAiProvider: Provider<"openai-completions"> =
       const workersAiModel: Model<"openai-completions"> = {
         ...model,
         provider: WORKERS_AI_PROVIDER,
-        baseUrl: WORKERS_AI_GATEWAY_COMPAT_URL,
+        baseUrl,
         // The binding URL does not match pi-ai's HTTPS gateway detection.
         compat: {
           maxTokensField: "max_tokens",
@@ -121,14 +124,14 @@ export const workersAiProvider: Provider<"openai-completions"> =
     }),
     api: openAICompletionsApi(),
   });
+}
 
-export const workersAiBindingFetch: typeof fetch = (input, init) => {
-  const binding = getWorkersAiBinding();
+export function workersAiBindingFetch(binding: WorkersAiBinding | undefined): typeof fetch {
   if (!binding) {
     throw new Error("Workers AI binding is not configured for this worker");
   }
-  return createAiBindingFetch(binding)(input, init);
-};
+  return createAiBindingFetch(binding);
+}
 
 export function isWorkersAiProvider(provider: string): boolean {
   const normalized = provider.trim().toLowerCase();
@@ -138,7 +141,7 @@ export function isWorkersAiProvider(provider: string): boolean {
 export function resolveWorkersAiModelMetadata(
   modelName: string,
 ): Model<"openai-completions"> | null {
-  return workersAiProvider.getModels().find((model) => model.id === modelName) ?? null;
+  return createWorkersAiProvider(undefined).getModels().find((model) => model.id === modelName) ?? null;
 }
 
 export function prepareWorkersAiGatewayPayload(
@@ -168,17 +171,12 @@ export function extractWorkersAiContextWindow(
 
 export async function resolveWorkersAiModelContextWindow(
   modelName: string,
+  binding?: WorkersAiBinding,
 ): Promise<number | null> {
   const catalogModel = resolveWorkersAiModelMetadata(modelName);
   if (catalogModel) return catalogModel.contextWindow;
 
-  const cacheKey = normalizeWorkersAiModelName(modelName);
-  const cached = workersAiContextWindowCache.get(cacheKey);
-  if (cached) return cached;
-
-  const lookup = lookupWorkersAiModelContextWindow(modelName);
-  workersAiContextWindowCache.set(cacheKey, lookup);
-  return lookup;
+  return lookupWorkersAiModelContextWindow(modelName, binding);
 }
 
 export function hasWorkersAiModelPricing(modelName: string): boolean {
@@ -187,9 +185,9 @@ export function hasWorkersAiModelPricing(modelName: string): boolean {
 
 async function lookupWorkersAiModelContextWindow(
   modelName: string,
+  ai: WorkersAiBinding | undefined,
 ): Promise<number | null> {
-  const ai = getWorkersAiBinding();
-  if (!ai) return null;
+  if (!ai?.models) return null;
 
   try {
     for (const search of workersAiModelSearchTerms(modelName)) {
@@ -276,9 +274,4 @@ function parseTokenQuantity(value: string): number | null {
       : 1;
   const tokens = Math.round(amount * multiplier);
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
-}
-
-function getWorkersAiBinding(): Ai | undefined {
-  const bindings: { AI?: Ai } = env;
-  return bindings.AI;
 }

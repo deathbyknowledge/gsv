@@ -8,6 +8,7 @@
     "extension",
     "workers/gateway",
     "workers/installations",
+    "workers/inference",
     "web",
     "packages/*"
   ],

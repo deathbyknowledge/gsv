@@ -442,8 +442,7 @@ describe("proc.send", () => {
         };
         process.sendSignal = vi.fn(async () => {});
         process.resources.resolveMediaProcessingOptions = vi.fn(async () => ({
-          ai: process.env.AI,
-        }));
+          }));
 
         await process.resources.prepareRunMedia(runId, messageId, media);
       });

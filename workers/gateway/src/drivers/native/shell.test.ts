@@ -15,7 +15,7 @@ import {
   handleFsTransferStat,
   handleFsWrite,
 } from "./fs";
-import * as inferenceService from "../../inference/service";
+import * as inferenceService from "../../inference/execution-client";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { TargetRecord } from "../../kernel/target-registry";

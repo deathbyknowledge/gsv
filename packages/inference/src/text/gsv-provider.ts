@@ -12,7 +12,6 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   decodeManagedInferenceStream,
-  GSV_INFERENCE_FEATURE,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -29,13 +28,12 @@ import type {
   InferenceProviderFactory,
 } from "./provider";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
-import { createGenerationAbort, TimeoutError } from "./timeout";
+import { createGenerationAbort, TimeoutError } from "../shared/timeout";
 import { raceWithAbort } from "../shared/abort";
-import type { GatewayEnv } from "../runtime-env";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
-const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
+export const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
   id: GSV_INFERENCE_MODEL,
   name: "GSV included",
   api: GSV_INFERENCE_API,
@@ -53,15 +51,7 @@ const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
   maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
 };
 
-type ManagedInferenceAccess =
-  | {
-    kind: "installations";
-    installations: DurableObjectNamespace;
-  }
-  | {
-    kind: "service";
-    service: ManagedInferenceService;
-  };
+type ManagedInferenceAccess = { kind: "service"; service: ManagedInferenceService };
 
 type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
   [Symbol.dispose]?(): void;
@@ -76,19 +66,6 @@ type AppliedManagedInferenceEvent = {
   partial: AssistantMessage | undefined;
   terminal: boolean;
 };
-
-export function gsvInferenceProviderFactoryFromEnv(
-  env: GatewayEnv,
-): InferenceProviderFactory | undefined {
-  const access = managedInferenceAccessFromEnv(env);
-  return access ? createGsvInferenceProviderFactoryForAccess(access) : undefined;
-}
-
-export function gsvInferenceFeaturesFromEnv(env: GatewayEnv): string[] {
-  return managedInferenceAccessFromEnv(env)
-    ? [GSV_INFERENCE_FEATURE]
-    : [];
-}
 
 export function createGsvInferenceProviderFactory(
   service: ManagedInferenceService,
@@ -109,9 +86,7 @@ function createGsvInferenceProviderFactoryForAccess(
           name: "GSV included inference",
           resolve: async () => ({
             auth: {},
-            source: access.kind === "installations"
-              ? "gateway durable object binding"
-              : "gateway service binding",
+            source: "operator funded inference",
           }),
         },
       },
@@ -227,12 +202,7 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true, signal));
       return;
     }
-    if (access.kind === "installations") {
-      target = managedInferenceTarget(
-        access.installations,
-        request.installationId,
-      );
-    } else {
+    {
       const acquisition = access.service.getInstallation(request.installationId);
       target = await raceWithAbort(acquisition, signal, {
         onAbort: () => {
@@ -497,28 +467,6 @@ function requirePartial(
   return partial;
 }
 
-
-function managedInferenceAccessFromEnv(value: GatewayEnv): ManagedInferenceAccess | undefined {
-  if (value.MANAGED_INFERENCE_INSTALLATIONS) {
-    return {
-      kind: "installations",
-      installations: value.MANAGED_INFERENCE_INSTALLATIONS,
-    };
-  }
-  return value.MANAGED_INFERENCE
-    ? { kind: "service", service: value.MANAGED_INFERENCE }
-    : undefined;
-}
-
-function managedInferenceTarget(
-  installations: DurableObjectNamespace,
-  installationId: string,
-): ManagedInferenceTarget {
-  const target: unknown = installations.getByName(installationId);
-  // SAFETY: The external namespace is bound to the inference service's exported
-  // InferenceInstallation class, whose public RPC surface implements this contract.
-  return target as ManagedInferenceTarget;
-}
 
 function gsvInferenceErrorEvent(
   aborted: boolean,

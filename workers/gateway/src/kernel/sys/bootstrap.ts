@@ -100,7 +100,7 @@ export async function handleSysBootstrap(
   }
 }
 
-function resolveManualBootstrapUpstream(env: Env): BootstrapResolvedUpstream {
+function resolveManualBootstrapUpstream(env: KernelContext["env"]): BootstrapResolvedUpstream {
   const configuredUpstream = readEnvString(env, GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV);
   const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
   return {
@@ -151,7 +151,7 @@ function githubRepoUrl(repo: string): string {
   return `https://github.com/${trimmed}`;
 }
 
-function readEnvString(env: Env, name: string): string | undefined {
+function readEnvString(env: KernelContext["env"], name: string): string | undefined {
   const value = Object.entries(env).find(([key]) => key === name)?.[1];
   const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : undefined;
