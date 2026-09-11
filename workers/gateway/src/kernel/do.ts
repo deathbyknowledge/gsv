@@ -673,7 +673,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<void> {
     switch (task.callback) {
       case "onProcessApprovalNotice":
-        await deliverProcessApprovalNotice(this, task.payload);
+        try {
+          await deliverProcessApprovalNotice(this, task.payload);
+        } catch {
+          await this.schedule(5, "onProcessApprovalNotice", task.payload, { idempotent: false });
+        }
         return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
