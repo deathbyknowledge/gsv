@@ -3,7 +3,11 @@ import type { BeginInstallationOwnerLinkInput, InstallationOwnershipService, Ins
 import { InstallationOwnerStore } from "./owner-store";
 
 export const OPERATOR_REGISTRY_PRINCIPAL_ID = "principal_operator_registry";
-export type InstallationOwnerEnvironment = Env & {
+export type InstallationOwnerEnvironment = {
+  INSTALLATIONS_DB: D1Database;
+  GSV_ADMIN_ORIGIN: string;
+  GSV_OWNER_OIDC_ISSUER?: string;
+  GSV_OWNER_OIDC_CLIENT_ID?: string;
   ACCOUNTS_GATEWAY_RECOVERY?: InstallationRecoveryGatewayService;
   GSV_OWNER_OIDC_CLIENT_SECRET?: string;
 };
