@@ -82,6 +82,7 @@ import { KERNEL_V042_ADD_LEDGER_ERROR } from "./v042_add_ledger_error";
 import { KERNEL_V043_ADD_DEVICE_PAIRINGS } from "./v043_add_device_pairings";
 import { KERNEL_V044_ADD_ACCOUNT_RECOVERY } from "./v044_add_account_recovery";
 import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./v045_add_human_invitations";
+import { KERNEL_V046_ADD_ACCOUNT_PASSKEYS } from "./v046_add_account_passkeys";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -132,6 +133,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V043_ADD_DEVICE_PAIRINGS,
   KERNEL_V044_ADD_ACCOUNT_RECOVERY,
   KERNEL_V045_ADD_HUMAN_INVITATIONS,
+  KERNEL_V046_ADD_ACCOUNT_PASSKEYS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

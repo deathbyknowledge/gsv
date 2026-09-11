@@ -84,6 +84,10 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.link.consume",
     "account.create",
     "account.list",
+    "account.passkey.register.begin",
+    "account.passkey.register.finish",
+    "account.passkey.list",
+    "account.passkey.revoke",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["adapter.*"]],                                   // services

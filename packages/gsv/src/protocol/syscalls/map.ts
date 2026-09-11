@@ -1,3 +1,4 @@
+import type { AccountPasskey, PasskeyRegistrationOptions, PasskeyAuthenticationOptions, PasskeyRegistrationResponse, PasskeyAuthenticationResponse } from "./passkeys";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -425,6 +426,12 @@ export type SyscallDomains = {
   "account.people.list": { args: Record<string, never>; result: { people: LocalPerson[] } };
   "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
   "account.remove": { args: { uid: number }; result: { removed: true } };
+  "account.passkey.register.begin": { args: { label: string }; result: { id: string; options: PasskeyRegistrationOptions } };
+  "account.passkey.register.finish": { args: { id: string; response: PasskeyRegistrationResponse }; result: AccountPasskey };
+  "account.passkey.authenticate.begin": { args: { username: string }; result: { id: string; options: PasskeyAuthenticationOptions } };
+  "account.passkey.authenticate.finish": { args: { id: string; response: PasskeyAuthenticationResponse }; result: { username: string; token: string } };
+  "account.passkey.list": { args: Record<string, never>; result: { passkeys: AccountPasskey[] } };
+  "account.passkey.revoke": { args: { id: string }; result: { revoked: boolean } };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };

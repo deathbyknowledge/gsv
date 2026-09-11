@@ -1584,6 +1584,12 @@ type SystemSyscalls = {
   "account.people.list": { args: {}; result: { people: LocalPerson[] } };
   "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
   "account.remove": { args: { uid: number }; result: { removed: true } };
+  "account.passkey.register.begin": { args: { label: string }; result: { id: string; options: PasskeyRegistrationOptions } };
+  "account.passkey.register.finish": { args: { id: string; response: PasskeyRegistrationResponse }; result: AccountPasskey };
+  "account.passkey.authenticate.begin": { args: { username: string }; result: { id: string; options: PasskeyAuthenticationOptions } };
+  "account.passkey.authenticate.finish": { args: { id: string; response: PasskeyAuthenticationResponse }; result: { username: string; token: string } };
+  "account.passkey.list": { args: {}; result: { passkeys: AccountPasskey[] } };
+  "account.passkey.revoke": { args: { id: string }; result: { revoked: boolean } };
 };
 ```
 
@@ -1622,6 +1628,27 @@ ordinary human accounts. Both revoke earlier credentials and linked messengers;
 removal also disables future sign-in and credential issuance. The uid, groups,
 data and already-admitted Processes remain. A removed uid cannot be linked to a
 messenger again. Enrollment secrets and new passwords never enter the ledger.
+
+Passkey registration, listing and revocation require a direct, signed-in local
+human. The Kernel fixes the uid, opaque WebAuthn user handle, expected origin and
+relying-party hostname. It supports ES256 and RS256, requests user verification,
+and verifies both user presence and verification. Neither clients nor Processes
+can choose another account or supply a relying-party override. Challenges expire
+after five minutes and persist across Kernel eviction. Registration and its
+receipt commit atomically; an identical registration retry cannot restore a
+revoked credential.
+
+Passkey authentication runs on the pre-authentication connection path behind the
+installation work gate. A verified assertion consumes one challenge, updates the
+authenticator counter and mints a five-minute human token in one transaction. The
+web client enters its ordinary session path with that token and rotates it there.
+After a lost authentication reply, start another WebAuthn challenge; assertion
+replay does not mint another token. Revoking a passkey cancels pending passkey
+sign-ins while preserving passwords and existing sessions. Root recovery, member
+password reset and account removal invalidate earlier passkeys with the other
+credentials. Public keys, attestation responses and signatures stay out of the
+ledger. Passkeys are bound to the canonical hostname: after a hostname change,
+use the password fallback and enroll a passkey at the new hostname.
 
 ## AI: `ai.*`
 

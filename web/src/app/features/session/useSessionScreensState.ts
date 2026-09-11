@@ -16,6 +16,7 @@ import {
   type PendingAction,
 } from "./sessionDomain";
 import { useSessionFocus } from "./useSessionFocus";
+import { signInWithPasskey, supportsPasskeys } from "../../services/session/passkeys";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
@@ -48,6 +49,7 @@ export function useSessionScreensState({
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
   const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [guideMessage, setGuideMessage] = useState("");
   const screenRef = useRef<HTMLElement>(null);
   const guideInputRef = useRef<HTMLTextAreaElement>(null);
@@ -57,10 +59,10 @@ export function useSessionScreensState({
   const nodeCommandRef = useRef<HTMLTextAreaElement>(null);
   const zones = useMemo(timeZoneOptions, []);
   const visibleView = resolveVisibleView(snapshot, pendingAction);
-  const busy = snapshot.phase === "authenticating";
+  const busy = snapshot.phase === "authenticating" || passkeyBusy;
   const { draft } = onboardingSnapshot;
   const setupError = snapshot.phase === "setup" && snapshot.message ? snapshot.message : setupValidationError;
-  const loginError = snapshot.phase === "locked" && snapshot.message ? snapshot.message : loginValidationError;
+  const loginError = loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null);
   const completeError = snapshot.phase === "setup-complete" && snapshot.message ? snapshot.message : null;
   const setupResult = setupResultViewModel(snapshot, lastAdminMode);
 
@@ -114,9 +116,10 @@ export function useSessionScreensState({
 
   const submitLogin = (event: Event): void => {
     event.preventDefault();
+    if (busy) return;
 
     const username = loginUsername.trim();
-    const password = loginPassword.trim();
+    const password = loginPassword;
 
     if (!username) {
       setLoginValidationError("Username is required.");
@@ -135,6 +138,15 @@ export function useSessionScreensState({
     }).catch(() => {
       // Error is reflected through session snapshot.
     });
+  };
+
+  const submitPasskey = async (): Promise<void> => {
+    const username = loginUsername.trim();
+    if (!username || busy) return;
+    setLoginValidationError(null); setPasskeyBusy(true);
+    try { await signInWithPasskey(session, username); }
+    catch (error) { setLoginValidationError(error instanceof Error ? error.message : "Passkey sign-in failed. You can use your password."); }
+    finally { setPasskeyBusy(false); }
   };
 
   const selectLane = (lane: OnboardingLane): void => {
@@ -288,6 +300,8 @@ export function useSessionScreensState({
         setLoginPassword(value);
       },
       onSubmit: submitLogin,
+      onPasskey: () => void submitPasskey(),
+      passkeysSupported: supportsPasskeys(),
     },
     setup: {
       error: setupError,

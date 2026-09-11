@@ -101,6 +101,10 @@ describe("CapabilityStore", () => {
       expect(userCaps.map((r) => r.capability)).toEqual([
         "account.create",
         "account.list",
+        "account.passkey.list",
+        "account.passkey.register.begin",
+        "account.passkey.register.finish",
+        "account.passkey.revoke",
         "adapter.connect",
         "adapter.disconnect",
         "adapter.list",
