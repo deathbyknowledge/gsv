@@ -25,6 +25,7 @@ jobs:
       installations: ${{ steps.filter.outputs.installations }}
       inference: ${{ steps.filter.outputs.inference }}
       deployment: ${{ steps.filter.outputs.deployment }}
+      deletion_stack: ${{ steps.filter.outputs.deletion_stack }}
       adapters: ${{ steps.filter.outputs.adapters }}
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
@@ -117,6 +118,19 @@ jobs:
               - 'package-lock.json'
               - 'deployment/**'
               - 'workers/installations/migrations/**'
+            deletion_stack:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'packages/inference/**'
+              - 'deployment/**'
+              - 'workers/installations/**'
+              - 'workers/inference/**'
+              - 'workers/gateway/**'
+              - 'workers/adapters/email/**'
+              - 'workers/ripgit/**'
+              - 'scripts/worker-build.sh'
             adapters:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -250,7 +264,8 @@ jobs:
       needs.changes.outputs.extension == 'true' ||
       needs.changes.outputs.installations == 'true' ||
       needs.changes.outputs.inference == 'true' ||
-      needs.changes.outputs.deployment == 'true'
+      needs.changes.outputs.deployment == 'true' ||
+      needs.changes.outputs.deletion_stack == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -305,8 +320,35 @@ jobs:
         run: npm run test:run --workspace web
 
       - name: Build web shell
-        if: needs.changes.outputs.web == 'true'
+        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.deletion_stack == 'true'
         run: npm run build --workspace web
+
+      - name: Install Rust for deletion acceptance
+        if: needs.changes.outputs.deletion_stack == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install mail dependencies for deletion acceptance
+        if: needs.changes.outputs.deletion_stack == 'true'
+        working-directory: workers/adapters/email
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache ripgit build for deletion acceptance
+        if: needs.changes.outputs.deletion_stack == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: workers/ripgit
+          key: deletion-acceptance
+
+      - name: Build ripgit for deletion acceptance
+        if: needs.changes.outputs.deletion_stack == 'true'
+        run: bash scripts/worker-build.sh workers/ripgit --release
+
+      # Local Workers prove live isolation/erasure; fresh-account and backup-retention gates remain separate.
+      - name: Test public two-space deletion
+        if: needs.changes.outputs.deletion_stack == 'true'
+        run: npx vitest run --config deployment/test/deletion-stack.vitest.config.ts
 
       - name: Check browser extension
         if: needs.changes.outputs.extension == 'true'
