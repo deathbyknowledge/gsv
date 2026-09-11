@@ -104,6 +104,25 @@ function makeProcessCleanupMocks() {
 }
 
 describe("proc handlers", () => {
+  it("keeps child approval decisions human-only and forwards the original request unchanged", async () => {
+    const ctx = makeForwardContext();
+    const frame: RequestFrame<"proc.hil"> = { type: "req", id: "decision", call: "proc.hil",
+      args: { pid: "proc-1", requestId: "child-request", decision: "approve" } };
+    await forwardToProcess(frame, ctx);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "proc-1", frame);
+    sendFrameToProcessMock.mockClear();
+    ctx.processId = "parent";
+    ctx.callerOwnerUid = IDENTITY.uid;
+    await expect(forwardToProcess(frame, ctx)).rejects.toThrow("requires a human interaction");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    delete ctx.processId;
+    ctx.peer!.provenance = { kind: "kernel" };
+    await expect(forwardToProcess(frame, ctx)).rejects.toThrow("requires a human interaction");
+    ctx.peer = testPeer({ kind: "human", account: { ...IDENTITY, uid: 2000 }, calls: ["proc.hil"] });
+    ctx.callerOwnerUid = 2000;
+    await expect(forwardToProcess(frame, ctx)).rejects.toThrow("cannot access process");
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.

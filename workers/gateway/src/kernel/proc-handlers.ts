@@ -752,6 +752,10 @@ export async function forwardToProcess(
 ): Promise<ForwardedProcessResult> {
   const identity = principalOf(ctx)!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  if (frame.call === "proc.hil" && (identity.kind !== "human" || ctx.processId
+    || !["credential", "adapter-link"].includes(ctx.peer?.provenance.kind ?? ""))) {
+    throw new Error("Permission denied: approval requires a human interaction");
+  }
   // SAFETY: dispatch routes only Process-targeting calls here, whose syscall
   // arguments all use the shared optional `pid` target field.
   const args = frame.args as { pid?: string };

@@ -21,6 +21,47 @@ function request(eventId: string, audience: "model" | "person" | "both" = "perso
 }
 
 describe("registered Process events", () => {
+  it("makes an approval notice visible to the delegating model once and fences reset or aborted source runs", async () => {
+    const stub = await initProcess("history-events-child-approval", ROOT_IDENTITY);
+    const frame: InternalRequestFrame<"proc.event.deliver"> = {
+      type: "req", id: "approval", call: "proc.event.deliver", args: {
+        eventId: "approval:request:call", event: {
+          kind: "process.approval", severity: "warn", audience: "model",
+          payload: { pid: "child", runId: "child-run", requestId: "request", syscall: "net.fetch", target: "gsv",
+            sourceRunId: "parent-run", sourceCreatedAt: 100, observedAt: 300 },
+        },
+      },
+    };
+    await runInProcess(stub, async (process: Process) => {
+      vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      process.store.state.setValue(PROCESS_RESET_AT_KEY, "200");
+      expect(await process.controller.handleReq(frame)).toMatchObject({ ok: true, data: { ignored: true } });
+      expect(process.store.messages.messageCount()).toBe(0);
+      process.store.state.setValue(PROCESS_RESET_AT_KEY, "0");
+      const aborted = vi.spyOn(process.controller, "isAbortedRun").mockReturnValue(true);
+      expect(await process.controller.handleReq(frame)).toMatchObject({ ok: true, data: { ignored: true } });
+      expect(process.runs.active).toBeNull();
+      aborted.mockRestore();
+      const first = await process.controller.handleReq(frame);
+      expect(first).toMatchObject({ ok: true, data: { runId: frame.args.eventId } });
+      expect(await process.controller.handleReq(frame)).toEqual(first);
+      const context = await process.history.buildContextMessages();
+      expect(context).toHaveLength(1);
+      expect(context[0]?.content).toContain("waiting for human approval");
+      expect(context[0]?.content).toContain("grants no approval authority");
+      expect(process.store.messages.getRecords()[0]).toMatchObject({ kind: "event", payload: frame.args.event });
+      process.runs.active = null;
+    });
+    await evictDurableObject(stub);
+    await runInProcess(stub, async (process: Process) => {
+      const scheduling = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      await process.controller.handleReq(frame);
+      expect(process.store.messages.messageCount()).toBe(1);
+      expect(scheduling).not.toHaveBeenCalled();
+    });
+  });
+
   it("delivers and deduplicates an idle notice across eviction without a model run", async () => {
     const stub = await initProcess("history-events-notice", ROOT_IDENTITY);
     const first = await stub.recvFrame(request("event:first"));

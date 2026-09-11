@@ -39,6 +39,7 @@ export function historyEventText(event: ProcHistoryEvent): string {
     case "ipc.reply": return event.payload.error ?? displayValue(event.payload.response ?? null);
     case "ipc.overdue": return `Waiting for ${event.payload.targetPid ?? "process reply"}.`;
     case "ipc.timeout": return event.payload.error ?? `The reply from ${event.payload.targetPid ?? "another process"} timed out.`;
+    case "process.approval": return `${event.payload.pid} is waiting for your approval of ${event.payload.syscall} on ${event.payload.target}.`;
     case "adapter.work.returned": return `Returned from work process ${event.payload.workPid}.`;
     case "target.connection": return `${event.payload.label ?? event.payload.targetId} ${event.payload.event}.`;
     case "runtime.wake": return "A runtime event arrived while this process was busy.";

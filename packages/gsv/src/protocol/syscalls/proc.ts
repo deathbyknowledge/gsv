@@ -727,6 +727,7 @@ export type ProcListArgs = {
 
 export type ProcListEntry = {
   pid: string;
+  /** Owning human account, independently of the process's run-as account. */
   uid: number;
   /** Username of the account the process runs as (its run-as identity). */
   username: string;

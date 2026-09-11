@@ -37,6 +37,7 @@ import type {
 } from "./do-shared";
 import type { Kernel } from "./do";
 import { notifyProcessChanged } from "./process-notifications";
+import { processApprovalNoticeSchema } from "./process-approvals";
 import {
   adapterTypingActivity,
 } from "./do-shared";
@@ -106,6 +107,13 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     const runId = userFrame?.payload?.runId?.trim() || null;
 
     if (!userFrame) return;
+
+    if (runId && frame.signal === "proc.run.hil.requested") {
+      const notice = processApprovalNoticeSchema.safeParse({
+        pid: processId, runId, requestId: userFrame.payload?.requestId,
+      });
+      if (notice.success) await this.host.schedule(0, "onProcessApprovalNotice", notice.data, { idempotent: true });
+    }
 
     let route = runId ? this.host.runRoutes.get(runId) : null;
     if (!route && runId && frame.signal === "proc.run.hil.requested") {

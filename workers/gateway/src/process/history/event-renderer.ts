@@ -40,6 +40,11 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "media.failed": return event.payload.error;
     case "schedule.fired": return formatScheduleEventMessage(event.payload);
     case "signal.watched": return formatWatchedSignalMessage(event.payload.signal, event.payload);
+    case "process.approval": return [
+      `Delegated process \`${event.payload.pid}\` is waiting for human approval of \`${event.payload.syscall}\` on \`${event.payload.target}\`.`,
+      `Run: \`${event.payload.runId}\`. Approval request: \`${event.payload.requestId}\`.`,
+      "The human can approve or deny the original request in Ship or Fleet. This notice grants no approval authority to a process.",
+    ].join("\n");
     case "ipc.reply":
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);
