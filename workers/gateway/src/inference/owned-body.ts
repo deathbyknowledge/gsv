@@ -7,7 +7,6 @@ export function ownInferenceBody(
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let closed = false;
-  let cancellation: Promise<void> | undefined;
   let controller: ReadableByteStreamController;
   const finish = () => {
     signal.removeEventListener("abort", abort);
@@ -15,12 +14,12 @@ export function ownInferenceBody(
     onFinish();
   };
   const cancel = (reason: Error | string | null | undefined) => {
-    if (closed) return cancellation;
+    if (closed) return;
     closed = true;
     signal.removeEventListener("abort", abort);
     onCancel(reason);
-    cancellation = reader.cancel(reason).catch(() => {}).finally(finish);
-    return cancellation;
+    void reader.cancel(reason).catch(() => {});
+    finish();
   };
   const abort = () => {
     if (closed) return;

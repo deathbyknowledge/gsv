@@ -8,10 +8,11 @@ type Binding = NonNullable<ExecutorEnvironment["AI"]>;
 /** Bind native provider body ownership to the executor's terminal signal. */
 export function requestBinding(binding: Binding | undefined, signal: AbortSignal): Binding | undefined {
   if (!binding) return undefined;
-  const run = async (model: string, input: JsonObject): Promise<BindingResult> => {
-    signal.throwIfAborted();
-    const result = await raceWithAbort(binding.run(model, input), signal, { onLateResolve: cancelResult });
-    return ownResult(result, signal);
+  const run = async (model: string, input: JsonObject, options?: { signal?: AbortSignal }): Promise<BindingResult> => {
+    const combined = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
+    combined.throwIfAborted();
+    const result = await raceWithAbort(binding.run(model, input, { ...options, signal: combined }), combined, { onLateResolve: cancelResult });
+    return ownResult(result, combined);
   };
   return {
     aiGatewayLogId: binding.aiGatewayLogId,
