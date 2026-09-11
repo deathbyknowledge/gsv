@@ -5,6 +5,11 @@ import {
   installationMigrationInventory,
   type InstallationMigrationOwner,
 } from "./installation-migration-inventory.ts";
+import {
+  ADOPTION_STATE_TABLE,
+  adoptionRowsDigest,
+  readLocalAdoptionState,
+} from "./installation-migration-adoption-state.ts";
 
 type Reader = Pick<DatabaseSync, "prepare">;
 type Row = Record<string, string | number | bigint | Uint8Array | null>;
@@ -151,7 +156,9 @@ function validateContext(context: MigrationAdoptionContext): void {
   const names = [context.legacyLedger, context.directoryLedger, context.policyLedger];
   if (!context.legacyRunnerFrozen) throw new Error("Freeze the legacy migration runner before adoption");
   if (context.directoryLedger !== "installation_migrations" || new Set(names).size !== 3
-    || names.some((name) => !/^[a-z][a-z0-9_]*$/.test(name))) throw new Error("Migration owners require distinct explicit ledger names");
+    || names.some((name) => !/^[a-z][a-z0-9_]*$/.test(name) || name === ADOPTION_STATE_TABLE)) {
+    throw new Error("Migration owners require distinct explicit ledger names");
+  }
   if (![context.operationId, context.environment, context.accountId, context.databaseId].every((value) => value.trim())) {
     throw new Error("Adoption requires the exact operation, environment, account, and database identity");
   }
@@ -166,11 +173,17 @@ export function planInstallationMigrationAdoption(input: {
   database: Reader;
   context: MigrationAdoptionContext;
   sources: readonly { name: string; sql: string }[];
-  handoffs: readonly MigrationOwnerHandoff[];
+  handoffs?: readonly MigrationOwnerHandoff[];
   resetProofs?: readonly HistoricalResetProof[];
 }): InstallationMigrationAdoptionPlan {
   const { database: db, context } = input;
   validateContext(context);
+  const persisted = readLocalAdoptionState(db);
+  const handoffs = input.handoffs ?? persisted?.handoffs ?? [];
+  if (persisted && (persisted.operationId !== context.operationId
+    || (input.handoffs !== undefined && JSON.stringify(input.handoffs) !== JSON.stringify(persisted.handoffs)))) {
+    throw new Error("Local adoption evidence conflicts with supplied owner handoffs");
+  }
   const sourceMap = new Map(input.sources.map((source) => [source.name, source.sql]));
   if (sourceMap.size !== input.sources.length || input.sources.some((source) => {
     const reviewed = installationMigrationInventory.find((item) => item.name === source.name);
@@ -193,23 +206,26 @@ export function planInstallationMigrationAdoption(input: {
   } finally {
     expected.close();
   }
-  const actualSchema = schema(db, [context.legacyLedger, context.directoryLedger, context.policyLedger]);
+  const actualSchema = schema(db, [context.legacyLedger, context.directoryLedger, context.policyLedger, ADOPTION_STATE_TABLE]);
   if (JSON.stringify(actualSchema) !== JSON.stringify(expectedSchema)) {
     throw new Error("Observed schema disagrees with the applied legacy migrations");
   }
   if (query(db, "PRAGMA foreign_key_check").length !== 0) throw new Error("Database contains broken foreign key references");
   const evidenceSha256 = digest(JSON.stringify({ context, applied, schema: actualSchema }));
+  if (persisted && persisted.evidenceSha256 !== evidenceSha256) {
+    throw new Error("Local adoption belongs to different migration evidence");
+  }
   const rowCounts = Object.fromEntries(query(db, "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
     .filter((row) => !String(row.name).startsWith("sqlite_") && row.name !== "_cf_KV"
-      && ![context.legacyLedger, context.directoryLedger, context.policyLedger].includes(String(row.name)))
+      && ![context.legacyLedger, context.directoryLedger, context.policyLedger, ADOPTION_STATE_TABLE].includes(String(row.name)))
     .map((row) => [String(row.name), Number(query(db, `SELECT COUNT(*) AS count FROM ${quote(String(row.name))}`)[0].count)]));
-  if (input.handoffs.length > 2 || new Set(input.handoffs.map((handoff) => handoff.owner)).size !== input.handoffs.length
-    || input.handoffs.some((handoff) => !["directory", "policy"].includes(handoff.owner))) {
+  if (handoffs.length > 2 || new Set(handoffs.map((handoff) => handoff.owner)).size !== handoffs.length
+    || handoffs.some((handoff) => !["directory", "policy"].includes(handoff.owner))) {
     throw new Error("Conflicting owner handoff records");
   }
   const owners = (["directory", "policy"] as const).map((owner) => {
     const name = owner === "directory" ? context.directoryLedger : context.policyLedger;
-    const handoff = input.handoffs.find((record) => record.owner === owner);
+    const handoff = handoffs.find((record) => record.owner === owner);
     if (handoff && (handoff.operationId !== context.operationId || handoff.ledger !== name
       || handoff.evidenceSha256 !== evidenceSha256 || !["seeding", "complete"].includes(handoff.state))) {
       throw new Error("Owner handoff belongs to different adoption evidence");
@@ -240,7 +256,9 @@ export function planInstallationMigrationAdoption(input: {
     ? historicalResetImports(db, input.resetProofs ?? []) : [];
   const handoffComplete = owners.every((owner) => owner.completeHandoff === null);
   return { operationId: context.operationId, evidenceSha256,
-    preconditionSha256: digest(JSON.stringify({ evidenceSha256, rowCounts, owners, resetImports })),
+    preconditionSha256: digest(JSON.stringify({ evidenceSha256, rowCounts, owners, resetImports,
+      resetProofs: input.resetProofs ?? [], rowsSha256: adoptionRowsDigest(db),
+      observedSchema: schema(db, [ADOPTION_STATE_TABLE]) })),
     owners, rowCounts, resetImports, resetImportsRequireMigrations, handoffComplete,
     pendingForwardMigrations: installationMigrationInventory.filter((source) => !applied.some((entry) => entry.name === source.name))
       .map((source) => source.name) };

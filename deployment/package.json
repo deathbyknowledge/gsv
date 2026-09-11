@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./manifest": "./src/manifest.ts",
-    "./installation-migrations": "./src/installation-migration-adoption.ts"
+    "./installation-migrations": "./src/installation-migration-adoption.ts",
+    "./installation-migration-adoption-local": "./src/installation-migration-adoption-executor.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",
