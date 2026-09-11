@@ -92,7 +92,7 @@ export class ProcessKernelClient {
       const outbound = requestToNetFetchArgs(request, redirect);
       const parsedOptions = routedFetchOptionsSchema.safeParse(init);
       const timeoutMs = normalizeNetFetchTimeoutMs(
-        parsedOptions.success ? parsedOptions.data.timeoutMs : undefined,
+        (parsedOptions.success ? parsedOptions.data.timeoutMs : undefined) ?? config.generationTimeoutMs,
       );
       const requestId = crypto.randomUUID();
       const response = await requestNetFetchWithSignal(
