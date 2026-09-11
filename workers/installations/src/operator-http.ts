@@ -75,7 +75,7 @@ export class InstallationOperatorHttp {
         <div id="operator-result" hidden>
           <p><a id="setup-link" class="button" hidden>Set up your space</a></p>
           <div id="credential-result" hidden><p>Save this operator credential now. It is shown once.</p><textarea id="operator-credential" readonly rows="3"></textarea></div>
-          <p><a href="/admin/installations">Open installation administration</a></p>
+          <p><a href="/admin/installations">Manage spaces</a></p>
         </div>
       </section><script src="/operator/client.js" defer></script>` });
     response.headers.set("content-security-policy", "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; style-src 'self'; script-src 'self'; connect-src 'self'");

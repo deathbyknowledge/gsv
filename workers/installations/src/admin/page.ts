@@ -21,9 +21,9 @@ export function adminPageResponse(input: {
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/admin/installations"><strong>GSV</strong><span>installation registry</span></a>
+      <a class="brand" href="/admin/installations"><strong>GSV</strong><span>spaces</span></a>
       <nav aria-label="Operator navigation">
-        ${navLink("/admin/installations", "Installations", input.section === "installations")}
+        ${navLink("/admin/installations", "Spaces", input.section === "installations")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
       </nav>
       <small>private operator surface</small>
@@ -52,7 +52,7 @@ export function adminErrorPage(
     content: `<section class="narrow stack">
       <div class="page-heading"><div><p class="eyebrow">OPERATOR REQUEST</p><h1>${status === 404 ? "Not found" : "Request not completed"}</h1></div></div>
       ${errorNotice(message)}
-      <p><a class="button secondary" href="/admin/installations">Back to installations</a></p>
+      <p><a class="button secondary" href="/admin/installations">Back to spaces</a></p>
     </section>`,
   });
 }
@@ -66,7 +66,7 @@ export function adminStylesheet(head: boolean): Response {
 export function onboardingNotice(issued: IssuedAdminInstallation): string {
   const url = escapeHtml(issued.onboarding.onboardingUrl);
   const resetCopy = issued.reset
-    ? `<p>The previous installation <strong>${escapeHtml(issued.reset.previousInstallationId)}</strong> is offline. Its stored data is recorded as ${escapeHtml(issued.reset.dataDeletionState)} deletion; reset itself did not erase it.</p>`
+    ? `<p>The previous space <strong>${escapeHtml(issued.reset.previousInstallationId)}</strong> is offline. Its stored data is recorded as ${escapeHtml(issued.reset.dataDeletionState)} deletion; reset itself did not erase it.</p>`
     : "";
   return `<section class="notice success" aria-live="polite">
     <div><p class="eyebrow">ONBOARDING LINK ISSUED</p><h2>${escapeHtml(issued.installation.handle)} is ready to claim</h2>

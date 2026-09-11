@@ -35,15 +35,15 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
   presentation: Pick<InstallationAdminPresentation<AdminInstallation, Summary>, "navigation" | "summaryColumn"> = {},
 ): Response {
   return adminPageResponse({
-    title: "Installations",
+    title: "Spaces",
     section: "installations",
     navigation: presentation.navigation,
     head,
     status,
     content: `<section class="stack">
       <div class="page-heading">
-        <div><p class="eyebrow">MANAGED CONTROL PLANE</p><h1>Installations</h1></div>
-        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button" href="/admin/installations/new">New installation</a></div>
+        <div><p class="eyebrow">OPERATOR</p><h1>Spaces</h1></div>
+        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button" href="/admin/installations/new">New space</a></div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
@@ -62,7 +62,7 @@ export function adminNewInstallationPage(
 ): Response {
   const operationId = values?.operationId ?? `operation_${crypto.randomUUID()}`;
   return adminPageResponse({
-    title: "New installation",
+    title: "New space",
     section: "installations",
     navigation,
     head,
@@ -74,10 +74,10 @@ export function adminNewInstallationPage(
       </div>
       ${error ? errorNotice(error) : ""}
       <form class="panel stack" method="post" action="/admin/installations">
-        <div><h2>Installation identity</h2><p>The handle becomes the installation hostname. The owner chooses their local username and password from the one-time onboarding link.</p></div>
+        <div><h2>Space identity</h2><p>The handle becomes the space hostname. The owner chooses their local username and password from the one-time onboarding link.</p></div>
         <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
         <label><span>Handle</span><input name="handle" required minlength="1" maxlength="63" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" autocomplete="off" placeholder="hank" value="${escapeHtml(values?.handle ?? "")}"></label>
-        <div class="form-actions"><button type="submit">Create installation</button></div>
+        <div class="form-actions"><button type="submit">Create space</button></div>
       </form>
     </section>`,
   });
@@ -99,18 +99,18 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
     head,
     status,
     content: `<section class="stack">
-      <div><a href="/admin/installations">← Installations</a></div>
+      <div><a href="/admin/installations">← Spaces</a></div>
       <div class="page-heading">
-        <div><p class="eyebrow">INSTALLATION</p><h1>${escapeHtml(installation.handle)}</h1></div>
+        <div><p class="eyebrow">SPACE</p><h1>${escapeHtml(installation.handle)}</h1></div>
         <div class="actions">${stateBadge(installation.state)}<a class="button secondary" href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">Open GSV</a></div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${issued ? onboardingNotice(issued) : ""}
       ${presentation.overview?.(installation) ?? ""}
       <div class="grid">
-        <section class="panel"><p class="eyebrow">IDENTITY</p><h2>Installation details</h2>
+        <section class="panel"><p class="eyebrow">IDENTITY</p><h2>Space details</h2>
           <dl class="definition-list">
-            <dt>Installation ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
+            <dt>Space ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
             <dt>Canonical origin</dt><dd><a href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">${escapeHtml(installation.canonicalOrigin)}</a></dd>
             <dt>Lifecycle</dt><dd>${stateBadge(installation.state)}</dd>
             <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
@@ -130,7 +130,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
 
 function installationFilters(list: AdminInstallationList): string {
   return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle or installation ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
+    <label><span>Search handle or space ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
     <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
     <button type="submit">Search</button>
     <a class="button secondary" href="/admin/installations">Reset</a>
@@ -142,9 +142,9 @@ function installationTable<Summary extends AdminInstallationSummary>(
   column?: InstallationAdminPresentation<AdminInstallation, Summary>["summaryColumn"],
 ): string {
   if (installations.length === 0) {
-    return `<div class="empty">No installations match this view.</div>`;
+    return `<div class="empty">No spaces match this view.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Installation</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Space</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -169,7 +169,7 @@ function pagination(list: AdminInstallationList): string {
   const next = list.page < list.totalPages
     ? `<a class="button secondary" href="${escapeHtml(registryHref(list, list.page + 1))}">Next</a>`
     : "";
-  return `<nav class="pagination" aria-label="Installation pages"><span>Page ${formatInteger(list.page)} of ${formatInteger(list.totalPages)}</span><div>${previous}${next}</div></nav>`;
+  return `<nav class="pagination" aria-label="Space pages"><span>Page ${formatInteger(list.page)} of ${formatInteger(list.totalPages)}</span><div>${previous}${next}</div></nav>`;
 }
 
 function registryHref(list: AdminInstallationList, page: number): string {
@@ -201,12 +201,12 @@ function lifecyclePanel(
   installationPath: string,
 ): string {
   if (installation.state === "active") {
-    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend installation</h2><p>Suspension retains the installation identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend space</h2><p>Suspension retains the space identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   if (installation.state === "restricted") {
-    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate installation</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate space</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
   }
-  return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this installation is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
+  return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this space is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
 }
 
 function resetPanel(
@@ -217,9 +217,9 @@ function resetPanel(
     return "";
   }
   const operationId = `reset_${crypto.randomUUID()}`;
-  return `<section class="panel danger-zone"><p class="eyebrow">FRESH INSTALLATION</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
-    <p>Reset assigns this handle to a new installation ID and starts onboarding again. Existing sessions and background work stop because the previous installation becomes inactive.</p>
-    <p><strong>This does not delete the previous installation's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
+  return `<section class="panel danger-zone"><p class="eyebrow">FRESH SPACE</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
+    <p>Reset assigns this handle to a new space ID and starts onboarding again. Existing sessions and background work stop because the previous space becomes inactive.</p>
+    <p><strong>This does not delete the previous space's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
     <form class="form-actions" method="post" action="${installationPath}/reset">
       <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
