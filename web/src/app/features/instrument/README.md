@@ -32,6 +32,8 @@ Direct commands retain their shell sessions in the signed-in Instrument owner ac
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
+Explicit start rejections finish the command as failed and remove its live controls. The Kernel marks rejections before dispatch in structured error details; a timeout or disconnect after dispatch remains unavailable and recoverable. A legacy daemon's unknown-session rejection finishes with the update instruction, without retrying the command.
+
 Scrollbar and selection colors use the current light or dark theme, including prompt text and native controls. Zen retains its existing hidden transcript scrollbar.
 
 The contact inspector separates relationship details, canonical messages and cross-Ship requests. Messages support older history, text and attachments; each contact’s draft and send identity remain in Fleet while selecting other rows. Leaving Fleet or reloading protects unsent drafts; uploads are cancelled on teardown. Active conversation and request caches refresh from their exact owner-scoped signals, and hidden views wait until opened. Request actions retain revision checks and show human-readable states and structured details. Revoked contacts keep readable history with sending disabled. Delivery acceptance is labelled separately from confirmed delivery.

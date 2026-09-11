@@ -220,7 +220,7 @@ export async function dispatch(
   if (ctx.requestSignal?.aborted) {
     return {
       handled: true,
-      response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+      response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
     };
   }
   const routingArgs = routableFrameArgs(frame);
@@ -235,7 +235,7 @@ export async function dispatch(
   const startSession = frame.call === "shell.exec" && frame.args.start === true;
 
   if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
-    return { handled: true, response: errFrame(frame.id, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
+    return { handled: true, response: rejectBeforeDispatch(frame, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
   }
 
   if (frame.call === "shell.cancel" && !sessionId) {
@@ -278,7 +278,7 @@ export async function dispatch(
     if (!routedTarget) {
       return {
         handled: true,
-        response: errFrame(frame.id, 403, `Access denied to target: ${target}`),
+        response: rejectBeforeDispatch(frame, 403, `Access denied to target: ${target}`),
       };
     }
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
@@ -751,14 +751,14 @@ async function routeToTarget(
   if (!target.online) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `Target offline: ${target.targetId}`),
+      response: rejectBeforeDispatch(frame, 503, `Target offline: ${target.targetId}`),
     };
   }
 
   if (!targetCanHandle(target, frame.call)) {
     return {
       handled: true,
-      response: errFrame(frame.id, 400, `Target ${target.targetId} does not implement ${frame.call}`),
+      response: rejectBeforeDispatch(frame, 400, `Target ${target.targetId} does not implement ${frame.call}`),
     };
   }
 
@@ -783,7 +783,7 @@ async function routeToTarget(
   if (!deviceConn) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `No active connection for device: ${target.targetId}`),
+      response: rejectBeforeDispatch(frame, 503, `No active connection for device: ${target.targetId}`),
     };
   }
 
@@ -804,7 +804,7 @@ async function routeToTarget(
       route.cancel();
       return {
         handled: true,
-        response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+        response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
       };
     }
   } catch (error) {
@@ -812,7 +812,7 @@ async function routeToTarget(
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,
-      response: errFrame(frame.id, 500, `Failed to register route for ${frame.call}: ${message}`),
+      response: rejectBeforeDispatch(frame, 500, `Failed to register route for ${frame.call}: ${message}`),
     };
   }
 
@@ -870,6 +870,14 @@ function findTargetConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+export function rejectBeforeDispatch(frame: RequestFrame, code: number, message: string): ResponseFrame {
+  const response = errFrame(frame.id, code, message);
+  if (!response.ok && frame.call === "shell.exec" && frame.args.start === true) {
+    response.error.details = { shellStart: "rejected" };
+  }
+  return response;
 }
 
 function requestCancelMessage(signal: AbortSignal): string {

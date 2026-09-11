@@ -187,6 +187,10 @@ describe("gateway authentication integration", () => {
       password: PASSWORD,
       peer: peerInfo("device-observer"),
     });
+    await expect(driver.request("shell.exec", { target: "integration-device", sessionId: crypto.randomUUID(), start: true, input: "must not run" })).rejects.toMatchObject({
+      code: 403,
+      details: { shellStart: "rejected" },
+    });
     await user.connect();
     expect((await user.call("sys.target.list", {})).targets).toContainEqual(
       expect.objectContaining({

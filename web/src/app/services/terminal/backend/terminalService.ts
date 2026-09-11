@@ -1,5 +1,6 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { GsvClientError } from "@humansandmachines/gsv/client";
+import { z } from "zod";
 import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "../domain/models";
 import {
   normalizeCommandInput,
@@ -19,6 +20,8 @@ type TerminalRequestArgs = {
   background?: boolean;
   yieldMs?: number;
 };
+
+const rejectedStartSchema = z.object({ shellStart: z.literal("rejected") });
 
 export async function listTerminalTargets(client: TerminalClient): Promise<TerminalTarget[]> {
   const payload = await client.call<unknown>("sys.target.list", { includeOffline: true });
@@ -60,8 +63,12 @@ export async function executeTerminalCommand(
     const response = await client.request("shell.exec", requestArgs, { signal });
     return normalizeTranscriptEntry(response.data, startedAt, input);
   } catch (error) {
-    if (input.start && error instanceof GsvClientError && error.message === `Unknown shell session: ${input.sessionId}`) {
-      throw new Error("Update GSV on this computer before running commands here.");
+    if (input.start && error instanceof GsvClientError) {
+      const legacyDaemon = error.message === `Unknown shell session: ${input.sessionId}`;
+      if (legacyDaemon || rejectedStartSchema.safeParse(error.details).success) {
+        const message = legacyDaemon ? "Update GSV on this computer before running commands here." : error.message;
+        return normalizeTranscriptEntry({ status: "failed", error: message, output: "" }, startedAt, input);
+      }
     }
     throw error;
   }

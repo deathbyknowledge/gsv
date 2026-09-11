@@ -118,6 +118,8 @@ describe("dispatch", () => {
       const admissions = await Promise.all([dispatch(start(), { type: "app", id: "tab" }, ctx, deps), dispatch(start(), { type: "app", id: "tab" }, ctx, deps)]);
       expect(admissions.filter((result) => !result.handled)).toHaveLength(1);
       expect(admissions.find((result) => result.handled)).toMatchObject({ response: { ok: false, error: { code: 409 } } });
+      const duplicate = admissions.find((result) => result.handled);
+      if (duplicate?.handled && !duplicate.response.ok) expect(duplicate.response.error.details).toBeUndefined();
       expect(send).toHaveBeenCalledTimes(1);
 
       // Recreate the store without ever delivering a start response or exec.status signal.
@@ -146,10 +148,51 @@ describe("dispatch", () => {
       { input: "run", start: true, target: "gsv", sessionId: crypto.randomUUID() },
       { input: "run", start: true, sessionId: crypto.randomUUID() },
     ]) {
-      expect(await dispatch({ type: "req", id: "invalid", call: "shell.exec", args }, { type: "app", id: "tab" }, makeContext(), deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400 } } });
+      expect(await dispatch({ type: "req", id: "invalid", call: "shell.exec", args }, { type: "app", id: "tab" }, makeContext(), deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400, details: { shellStart: "rejected" } } } });
     }
     expect(registerRoute).not.toHaveBeenCalled();
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it.each(["offline", "unsupported", "disconnected", "forbidden", "cancelled", "registration failed"] as const)("marks named starts rejected before dispatch: %s", async (reason) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", reason !== "offline", reason === "unsupported" ? ["fs.*"] : ["shell.*"]));
+      vi.mocked(ctx.targets.canAccess).mockReturnValue(reason !== "forbidden");
+      if (reason === "cancelled") ctx.requestSignal = AbortSignal.abort();
+      const send = vi.fn();
+      const registerRoute = vi.fn(async () => {
+        if (reason === "registration failed") throw new Error("route unavailable");
+        return { cancel: vi.fn() };
+      });
+      // SAFETY: fixture provides the target routing dependencies exercised by this request.
+      const deps = {
+        connections: reason === "disconnected" ? new Map() : new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute, shellSessions: new ShellSessionStore(sql),
+      } as DispatchDeps;
+      const result = await dispatch({ type: "req", id: "start", call: "shell.exec", args: { target: "macbook", sessionId: crypto.randomUUID(), start: true, input: "must not run" } }, { type: "app", id: "tab" }, ctx, deps);
+      expect(result).toMatchObject({ handled: true, response: { ok: false, error: { details: { shellStart: "rejected" } } } });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not claim a start was rejected after outbound work began", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const cancel = vi.fn();
+      const send = vi.fn(() => { throw new Error("connection closed while sending"); });
+      // SAFETY: fixture provides the target routing dependencies exercised by this request.
+      const deps = {
+        connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute: vi.fn(async () => ({ cancel })), shellSessions: new ShellSessionStore(sql),
+      } as DispatchDeps;
+      const result = await dispatch({ type: "req", id: "start", call: "shell.exec", args: { target: "macbook", sessionId: crypto.randomUUID(), start: true, input: "run once" } }, { type: "app", id: "tab" }, ctx, deps);
+      expect(result).toMatchObject({ handled: true, response: { ok: false, error: { code: 500 } } });
+      if (result.handled && !result.response.ok) expect(result.response.error.details).toBeUndefined();
+      expect(send).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith("failed");
+    });
   });
 
   it("routes target syscalls to connected human endpoints", async () => {

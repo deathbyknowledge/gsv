@@ -276,6 +276,11 @@ be updated. Browser targets can accept a named start but remain foreground-only;
 disconnecting their request cancels the operation. The native `gsv` shell also
 remains foreground-only and does not accept named sessions.
 
+When the Kernel rejects a named start before forwarding it, the error includes
+`details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+An unmarked transport error is uncertain: retain the saved session ID and recover
+by polling. A reused ID is also unmarked because its existing command may be live.
+
 ```json
 { "target": "macbook", "sessionId": "73c8fcce-fd24-4ebe-8c85-42f2c2befcf9", "start": true, "input": "npm test" }
 ```

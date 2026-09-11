@@ -64,7 +64,7 @@ import { IpcCallStore } from "./ipc-calls";
 import {
   ScheduleStore,
 } from "./scheduler";
-import { dispatch, type DispatchDeps } from "./dispatch";
+import { dispatch, rejectBeforeDispatch, type DispatchDeps } from "./dispatch";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
@@ -1373,7 +1373,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<ResponseFrame | null> {
     const peer = ctx.peer;
     if (!peer) {
-      return errFrame(inputFrame.id, 403, "Request has no authenticated peer");
+      return rejectBeforeDispatch(inputFrame, 403, "Request has no authenticated peer");
     }
     // Internal-only syscalls are reachable solely through Process provenance;
     // every other call is gated by the peer's grant.
@@ -1384,7 +1384,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     // a denied call is recorded with its arguments and closed as denied.
     this.recordLedgerDispatch(inputFrame, ctx, origin);
     if (!allowed) {
-      const denied = errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+      const denied = rejectBeforeDispatch(inputFrame, 403, `Permission denied: ${inputFrame.call}`);
       this.completeLedger(denied);
       return denied;
     }
