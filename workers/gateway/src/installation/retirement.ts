@@ -31,7 +31,7 @@ export function inspectResourceStorage(storage: DurableObjectStorage, localId?: 
     if (key !== RESOURCE_IDENTITY_KEY && key !== INSTALLATION_RETIREMENT_KEY && !emptyKvKeys.includes(key)) observation.empty = false;
   }
   const tables = storage.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'
-    AND name NOT LIKE 'sqlite_%' AND name != '_gsv_schema_migrations'
+    AND name NOT LIKE 'sqlite_%' AND name != '_gsv_schema_migrations' AND name != '__miniflare_do_name'
     AND substr(lower(name), 1, 4) != '_cf_' AND substr(lower(name), 1, 5) != '__cf_'`).toArray();
   for (const { name } of tables) {
     if (storage.sql.exec<{ present: number }>(`SELECT EXISTS(SELECT 1 FROM "${name.replaceAll('"', '""')}" LIMIT 1) AS present`).one().present) observation.empty = false;
@@ -49,7 +49,7 @@ export function durableResourceName(
   if (!namespace.idFromName(name).equals(state.id) || (stored && stored.name !== name)) throw new Error("Durable resource identity mismatch");
   if (!stored) {
     const tables = state.storage.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'
-      AND name NOT LIKE 'sqlite_%' AND substr(lower(name), 1, 4) != '_cf_' AND substr(lower(name), 1, 5) != '__cf_'`).toArray();
+      AND name NOT LIKE 'sqlite_%' AND name != '__miniflare_do_name' AND substr(lower(name), 1, 4) != '_cf_' AND substr(lower(name), 1, 5) != '__cf_'`).toArray();
     const inventoriedSinceBirth = tables.length === 0 && [...state.storage.kv.list()].length === 0;
     state.storage.kv.put(RESOURCE_IDENTITY_KEY, { name, inventoriedSinceBirth });
   }
@@ -147,7 +147,7 @@ export class InstallationRetirement {
     const next: ResourceRetirement = { ...this.record, phase: "live-erased", updatedAt: Date.now() };
     this.raw.transactionSync(() => {
       const tables = this.raw.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'
-        AND name NOT LIKE 'sqlite_%' AND substr(lower(name), 1, 4) != '_cf_' AND substr(lower(name), 1, 5) != '__cf_'`).toArray();
+        AND name NOT LIKE 'sqlite_%' AND name != '__miniflare_do_name' AND substr(lower(name), 1, 4) != '_cf_' AND substr(lower(name), 1, 5) != '__cf_'`).toArray();
       for (const { name } of tables) this.raw.sql.exec(`DROP TABLE IF EXISTS "${name.replaceAll('"', '""')}"`);
       for (const [key] of this.raw.kv.list()) {
         if (key !== RESOURCE_IDENTITY_KEY) this.raw.kv.delete(key);

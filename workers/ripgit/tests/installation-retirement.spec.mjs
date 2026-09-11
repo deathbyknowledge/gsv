@@ -84,6 +84,18 @@ describe("Repository installation retirement", () => {
     await create("ordinary", "home");
   });
 
+  it("discovers repository and index ownership from their physical addresses without a name hint", async () => {
+    await create("discovered", "home");
+    const namespace = await miniflare.getDurableObjectNamespace("REPOSITORY");
+    for (const name of ["discovered/alice/home", "installation-index:discovered"]) {
+      const response = await miniflare.dispatchFetch("http://ripgit/.gsv/discovery/inspect", {
+        method: "POST", body: JSON.stringify({ kind: "ripgit", namespaceId: "a".repeat(32), objectId: namespace.idFromName(name).toString() }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(await response.json()).toMatchObject({ name, empty: false });
+    }
+  });
+
   async function create(installationId, repo) {
     const response = await miniflare.dispatchFetch(`http://ripgit/hyperspace/repos/alice/${repo}/apply`, {
       method: "POST", headers: { "x-gsv-installation-id": installationId, "content-type": "application/json" },

@@ -5,7 +5,7 @@ import type { Conversation } from "../conversation/do";
 import type { Kernel } from "../kernel/do";
 import type { Process } from "../process/do";
 import { conversationDurableObjectName, processDurableObjectName } from "./routing";
-import { InstallationRetirement, INSTALLATION_RETIREMENT_KEY, MULTIPART_UPLOAD_PREFIX, RESOURCE_IDENTITY_KEY, VERIFIED_INVENTORY_KEY } from "./retirement";
+import { InstallationRetirement, INSTALLATION_RETIREMENT_KEY, MULTIPART_UPLOAD_PREFIX, RESOURCE_IDENTITY_KEY, VERIFIED_INVENTORY_KEY, durableResourceName, inspectResourceStorage } from "./retirement";
 import { GatewayDeletionDiscovery } from "./deletion-discovery";
 import { PROCESS_KILLED_TOMBSTONE_KEY, tombstoneKilledProcessStorage } from "../process/internal/lifecycle";
 import { createInstallationStorage, installationStoragePrefix } from "./storage";
@@ -15,6 +15,31 @@ function request() {
 }
 
 describe("installation resource retirement", () => {
+  it("preserves the exact local runtime identity table without treating it as application data", async () => {
+    const input = request();
+    const name = conversationDurableObjectName(input.installationId, "conv:local-runtime");
+    const stub = env.CONVERSATION.getByName(name);
+    await runInDurableObject(stub, async (_instance: Conversation, state) => {
+      await state.storage.deleteAll();
+      state.storage.sql.exec("CREATE TABLE __miniflare_do_name (id INTEGER PRIMARY KEY, name TEXT)");
+      state.storage.sql.exec("INSERT INTO __miniflare_do_name VALUES (1, ?)", name);
+      expect(durableResourceName(state, env.CONVERSATION)).toBe(name);
+      expect(state.storage.kv.get(RESOURCE_IDENTITY_KEY)).toEqual({ name, inventoriedSinceBirth: true });
+      expect(inspectResourceStorage(state.storage)).toEqual({ name, empty: true });
+      state.storage.sql.exec("CREATE TABLE __miniflare_application_data (value TEXT)");
+      state.storage.sql.exec("INSERT INTO __miniflare_application_data VALUES ('fixture')");
+      expect(inspectResourceStorage(state.storage).empty).toBe(false);
+      const retirement = new InstallationRetirement(state.storage, input.installationId);
+      retirement.begin(input);
+      await retirement.quiesced();
+      retirement.erase();
+      expect(state.storage.sql.exec("SELECT name FROM __miniflare_do_name").toArray()).toEqual([{ name }]);
+      expect(inspectResourceStorage(state.storage)).toEqual({ name, empty: true });
+    });
+    await evictDurableObject(stub);
+    expect(await stub.inspectInstallationResource()).toEqual({ name, empty: true });
+  });
+
   it("erases a Conversation, retains its fence across eviction, and preserves another installation", async () => {
     const input = request();
     const name = conversationDurableObjectName(input.installationId, "conv:ship");

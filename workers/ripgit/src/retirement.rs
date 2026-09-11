@@ -199,6 +199,8 @@ impl RetirementSql {
                         | "resource_identity"
                         | "installation_resources"
                         | "installation_retirement"
+                        // Wrangler's local runtime persists only the Durable Object name here.
+                        | "__miniflare_do_name"
                 )
                 || table.name.starts_with("sqlite_")
                 || table.name.to_lowercase().starts_with("_cf_")
