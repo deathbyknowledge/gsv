@@ -58,7 +58,7 @@ export default defineConfig({
                         : handle;
                   return {
                     found: true,
-                    state: "active",
+                    state: handle.startsWith("retained_") ? "retained" : "active",
                     installationId,
                     handle: resolvedHandle,
                     canonicalOrigin: "https://" + resolvedHandle + ".gsv.space",
