@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
-import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL, DEFAULT_IMAGE_READING_MODEL, deleteProcessMedia, parseStoredProcessMedia, processMediaPath, storeIncomingProcessMedia, type AudioTranscriptionBinding, type ImageReadingBinding } from "./media";
+import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL, DEFAULT_IMAGE_READING_MODEL, deleteProcessMedia, parseStoredProcessMedia, processMediaPath, storeIncomingProcessMedia } from "./media";
+import type { MediaExecutor } from "../inference/media-client";
 import { describeStoredProcessMedia } from "./history/media-renderer";
 
 const touchedPids = new Set<string>();
@@ -60,14 +61,13 @@ describe("process media", () => {
     expect(parsed.slice(1).map((item) => item.path)).toEqual([undefined, undefined, undefined]);
   });
 
-  it("transcribes incoming audio with Workers AI before storing metadata", async () => {
+  it("transcribes incoming audio through inference before storing metadata", async () => {
     const pid = pidForTest("transcribe");
-    const ai: AudioTranscriptionBinding = {
-      run: vi.fn(async () => ({
-        text: "voice note transcript",
-        transcription_info: { duration: 1.5 },
-      })),
-    };
+    const accepted: Uint8Array[] = [];
+    const execute = vi.fn<MediaExecutor>(async (_operation, body) => {
+      accepted.push(new Uint8Array(await new Response(body).arrayBuffer()));
+      return { kind: "transcription", result: { text: "voice note transcript", duration: 1.5, provider: "workers-ai", model: DEFAULT_AUDIO_TRANSCRIPTION_MODEL } };
+    });
 
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
@@ -81,7 +81,7 @@ describe("process media", () => {
         }),
       ],
       {
-        ai,
+        execute,
         audioTranscriptionProvider: "workers-ai",
         audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       },
@@ -93,24 +93,20 @@ describe("process media", () => {
     expect(media[0].duration).toBe(1.5);
     expect(media[0].key).toBeTruthy();
     expect(media[0].path).toBe(`/${media[0].key}`);
-    expect(ai.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-      expect.objectContaining({
-        audio: "AQID",
-        task: "transcribe",
-        vad_filter: true,
-      }),
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "transcription", input: expect.objectContaining({ model: DEFAULT_AUDIO_TRANSCRIPTION_MODEL, mode: "transcribe", vadFilter: true, maxInputBytes: 3 }) }),
+      expect.any(ReadableStream), 30_000, undefined,
     );
+    expect([...accepted[0]]).toEqual([1, 2, 3]);
   });
 
   it("keeps audio media when transcription fails", async () => {
     const pid = pidForTest("transcribe-fail");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ai: AudioTranscriptionBinding = {
-      run: vi.fn(async () => {
-        throw new Error("stt unavailable");
-      }),
-    };
+    const execute = vi.fn<MediaExecutor>(async (_operation, body) => {
+      await body?.cancel();
+      throw new Error("stt unavailable");
+    });
 
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
@@ -124,7 +120,7 @@ describe("process media", () => {
         }),
       ],
       {
-        ai,
+        execute,
         audioTranscriptionProvider: "workers-ai",
         audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       },
@@ -143,25 +139,24 @@ describe("process media", () => {
     const pid = pidForTest("transcribe-cancel");
     const controller = new AbortController();
     let bindingSignal: AbortSignal | undefined;
-    const ai: AudioTranscriptionBinding = {
-      run: vi.fn((_model, _input, options) => {
-        bindingSignal = options?.signal;
-        return new Promise<never>(() => {});
-      }),
-    };
+    const execute = vi.fn<MediaExecutor>(async (_operation, body, _timeout, signal) => {
+      await body?.cancel();
+      bindingSignal = signal;
+      return new Promise<never>((_resolve, reject) => { signal?.addEventListener("abort", () => reject(signal.reason), { once: true }); });
+    });
     const request = storeIncomingProcessMedia(
       env.STORAGE,
       0,
       pid,
       [await storedMedia(pid, { type: "audio", mimeType: "audio/ogg" })],
       {
-        ai,
+        execute,
         signal: controller.signal,
         audioTranscriptionProvider: "workers-ai",
         audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       },
     );
-    await vi.waitFor(() => expect(ai.run).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
 
     controller.abort(new Error("media run stopped"));
 
@@ -171,9 +166,7 @@ describe("process media", () => {
 
   it("does not retranscribe audio that already has a transcript", async () => {
     const pid = pidForTest("existing-transcript");
-    const ai: AudioTranscriptionBinding = {
-      run: vi.fn(async () => ({ text: "ignored" })),
-    };
+    const execute = vi.fn<MediaExecutor>();
 
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
@@ -187,21 +180,20 @@ describe("process media", () => {
           transcription: "existing transcript",
         }),
       ],
-      { ai },
+      { execute },
     );
 
     const media = parseStoredProcessMedia(raw);
     expect(media[0].transcription).toBe("existing transcript");
-    expect(ai.run).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it("describes incoming images with the fixed Moondream caption path", async () => {
+  it("describes incoming images through inference caption requests", async () => {
     const pid = pidForTest("image-read");
-    const ai: ImageReadingBinding = {
-      run: vi.fn(async () => ({
-        caption: "a screenshot of a settings page",
-      })),
-    };
+    const execute = vi.fn<MediaExecutor>(async (_operation, body) => {
+      await body?.cancel();
+      return { kind: "image-read", result: { mode: "caption", text: "a screenshot of a settings page", model: DEFAULT_IMAGE_READING_MODEL, provider: "workers-ai" } };
+    });
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -218,7 +210,7 @@ describe("process media", () => {
       ],
       {
         // SAFETY: test fixture is constructed with the asserted domain shape.
-        ai: ai as AudioTranscriptionBinding & ImageReadingBinding,
+        execute,
         imageReadingMaxTokens: 128,
       },
     );
@@ -227,20 +219,15 @@ describe("process media", () => {
     expect(media).toHaveLength(1);
     expect(media[0].description).toBe("a screenshot of a settings page");
     expect(media[0].key).toBeTruthy();
-    expect(ai.run).toHaveBeenCalledWith(
-      DEFAULT_IMAGE_READING_MODEL,
-      expect.objectContaining({
-        task: "caption",
-        image: "data:image/png;base64,AQID",
-        caption_length: "normal",
-        max_tokens: 128,
-      }),
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-read", input: expect.objectContaining({ mode: "caption", mimeType: "image/png", captionLength: "normal", maxTokens: 128, maxInputBytes: 3 }) }),
+      expect.any(ReadableStream), 30_000, undefined,
     );
   });
 
   it("stores SVG images without sending them to the raster image reader", async () => {
     const pid = pidForTest("svg");
-    const ai: ImageReadingBinding = { run: vi.fn() };
+    const execute = vi.fn<MediaExecutor>();
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -256,7 +243,7 @@ describe("process media", () => {
         }),
       ],
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
+      { execute },
     );
 
     const media = parseStoredProcessMedia(raw);
@@ -268,17 +255,16 @@ describe("process media", () => {
       }),
     ]);
     expect(media[0].description).toBeUndefined();
-    expect(ai.run).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("keeps image media when image reading fails", async () => {
     const pid = pidForTest("image-read-fail");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ai: ImageReadingBinding = {
-      run: vi.fn(async () => {
-        throw new Error("vision unavailable");
-      }),
-    };
+    const execute = vi.fn<MediaExecutor>(async (_operation, body) => {
+      await body?.cancel();
+      throw new Error("vision unavailable");
+    });
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -294,7 +280,7 @@ describe("process media", () => {
         }),
       ],
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
+      { execute },
     );
 
     const media = parseStoredProcessMedia(raw);
@@ -302,7 +288,7 @@ describe("process media", () => {
     expect(media[0].type).toBe("image");
     expect(media[0].description).toBeUndefined();
     expect(media[0].key).toBeTruthy();
-    expect(ai.run).toHaveBeenCalledWith(DEFAULT_IMAGE_READING_MODEL, expect.any(Object));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: "image-read" }), expect.any(ReadableStream), 30_000, undefined);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
