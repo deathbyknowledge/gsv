@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { GsvAdapterWorker, GsvDeployment, gsvDeploymentManifestSchema, type GsvAdapterBinding } from "./deployment/src/index.ts";
+import { operatorResourceCatalogSchema } from "./workers/installations/src/operator-resource-contracts.ts";
 
 const manifest = gsvDeploymentManifestSchema.parse(JSON.parse(readFileSync("./dist/cloudflare/deployment-manifest.json", "utf8")));
 
@@ -44,7 +45,10 @@ export default Alchemy.Stack("gsv", {
       lifecycle: adapter.managed.lifecycle, worker });
   }
   const apiKey = Option.getOrUndefined(yield* Config.redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
+  const catalogPath = Option.getOrUndefined(yield* Config.string("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
+  const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
+    deletion,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,
     services: { adapters },
     installations: { workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,

@@ -41,8 +41,11 @@ support each claimed completion time.
 `DELETION_DISCOVERY_NAMESPACES` is derived from the adopted Worker outputs.
 Accounts verifies persisted per-resource observations against that catalog.
 `DELETION_RESOURCE_SCOPES` declares the exact non-DO resources for every current
-or historical owner. `DELETION_ADDITIONAL_EVIDENCE` verifies the remaining
-operator evidence; it cannot be replaced by a caller's completeness assertion.
+or historical owner. The public `operator-resources` owner validates a deployment-owned
+`OPERATOR_DELETION_CATALOG`; an operator may instead supply
+`DELETION_ADDITIONAL_EVIDENCE`. Neither mechanism discovers historical provider
+accounts from current settings. See the
+[operator evidence contract](installation-deletion-operator.md).
 
 The complete inventory resolver fails closed when these additional declarations
 or proofs are absent. Durable Object discovery alone does not authorize full

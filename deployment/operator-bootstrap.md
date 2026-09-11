@@ -58,3 +58,18 @@ interleaved retries, setup claim preservation, second-installation isolation,
 access mode, CSRF, cookie flags and credential recovery. These local fixtures do
 not substitute for fresh-account Cloudflare deployment and two-installation
 acceptance on staging.
+
+## Deletion inventory
+
+Set `GSV_DELETION_CATALOG_FILE` to an operator-reviewed JSON catalog before
+enabling complete deletion inventory registration. The schema and evidence API
+are documented in the [operator evidence contract](../engineering/installation-deletion-operator.md).
+Without that file, ordinary service works but full deletion admission remains
+unavailable. Configuration never supplies an erasure receipt.
+
+`GsvDeletionResourceBindings` combines the operator catalog with the exact
+application-owner storage scopes. `GsvDeployment` derives those scopes for its
+fresh public components. An overlay supplying its own directory, inference or
+Mail must call the helper with its complete owner inventory. Historical services,
+exports, custom provider endpoints and user-provider accounts remain the
+operator's responsibility; today's enabled bindings cannot prove their absence.
