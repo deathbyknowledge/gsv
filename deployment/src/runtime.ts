@@ -32,6 +32,8 @@ export type GsvAdapterBinding = {
 
 export type GsvRuntimeServices = {
   installationDirectory?: Cloudflare.Workers.Worker;
+  inferenceExecution?: Cloudflare.Workers.WorkerBindingProps[string];
+  /** Historical commercial-service input retained until the W7 symbol removal. */
   inference?: Cloudflare.Workers.WorkerEntrypointBinding;
   inferenceInstallations?: Cloudflare.Workers.WorkerBindingProps[string];
   entitlements?: Cloudflare.Workers.WorkerEntrypointBinding;
@@ -77,8 +79,17 @@ const telemetryProducerObservability = {
   traces: { enabled: false },
 } satisfies Cloudflare.Workers.WorkerObservability;
 
-export const GsvRuntime = (props: GsvRuntimeProps) =>
-  Effect.gen(function* () {
+export type GsvRuntimeDependencies = { Cloudflare: typeof Cloudflare; Effect: typeof Effect; retain: typeof retain };
+export const gsvRuntimeDependencies: GsvRuntimeDependencies = { Cloudflare, Effect, retain };
+
+export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDependencies) => {
+  const { Cloudflare, Effect, retain } = dependencies;
+  return Effect.gen(function* () {
+    const directory = props.services?.installationDirectory;
+    const inferenceExecution = props.services?.inferenceExecution;
+    if (!directory || !inferenceExecution) {
+      throw new Error("GSV now requires an installation directory and inference execution service. Use GsvDeployment or supply both services; legacy standalone deployments must migrate before upgrading.");
+    }
     const compatibility = props.compatibility ?? GSV_WORKER_COMPATIBILITY;
     const adapters = props.services?.adapters ?? [];
     const storageResource = Cloudflare.R2.Bucket(
@@ -105,18 +116,13 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
       },
     ).pipe(retain());
 
-    const managedBindings: Cloudflare.Workers.WorkerBindingProps = {};
-    if (props.services?.installationDirectory) {
-      managedBindings.INSTALLATION_DIRECTORY =
-        props.services.installationDirectory;
-    }
-    if (props.services?.inference) {
-      managedBindings.MANAGED_INFERENCE = props.services.inference;
-    }
-    if (props.services?.inferenceInstallations) {
-      managedBindings.MANAGED_INFERENCE_INSTALLATIONS =
-        props.services.inferenceInstallations;
-    }
+    const managedBindings: Cloudflare.Workers.WorkerBindingProps = {
+      INSTALLATION_DIRECTORY: directory,
+      INFERENCE_EXECUTION: inferenceExecution,
+      INSTALLATION_OWNERSHIP: Cloudflare.WorkerEntrypoint(directory, {
+        entrypoint: "InstallationOwnershipEntrypoint", props: { authority: "kernel-owner-link" },
+      }),
+    };
     if (props.services?.entitlements) {
       managedBindings.ENTITLEMENTS = props.services.entitlements;
     }
@@ -134,7 +140,6 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
         className: "Conversation",
       }),
       STORAGE: storageResource,
-      AI: Cloudflare.Workers.AI(),
       RIPGIT: ripgitWorker,
       LOADER: Cloudflare.WorkerLoader(),
       ...managedBindings,
@@ -191,8 +196,13 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
     const storage = yield* storageResource;
     const ripgit = yield* ripgitWorker;
     const gateway = yield* gatewayWorker;
+    yield* directory.bind(`${props.logicalPrefix}DirectoryRecoveryBinding`, {
+      bindings: [{ type: "service", name: "ACCOUNTS_GATEWAY_RECOVERY", service: props.names.gateway,
+        entrypoint: "GatewayRecoveryEntrypoint", props: { authority: "installation-owner-recovery" } }],
+    });
     return { mode: props.mode, storage, ripgit, gateway };
   });
+};
 
 export type StandaloneGsvProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
   adapters?: readonly GsvAdapterBinding[];
