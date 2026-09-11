@@ -13,6 +13,7 @@ import { FleetApproval } from "../fleet/FleetApproval";
 import { WireSync } from "../wire/WireSync";
 import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { DelegatedApprovals, delegatedApprovalProcesses } from "./DelegatedApprovals";
+import { useZenProcess } from "./useZenProcess";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -23,6 +24,78 @@ function process(pid: string, parentPid: string | null, overrides: Partial<Conso
 }
 
 describe("Ship pending approvals", () => {
+  it("follows a mounted Ship replacement without redirecting a deleted helper or mixing owners", async () => {
+    vi.stubGlobal("document", {});
+    vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" },
+      sessionStorage: { getItem: () => null, setItem: () => {} } });
+    vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+    const listeners = new Set<Parameters<GSVClient["onSignal"]>[0]>();
+    vi.spyOn(GSVClient.prototype, "onSignal").mockImplementation((listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    });
+    const child = process("child", "ship");
+    const helperChild = process("helper-child", "helper");
+    const foreignShip = process("foreign-ship", null, { uid: 2000, personal: true, state: "idle", activeRunId: null });
+    const foreignChild = process("foreign-child", "foreign-ship", { uid: 2000 });
+    const replacement = process("replacement", null, { personal: true, state: "idle", activeRunId: null });
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call) => {
+      if (call === "proc.list") return { data: { processes: [foreignShip, foreignChild, replacement, child, helperChild] } };
+      throw new Error(`Unexpected request ${call}`);
+    });
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cache.setQueryData(INSTRUMENT_PROCESSES_KEY, [
+      process("ship", null, { personal: true, state: "idle", activeRunId: null }),
+      process("helper", "ship", { state: "idle", activeRunId: null }),
+      child, helperChild, foreignShip, foreignChild,
+    ]);
+    const root = createTestRoot("Ship replacement");
+    const onError = vi.fn();
+    let shipPid: string | null = null;
+    let helperPid: string | null = null;
+    let shipTree: ComponentChildren;
+    let helperTree: ComponentChildren;
+    function Harness() {
+      shipPid = useZenProcess(null, onError);
+      helperPid = useZenProcess("helper", onError);
+      shipTree = DelegatedApprovals({ pid: shipPid ?? "", onFleet: () => {} });
+      helperTree = DelegatedApprovals({ pid: helperPid ?? "", onFleet: () => {} });
+      return null;
+    }
+    try {
+      await root.render(<GatewayProvider><SessionProvider createService={(client) => ({
+        ...createSessionService(client), start: async () => {},
+      })}><TerminalProvider><QueryClientProvider client={cache}><WireSync /><Harness /></QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
+      await vi.waitFor(() => expect(shipPid).toBe("ship"));
+      expect(collectText(shipTree)).toMatch(/child\s+is waiting for your approval/);
+      expect(collectText(helperTree)).toMatch(/helper-child\s+is waiting for your approval/);
+      await act(async () => {
+        for (const listener of listeners) {
+          listener("process.exit", { pid: "ship" });
+          listener("process.exit", { pid: "helper" });
+        }
+      });
+      await vi.waitFor(() => expect(collectText(helperTree)).toBe(""));
+      expect(shipPid).toBe("ship");
+      expect(helperPid).toBe("helper");
+      expect(request).not.toHaveBeenCalled();
+      await act(async () => {
+        for (const listener of listeners) listener("proc.changed", { pid: "replacement", changes: ["created"], runtime: {
+          state: "idle", activeRunId: null, queuedCount: 0, lastActiveAt: 10,
+        } });
+      });
+      await vi.waitFor(() => expect(shipPid).toBe("replacement"));
+      expect(collectNodes(shipTree).filter((node) => node.type === FleetApproval).map((node) => node.props))
+        .toMatchObject([{ pid: "child", runId: "child-run" }, { pid: "helper-child", runId: "helper-child-run" }]);
+      expect(collectText(shipTree)).not.toContain("foreign-child");
+      expect(helperPid).toBe("helper");
+      expect(collectText(helperTree)).toBe("");
+      expect(request.mock.calls.map(([call]) => call)).toEqual(["proc.list"]);
+      expect(onError).not.toHaveBeenCalled();
+    } finally { await root.unmount(); cache.clear(); }
+  });
+
   it("shows and clears a child's approval in mounted Ship from owner registry signals alone", async () => {
     vi.stubGlobal("document", {});
     vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" },
