@@ -13,9 +13,10 @@ import type {
   ManagedInferenceRequest,
   ManagedInferenceRouting,
 } from "@humansandmachines/gsv/protocol";
-import type {
-  AiGatewayUniversalRequestLike,
-} from "@earendil-works/pi-ai/api/cloudflare-gateway-binding";
+import {
+  CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
+  type AiBinding,
+} from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWorkersAiGeneration,
@@ -83,13 +84,9 @@ const FALLBACK_ROUTING: ManagedInferenceRouting = {
 };
 
 function testBinding(
-  run: (
-    request: AiGatewayUniversalRequestLike,
-    options?: { signal?: AbortSignal },
-  ) => Promise<Response>,
+  fetch: NonNullable<AiBinding["fetch"]>,
 ) {
-  const gateway = vi.fn((_id: string) => ({ run }));
-  return { binding: { gateway }, gateway };
+  return { binding: { aiGatewayLogId: null, fetch } satisfies AiBinding };
 }
 
 function completionResponse(
@@ -122,40 +119,38 @@ afterEach(() => {
 
 describe("shared Workers AI inference", () => {
 
+  it("requires the native AI binding fetch capability before dispatch", () => {
+    expect(() => createWorkersAiGeneration(REQUEST, { aiGatewayLogId: null }))
+      .toThrow("the AI binding does not expose fetch()");
+  });
+
   it("uses the binding route while returning the stable GSV product model", async () => {
-    const run = vi.fn(async (
-      _request: AiGatewayUniversalRequestLike,
-      _options?: { signal?: AbortSignal },
-    ) => completionResponse());
-    const { binding, gateway } = testBinding(run);
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async () => completionResponse());
+    const { binding } = testBinding(run);
     const generation = createWorkersAiGeneration(REQUEST, binding);
     const [first, second] = await Promise.all([
       generation.result(ROUTING),
       generation.result(ROUTING),
     ]);
 
-    expect(gateway).toHaveBeenCalledWith("default");
     expect(run).toHaveBeenCalledTimes(1);
-    const [request] = run.mock.calls[0];
-    expect(request).toMatchObject({
-      provider: "compat",
-      endpoint: "chat/completions",
-      headers: {
-        "cf-aig-collect-log-payload": "false",
-        "x-client-request-id": "pid_test",
-        "x-session-affinity": "pid_test",
-      },
-      query: {
-        model: "workers-ai/@cf/test/second",
-        max_tokens: 32,
-        stream: true,
-      },
+    const request = new Request(...run.mock.calls[0]);
+    expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
+    expect(request.method).toBe("POST");
+    expect(request.headers.get("cf-aig-collect-log-payload")).toBe("false");
+    expect(request.headers.get("x-client-request-id")).toBe("pid_test");
+    expect(request.headers.get("x-session-affinity")).toBe("pid_test");
+    expect(request.headers.get("cf-aig-authorization")).toBe(`Bearer ${CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL}`);
+    expect(request.headers.has("authorization")).toBe(false);
+    expect(request.headers.has("x-api-key")).toBe(false);
+    const query: unknown = await request.json();
+    expect(query).toMatchObject({
+      model: "workers-ai/@cf/test/second",
+      max_tokens: 32,
+      stream: true,
     });
-    expect(request.headers).not.toHaveProperty("authorization");
-    expect(request.headers).not.toHaveProperty("cf-aig-authorization");
-    expect(request.headers).not.toHaveProperty("x-api-key");
-    expect(JSON.stringify(request.query)).not.toContain(REQUEST.installationId);
-    expect(JSON.stringify(request.query)).not.toContain(REQUEST.logicalRequestId);
+    expect(JSON.stringify(query)).not.toContain(REQUEST.installationId);
+    expect(JSON.stringify(query)).not.toContain(REQUEST.logicalRequestId);
     expect(first).toEqual(second);
     expect(first).toMatchObject({
       role: "assistant",
@@ -196,7 +191,7 @@ describe("shared Workers AI inference", () => {
   });
 
   it("falls back after a retryable failure before output is exposed", async () => {
-    const run = vi.fn()
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         error: { message: "rate limit reached" },
       }), {
@@ -218,9 +213,9 @@ describe("shared Workers AI inference", () => {
     }
 
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls.map(([request]) => request.query.model)).toEqual([
-      `workers-ai/${FIRST_MODEL.modelId}`,
-      `workers-ai/${SECOND_MODEL.modelId}`,
+    expect(await Promise.all(run.mock.calls.map(async (args) => new Request(...args).json()))).toMatchObject([
+      { model: `workers-ai/${FIRST_MODEL.modelId}` },
+      { model: `workers-ai/${SECOND_MODEL.modelId}` },
     ]);
     expect(events[0]).toMatchObject({
       type: "start",
@@ -321,14 +316,12 @@ describe("shared Workers AI inference", () => {
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const run = vi.fn(async (
-      _request: AiGatewayUniversalRequestLike,
-      options?: { signal?: AbortSignal },
-    ) => {
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async (input, options) => {
       markStarted?.();
+      const signal = options?.signal ?? (input instanceof Request ? input.signal : undefined);
       return await new Promise<Response>((_resolve, reject) => {
-        options?.signal?.addEventListener("abort", () => {
-          reject(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        signal?.addEventListener("abort", () => {
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
         }, { once: true });
       });
     });

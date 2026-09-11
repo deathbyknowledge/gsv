@@ -8,9 +8,9 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
-  createGatewayBindingFetch,
-  type AiGatewayBinding,
-} from "@earendil-works/pi-ai/api/cloudflare-gateway-binding";
+  createAiBindingFetch,
+  type AiBinding,
+} from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -25,7 +25,7 @@ import type { InferenceModelRouting, InferenceRequest, InferencePartial, Inferen
 const GSV_INFERENCE_API = "gsv-inference";
 const AI_GATEWAY_ID = "default";
 const AI_GATEWAY_BASE_URL =
-  `https://gateway.ai.cloudflare.com/v1/binding/${AI_GATEWAY_ID}`;
+  `https://workers-binding.ai/ai-gateway/gateways/${AI_GATEWAY_ID}`;
 const AI_GATEWAY_COMPAT_URL = `${AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_MODEL_PREFIX = "workers-ai/";
 
@@ -73,7 +73,7 @@ const workersAi = createProvider<"openai-completions">({
 
 export function createWorkersAiGeneration(
   input: InferenceRequest,
-  binding: AiGatewayBinding,
+  binding: AiBinding,
 ): WorkersAiGeneration {
   if (input.model !== GSV_INFERENCE_PRODUCT_MODEL) {
     throw new Error(`Unsupported managed inference model: ${input.model}`);
@@ -83,11 +83,7 @@ export function createWorkersAiGeneration(
     Date.now() + input.timeoutMs,
     input.deadlineAt ?? Infinity,
   );
-  const rawBindingFetch = createGatewayBindingFetch({
-    binding,
-    baseUrl: AI_GATEWAY_BASE_URL,
-    gateway: AI_GATEWAY_ID,
-  });
+  const rawBindingFetch = createAiBindingFetch(binding);
   const attempts: WorkersAiAttempt[] = [];
   let activeAttempt: WorkersAiAttempt | undefined;
   let eventStream: AsyncIterable<AssistantMessageEvent> | undefined;
