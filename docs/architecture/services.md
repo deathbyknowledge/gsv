@@ -15,6 +15,10 @@ The current contracts are:
 - `mail`: Gateway mail transport and operational mail inspection
 - `adapters`: external messaging transport discovery and operations
 
+[Installation directory and onboarding](./installation-directory.md)
+specifies installation identity, state gates, ownership, setup claims, and
+the current reset/deletion boundary for directory implementers and callers.
+
 Service bindings are capabilities. A deployment must bind only the interface a
 Worker needs; Cloudflare Access identity does not implicitly propagate through a
 service binding. Implementations validate arguments at their public boundary and
