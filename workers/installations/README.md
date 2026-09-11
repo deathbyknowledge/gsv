@@ -11,8 +11,9 @@ orchestration; none of these operations requires commercial tables. H&M uses the
 same controller, pages, API, Access verifier and administration service. Its
 private presentation adds navigation, a list summary column and installation
 detail slots; those trusted renderers own escaping their data. Funding forms
-and inference routes remain private. Owner sign-in/recovery, operator-token
-login, common bootstrap and production adoption are subsequent batches; this
+and inference routes remain private. Owner sign-in and root recovery use the
+shared identity flow described below. Operator-token login, common bootstrap
+and production adoption are subsequent batches; this
 is not yet the complete replacement deployment.
 
 The HTML registry is available at `/admin` and `/admin/installations`, with a
@@ -36,8 +37,8 @@ origin. The shared interface allows the forthcoming operator-credential access
 implementation without duplicating routes or lifecycle operations.
 
 The public reference Worker creates reservations under `principal_operator_registry`.
-This deployment-owned placeholder does not prove an individual owner's identity;
-owner linking/recovery remains a separate implementation step. H&M supplies its
+This deployment-owned placeholder does not prove an individual owner's identity.
+A root human links a verified external identity before owner recovery is enabled. H&M supplies its
 existing registry identity to preserve adoption. Caller-provided principal ids
 cannot change the reservation owner. Reset participants are supplied by the
 hosting composition; the reference Worker currently has no optional services.
@@ -63,6 +64,44 @@ fresh migration runner at an existing database: adoption must first verify the
 legacy migration inventory/checksums and seed the new owner ledger, as specified
 in `engineering/hosting-consolidation-spec.md`. No legacy columns, resources or
 records are removed by this extraction.
+
+## Owner linking and root recovery
+
+Configure an OIDC application with issuer `GSV_OWNER_OIDC_ISSUER`, client ID
+`GSV_OWNER_OIDC_CLIENT_ID`, and optional confidential-client secret
+`GSV_OWNER_OIDC_CLIENT_SECRET`. Its HTTPS callback is
+`GSV_ADMIN_ORIGIN/owner/callback`. The provider must support authorization code
+flow with PKCE, RS256 ID tokens, nonce, verified email, and `max_age=0` with a
+fresh `auth_time`. Issued-at time alone is insufficient. Operator Access
+authorization remains separate and does not prove ownership of a space.
+
+Gateway binds `INSTALLATION_OWNERSHIP` to Accounts'
+`InstallationOwnershipEntrypoint` with deployment-owned props
+`{ authority: "kernel-owner-link" }`. Accounts binds `ACCOUNTS_GATEWAY_RECOVERY`
+to `GatewayRecoveryEntrypoint` with props
+`{ authority: "installation-owner-recovery" }`. Missing configuration denies
+owner operations. A directory binding alone grants no incoming recovery authority.
+
+In Settings, a signed-in root human starts a ten-minute link attempt. The
+Kernel fixes its own installation identity and credential generation. Accounts
+verifies the person's provider subject and atomically replaces registry
+ownership and membership; it never issues a local credential. Before committing,
+Accounts confirms that the original root authorization remains valid. The same
+principal may link several spaces; email matching never merges distinct subjects.
+
+`/owner/recover` freshly authenticates the current verified owner of a space.
+Accounts grants an exact, expiring root-reset claim and redirects the browser
+to that space's `/recover` page. Kernel redemption changes only root's password
+and revokes earlier root tokens, sessions, pending device invitations and root
+adapter links. An identical receiver-bound retry returns the existing receipt
+without overwriting later changes or disconnecting newly authenticated sessions.
+Existing ordinary human credentials and data remain unchanged. Passkeys and
+member recovery are the next Kernel-owned access batch.
+
+`0013_installation_owner_identity.sql` adds the external-subject mapping and
+durable owner attempts. On an existing H&M database it runs only through the
+directory-owned runner after the legacy migration handoff. Do not copy it into
+or run it through the retired private legacy migration directory.
 
 ## Reset preparation
 

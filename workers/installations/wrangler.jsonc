@@ -11,7 +11,9 @@
     "ENVIRONMENT": "production",
     "GSV_ADMIN_ORIGIN": "https://accounts.example.com",
     "GSV_ADMIN_ACCESS_TEAM_DOMAIN": "",
-    "GSV_ADMIN_ACCESS_AUD": ""
+    "GSV_ADMIN_ACCESS_AUD": "",
+    "GSV_OWNER_OIDC_ISSUER": "",
+    "GSV_OWNER_OIDC_CLIENT_ID": ""
   },
   "d1_databases": [{
     "binding": "INSTALLATIONS_DB",

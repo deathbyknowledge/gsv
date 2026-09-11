@@ -27,6 +27,7 @@ function runtimeWith(sockets: ReturnType<typeof fakeSocket>[]) {
   const host = {
     ctx: { getWebSockets: () => sockets },
     connections: new Map(),
+    auth: { credentialEpoch: vi.fn(() => 0), isAccountDisabled: vi.fn(() => false) },
     targets: { setOnline, listOnline: () => [] },
   };
   // SAFETY: rehydration touches only the sockets, connection index, and target flags stubbed here.
@@ -57,6 +58,18 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
     }
     expect(host.connections.size).toBe(0);
     expect(setOnline).not.toHaveBeenCalled();
+  });
+
+  it("refuses a session restored after its account credentials were reset", () => {
+    const old = fakeSocket({ step: "connected", protocol: 4, peer: MACHINE_PEER });
+    const current = fakeSocket({ step: "connected", protocol: 4, peer: MACHINE_PEER, credentialEpoch: 1 });
+    const { runtime, host, setOnline } = runtimeWith([old, current]);
+    host.auth.credentialEpoch.mockReturnValue(1);
+    runtime.rehydrateConnections();
+    expect(old.close).toHaveBeenCalledWith(1008, "Credentials changed; sign in again");
+    expect(old.serializeAttachment).toHaveBeenCalledWith(expect.objectContaining({ state: expect.objectContaining({ step: "superseded" }) }));
+    expect(current.close).not.toHaveBeenCalled();
+    expect(setOnline).toHaveBeenCalledTimes(1);
   });
 
   it("keeps pending sockets that have not negotiated yet", () => {

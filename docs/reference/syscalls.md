@@ -1566,6 +1566,14 @@ type SystemSyscalls = {
     args: { uid?: number };
     result: { accounts: Array<{ uid: number; username: string; displayName: string; relation: "self" | "personal-agent" | "agent" | "human"; runnable: boolean; capabilities?: string[]; gecos?: string }> };
   };
+  "account.owner.link": {
+    args: { id: string; secret: string };
+    result: { url: string; expiresAt: number };
+  };
+  "account.recovery.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { username: "root" };
+  };
 };
 ```
 
@@ -1574,6 +1582,17 @@ authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
 the accounts a human owns: a `human` account gets a personal agent, and an
 `agent` account is a non-login identity the owner can run processes as.
+
+`account.owner.link` requires a signed-in root human and attests the Kernel's
+immutable installation identity to Accounts. The browser then verifies the
+external owner through the configured identity provider. `account.recovery.redeem`
+is available before connection authentication, behind the ordinary installation
+work gate. Accounts authorizes only a short-lived root-reset claim through its
+deployment-granted recovery binding; redemption atomically consumes the claim,
+updates root's password, and revokes earlier root credentials and sessions.
+The receiving browser persists its random proof before redemption. Identical
+retries recover the receipt without rewriting the password; another proof or
+password cannot reuse a consumed claim. Secrets are excluded from the ledger.
 
 ## AI: `ai.*`
 

@@ -12,6 +12,7 @@ export type KernelConnectionState = {
   clientId?: string;
   clientPlatform?: string;
   credentialMethod?: "password" | "token";
+  credentialEpoch?: number;
   observedProcessIds?: string[];
 };
 
@@ -22,6 +23,7 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   clientId: z.string().optional(),
   clientPlatform: z.string().optional(),
   credentialMethod: z.enum(["password", "token"]).optional(),
+  credentialEpoch: z.number().int().nonnegative().optional(),
   observedProcessIds: z.array(z.string()).optional(),
 }) satisfies z.ZodType<KernelConnectionState>;
 

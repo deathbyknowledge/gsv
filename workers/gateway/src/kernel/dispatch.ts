@@ -53,6 +53,7 @@ import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
 import { DevicePairingCreateError } from "./device-pairings";
+import { handleOwnerLink } from "./sys/owner";
 import {
   handleRepoApply,
   handleRepoCompare,
@@ -619,6 +620,11 @@ async function dispatchKernel(
       case "account.list":
         data = handleAccountList(frame.args, ctx);
         break;
+      case "account.owner.link":
+        data = await handleOwnerLink(frame.args, ctx);
+        break;
+      case "account.recovery.redeem":
+        return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
 
       // --- sched.* ---
       case "sched.list":

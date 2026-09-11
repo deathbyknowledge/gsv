@@ -414,6 +414,8 @@ export type SyscallDomains = {
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
+  "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
+  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };

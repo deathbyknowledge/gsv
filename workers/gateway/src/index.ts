@@ -56,6 +56,7 @@ import type { GatewayEnv } from "./runtime-env";
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { Conversation } from "./conversation/do";
+export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
 
 export default {
   async fetch(request, env): Promise<Response> {

@@ -42,6 +42,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
+import { AccountRecoveryStore } from "./account-recovery";
+import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -376,6 +378,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
   readonly pairings: DevicePairingStore;
+  readonly accountRecovery: AccountRecoveryStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
@@ -449,6 +452,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
+    this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
 
     this.routes = new RoutingTable(sql);
     this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
@@ -565,6 +569,26 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity ?? null;
+  }
+
+  async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) throw new Error("The space is unavailable");
+    this.accountRecovery.authorize(input);
+    return { authorized: true };
+  }
+
+  async confirmOwnerLinkAuthorization(attemptId: string): Promise<{ authorized: true }> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) throw new Error("The space is unavailable");
+    this.accountRecovery.confirmOwnerLink(attemptId);
+    return { authorized: true };
+  }
+
+  async redeemAccountRecovery(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
+    const result = await this.accountRecovery.redeem(input);
+    this.connectionRuntime.invalidateAccountConnections(0);
+    return result;
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -1275,6 +1299,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationIdentity,
       auth: this.auth,
       pairings: this.pairings,
+      accountRecovery: this.accountRecovery,
       caps: this.caps,
       config: this.config,
       targets: this.targets,
@@ -1498,7 +1523,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "sys.pair.create"
+      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
+        ? { id: frame.args.id }
+        : frame.call === "sys.pair.create"
         ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
         : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
         : frame.args) as JsonLike;

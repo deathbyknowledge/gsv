@@ -10,6 +10,7 @@ import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
 import { MessengerConnections } from "./MessengerConnections";
 import { Mcp } from "./Mcp";
+import { OwnerAccess } from "./OwnerAccess";
 import "./settings.css";
 
 export type SettingsProps = {
@@ -52,7 +53,7 @@ export function Settings({ onDirtyChange }: SettingsProps) {
         {accounts.isPending && connected && <LoadingState variant="panel">Loading your account…</LoadingState>}
         {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
         {account && <div key={account.uid}>
-          <div hidden={section !== "preferences"}><Preferences account={account} active={section === "preferences"} onDirty={preferencesDirty} /></div>
+          <div hidden={section !== "preferences"}><Preferences account={account} active={section === "preferences"} onDirty={preferencesDirty} />{account.uid === 0 && <OwnerAccess />}</div>
           <div hidden={section !== "permissions"}><Permissions account={account} active={section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={section === "messengers"} /></div>

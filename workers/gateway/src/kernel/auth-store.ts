@@ -79,7 +79,7 @@ export type AuthTokenRecord = {
   revokedReason: string | null;
 };
 
-export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string };
+export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string; credentialEpoch: number };
 
 type TokenAuthOptions = {
   kind?: AuthTokenKind;
@@ -88,6 +88,22 @@ type TokenAuthOptions = {
 
 export class AuthStore {
   constructor(private readonly sql: SqlStorage) {}
+
+  credentialEpoch(uid: number): number {
+    return this.sql.exec<{ credential_epoch: number }>("SELECT credential_epoch FROM account_access WHERE uid = ?", uid).toArray()[0]?.credential_epoch ?? 0;
+  }
+
+  isAccountDisabled(uid: number): boolean {
+    return this.sql.exec<{ disabled_at: number | null }>("SELECT disabled_at FROM account_access WHERE uid = ?", uid).toArray()[0]?.disabled_at != null;
+  }
+
+  /** Called inside the credential owner's transaction; live sessions compare this epoch before admission. */
+  invalidateCredentials(uid: number, reason: string): void {
+    this.sql.exec(`INSERT INTO account_access (uid, credential_epoch) VALUES (?, 1)
+      ON CONFLICT(uid) DO UPDATE SET credential_epoch = credential_epoch + 1`, uid);
+    this.sql.exec("UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE uid = ? AND revoked_at IS NULL", Date.now(), reason, uid);
+    this.sql.exec("UPDATE device_pairings SET cancelled_at = ? WHERE owner_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
+  }
 
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(
@@ -345,12 +361,15 @@ export class AuthStore {
   async authenticate(username: string, credential: string): Promise<AuthResult> {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
+    if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
+    const epoch = this.credentialEpoch(user.uid);
 
     const shadow = this.getShadowByUsername(username);
     if (!shadow) return { ok: false, error: "No credentials found" };
 
     const valid = await verify(credential, shadow.hash);
-    if (!valid) return { ok: false, error: "Authentication failed" };
+    if (!valid || this.credentialEpoch(user.uid) !== epoch || this.isAccountDisabled(user.uid)
+      || this.getShadowByUsername(username)?.hash !== shadow.hash) return { ok: false, error: "Authentication failed" };
 
     const gids = this.resolveGids(username, user.gid);
 
@@ -390,6 +409,7 @@ export class AuthStore {
   ): Promise<PeerTokenAuthResult> {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
+    if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
 
     const tokenHash = await hashToken(token);
     const rows = this.sql.exec<{
@@ -456,6 +476,7 @@ export class AuthStore {
 
     const now = Date.now();
     const tokenId = crypto.randomUUID();
+    const credentialEpoch = this.credentialEpoch(input.uid);
     const rawToken = credential ?? this.generateTokenValue(input.kind);
     const tokenPrefix = rawToken.slice(0, 16);
     const tokenHash = await hashToken(rawToken);
@@ -466,14 +487,15 @@ export class AuthStore {
       throw new Error("peerId is only valid for machine tokens");
     }
 
-    return { hash: tokenHash, issued: {
+    return { hash: tokenHash, credentialEpoch, issued: {
       tokenId, token: rawToken, tokenPrefix, uid: input.uid, kind: input.kind,
       label: input.label ?? null, peerId: input.peerId ?? null, createdAt: now,
       expiresAt: input.expiresAt ?? null,
     } };
   }
 
-  storePreparedToken({ issued, hash }: PreparedAuthToken): IssuedAuthToken {
+  storePreparedToken({ issued, hash, credentialEpoch }: PreparedAuthToken): IssuedAuthToken {
+    if (this.credentialEpoch(issued.uid) !== credentialEpoch || this.isAccountDisabled(issued.uid)) throw new Error("Credential issuance was revoked");
     this.sql.exec(
       `INSERT INTO auth_tokens
         (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)

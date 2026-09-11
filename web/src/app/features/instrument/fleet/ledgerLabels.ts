@@ -108,6 +108,8 @@ const labels = {
   "sys.link.consume": "confirmed a messaging link",
   "account.create": "created an account",
   "account.list": "listed accounts",
+  "account.owner.link": "started owner verification",
+  "account.recovery.redeem": "redeemed root recovery",
   "sched.list": "listed schedules",
   "sched.add": "created a schedule",
   "sched.update": "updated a schedule",
