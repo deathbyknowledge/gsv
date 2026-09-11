@@ -21,6 +21,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
 | `GSV_INFERENCE_PROVIDER`, `GSV_INFERENCE_MODEL` | Operator default provider and model. |
 | `GSV_INFERENCE_API_KEY`, `GSV_INFERENCE_BASE_URL` | Optional operator provider credentials and endpoint. |
+| `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see the workflow below. |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and
@@ -58,6 +59,45 @@ service; the manifest inventories every owned Durable Object namespace,
 including retained legacy namespaces. Their public callback routes and provider application registration
 belong to the operator; enabling a Worker alone does not complete that external
 provider setup. People pair their own identities through their installation.
+
+Before deleting a space, account for every service that still holds its data,
+including services previously enabled. `GSV_DELETION_CATALOG_FILE` supplies the
+external-resource catalog to the public composition. Each entry declares an
+`id`, physical `namespace`, `kind`, `source`, `scope` (`installation` or
+`deployment`), and `disposition` (`live` or `retained`). Include logs, telemetry
+exports, provider copies, caches, backups, unfinished R2 uploads, and mail queues
+and dead-letter queues where applicable. Queues and unfinished uploads are live
+resources. Current bindings and default-provider settings cannot establish the
+complete history of destinations, including people's own provider accounts.
+Leave the catalog unset while that inventory is unresolved; deletion admission
+fails closed. A configured catalog declares scope, not successful cleanup.
+
+Follow the inventory and evidence workflow:
+
+1. Inventory application owners and historical addresses using the
+   [historical inventory rules](https://github.com/deathbyknowledge/gsv/blob/main/engineering/installation-deletion-gateway.md#historical-inventory-is-a-prerequisite).
+   The [Durable Object capture command](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-deletion-capture.md)
+   records namespace snapshots and trusted ownership observations for an already
+   retired space. Its capture alone neither begins erasure nor proves the
+   complete inventory.
+2. Combine those captures with the external scopes and evidence required by the
+   [operator evidence contract](https://github.com/deathbyknowledge/gsv/blob/main/engineering/installation-deletion-operator.md).
+   Accounts verifies the inventory before cleanup starts. Provider API access
+   stays in the operator's tools; record fresh cleanup evidence after the
+   application owners' live-erasure receipts, using the existing operator
+   authentication and mutation Origin checks.
+3. Inspect `GET /admin/api/installations/{installationId}/deletion` for owner
+   progress and `/deletion/operator-resources` under the same installation path
+   for external evidence. Resume failed work through the authenticated retry
+   endpoint. Preserve the replacement space, other people's data, and shared
+   application credentials throughout cleanup.
+
+Report verified live-data erasure separately from retained copies. Known,
+enforced retention can remain pending with its declared expiry visible; the
+operation must not claim final erasure until every live scope is empty and every
+retained copy is deleted or expires. Unknown scope or expiry stays unresolved.
+New inference tags can identify new AI Gateway records, but cannot establish
+ownership or absence of historical untagged logs in a shared gateway.
 
 For local development, `npm run dev` builds the SDK and web assets, applies public
 migrations to a separate local database and runs the four public Workers. Open
