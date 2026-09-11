@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const installationResourceKindSchema = z.enum([
   "kernel", "process", "conversation", "ripgit", "mail",
-  "adapter-peer", "adapter-pairing", "adapter-account", "inference-executor", "inference-installation",
+  "adapter-peer", "adapter-pairing", "adapter-account", "adapter-installation", "inference-executor", "inference-installation",
 ]);
 const objectId = z.string().regex(/^[a-f0-9]{64}$/);
 const installationId = z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/);
