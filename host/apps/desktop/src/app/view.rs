@@ -1003,6 +1003,7 @@ impl GsvApp {
             .map(|moment| self.conversation.activity_summary_for(moment).to_vec())
             .unwrap_or_default();
         let local_preparation_candidate = current.and_then(|moment| moment.preparation_candidate());
+        let selected_target = current.and_then(|moment| moment.selected_target.clone());
         let (display_text, media, moment_id, run_id, role, state, message_revision) = match current
         {
             Some(moment) => (
@@ -1325,6 +1326,11 @@ impl GsvApp {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
             .child(canvas)
+            .when(!draft_visible, |this| this.when_some(selected_target, |this, target| {
+                this.child(div().absolute().left(px(geometry.left)).top(px(geometry.top - 24.0))
+                    .font_family(theme::MONO_FONT).text_size(px(9.0)).text_color(theme::color(theme::TEXT_QUIET))
+                    .child(format!("SELECTED TARGET · {target}")))
+            }))
             .child(self.presence_lane.clone())
             .when_some(self.history_edge_intent, |this, intent| {
                 this.child(render_history_edge_feedback(intent, geometry))

@@ -262,11 +262,16 @@ fn print_proc_list(processes: &[ProcListEntryPayload]) {
 fn render_history_record(record: &HistoryRecordData) -> String {
     match record {
         HistoryRecordData::Message(message) => format!(
-            "message/{}: {}{}",
+            "message/{}{}: {}{}",
             match message.direction {
                 HistoryDirection::In => "in",
                 HistoryDirection::Out => "out",
             },
+            message
+                .selected_target
+                .as_ref()
+                .map(|target| format!(" [selected target: {target}]"))
+                .unwrap_or_default(),
             message.text,
             render_media(&message.media)
         ),
@@ -343,6 +348,24 @@ fn render_media(media: &[Value]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_retains_message_selection_separately_from_literal_text() {
+        for (selection, expected) in [
+            (
+                Some("macbook"),
+                "message/in [selected target: macbook]:   inspect this\n",
+            ),
+            (None, "message/in:   inspect this\n"),
+        ] {
+            let mut value = json!({"kind":"message","payload":{"direction":"in","text":"  inspect this\n","media":[],"origin":{}}});
+            if let Some(target) = selection {
+                value["payload"]["selectedTarget"] = json!(target);
+            }
+            let record = serde_json::from_value(value).expect("typed message");
+            assert_eq!(render_history_record(&record), expected);
+        }
+    }
 
     #[test]
     fn history_renders_explicit_calls_outcomes_and_events() {

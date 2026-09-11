@@ -104,6 +104,8 @@ pub struct HistoryMessage {
     pub text: String,
     pub media: Vec<Value>,
     pub origin: Map<String, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_target: Option<String>,
     pub conversation_id: Option<String>,
     pub conversation_message_id: Option<String>,
     pub delivery_id: Option<String>,
@@ -228,5 +230,24 @@ mod tests {
             matches!(&history.records[0].data, HistoryRecordData::Result(result)
             if result.outcome == HistoryOutcome::Cancelled && result.output["finish"] == false)
         );
+    }
+
+    #[test]
+    fn message_selection_survives_transport_without_inventing_older_selections() {
+        for selected in [Some("my-macbook"), None] {
+            let mut payload =
+                json!({"direction":"in","text":"  inspect this\n","media":[],"origin":{}});
+            if let Some(target) = selected {
+                payload["selectedTarget"] = json!(target);
+            }
+            let message: HistoryMessage = serde_json::from_value(payload).expect("message");
+            let encoded = serde_json::to_value(&message).expect("encode message");
+            assert_eq!(message.selected_target.as_deref(), selected);
+            assert_eq!(
+                encoded.get("selectedTarget").and_then(Value::as_str),
+                selected
+            );
+            assert_eq!(message.text, "  inspect this\n");
+        }
     }
 }

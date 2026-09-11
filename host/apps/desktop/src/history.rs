@@ -151,6 +151,7 @@ pub struct HistoryMoment {
     pub id: Arc<str>,
     pub role: HistoryMomentRole,
     pub event_severity: Option<HistorySeverity>,
+    pub selected_target: Option<Arc<str>>,
     pub text: Arc<str>,
     pub render_text: Arc<str>,
     pub media: Arc<Vec<MediaAttachment>>,
@@ -287,6 +288,7 @@ pub fn normalize_history(payload: &ProcHistory) -> HistorySnapshot {
                     id: message.id,
                     role: HistoryMomentRole::System,
                     event_severity: Some(event.severity),
+                    selected_target: None,
                     text: text.clone(),
                     render_text: text,
                     media: Arc::new(Vec::new()),
@@ -299,13 +301,18 @@ pub fn normalize_history(payload: &ProcHistory) -> HistorySnapshot {
         append_moment(
             &mut moments,
             &mut preparation_candidates,
-            message.id,
+            message.id.clone(),
             role,
             text,
             parse_media_attachments(&Value::Array(media.clone())),
             message.value.run_id.as_deref().map(Arc::from),
             &summary_owners,
         );
+        if let HistoryRecordData::Message(payload) = &message.value.data {
+            if let Some(moment) = moments.last_mut().filter(|moment| moment.id == message.id) {
+                moment.selected_target = payload.selected_target.as_deref().map(Arc::from);
+            }
+        }
     }
     HistorySnapshot {
         revision: history_revision(payload),
@@ -390,6 +397,7 @@ fn append_moment(
         id,
         role,
         event_severity: None,
+        selected_target: None,
         text: text.clone(),
         render_text: text,
         media,
@@ -490,6 +498,10 @@ pub fn normalize_conversation_history(
         );
         if let Some(moment) = moments.last_mut().filter(|moment| moment.id.as_ref() == id) {
             moment.event_severity = notice_messages.get(id).copied();
+            moment.selected_target = message
+                .get("selectedTarget")
+                .and_then(Value::as_str)
+                .map(Arc::from);
         }
     }
     let raw_run_by_moment = activity
@@ -885,6 +897,37 @@ pub(crate) fn normalize_fixture(payload: &Value) -> HistorySnapshot {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn selected_targets_reach_native_moments_from_each_history_owner() {
+        let process = super::fixture(json!({"records":[
+            {"kind":"message","payload":{"direction":"in","text":"  inspect this\n","media":[],"origin":{},"selectedTarget":"macbook"}},
+            {"kind":"message","payload":{"direction":"in","text":"another message","media":[],"origin":{}}}
+        ]}));
+        let raw = super::normalize_history(&process);
+        let raw_moments = crate::model::moments_from_history(&raw);
+        assert_eq!(raw_moments[0].selected_target.as_deref(), Some("macbook"));
+        assert_eq!(raw_moments[0].text.as_ref(), "  inspect this\n");
+        assert_eq!(raw_moments[1].selected_target, None);
+
+        let canonical = json!({"conversation":{"id":"c"},"messages":[
+            {"id":"first","author":{"kind":"user"},"text":"  inspect this\n","selectedTarget":"gsv"},
+            {"id":"second","author":{"kind":"user"},"text":"another message"}
+        ]});
+        let snapshot = super::normalize_conversation_history(&canonical, &process);
+        let moments = crate::model::moments_from_history(&snapshot);
+        assert_eq!(moments[0].selected_target.as_deref(), Some("gsv"));
+        assert_eq!(moments[0].text.as_ref(), "  inspect this\n");
+        assert_eq!(moments[1].selected_target, None);
+
+        let mut changed = process.clone();
+        if let gateway_client::history::HistoryRecordData::Message(message) =
+            &mut changed.records[0].data
+        {
+            message.selected_target = Some("different-target".to_string());
+        }
+        assert_ne!(raw.revision, super::normalize_history(&changed).revision);
+    }
 
     use super::*;
 

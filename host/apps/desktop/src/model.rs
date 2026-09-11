@@ -183,6 +183,7 @@ pub struct Moment {
     pub id: String,
     pub role: MomentRole,
     pub event_severity: Option<gateway_client::history::HistorySeverity>,
+    pub selected_target: Option<Arc<str>>,
     /// The immutable presentation snapshot is also the canonical body. GPUI can wrap this in a
     /// `SharedString` without copying it, so a live update never retains a second full body solely
     /// for rendering.
@@ -222,6 +223,7 @@ impl Moment {
             id: id.into(),
             role,
             event_severity: None,
+            selected_target: None,
             text_fingerprint: text_fingerprint(text.as_ref()),
             text,
             content_revision: next_moment_revision(),
@@ -240,6 +242,7 @@ impl Moment {
             id: id.into(),
             role: MomentRole::Intelligence,
             event_severity: None,
+            selected_target: None,
             text: Arc::from(text),
             content_revision: next_moment_revision(),
             media: Arc::new(Vec::new()),
@@ -264,6 +267,7 @@ impl Moment {
             id,
             role,
             event_severity: None,
+            selected_target: None,
             text_fingerprint: text_fingerprint(render_text.as_ref()),
             text: render_text,
             content_revision: next_moment_revision(),
@@ -1472,6 +1476,7 @@ pub fn moments_from_history(snapshot: &HistorySnapshot) -> Vec<Moment> {
                 preparations.get(moment.id.as_ref()).copied(),
             );
             rendered.event_severity = moment.event_severity;
+            rendered.selected_target = moment.selected_target.clone();
             rendered
         })
         .collect()
