@@ -1,0 +1,178 @@
+import { env } from "cloudflare:workers";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import type { JsonValue } from "./http";
+import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+import { AccountStore } from "./store";
+import { AccountsDeletionRuntime } from "./deletion-runtime";
+import { InstallationDeletionHttp } from "./deletion-http";
+import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
+import type { InstallationDeletionDiscoveryService, InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
+
+class ExternalOwner implements InstallationDeletionService {
+  fail = false;
+  private receipt(input: InstallationDeletionRequest, phase: "quiesced" | "erased"): InstallationDeletionReceipt {
+    if (this.fail) throw new Error("owner interrupted");
+    return { ...input, phase, updatedAt: Date.now(), pendingResources: 0,
+      outcome: phase === "erased" ? "complete" : "progress", retainedCopies: [] };
+  }
+  async quiesceInstallation(input: InstallationDeletionRequest) { return this.receipt(input, "quiesced"); }
+  async eraseInstallation(input: InstallationDeletionRequest) { return this.receipt(input, "erased"); }
+  async installationDeletionStatus(input: InstallationDeletionRequest) { return this.receipt(input, "erased"); }
+}
+
+async function fixture() {
+  const db = env.INSTALLATIONS_DB;
+  const accounts = new AccountStore(db, "example.com");
+  const id = crypto.randomUUID();
+  const principal = await accounts.createPrincipal({ email: `${id}@example.com`, displayName: "shared owner", verified: true });
+  const createOperationId = `create-${id}`;
+  const old = await accounts.reserveInstallation({ principalId: principal.id, operationId: createOperationId, handle: `a${id.slice(0, 8)}` });
+  const second = await accounts.reserveInstallation({ principalId: principal.id, operationId: `second-${id}`, handle: `b${id.slice(0, 8)}` });
+  await db.batch([
+    db.prepare("UPDATE installations SET state = 'active' WHERE id IN (?, ?)").bind(old.installationId, second.installationId),
+    db.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id IN (?, ?)").bind(old.installationId, second.installationId),
+    db.prepare(`INSERT INTO installation_owner_attempts (id, installation_id, purpose, expected_owner_id, state, created_at, expires_at)
+      SELECT ? || value, ?, 'link', ?, 'pending', 1, 9999999999999 FROM json_each(?)`)
+      .bind(`attempt-${id}-`, old.installationId, principal.id, JSON.stringify(Array.from({ length: 205 }, (_, index) => index))),
+  ]);
+  let now = Date.now();
+  const owners = { gateway: new ExternalOwner(), inference: new ExternalOwner() };
+  const resolver: InstallationDeletionInventoryResolver = {
+    verifyInstallationDeletionInventory: vi.fn(async ({ manifest, sha256 }) => ({ installationId: manifest.installationId, sha256, outcome: "verified" as const, verifiedAt: now })),
+  };
+  const makeRuntime = (configuredResolver: InstallationDeletionInventoryResolver | undefined = resolver) =>
+    new AccountsDeletionRuntime(db, owners, configuredResolver, 20, () => now);
+  const manifest: InstallationDeletionManifest = { version: 1, installationId: old.installationId, capturedAt: now,
+    owners: ["accounts", "gateway", "inference"].map((id) => ({ id,
+      resources: [{ kind: "d1", namespace: `test-${id}`, resourceId: old.installationId }],
+      evidence: [{ id: `scan-${id}`, reference: `test://scan/${id}`, sha256: "a".repeat(64), capturedAt: now }],
+    })) };
+  return { db, accounts, old, second, principal, createOperationId, owners, resolver, makeRuntime, manifest,
+    tick: () => { now += 21; }, operationId: `delete-${id}` };
+}
+
+describe("Accounts deletion runtime", () => {
+  it("resumes explicit deletion, erases bounded rows, preserves another space and reports D1 retention", async () => {
+    const state = await fixture();
+    let runtime = state.makeRuntime();
+    const http = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.com");
+    const url = `https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion`;
+    const post = (suffix: string, body: JsonValue) => http.handle(new Request(url + suffix, {
+      method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle }))?.status).toBe(200);
+    expect((await state.accounts.resolveInstallation(state.old.installationId))).toMatchObject({ found: true, state: "retained" });
+    const registered = z.object({ sha256: z.string() }).parse(await (await post("/inventory", state.manifest))!.json());
+    expect((await post("", { operationId: state.operationId, inventorySha256: registered.sha256 }))?.status).toBe(201);
+    state.owners.gateway.fail = true;
+    expect((await runtime.retry(state.old.installationId)).phase).toBe("quiescing");
+    expect((await state.db.prepare("SELECT COUNT(*) AS count FROM installation_owner_attempts WHERE installation_id = ?").bind(state.old.installationId).first())?.count).toBe(205);
+    runtime = state.makeRuntime();
+    state.owners.gateway.fail = false;
+    await runtime.resumePending();
+    expect((await runtime.status(state.old.installationId)).phase).toBe("erasing");
+    await runtime.retry(state.old.installationId);
+    await runtime.retry(state.old.installationId);
+    expect((await state.db.prepare("SELECT COUNT(*) AS count FROM installation_owner_attempts WHERE installation_id = ?").bind(state.old.installationId).first())?.count).toBe(105);
+    await runtime.retry(state.old.installationId);
+    const retained = await runtime.retry(state.old.installationId);
+    expect(retained.phase).toBe("live-erased");
+    expect(retained.owners.find((owner) => owner.id === "accounts")?.receipt?.retainedCopies).toEqual([
+      { id: "accounts-d1-time-travel", kind: "backup", expiresAt: expect.any(Number) },
+    ]);
+    expect(await state.db.prepare("SELECT * FROM installations WHERE id = ?").bind(state.old.installationId).first()).toBeNull();
+    expect(await state.db.prepare("SELECT * FROM installation_deletion_inventories WHERE installation_id = ?").bind(state.old.installationId).first()).toBeNull();
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ found: true, state: "deleted" });
+    expect(await state.accounts.resolveInstallation(state.second.installationId)).toMatchObject({ found: true, state: "active" });
+    expect(await state.accounts.getPrincipal(state.principal.id)).not.toBeNull();
+    await expect(state.db.prepare(`INSERT INTO memberships (installation_id, principal_id, state, created_at) VALUES (?, ?, 'active', 1)`)
+      .bind(state.old.installationId, state.principal.id).run()).rejects.toThrow();
+    await expect(state.accounts.reserveInstallation({ principalId: state.principal.id, operationId: state.createOperationId, handle: state.old.handle })).rejects.toThrow();
+    state.tick();
+    expect(await state.makeRuntime().retry(state.old.installationId)).toMatchObject({ phase: "erased", owners: [] });
+    expect(await state.db.prepare("SELECT * FROM installation_reset_operations WHERE previous_installation_id = ?").bind(state.old.installationId).first()).toBeNull();
+  });
+
+  it("denies unauthenticated and cross-origin administration without retiring the space", async () => {
+    const state = await fixture();
+    const url = `https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion/retire`;
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+    for (const [allowed, origin] of [[false, "https://admin.example.com"], [true, "https://evil.example.com"]] as const) {
+      const api = new InstallationDeletionHttp(state.makeRuntime(), { allows: async () => allowed }, "https://admin.example.com");
+      expect((await api.handle(new Request(url, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) })))?.status).toBe(403);
+    }
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "active" });
+  });
+
+  it("requires verified discovery and does not start pending reset erasure before service preparation", async () => {
+    const state = await fixture();
+    const reset = await state.accounts.resetInstallation({ installationId: state.old.installationId, operationId: `reset-${state.operationId}`,
+      confirmHandle: state.old.handle, participants: ["inference"] });
+    const runtime = state.makeRuntime();
+    const missing = new AccountsDeletionRuntime(state.db, state.owners, undefined, 20);
+    expect((await missing.registerInventory(state.old.installationId, state.manifest)).outcome).toBe("missing-inventory");
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    await expect(runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: registered.sha256 })).rejects.toThrow("reset preparation");
+    await runtime.resumePending();
+    expect(await state.db.prepare("SELECT * FROM installation_deletions WHERE installation_id = ?").bind(state.old.installationId).first()).toBeNull();
+    await state.db.prepare("UPDATE installation_reset_participants SET state = 'prepared' WHERE operation_id = ?").bind(`reset-${state.operationId}`).run();
+    await runtime.resumePending();
+    expect((await runtime.status(state.old.installationId)).phase).toBe("erasing");
+    expect(await state.accounts.resolveInstallation(reset.installationId)).toMatchObject({ state: "reserved" });
+  });
+
+  it("binds uploaded evidence bytes to immutable reviewed references", async () => {
+    const state = await fixture();
+    const runtime = state.makeRuntime();
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const body = JSON.stringify({ namespace: "test", objects: [], cursor: null });
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const reference = "test://actual-enumeration";
+    for (const owner of state.manifest.owners) owner.evidence = [{ id: "enumeration", reference, sha256, capturedAt: state.manifest.capturedAt }];
+    await expect(runtime.registerInventory(state.old.installationId, state.manifest, [{ reference, sha256, body: "changed" }])).rejects.toThrow("does not match");
+    expect(state.resolver.verifyInstallationDeletionInventory).not.toHaveBeenCalled();
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest, [{ reference, sha256, body }]);
+    expect(registered.outcome).toBe("verified");
+    expect((await state.db.prepare("SELECT body FROM installation_deletion_evidence WHERE manifest_sha256 = ?")
+      .bind(registered.sha256).first())?.body).toBe(body);
+    expect((await runtime.registerInventory(state.old.installationId, state.manifest, [])).outcome).toBe("missing-inventory");
+    const invalidResolver: InstallationDeletionInventoryResolver = { verifyInstallationDeletionInventory: async ({ sha256 }) => ({
+      installationId: state.second.installationId, sha256, outcome: "verified", verifiedAt: Date.now(),
+    }) };
+    expect((await state.makeRuntime(invalidResolver).registerInventory(state.old.installationId, state.manifest, [{ reference, sha256, body }])).outcome).toBe("missing-inventory");
+  });
+
+  it("requires the exact verified DO list and finished owner import before admission", async () => {
+    const state = await fixture();
+    const importInventory = vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({
+      installationId: input.installationId, discoverySha256: input.discoverySha256, outcome: "missing-inventory", verifiedAt: Date.now(),
+    }));
+    const discovery: InstallationDeletionDiscoveryService = { importInstallationDeletionInventory: importInventory,
+      inspectInstallationDeletion: vi.fn(async (input) => ({ installationId: input.installationId, observations: [] })) };
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, discovery);
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const resources: InstallationDeletionInventoryImport["resources"] = [
+      { kind: "kernel", objectId: "a".repeat(64), name: state.old.installationId },
+      { kind: "process", objectId: "b".repeat(64), name: `${state.old.installationId}:process:one` },
+    ];
+    state.manifest.owners.find((owner) => owner.id === "gateway")!.resources = resources.map((resource) => ({
+      kind: "durable-object", namespace: resource.kind, resourceId: resource.objectId, name: resource.name,
+    }));
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    const input = { installationId: state.old.installationId, discoverySha256: registered.sha256, resources };
+    const begin = () => runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: registered.sha256 });
+    await expect(begin()).rejects.toThrow("missing-inventory import");
+    await expect(runtime.importInventory(state.old.installationId, { ...input, resources: resources.slice(0, 1) })).rejects.toThrow("outside");
+    await expect(runtime.importInventory(state.old.installationId, { ...input, resources: [resources[0], { ...resources[1], name: "another-space" }] })).rejects.toThrow("outside");
+    expect(importInventory).not.toHaveBeenCalled();
+    expect((await runtime.importInventory(state.old.installationId, input)).outcome).toBe("missing-inventory");
+    await expect(begin()).rejects.toThrow("missing-inventory import");
+    importInventory.mockImplementation(async (request) => ({ installationId: request.installationId, discoverySha256: request.discoverySha256,
+      outcome: "verified", verifiedAt: Date.now() }));
+    expect((await runtime.importInventory(state.old.installationId, input)).outcome).toBe("verified");
+    expect((await begin()).phase).toBe("quiescing");
+    await runtime.importInventory(state.old.installationId, input);
+    expect(importInventory).toHaveBeenCalledTimes(2);
+  });
+});

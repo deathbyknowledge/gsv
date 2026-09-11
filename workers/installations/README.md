@@ -125,4 +125,64 @@ The database prevents provisioning or activation while a participant is pending,
 including writes from an older Worker during deployment. The hosting Worker
 calls `resumePending()` periodically and supplies the same registered services.
 Reset preparation does not erase data: the previous installation remains marked
-as pending deletion until the full deletion coordinator is implemented.
+as pending deletion until a verified owner inventory admits the cleanup operation.
+
+## Installation deletion
+
+Apply `0017_account_deletion.sql` through the directory-owned migration runner
+before deploying these handlers. Configure lifecycle service bindings named
+`DELETION_OWNER_<OWNER>`; names become lowercase owner IDs with underscores
+converted to hyphens. `accounts` is always the local D1 owner. Bind the gateway
+to its `GatewayLifecycleEntrypoint` with deletion authority and provide every
+other owner named by the verified inventory, including services no longer enabled.
+The shared runtime is exported from `@humansandmachines/gsv-installations/deletion`.
+Reference and private Workers call the same runtime from their scheduled handler;
+the deployment must configure a periodic cron trigger.
+
+`DELETION_INVENTORY` is a deployment-owned `InstallationDeletionInventoryResolver`.
+It authenticates discovery provenance and verifies pagination, configured namespaces,
+every resource's stored identity, and the exact owner set. Missing or unmapped
+historical resources prevent registration. The registry checks the returned scope
+and canonical manifest digest; a caller cannot submit a completeness flag.
+Evidence contains only resource addresses and enumeration metadata. Each uploaded
+body is limited to 512 KiB and is verified against the manifest's SHA256 reference;
+up to 8 MiB is stored in individual D1 rows. The canonical manifest is at most 1 MB.
+Resolvers may instead fetch evidence references from their owned storage.
+
+The existing operator authentication and exact mutation Origin protect these JSON
+routes under `/admin/api/installations/:id/deletion`:
+
+- `POST /retire` takes `operationId` and `confirmHandle` to close admission for
+  explicit deletion without creating a replacement. A required reset preparation
+  must finish first. Retired reset sources already have closed admission.
+- `POST /inspect` takes the shared lifecycle inspection request and probes only
+  through the trusted gateway discovery capability.
+- `POST /inventory` registers a manifest, or `{ manifest, evidence }` where each
+  evidence entry has `reference`, `sha256`, and its exact UTF-8 `body` string.
+- `POST /import` takes the shared import request with the registered canonical
+  manifest hash in `discoverySha256`. Its complete gateway/ripgit DO list must
+  match the manifest exactly; repeating the request resumes bounded owner work.
+  Admission waits for the owner's final verified import acknowledgment.
+- `POST` on the base route takes `operationId` and `inventorySha256` to begin.
+  Explicit retirement and begin use the same operation ID. `GET` reports status,
+  and `POST /retry` advances the durable operation.
+
+After verified registration/import, the scheduled job also admits already-pending
+reset deletions whose service preparation is complete. Unverified pending resets
+are left alone. Every owner quiesces before erasure; Accounts retains its directory
+and resource inventory until all external owners report live-data erasure. D1
+cleanup is bounded to 100 rows per table per call. SQL retirement guards reject
+late claims, memberships, provisioning, and identity recreation. Minimal operation
+ID tombstones also prevent a delayed create retry from allocating a new space.
+Shared principals, another space's data, and operator credentials remain owned by
+their original boundaries.
+
+Accounts reports live erasure separately from D1 Time Travel retention. The default
+expiry is 30 days plus one minute after the last live row is erased, covering
+[D1's documented recovery window](https://developers.cloudflare.com/d1/reference/time-travel/).
+`ACCOUNTS_D1_BACKUP_RETENTION_MS` may supply a positive, verified operator policy;
+the chosen expiry is recorded once. Exported backups, provider copies, and logs
+remain separate inventoried owners. Final completion waits for every retained copy.
+After erasure, directory lookup of the immutable ID returns `deleted` with inert
+placeholder routing metadata; hostname lookup is absent. Only content-free
+identity, operation and terminal-state tombstones survive.

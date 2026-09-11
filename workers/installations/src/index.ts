@@ -18,10 +18,15 @@ import { OwnerIdentityProvider } from "./owner-identity";
 import { OPERATOR_REGISTRY_PRINCIPAL_ID, type InstallationOwnerEnvironment } from "./owner-service";
 import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstrap";
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
+import { createAccountsDeletionRuntime, type AccountsDeletionEnvironment } from "./deletion-runtime";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & AccountsDeletionEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
+  async scheduled(): Promise<void> {
+    await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, this.env).resumePending();
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
@@ -56,6 +61,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
         audience: this.env.GSV_ADMIN_ACCESS_AUD,
       })),
       this.env.GSV_ADMIN_ORIGIN,
+      {},
+      createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, this.env),
     );
     const response = await api.handle(request);
     if (response) return response;

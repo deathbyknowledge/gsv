@@ -490,7 +490,11 @@ export class AccountStore {
       canonical_origin: string;
       state: InstallationState;
     }>();
-    if (!row) return { found: false };
+    if (!row) {
+      const retired = await this.db.prepare("SELECT installation_id FROM installation_account_deletions WHERE installation_id = ?")
+        .bind(installationId).first<{ installation_id: string }>();
+      return retired ? { found: true, installationId, handle: "deleted", canonicalOrigin: "https://deleted.invalid", state: "deleted" } : { found: false };
+    }
     return {
       found: true,
       installationId: row.id,

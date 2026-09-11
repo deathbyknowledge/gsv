@@ -5,6 +5,8 @@ import { InstallationAdminApi, readInstallationListQuery } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation } from "./installations-page";
 import { adminErrorPage, adminStylesheet } from "./page";
 import type { IssuedAdminInstallation } from "./service";
+import { InstallationDeletionHttp } from "../deletion-http";
+import type { AccountsDeletionRuntime } from "../deletion-runtime";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
 type AdminService<Detail extends AdminInstallation, Summary extends AdminInstallationSummary> = {
@@ -22,19 +24,24 @@ export class InstallationAdminHttp<
   Summary extends AdminInstallationSummary = AdminInstallationSummary,
 > {
   private readonly api: InstallationAdminApi;
+  private readonly deletion: InstallationDeletionHttp | undefined;
 
   constructor(
     private readonly service: AdminService<Detail, Summary>,
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
     private readonly presentation: InstallationAdminPresentation<Detail, Summary> = {},
+    deletion?: AccountsDeletionRuntime,
   ) {
     this.api = new InstallationAdminApi(service, access, origin);
+    this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin) : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     if (url.pathname !== "/admin" && !url.pathname.startsWith("/admin/")) return null;
+    const deletionResponse = await this.deletion?.handle(request);
+    if (deletionResponse) return deletionResponse;
     const response = await this.api.handle(request);
     if (response) return response;
     if (!await this.access.allows(request)) return adminText("Forbidden", 403);

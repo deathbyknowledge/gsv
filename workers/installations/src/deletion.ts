@@ -1,4 +1,10 @@
 import { z } from "zod";
+export { InstallationDeletionInventories, installationDeletionManifestDigest, installationDeletionManifestSchema } from "./deletion-inventory";
+export type { InstallationDeletionManifest, InstallationDeletionEvidence, InstallationDeletionInventoryResolver, InstallationDeletionInventoryVerification } from "./deletion-inventory";
+export { AccountsDeletionOwner, DEFAULT_D1_BACKUP_RETENTION_MS } from "./deletion-owner";
+export { AccountsDeletionRuntime, createAccountsDeletionRuntime } from "./deletion-runtime";
+export type { AccountsDeletionEnvironment } from "./deletion-runtime";
+export { InstallationDeletionHttp } from "./deletion-http";
 import {
   installationDeletionReceiptSchema,
   installationDeletionRequestSchema,
@@ -114,6 +120,11 @@ export class InstallationDeletionCoordinator {
         this.db.prepare(`UPDATE installation_reset_operations SET data_deletion_state = ?, updated_at = ?, completed_at = ?
           WHERE previous_installation_id = ? AND EXISTS (SELECT 1 FROM installation_deletions WHERE operation_id = ? AND lease_id = ?)`)
           .bind(next === "erased" ? "complete" : "deleting", this.clock(), next === "erased" ? this.clock() : null, input.installationId, operationId, lease),
+        this.db.prepare(`DELETE FROM installation_deletion_owners WHERE operation_id = ?
+          AND EXISTS (SELECT 1 FROM installation_deletions WHERE operation_id = ? AND phase = 'erased' AND lease_id = ?)`)
+          .bind(operationId, operationId, lease),
+        this.db.prepare("UPDATE installation_deletions SET owners_json = '[]' WHERE operation_id = ? AND phase = 'erased' AND lease_id = ?")
+          .bind(operationId, lease),
       ]);
     } finally {
       await this.db.prepare("UPDATE installation_deletions SET lease_id = NULL, lease_until = 0 WHERE operation_id = ? AND lease_id = ?")
