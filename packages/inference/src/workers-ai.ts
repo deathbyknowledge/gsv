@@ -8,7 +8,6 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
-  createAiBindingFetch,
   type AiBinding,
 } from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import {
@@ -21,6 +20,7 @@ import {
   type ProviderFailureInput,
 } from "./failure";
 import type { InferenceModelRouting, InferenceRequest, InferencePartial, InferenceResult, InferenceRouting, InferenceStreamEvent, InferenceAbortReason } from "./types";
+import { createAttributedAiBindingFetch } from "./ai-gateway-fetch";
 
 const GSV_INFERENCE_API = "gsv-inference";
 const AI_GATEWAY_ID = "default";
@@ -83,7 +83,7 @@ export function createWorkersAiGeneration(
     Date.now() + input.timeoutMs,
     input.deadlineAt ?? Infinity,
   );
-  const rawBindingFetch = createAiBindingFetch(binding);
+  const rawBindingFetch = createAttributedAiBindingFetch(binding, input);
   const attempts: WorkersAiAttempt[] = [];
   let activeAttempt: WorkersAiAttempt | undefined;
   let eventStream: AsyncIterable<AssistantMessageEvent> | undefined;

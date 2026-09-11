@@ -389,6 +389,17 @@ describe("createGenerationService", () => {
     );
   });
 
+  it("rejects native Workers AI generation without owned attribution", async () => {
+    const bindingFetch = makeFetchFixture();
+    const service = createGenerationService({ workersAi: { aiGatewayLogId: null, fetch: bindingFetch } });
+    const request = { config: { ...CONFIG, provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash" }, context: CONTEXT };
+    await expect(service.generate(request)).rejects.toThrow("Workers AI requires installation request attribution");
+    expect(() => service.stream(request)).toThrow("Workers AI requires installation request attribution");
+    expect(bindingFetch).not.toHaveBeenCalled();
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
+    expect(streamPiAiSimpleMock).not.toHaveBeenCalled();
+  });
+
   it("uses pi-ai over the Workers AI gateway binding", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
     completePiAiSimpleMock.mockResolvedValueOnce(message);
@@ -402,6 +413,7 @@ describe("createGenerationService", () => {
       },
       context: CONTEXT,
       sessionAffinityKey: "process-1",
+      attribution: { installationId: "native-space", logicalRequestId: "native-request", actor: { localUid: 1000 } },
     });
 
     expect(completePiAiSimpleMock).toHaveBeenCalledWith(

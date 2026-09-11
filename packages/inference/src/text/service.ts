@@ -156,6 +156,7 @@ export function createGenerationService(
       return result;
     }
 
+    const providerFetch = workersAi ? workersAiBindingFetch(serviceOptions.workersAi, request.attribution) : generationFetch;
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const deadlineAt = Math.min(Date.now() + generationTimeoutMs, request.deadlineAt ?? Infinity);
     const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt, serviceOptions);
@@ -186,7 +187,7 @@ export function createGenerationService(
     }
     const result = transports.streamPiAiSimple(piAi.model, request.context, {
       apiKey: options.apiKey,
-      fetch: workersAi ? workersAiBindingFetch(serviceOptions.workersAi) : generationFetch,
+      fetch: providerFetch,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
       signal: abort.signal,
@@ -251,6 +252,7 @@ export function createGenerationService(
       }
     }
 
+    const providerFetch = workersAi ? workersAiBindingFetch(serviceOptions.workersAi, request.attribution) : generationFetch;
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const deadlineAt = Math.min(Date.now() + generationTimeoutMs, request.deadlineAt ?? Infinity);
     const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt, serviceOptions);
@@ -282,7 +284,7 @@ export function createGenerationService(
       return await withTimeout(
         transports.completePiAiSimple(piAi.model, request.context, {
           apiKey: options.apiKey,
-          fetch: workersAi ? workersAiBindingFetch(serviceOptions.workersAi) : generationFetch,
+          fetch: providerFetch,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: abort.signal,

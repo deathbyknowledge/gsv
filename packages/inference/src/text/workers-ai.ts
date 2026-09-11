@@ -8,11 +8,12 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
-  createAiBindingFetch,
   type AiBinding,
 } from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
+import { createAttributedAiBindingFetch } from "../ai-gateway-fetch";
+import type { InferenceAttribution } from "./provider";
 import * as z from "zod/mini";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
@@ -126,11 +127,14 @@ export function createWorkersAiProvider(
   });
 }
 
-export function workersAiBindingFetch(binding: WorkersAiBinding | undefined): typeof fetch {
+export function workersAiBindingFetch(
+  binding: WorkersAiBinding | undefined,
+  attribution: InferenceAttribution | undefined,
+): typeof fetch {
   if (!binding) {
     throw new Error("Workers AI binding is not configured for this worker");
   }
-  return createAiBindingFetch(binding);
+  return createAttributedAiBindingFetch(binding, attribution);
 }
 
 export function isWorkersAiProvider(provider: string): boolean {

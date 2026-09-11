@@ -138,6 +138,11 @@ describe("shared Workers AI inference", () => {
     expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
     expect(request.method).toBe("POST");
     expect(request.headers.get("cf-aig-collect-log-payload")).toBe("false");
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+      "gsv.installation_id": REQUEST.installationId,
+      "gsv.request_id": REQUEST.logicalRequestId,
+      "gsv.attempt_id": expect.any(String),
+    });
     expect(request.headers.get("x-client-request-id")).toBe("pid_test");
     expect(request.headers.get("x-session-affinity")).toBe("pid_test");
     expect(request.headers.get("cf-aig-authorization")).toBe(`Bearer ${CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL}`);
@@ -213,6 +218,13 @@ describe("shared Workers AI inference", () => {
     }
 
     expect(run).toHaveBeenCalledTimes(2);
+    const metadata = run.mock.calls.map((args) => JSON.parse(new Request(...args).headers.get("cf-aig-metadata")!));
+    expect(metadata).toEqual([0, 1].map(() => ({
+      "gsv.installation_id": REQUEST.installationId,
+      "gsv.request_id": REQUEST.logicalRequestId,
+      "gsv.attempt_id": expect.any(String),
+    })));
+    expect(metadata[0]["gsv.attempt_id"]).not.toBe(metadata[1]["gsv.attempt_id"]);
     expect(await Promise.all(run.mock.calls.map(async (args) => new Request(...args).json()))).toMatchObject([
       { model: `workers-ai/${FIRST_MODEL.modelId}` },
       { model: `workers-ai/${SECOND_MODEL.modelId}` },

@@ -36,6 +36,24 @@ and [AI Gateway logging](https://developers.cloudflare.com/ai-gateway/observabil
 The deployment's actual settings and historical configuration still need to
 support each claimed completion time.
 
+New text-inference calls through the Cloudflare AI Gateway binding carry
+`gsv.installation_id`, `gsv.request_id`, and a fresh `gsv.attempt_id` in
+`cf-aig-metadata`. The executing owner supplies the immutable installation and
+logical request identities; the transport replaces incoming metadata on every
+dispatch, including retries and fallback attempts. Funded inference keeps
+payload logging disabled; native Workers AI keeps log collection disabled.
+These tags add no prompts, response text, account names, or credentials.
+
+The operator can use [metadata-filtered log enumeration](https://developers.cloudflare.com/api/resources/ai_gateway/subresources/logs/methods/list/)
+to verify each exact installation tag and obtain log IDs for scoped deletion
+after live inference has stopped. Gateway `default` is shared by H&M production
+and staging: never clear it globally. Deletion acknowledgement alone is not
+completion evidence; a complete empty follow-up enumeration is still required.
+Historical untagged requests, including the original staging deletion fixture,
+cannot be attributed retroactively from these new tags. This change does not
+establish historical log absence, indexing completion, or upstream-provider
+erasure, and does not close those evidence gates.
+
 ## Admission and completion
 
 `DELETION_DISCOVERY_NAMESPACES` is derived from the adopted Worker outputs.

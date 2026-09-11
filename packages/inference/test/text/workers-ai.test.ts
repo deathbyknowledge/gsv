@@ -82,11 +82,14 @@ describe("Workers AI provider", () => {
       tools: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: {} } }],
     };
     const result = await models.completeSimple(model, context, {
-      fetch: workersAiBindingFetch(binding),
+      fetch: workersAiBindingFetch(binding, {
+        installationId: "native-space", logicalRequestId: "native-request", actor: { localUid: 1000 },
+      }),
       maxTokens: 64,
       reasoning: "high",
       onPayload: prepareWorkersAiGatewayPayload,
       sessionId: "process_test",
+      headers: { "cf-aig-metadata": JSON.stringify({ "gsv.installation_id": "forged-space" }) },
     });
 
     expect(result).toMatchObject({
@@ -116,6 +119,11 @@ describe("Workers AI provider", () => {
     expect(payload).not.toHaveProperty("reasoning_effort");
     expect(payload).not.toHaveProperty("tools.0.function.strict");
     expect(request.headers.get("cf-aig-collect-log")).toBe("false");
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+      "gsv.installation_id": "native-space",
+      "gsv.request_id": "native-request",
+      "gsv.attempt_id": expect.any(String),
+    });
     expect(request.headers.get("cf-aig-authorization")).toBe("Bearer cloudflare-gateway-binding");
     expect(request.headers.has("authorization")).toBe(false);
     expect(request.headers.has("x-api-key")).toBe(false);
