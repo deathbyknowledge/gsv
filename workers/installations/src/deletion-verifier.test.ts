@@ -6,6 +6,8 @@ import { InstallationDeletionInventories, type InstallationDeletionEvidence, typ
 import { configuredDeletionEnvironment } from "./deletion-verifier";
 import type { InstallationDeletionDiscoveryService } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import type { JsonValue } from "./http";
+import { AccountsOperatorResources } from "./operator-resources";
+import { OPERATOR_RESOURCE_OWNER, operatorResourceManifestResources, type OperatorResourceCatalog } from "./operator-resource-contracts";
 
 describe("configured deletion verification", () => {
   it("uses persisted owner observations and seals the epoch without another remote probe", async () => {
@@ -55,6 +57,19 @@ describe("configured deletion verification", () => {
     expect(inspectInstallationDeletion).toHaveBeenCalledOnce();
     expect(await db.prepare("SELECT sealed_manifest_sha256 FROM installation_deletion_inspections WHERE id = ?").bind(epoch.id).first())
       .toEqual({ sealed_manifest_sha256: registered.sha256 });
+    const catalog: OperatorResourceCatalog = [{ id: "multipart", kind: "r2", namespace: "historical-multipart",
+      source: "cloudflare-r2-multipart", scope: "installation", disposition: "live" }];
+    const configured = configuredDeletionEnvironment(db, { DELETION_DISCOVERY_NAMESPACES: namespaces,
+      DELETION_RESOURCE_SCOPES: { ...config.DELETION_RESOURCE_SCOPES, [OPERATOR_RESOURCE_OWNER]: [{ kind: "r2", namespace: "historical-multipart" }] },
+      OPERATOR_DELETION_CATALOG: catalog }).DELETION_INVENTORY!;
+    const withOperator = structuredClone(manifest);
+    withOperator.owners.push({ id: OPERATOR_RESOURCE_OWNER, resources: operatorResourceManifestResources(catalog, installationId), evidence: [] });
+    expect(await configured.verifyInstallationDeletionInventory({ manifest: withOperator, sha256: "f".repeat(64), evidence }))
+      .toMatchObject({ outcome: "verified", inspectionEpochId: epoch.id });
+    expect((await new AccountsOperatorResources(db, catalog).inspect(installationId)).resources).toMatchObject([{ state: "unknown" }]);
+    withOperator.owners.at(-1)!.resources = [];
+    expect(await configured.verifyInstallationDeletionInventory({ manifest: withOperator, sha256: "f".repeat(64), evidence }))
+      .toMatchObject({ outcome: "missing-inventory" });
     additional.verifyAdditionalEvidence.mockResolvedValue(false);
     expect((await new InstallationDeletionInventories(db, resolver).register(manifest, evidence)).outcome).toBe("missing-inventory");
     expect(configuredDeletionEnvironment(db, { DELETION_DISCOVERY_NAMESPACES: namespaces }).DELETION_INVENTORY).toBeUndefined();

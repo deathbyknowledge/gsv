@@ -2,6 +2,7 @@ import { installationDeletionManifestSchema, installationDeletionEvidenceSchema 
 import { z } from "zod";
 import { installationDeletionInventoryImportSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { accountsDeletionInspectionSchema } from "./deletion-inspections";
+import { operatorResourceAttestationSchema } from "./operator-resource-contracts";
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
 import type { InstallationAdminAccess } from "./admin/access";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
@@ -11,7 +12,7 @@ export class InstallationDeletionHttp {
   constructor(private readonly runtime: AccountsDeletionRuntime, private readonly access: InstallationAdminAccess, private readonly origin: string) {}
 
   async handle(request: Request): Promise<Response | null> {
-    const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import))?$/.exec(new URL(request.url).pathname);
+    const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import|operator-resources))?$/.exec(new URL(request.url).pathname);
     if (!route) return null;
     const json = (value: JsonValue, status = 200) => Response.json(value, { status, headers: noStoreHeaders() });
     if (!await this.access.allows(request)) return json({ error: "Forbidden" }, 403);
@@ -19,6 +20,15 @@ export class InstallationDeletionHttp {
     try {
       const installationId = decodeURIComponent(route[1]);
       const action = route[2];
+      if (action === "operator-resources") {
+        const resources = this.runtime.operatorResources;
+        if (!resources) return json({ error: "installation operator resources are not configured" }, 503);
+        if (request.method === "GET") return json(await resources.inspect(installationId));
+        if (request.method !== "POST") return json({ error: "Not Found" }, 404);
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json") throw new Error("JSON body is required");
+        const input = operatorResourceAttestationSchema.parse(JSON.parse(new TextDecoder().decode(await readRequestBody(request, 512 * 1024))));
+        return json(await resources.record(installationId, input), 201);
+      }
       if (request.method === "GET" && !action) return json(await this.runtime.status(installationId));
       if (request.method !== "POST") return json({ error: "Not Found" }, 404);
       if (action === "inspection") return json(await this.runtime.openInspection(installationId), 201);

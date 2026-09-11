@@ -19,6 +19,8 @@
     "./reset-preparation": "./src/reset-preparation.ts",
     "./deletion": "./src/deletion.ts",
     "./deletion-verifier": "./src/deletion-verifier.ts",
+    "./operator-resources": "./src/operator-resources.ts",
+    "./operator-resource-contracts": "./src/operator-resource-contracts.ts",
     "./owner-store": "./src/owner-store.ts",
     "./owner-identity": "./src/owner-identity.ts",
     "./owner-http": "./src/owner-http.ts",

@@ -3,6 +3,7 @@ import type { AccountsDeletionEnvironment } from "./deletion-runtime";
 import type { InstallationDeletionManifest } from "./deletion-inventory";
 import { createInstallationDeletionInventoryResolver, type OperatorDeletionInventory } from "../../../deployment/src/installation-deletion-resolver.ts";
 import type { DeletionResourceObservation } from "../../../deployment/src/installation-deletion-evidence.ts";
+import { AccountsOperatorResources } from "./operator-resources";
 
 type ScopedResource = Pick<InstallationDeletionManifest["owners"][number]["resources"][number], "kind" | "namespace">;
 export type DeletionResourceEnvironment = AccountsDeletionEnvironment & {
@@ -13,10 +14,11 @@ export type DeletionResourceEnvironment = AccountsDeletionEnvironment & {
 
 /** Uses bounded server-side observations; registration does not invoke thousands of objects again. */
 export function configuredDeletionEnvironment(db: D1Database, env: DeletionResourceEnvironment): AccountsDeletionEnvironment {
-  if (env.DELETION_INVENTORY || !env.DELETION_RESOURCE_SCOPES || !env.DELETION_ADDITIONAL_EVIDENCE) return env;
+  const additionalEvidence = env.DELETION_ADDITIONAL_EVIDENCE ?? (env.OPERATOR_DELETION_CATALOG
+    ? new AccountsOperatorResources(db, env.OPERATOR_DELETION_CATALOG) : undefined);
+  if (env.DELETION_INVENTORY || !env.DELETION_RESOURCE_SCOPES || !additionalEvidence) return env;
   const namespaces = env.DELETION_DISCOVERY_NAMESPACES ?? {};
   const scopes = env.DELETION_RESOURCE_SCOPES;
-  const additionalEvidence = env.DELETION_ADDITIONAL_EVIDENCE;
   const inspections = new AccountsDeletionInspections(db);
   return { ...env, DELETION_INVENTORY: createInstallationDeletionInventoryResolver({
     namespaces: Object.entries(namespaces).map(([namespaceId, owner]) => ({ namespaceId, ownerId: owner.ownerId, className: owner.kind })),

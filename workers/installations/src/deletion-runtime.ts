@@ -7,6 +7,8 @@ import { InstallationDeletionInventories, installationDeletionManifestSchema, ty
 import { AccountsDeletionInspections, type AccountsDeletionInspection } from "./deletion-inspections";
 import { accountsDeletionNamespacesSchema, type AccountsDeletionDiscovery, type AccountsDeletionNamespaces } from "./deletion-discovery";
 import { parseHandle, parseOpaqueId } from "./domain";
+import { AccountsOperatorResources } from "./operator-resources";
+import { OPERATOR_RESOURCE_OWNER, type OperatorResourceCatalog } from "./operator-resource-contracts";
 
 type DiscoverableDeletionOwner = InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 
@@ -17,6 +19,7 @@ export type AccountsDeletionEnvironment = {
   DELETION_OWNER_INFERENCE?: InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
   DELETION_OWNER_MAIL?: InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
   DELETION_DISCOVERY_NAMESPACES?: AccountsDeletionNamespaces;
+  OPERATOR_DELETION_CATALOG?: OperatorResourceCatalog;
 };
 
 export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDeletionEnvironment): AccountsDeletionRuntime {
@@ -33,7 +36,7 @@ export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDelet
       gateway: env.DELETION_OWNER_GATEWAY,
       owners,
       namespaces: accountsDeletionNamespacesSchema.parse(env.DELETION_DISCOVERY_NAMESPACES ?? {}),
-    });
+    }, env.OPERATOR_DELETION_CATALOG);
 }
 
 export class AccountsDeletionRuntime {
@@ -41,6 +44,7 @@ export class AccountsDeletionRuntime {
   readonly inventories: InstallationDeletionInventories;
   readonly coordinator: InstallationDeletionCoordinator;
   private readonly accountOwner: AccountsDeletionOwner;
+  readonly operatorResources?: AccountsOperatorResources;
 
   constructor(
     private readonly db: D1Database,
@@ -49,17 +53,23 @@ export class AccountsDeletionRuntime {
     backupRetentionMs = DEFAULT_D1_BACKUP_RETENTION_MS,
     clock: () => number = Date.now,
     private readonly discovery: AccountsDeletionDiscovery = {},
+    operatorCatalog?: OperatorResourceCatalog,
   ) {
     this.inspections = new AccountsDeletionInspections(db, clock);
     this.accountOwner = new AccountsDeletionOwner(db, backupRetentionMs, clock);
     this.inventories = new InstallationDeletionInventories(db, resolver, clock);
-    this.coordinator = new InstallationDeletionCoordinator(db, { ...owners, accounts: this.accountOwner }, clock);
+    this.operatorResources = operatorCatalog ? new AccountsOperatorResources(db, operatorCatalog, clock) : undefined;
+    const coordinatedOwners = { ...owners };
+    coordinatedOwners.accounts = this.accountOwner;
+    if (this.operatorResources) coordinatedOwners[OPERATOR_RESOURCE_OWNER] = this.operatorResources;
+    this.coordinator = new InstallationDeletionCoordinator(db, coordinatedOwners, clock);
   }
 
   async registerInventory(installationId: string, manifest: InstallationDeletionManifest, evidence?: InstallationDeletionEvidence) {
     if (manifest.installationId !== parseOpaqueId(installationId, "installationId")) throw new Error("installation inventory scope does not match");
     const row = await this.db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>();
     if (row?.state !== "retained") throw new Error("installation inventory requires retirement before discovery");
+    if (this.operatorResources && !await this.operatorResources.verifyAdditionalEvidence({ manifest })) throw new Error("installation inventory omits configured operator resources");
     return this.inventories.register(manifest, evidence);
   }
 

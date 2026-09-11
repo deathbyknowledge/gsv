@@ -23,7 +23,7 @@ export type InstallationDeletionProgress = {
   operationId: string;
   installationId: string;
   phase: Operation["phase"];
-  owners: { id: string; outcome: string; receipt: InstallationDeletionReceipt | null }[];
+  owners: { id: string; outcome: string; receipt: InstallationDeletionReceipt | null; provenance?: "operator-attested" }[];
 };
 
 /** Accounts retains the verified owner inventory until every owner confirms erasure. */
@@ -68,8 +68,12 @@ export class InstallationDeletionCoordinator {
     const operation = await this.operation(operationId);
     if (!operation) throw new Error("Deletion operation is unavailable");
     return { operationId, installationId: operation.installation_id, phase: operation.phase,
-      owners: (await this.participants(operationId)).map((owner) => ({ id: owner.owner_id, outcome: owner.outcome,
-        receipt: owner.receipt_json ? installationDeletionReceiptSchema.parse(JSON.parse(owner.receipt_json)) : null })) };
+      owners: (await this.participants(operationId)).map((owner) => {
+        const progress: InstallationDeletionProgress["owners"][number] = { id: owner.owner_id, outcome: owner.outcome,
+          receipt: owner.receipt_json ? installationDeletionReceiptSchema.parse(JSON.parse(owner.receipt_json)) : null };
+        if (owner.owner_id === "operator-resources") progress.provenance = "operator-attested";
+        return progress;
+      }) };
   }
 
   async advance(operationId: string): Promise<InstallationDeletionProgress> {
