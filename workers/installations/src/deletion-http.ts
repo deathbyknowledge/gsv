@@ -21,7 +21,7 @@ export class InstallationDeletionHttp {
       const action = route[2];
       if (request.method === "GET" && !action) return json(await this.runtime.status(installationId));
       if (request.method !== "POST") return json({ error: "Not Found" }, 404);
-      if (action === "inspection") return json(await this.runtime.inspections.open(installationId), 201);
+      if (action === "inspection") return json(await this.runtime.openInspection(installationId), 201);
       if (action === "retry") return json(await this.runtime.retry(installationId));
       if (action === "inventory") {
         if (request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json") throw new Error("JSON body is required");

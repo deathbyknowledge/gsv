@@ -1,5 +1,5 @@
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
-import { installationDeletionInventoryImportSchema,
+import { installationDeletionInventoryImportSchema, installationDeletionInspectionResultSchema,
   type InstallationDeletionDiscoveryService, type InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { InstallationDeletionCoordinator, type InstallationDeletionProgress } from "./deletion";
 import { AccountsDeletionOwner, DEFAULT_D1_BACKUP_RETENTION_MS } from "./deletion-owner";
@@ -61,6 +61,23 @@ export class AccountsDeletionRuntime {
     const row = await this.db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>();
     if (row?.state !== "retained") throw new Error("installation inventory requires retirement before discovery");
     return this.inventories.register(manifest, evidence);
+  }
+
+  async openInspection(installationIdValue: string) {
+    const installationId = parseOpaqueId(installationIdValue, "installationId");
+    const writable = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND state = 'retained'
+      AND NOT EXISTS (SELECT 1 FROM installation_deletions WHERE installation_id = installations.id)`)
+      .bind(installationId).first();
+    if (!writable) throw new Error("installation inspection requires retirement before deletion begins");
+    const ownerIds = new Set(Object.values(this.discovery.namespaces ?? {}).filter((namespace) => namespace.kind.startsWith("adapter-"))
+      .map((namespace) => namespace.ownerId));
+    await Promise.all([...ownerIds].map(async (ownerId) => {
+      const owner = this.discovery.owners?.[ownerId];
+      if (!owner) throw new Error("installation adapter discovery is not configured");
+      const result = installationDeletionInspectionResultSchema.parse(await owner.inspectInstallationDeletion({ installationId, resources: [] }));
+      if (result.installationId !== installationId || result.observations.length) throw new Error("installation adapter discovery preflight does not match");
+    }));
+    return this.inspections.open(installationId);
   }
 
   async inspect(installationId: string, input: AccountsDeletionInspection) {

@@ -233,4 +233,25 @@ describe("Accounts deletion runtime", () => {
     await expect(runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: inventory.sha256 })).rejects.toThrow("missing-inventory import");
   });
 
+  it("preflights each configured adapter once before opening its capture epoch", async () => {
+    const state = await fixture();
+    const inspect = vi.fn<InstallationDeletionDiscoveryService["inspectInstallationDeletion"]>(async (input) => {
+      expect(await state.db.prepare("SELECT id FROM installation_deletion_inspections WHERE installation_id = ?").bind(input.installationId).first()).toBeNull();
+      return { installationId: input.installationId, observations: [] };
+    });
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {
+      owners: { telegram: { inspectInstallationDeletion: inspect } }, namespaces: {
+        ["a".repeat(32)]: { ownerId: "telegram", kind: "adapter-peer" },
+        ["b".repeat(32)]: { ownerId: "telegram", kind: "adapter-installation" },
+      },
+    });
+    await expect(runtime.openInspection(state.old.installationId)).rejects.toThrow("retirement");
+    expect(inspect).not.toHaveBeenCalled();
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const epoch = await runtime.openInspection(state.old.installationId);
+    expect(epoch.installationId).toBe(state.old.installationId);
+    expect(inspect).toHaveBeenCalledExactlyOnceWith({ installationId: state.old.installationId, resources: [] });
+    expect(await state.db.prepare("SELECT id FROM installation_deletion_inspections WHERE id = ?").bind(epoch.id).first()).toEqual({ id: epoch.id });
+  });
+
 });
