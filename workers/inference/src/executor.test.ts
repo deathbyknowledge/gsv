@@ -87,6 +87,47 @@ describe("public inference executor RPC", () => {
     expect(serialized).not.toContain("hello");
   });
 
+  it("attributes concurrent native dispatches to their owning spaces despite forged request metadata", async () => {
+    const dispatched: { metadata: Record<string, string>; collectLog: string | null }[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const bindingFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      dispatched.push({
+        // SAFETY: The assertions below validate the complete emitted metadata shape.
+        metadata: JSON.parse(headers.get("cf-aig-metadata") ?? "{}") as Record<string, string>,
+        collectLog: headers.get("cf-aig-collect-log"),
+      });
+      if (dispatched.length === 2) release();
+      await held;
+      return completion();
+    });
+    vi.stubGlobal("fetch", bindingFetch);
+    const ids = ["space_metadata_a", "space_metadata_b"];
+    const executors = await Promise.all(ids.map((id) => service.getExecutor(id)));
+    const inputs = ids.map((id) => ({
+      ...request(id, "same-logical-request"),
+      attribution: { installationId: "forged-space", logicalRequestId: "forged-request", attemptId: "forged-attempt" },
+      metadata: { "gsv.installation_id": "forged-space", "gsv.request_id": "forged-request", "gsv.attempt_id": "forged-attempt" },
+    }));
+    await expect(Promise.resolve(executors[0]!.generate(inputs[1]!))).rejects.toThrow("scope mismatch");
+    expect(bindingFetch).not.toHaveBeenCalled();
+
+    const results = await Promise.all(executors.map((executor, index) => executor.generate(inputs[index]!)));
+    expect(results.map((result) => result.stopReason)).toEqual(["stop", "stop"]);
+    expect(bindingFetch).toHaveBeenCalledTimes(2);
+    expect(dispatched.map((entry) => entry.metadata["gsv.installation_id"]).sort()).toEqual(ids);
+    for (const entry of dispatched) {
+      expect(entry.metadata).toEqual({
+        "gsv.installation_id": expect.stringMatching(/^space_metadata_[ab]$/),
+        "gsv.request_id": "same-logical-request",
+        "gsv.attempt_id": expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+      });
+      expect(entry.collectLog).toBe("false");
+    }
+    expect(new Set(dispatched.map((entry) => entry.metadata["gsv.attempt_id"])).size).toBe(2);
+  });
+
   it("streams generic provider identity through the real RPC codec", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => completion()));
     const executor = await service.getExecutor("space_stream");
