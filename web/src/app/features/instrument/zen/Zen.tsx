@@ -28,6 +28,7 @@ import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/P
 import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { RunFeedback } from "./RunFeedback";
+import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { ZenText } from "./ZenText";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
@@ -925,6 +926,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
+        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
         {showFeedback && <div class="zen-feedback">
           {activeRun && <RunFeedback key={activeRun} startedAt={runStartedAt} model={attemptedModel}
             place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}

@@ -2,7 +2,9 @@ import type { ProcessStore } from "../store";
 import {
   type JsonValue, type ProcToolResultOutcome, type ProcTraceSpanStatus, jsonObjectSchema, jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
-import { isToolSyscallName, syscallToolName } from "../../syscalls/constants";
+import { syscallToolName } from "../../syscalls/constants";
+import type { SyscallName } from "../../syscalls";
+import { wireRequestSchemaRefs } from "../../protocol/generated/wire-frame-schema.js";
 import {
   normalizeStoredToolResultOutcome, resolvedToolResultOutcome, toolCallStatusSchema, type PendingHilRecord,
   type PendingToolCallRecord, type ToolCallRecord,
@@ -265,7 +267,7 @@ export class ProcessToolRepository {
         ...(requestId ? [requestId] : []),
       );
     if (!row) return null;
-    if (!isToolSyscallName(row.syscall)) {
+    if (!wireRequestSchemaRefs.has(row.syscall)) {
       throw new Error(`Stored approval references an unsupported syscall: ${row.syscall}`);
     }
     const record: PendingHilRecord = {
@@ -273,7 +275,8 @@ export class ProcessToolRepository {
       runId: row.run_id,
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
-      syscall: row.syscall,
+      // SAFETY: the generated request registry contains exactly the public syscall names.
+      syscall: row.syscall as SyscallName,
       args: jsonObjectSchema.parse(JSON.parse(row.args_json)),
       createdAt: row.created_at,
     };

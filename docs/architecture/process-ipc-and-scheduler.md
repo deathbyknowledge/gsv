@@ -186,6 +186,22 @@ Forking preserves the source run-as identity and does not broaden its
 capabilities. The new process receives its own lifecycle and can diverge safely
 after import.
 
+Pending human approvals remain in the executing Process, including syscalls
+invoked inside CodeMode. The Kernel queues a notice containing only the child
+pid, run, and request identity, then rechecks the pending request before notifying
+same-owner callers through durable IPC ancestry. Each caller receives a typed
+`process.approval` event without the child's arguments. Reset and aborted source
+runs fence these events, and repeated delivery deduplicates against the original
+request and delegation. Existing adapter approval routes retain their destination
+and authorization checks.
+
+Ship presents pending approvals for its owning human, including surviving work
+from an earlier Ship process. Helper conversations present their descendants.
+Clients recover each request with a status-only history read and submit `proc.hil`
+to the original child and request id. Only a credential-authenticated human or a
+Kernel-derived linked adapter interaction may decide an approval; a process
+cannot approve itself or its children.
+
 ## Scheduler
 
 The scheduler is Kernel-owned. The public surface is:

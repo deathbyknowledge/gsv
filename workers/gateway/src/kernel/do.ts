@@ -11,6 +11,7 @@ import type {
 } from "./do-shared";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
+import { deliverProcessApprovalNotice, processApprovalNoticeSchema, type ProcessApprovalNotice } from "./process-approvals";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -201,6 +202,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  | { callback: "onProcessApprovalNotice"; payload: ProcessApprovalNotice }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
@@ -249,6 +251,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
+  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: processApprovalNoticeSchema }),
   z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
@@ -669,6 +672,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
+      case "onProcessApprovalNotice":
+        await deliverProcessApprovalNotice(this, task.payload);
+        return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
         return;
