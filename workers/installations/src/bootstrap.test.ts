@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InstallationAdminService } from "./admin/service";
 import { InstallationBootstrapService, type OperatorAccessMode } from "./bootstrap";
 import { InstallationOnboardingStore } from "./onboarding";
@@ -14,12 +14,16 @@ beforeEach(async () => {
   }
 });
 
-async function fixture(mode: OperatorAccessMode = "operator") {
+function services(mode: OperatorAccessMode = "operator") {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com", undefined, ["accounts.example.com"]);
   const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
   const admin = new InstallationAdminService(env.INSTALLATIONS_DB, accounts, onboarding,
     { id: "operator_registry", email: "registry@example.invalid", displayName: "Registry" }, {});
   const service = new InstallationBootstrapService(env.INSTALLATIONS_DB, accounts, onboarding, admin, mode);
+  return { accounts, onboarding, admin, service };
+}
+
+async function fixture(mode: OperatorAccessMode = "operator") {
   const claim = await createOpaqueToken("bootstrap");
   const operator = await createOpaqueToken("operator");
   const setup = await createOpaqueToken("onboard");
@@ -29,7 +33,7 @@ async function fixture(mode: OperatorAccessMode = "operator") {
   ).bind(claim.prefix, claim.hash, Date.now() + 60_000, mode, Date.now()).run();
   const input: Parameters<InstallationBootstrapService["redeem"]>[0] = { claim: claim.raw, handle: "first", onboardingToken: setup.raw };
   if (mode === "operator") input.operatorToken = operator.raw;
-  return { accounts, onboarding, admin, service, claim, operator, setup, input };
+  return { ...services(mode), claim, operator, setup, input };
 }
 
 describe("first installation bootstrap", () => {
@@ -55,6 +59,51 @@ describe("first installation bootstrap", () => {
     expect(secretRows).not.toContain(state.operator.raw);
     expect(secretRows).not.toContain(state.setup.raw);
   });
+
+  it.each(["recipient binding", "reservation", "provisioning", "onboarding"] as const)(
+    "resumes after interruption at %s using only the original recipient's secrets",
+    async (boundary) => {
+      const state = await fixture();
+      const failure = new Error(`lost reply after ${boundary}`);
+      if (boundary === "recipient binding") {
+        // The bootstrap's first D1 batch has committed before reservation starts.
+        vi.spyOn(state.admin, "reserve").mockRejectedValueOnce(failure);
+      } else if (boundary === "reservation") {
+        const reserve = state.admin.reserve.bind(state.admin);
+        vi.spyOn(state.admin, "reserve").mockImplementationOnce(async (input) => { await reserve(input); throw failure; });
+      } else if (boundary === "provisioning") {
+        const provision = state.accounts.beginProvisioning.bind(state.accounts);
+        vi.spyOn(state.accounts, "beginProvisioning").mockImplementationOnce(async (...args) => { await provision(...args); throw failure; });
+      } else {
+        const prepare = state.onboarding.prepare.bind(state.onboarding);
+        vi.spyOn(state.onboarding, "prepare").mockImplementationOnce(async (...args) => { await prepare(...args); throw failure; });
+      }
+      await expect(state.service.redeem(state.input)).rejects.toThrow(failure.message);
+      const partial = await state.admin.listInstallations({ query: "", state: null, page: 1 });
+      expect(partial.total).toBe(boundary === "recipient binding" ? 0 : 1);
+      const prepared = partial.installations[0] && await state.admin.getInstallation(partial.installations[0].installationId);
+
+      // A fresh service graph has no request-local state from the interrupted call.
+      const restarted = services();
+      const competitor = { ...state.input, onboardingToken: (await createOpaqueToken("onboard")).raw,
+        operatorToken: (await createOpaqueToken("operator")).raw };
+      await expect(restarted.service.redeem(competitor)).rejects.toThrow("different attempt");
+      expect(await restarted.service.authorizeOperator(competitor.operatorToken)).toBe(false);
+      expect(await restarted.service.authorizeOperator(state.operator.raw)).toBe(true);
+      const recovered = await restarted.service.redeem(state.input);
+      if (prepared) expect(recovered.installationId).toBe(prepared.installationId);
+      expect(recovered).toMatchObject({ operatorAccess: true, onboardingUrl: `https://first.example.com/onboarding#${state.setup.raw}` });
+      expect((await restarted.admin.listInstallations({ query: "", state: null, page: 1 })).total).toBe(1);
+      if (boundary === "onboarding") {
+        expect((await restarted.admin.getInstallation(recovered.installationId))?.onboardingExpiresAt).toBe(prepared?.onboardingExpiresAt);
+      }
+      const authorization = await restarted.onboarding.authorize({ installationId: recovered.installationId, token: state.setup.raw });
+      expect(authorization.ok).toBe(true);
+      if (!authorization.ok) throw new Error("Expected recovered setup authorization");
+      await restarted.onboarding.complete({ installationId: recovered.installationId, claimId: authorization.claimId });
+      expect(await services().service.redeem(state.input)).toMatchObject({ installationId: recovered.installationId, onboardingUrl: null, operatorAccess: true });
+    },
+  );
 
   it("does not reissue a consumed setup claim and leaves a second installation untouched", async () => {
     const state = await fixture();

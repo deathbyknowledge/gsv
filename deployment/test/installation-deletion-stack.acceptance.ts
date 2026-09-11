@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { deletionStackHarness, NAMESPACES, SCOPES, STACK } from "./fixtures/deletion-stack-harness.ts";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
 import { captureInstallationDeletionObjects, deletionCaptureEpochSchema, deletionCaptureInspectionResultSchema } from "../src/installation-deletion-capture.ts";
 import type { MigrationD1Row } from "../src/installation-migration-d1.ts";
 import type { InstallationDeletionManifest } from "../../workers/installations/src/deletion-inventory.ts";
+import type { InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
 
 type Harness = ReturnType<typeof deletionStackHarness>;
 type Worker = ReturnType<Harness["getWorker"]>;
@@ -15,6 +17,9 @@ const rpcSchema = z.object({ type: z.literal("res"), id: z.string(), ok: z.boole
 const createdSchema = z.object({ installation: z.object({ installationId: z.string() }), onboarding: z.object({ onboardingUrl: z.string() }) });
 type AdminHeaders = { origin: string; "content-type": string; authorization?: string };
 type ResourceNamespace = { getByName(name: string): { inspectInstallationResource(): Promise<{ name?: string; empty: boolean }> } };
+type ClaimRedemption = { id: string; secret: string; proof: string; password: string };
+type PendingClaims = { invitation: ClaimRedemption; recovery: ClaimRedemption;
+  authorization: Parameters<InstallationRecoveryGatewayService["authorizeRootRecovery"]>[0] };
 const origin = "https://accounts.example.invalid";
 const username = "same-owner";
 const path = `/home/${username}/same-file.txt`;
@@ -37,13 +42,17 @@ describe("public multi-worker deletion acceptance", () => {
     if (authenticated) headers.authorization = `Bearer ${operatorToken}`;
     return harness.getWorker(STACK.accounts).fetch(origin + path, { method: "POST", headers, body: JSON.stringify(body) });
   }
-  async function setup(handle: string, token?: string) {
+  async function openSocket(handle: string) {
     const response = await harness.getWorker(STACK.gateway).fetch(`https://${handle}.example.invalid/ws`, { headers: { upgrade: "websocket" } });
     expect(response.status).toBe(101);
     if (!response.webSocket) throw new Error("Gateway WebSocket is unavailable");
     const socket = response.webSocket; socket.accept(); sockets.push(socket);
+    return socket;
+  }
+  async function setup(handle: string, token?: string, account = username, credential = password) {
+    const socket = await openSocket(handle);
     if (token) await ok(socket, "sys.setup", { username, password, onboardingToken: token });
-    await ok(socket, "sys.connect", { protocol: 4, peer: { id: `deletion-${handle}`, version: "1", platform: "test" }, auth: { username, password } });
+    await ok(socket, "sys.connect", { protocol: 4, peer: { id: `deletion-${handle}-${account}`, version: "1", platform: "test" }, auth: { username: account, password: credential } });
     return socket;
   }
   async function populate(socket: Socket, text: string) {
@@ -66,7 +75,7 @@ describe("public multi-worker deletion acceptance", () => {
   }
 
   it("bootstraps two spaces, resets one, imports physical discovery and erases its state while the other remains usable", async () => {
-    const accounts = harness.getWorker<{ INSTALLATIONS_DB: D1Database }>(STACK.accounts);
+    const accounts = harness.getWorker<{ INSTALLATIONS_DB: D1Database; ACCOUNTS_GATEWAY_RECOVERY: InstallationRecoveryGatewayService }>(STACK.accounts);
     let { INSTALLATIONS_DB: db } = await accounts.getEnv();
     const issued = await administerOperatorBootstrap({ action: "issue", mode: "operator", database: {
       identity: { accountId: "local", databaseId: "local" }, async batch(statements) {
@@ -95,11 +104,45 @@ describe("public multi-worker deletion acceptance", () => {
     expect(await (await storage.get(`installations/${a.installationId}/${path.slice(1)}`))?.text()).toBe("first-space");
     expect(await (await storage.get(`installations/${b.installation.installationId}/${path.slice(1)}`))?.text()).toBe("second-space");
 
+    const rootA = await setup("first", undefined, "root");
+    const rootB = await setup("second", undefined, "root");
+    const pendingClaims: PendingClaims[] = [];
+    for (const [installationId, root] of [[a.installationId, rootA], [b.installation.installationId, rootB]] as const) {
+      const secret = Buffer.from(randomBytes(32)).toString("hex");
+      const invite = { id: crypto.randomUUID(), secret, username: "invited-member" };
+      expect(await ok(root, "account.invite.create", invite)).toMatchObject({ status: "pending" });
+      const recovery = { id: crypto.randomUUID(), secret: crypto.randomUUID() + crypto.randomUUID(),
+        proof: crypto.randomUUID() + crypto.randomUUID(), password: "recovered-root-fixture-password" };
+      const secretHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(recovery.secret))),
+        (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const authorization = { installationId, attemptId: recovery.id, purpose: "root-password-reset" as const, secretHash, expiresAt: Date.now() + 300_000 };
+      // Accounts' trusted binding grants the claim; no recovery SQL is seeded in the Kernel.
+      expect(await (await accounts.getEnv()).ACCOUNTS_GATEWAY_RECOVERY.authorizeRootRecovery(authorization)).toEqual({ authorized: true });
+      pendingClaims.push({ invitation: { id: invite.id, secret, proof: Buffer.from(randomBytes(32)).toString("hex"), password: "invited-member-password" }, recovery, authorization });
+    }
+    const oldEnrollment = await openSocket("first");
     const reset = await post(`/admin/api/installations/${a.installationId}/reset`, { operationId: "reset-first", confirmHandle: "first" });
     expect(reset.status).toBe(201);
     const replacement = createdSchema.parse(await reset.json());
     expect(replacement.installation.installationId).not.toBe(a.installationId);
     let replacementSocket = await setup("first", new URL(replacement.onboarding.onboardingUrl).hash.slice(1));
+    const replacementEnrollment = await openSocket("first");
+    for (const socket of [oldEnrollment, replacementEnrollment]) {
+      expect(await rpc(socket, "account.invite.redeem", pendingClaims[0].invitation)).toMatchObject({ ok: false });
+      expect(await rpc(socket, "account.recovery.redeem", pendingClaims[0].recovery)).toMatchObject({ ok: false });
+    }
+    await expect(async () => {
+      await (await accounts.getEnv()).ACCOUNTS_GATEWAY_RECOVERY.authorizeRootRecovery(pendingClaims[0].authorization);
+    }).rejects.toThrow("unavailable");
+    const replacementRoot = await setup("first", undefined, "root");
+    const replacementPeople = z.object({ people: z.array(z.object({ username: z.string() })) }).parse(await ok(replacementRoot, "account.people.list", {}));
+    expect(replacementPeople.people.some((person) => person.username === "invited-member")).toBe(false);
+    const otherEnrollment = await openSocket("second");
+    expect(await ok(otherEnrollment, "account.invite.redeem", pendingClaims[1].invitation)).toMatchObject({ username: "invited-member" });
+    expect(await ok(otherEnrollment, "account.recovery.redeem", pendingClaims[1].recovery)).toEqual({ username: "root" });
+    const retainedMember = await setup("second", undefined, "invited-member", pendingClaims[1].invitation.password);
+    expect(await ok(retainedMember, "account.list", {})).toMatchObject({ accounts: expect.arrayContaining([expect.objectContaining({ username: "invited-member" })]) });
+    await setup("second", undefined, "root", pendingClaims[1].recovery.password);
     expect(await ok(replacementSocket, "fs.read", { path })).toMatchObject({ ok: false });
     expect((await rpc(socketA, "proc.list", {})).ok).toBe(false);
     expect(await ok(socketB, "fs.search", { path, query: "second-space" })).toMatchObject({ ok: true, count: 1 });

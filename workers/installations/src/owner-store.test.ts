@@ -92,6 +92,55 @@ describe("verified space ownership", () => {
     expect(await f.store.destination(owner)).toMatchObject({ installationId: f.installation.installationId });
   });
 
+  it("keeps two independently claimed spaces isolated when either owner tries the other's recovery", async () => {
+    const f = await fixture();
+    const otherIdentity = { ...f.identity, subject: crypto.randomUUID(), email: `${crypto.randomUUID()}@example.com` };
+    const owners = [{ space: f.installation, identity: f.identity }, { space: f.other, identity: otherIdentity }];
+    for (const { space, identity } of owners) {
+      const link = await f.begin(space.installationId);
+      const verified = await f.verify(link.id, link.input.secretHash, identity);
+      await f.store.completeLink(link.id, verified.browserSecretHash);
+    }
+    const restarted = new InstallationOwnerStore(env.INSTALLATIONS_DB, f.registry);
+    for (const [index, { space, identity }] of owners.entries()) {
+      const attempt = await restarted.beginRecovery(space.handle, crypto.randomUUID());
+      const browserSecretHash = await sha256Hex(crypto.randomUUID());
+      await restarted.startAuthentication(attempt.id, { browserSecretHash, verifier: "verifier", nonce: "nonce" });
+      await expect(restarted.verify(attempt.id, browserSecretHash, owners[1 - index].identity)).rejects.toThrow("does not own");
+      expect((await restarted.get(attempt.id))?.state).toBe("authenticating");
+      const recovered = await restarted.verify(attempt.id, browserSecretHash, identity);
+      expect(await restarted.destination(recovered)).toEqual({ installationId: space.installationId, canonicalOrigin: space.canonicalOrigin });
+      expect(await f.accounts.resolveHostname(new URL(space.canonicalOrigin).hostname)).toMatchObject({ installationId: space.installationId });
+    }
+    await expect(f.begin(f.installation.installationId)).rejects.toThrow("unavailable");
+    await expect(f.begin(f.other.installationId)).rejects.toThrow("unavailable");
+  });
+
+  it("lets one verified principal own and recover multiple spaces through their own hostnames", async () => {
+    const f = await fixture();
+    const principals = new Set<string | null>();
+    for (const space of [f.installation, f.other]) {
+      const link = await f.begin(space.installationId);
+      const verified = await f.verify(link.id, link.input.secretHash);
+      await f.store.completeLink(link.id, verified.browserSecretHash);
+      principals.add(verified.attempt.principal_id);
+    }
+    expect(principals.size).toBe(1);
+    expect(principals.has(null)).toBe(false);
+    const restarted = new InstallationOwnerStore(env.INSTALLATIONS_DB, f.registry);
+    for (const space of [f.installation, f.other]) {
+      const hostname = new URL(space.canonicalOrigin).hostname;
+      const resolved = await f.accounts.resolveHostname(hostname);
+      expect(resolved).toMatchObject({ found: true, installationId: space.installationId });
+      const attempt = await restarted.beginRecovery(space.handle, crypto.randomUUID());
+      const browserSecretHash = await sha256Hex(crypto.randomUUID());
+      await restarted.startAuthentication(attempt.id, { browserSecretHash, verifier: "verifier", nonce: "nonce" });
+      const recovered = await restarted.verify(attempt.id, browserSecretHash, f.identity);
+      expect(principals.has(recovered.principal_id)).toBe(true);
+      expect(await restarted.destination(recovered)).toEqual({ installationId: space.installationId, canonicalOrigin: space.canonicalOrigin });
+    }
+  });
+
   it("does not merge a different provider subject by matching an email address", async () => {
     const f = await fixture();
     const first = await f.begin();

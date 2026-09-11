@@ -43,6 +43,7 @@ export function deletionStackHarness() {
       DELETION_DISCOVERY_NAMESPACES: Object.fromEntries(NAMESPACES.map(({ namespaceId, ownerId, kind }) => [namespaceId, { ownerId, kind }])),
       DELETION_RESOURCE_SCOPES: SCOPES },
     services: [
+      { binding: "ACCOUNTS_GATEWAY_RECOVERY", service: STACK.gateway, entrypoint: "GatewayRecoveryEntrypoint", props: { authority: "installation-owner-recovery" } },
       { binding: "DELETION_OWNER_GATEWAY", service: STACK.evidence, entrypoint: "GatewayFaultRelay" },
       { binding: "DELETION_OWNER_INFERENCE", service: STACK.inference, entrypoint: "InferenceLifecycleEntrypoint", props: deletionProps },
       { binding: "DELETION_OWNER_MAIL", service: STACK.mail, entrypoint: "MailLifecycleEntrypoint", props: deletionProps },
