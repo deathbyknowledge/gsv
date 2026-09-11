@@ -5,6 +5,7 @@ import { type JsonValue, decodeInferenceExecutionStream } from "@humansandmachin
 import type { InferenceExecutionRequest, InferenceExecutionService } from "@humansandmachines/gsv/services/inference-execution";
 import { RoutedInferenceTransport } from "../../gateway/src/inference/transport";
 import { ExecutorStore } from "../../../packages/inference/src/executor/store";
+import { executorLimits } from "../../../packages/inference/src/executor/config";
 
 const serviceBinding: unknown = exports.default;
 // SAFETY: The configured entrypoint implements the public execution service.
@@ -174,6 +175,22 @@ describe("public inference executor RPC", () => {
     expect((await pending).stopReason).toBe("aborted");
     expect((await rows(first.installationId)).usage[0]).toMatchObject({ requests: 1, output_tokens: 64, reserved_tokens: 0 });
     await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+
+  it("supports explicit unlimited monthly quotas while requiring positive request bounds", async () => {
+    const id = "space_unlimited";
+    await service.getExecutor(id);
+    await runInDurableObject(env.INFERENCE_EXECUTORS.getByName(id), (_instance, state) => {
+      const store = new ExecutorStore(state.storage);
+      const limits = { monthlyRequests: 0, monthlyOutputTokens: 0, maxOutputTokens: 64, maxDurationMs: 1000 };
+      for (let count = 0; count < 5; count++) store.admit(`unlimited-${count}`, 1000, Date.now() + 1000, 64, limits);
+      expect(state.storage.sql.exec("SELECT * FROM executor_usage").one()).toMatchObject({ requests: 5, reserved_tokens: 320 });
+      store.recover();
+    });
+    const base = { INSTALLATION_DIRECTORY: { resolveInstallation: async () => ({ found: false as const }), resolveHostname: async () => ({ found: false as const }) } };
+    expect(executorLimits({ ...base, INFERENCE_MONTHLY_REQUESTS: 0, INFERENCE_MONTHLY_OUTPUT_TOKENS: 0 })).toMatchObject({ monthlyRequests: 0, monthlyOutputTokens: 0 });
+    expect(() => executorLimits({ ...base, INFERENCE_MAX_OUTPUT_TOKENS: 0 })).toThrow("operator limit");
+    expect(() => executorLimits({ ...base, INFERENCE_MAX_DURATION_MS: 0 })).toThrow("operator limit");
   });
 
   it("uses the selected transport across RPC without persisting credentials", async () => {

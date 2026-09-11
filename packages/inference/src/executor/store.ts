@@ -54,8 +54,8 @@ export class ExecutorStore {
       const usage = this.storage.sql.exec<{ requests: number; output_tokens: number; reserved_tokens: number }>(
         "SELECT * FROM executor_usage WHERE month = ?", month,
       ).one();
-      if (usage.requests >= limits.monthlyRequests) throw new Error("Monthly inference request limit reached");
-      if (usage.output_tokens + usage.reserved_tokens + tokens > limits.monthlyOutputTokens) {
+      if (limits.monthlyRequests !== 0 && usage.requests >= limits.monthlyRequests) throw new Error("Monthly inference request limit reached");
+      if (limits.monthlyOutputTokens !== 0 && usage.output_tokens + usage.reserved_tokens + tokens > limits.monthlyOutputTokens) {
         throw new Error("Monthly inference output token limit reached");
       }
       this.storage.sql.exec(

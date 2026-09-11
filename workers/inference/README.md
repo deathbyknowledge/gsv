@@ -28,6 +28,9 @@ The reference limits are configurable Worker variables:
 
 Months use UTC. Admission atomically reserves the requested output budget and
 increments the request count. Completed text reports actual output tokens.
+An explicit zero disables either monthly quota. Per-request token and duration
+limits must remain positive. The private composition explicitly disables the
+monthly operational quotas and retains its existing commercial funding policy.
 Cancellation, deadline expiry, or restart without final usage consumes the
 reservation conservatively. Media counts as a request; image reading also
 reserves its text output budget. Other media has no text token reservation.

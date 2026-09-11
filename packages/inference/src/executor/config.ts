@@ -23,14 +23,14 @@ export function executorLimits(env: ExecutorEnvironment): ExecutorLimits {
   return {
     monthlyRequests: limit(env.INFERENCE_MONTHLY_REQUESTS, 10_000),
     monthlyOutputTokens: limit(env.INFERENCE_MONTHLY_OUTPUT_TOKENS, 1_000_000),
-    maxOutputTokens: limit(env.INFERENCE_MAX_OUTPUT_TOKENS, 32_768),
-    maxDurationMs: Math.min(limit(env.INFERENCE_MAX_DURATION_MS, 180_000), 2_147_483_647),
+    maxOutputTokens: limit(env.INFERENCE_MAX_OUTPUT_TOKENS, 32_768, 1),
+    maxDurationMs: Math.min(limit(env.INFERENCE_MAX_DURATION_MS, 180_000, 1), 2_147_483_647),
   };
 }
 
-function limit(value: number | undefined, fallback: number): number {
+function limit(value: number | undefined, fallback: number, minimum = 0): number {
   if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid inference operator limit");
+  if (!Number.isSafeInteger(value) || value < minimum) throw new Error("Invalid inference operator limit");
   return value;
 }
 
