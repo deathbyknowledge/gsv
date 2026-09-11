@@ -95,3 +95,102 @@ the same operation without losing completion proof midway through that cleanup.
 The local multi-Worker acceptance gate proves application isolation and erasure.
 It does not satisfy the separate fresh-Cloudflare-account, external provider,
 telemetry, multipart, queue or backup-retention gates.
+
+## Capture tagged AI Gateway records
+
+Run `scripts/capture-ai-gateway-logs.ts` from the public checkout using Node 24,
+as in the deployment checks. The command only lists log metadata. It never fetches log request or
+response payload endpoints, deletes logs, or submits an Accounts attestation.
+Supply an existing operator API token through `CF_API_TOKEN` or
+`CLOUDFLARE_API_TOKEN`; do not put the token in configuration, arguments or files.
+The [list endpoint](https://developers.cloudflare.com/api/resources/ai_gateway/subresources/logs/methods/list/)
+requires AI Gateway Read or Write permission.
+
+Create an operator scope file using the immutable installation ID from the
+authenticated deletion/reset response or the private test fixture. Do not
+derive identity from a hostname, handle, log content, or user-supplied tag.
+Copy the exact resource entry from the operator's declared catalog. For example:
+
+```json
+{
+  "version": 1,
+  "accountId": "00000000000000000000000000000000",
+  "gatewayId": "default",
+  "installationId": "immutable-id-from-operator-state",
+  "resourceId": "ai-gateway-logs",
+  "catalog": [{
+    "id": "ai-gateway-logs",
+    "kind": "provider",
+    "namespace": "default",
+    "source": "ai-gateway",
+    "scope": "installation",
+    "disposition": "retained"
+  }]
+}
+```
+
+This example selects one existing resource for observation; it does not declare
+the deployment's complete current/historical catalog. Use a new private output
+directory for every capture:
+
+```bash
+node scripts/capture-ai-gateway-logs.ts \
+  --config /private/operator-ai-gateway-scope.json \
+  --output /private/ai-gateway-capture-001
+```
+
+The helper fixes the Cloudflare origin and GET collection endpoint, refuses
+redirects, and filters by `metadata.key = gsv.installation_id` and
+`metadata.value = <installationId>`. It checks every row's actual
+`gsv.installation_id` value, because matching independent metadata filters alone
+does not prove that key/value pair belongs together. It validates page numbers,
+counts, stable totals and unique log IDs. A missing page, inconsistent total or
+capture beyond 64 pages of 50 records fails without a completed report; start a
+fresh capture after resolving the cause. Do not split a larger result set and
+present one part as complete.
+
+Output directories use 0700 and artifacts 0600. Page artifacts retain only exact
+log IDs, creation times, the verified installation identity, pagination and
+capture time. Arbitrary metadata, credentials and user content are discarded.
+`ai-gateway-capture-report.json` contains the same `enumeration` fact shape the
+operator evidence contract accepts. Each `responseSha256` hashes its sanitized
+page artifact, not a raw provider response. The report separates this query
+projection from the catalog resource and always has `submission: null`.
+
+**An empty tagged query does not prove the resource empty.** Historical
+untagged logs, delayed indexing and upstream-provider copies remain unknown.
+The report is deliberately not an upload-ready attestation; do not extract its
+empty facts and submit them as full-scope evidence. Full-scope clearance still
+requires independent coverage of those gaps and a capture after application
+owners finish their final writes. Verified IDs can support a separately
+authorized, exact-record cleanup and a new observation afterward. H&M shares
+gateway `default` between staging and production; never clear it globally.
+
+## Narrow queue and multipart observations
+
+For each configured queue and dead-letter queue, capture its exact physical
+ID, current settings and enforcement history using operator read access.
+[Queue metrics](https://developers.cloudflare.com/api/resources/queues/methods/get_metrics/)
+are explicitly approximate. A zero backlog is not a full empty enumeration.
+The [peek API](https://developers.cloudflare.com/api/typescript/resources/queues/subresources/messages/methods/peek)
+and message preview return body-bearing batches without continuation; they do
+not supply a complete metadata-only inventory. Do not remove consumers, pull,
+acknowledge or purge messages from a live shared queue to manufacture proof.
+The last possible enqueue time plus enforced TTL can support an expiry
+argument, but it must account for retries and later forwarding into the DLQ.
+The current live-resource contract does not accept retention metadata alone
+for queues. Keep this scope pending until an appropriate proof is supported.
+
+For unfinished R2 uploads, use existing operator S3 credentials and
+[ListMultipartUploads](https://developers.cloudflare.com/r2/api/s3/api/)
+with the exact `installations/<encoded-immutable-id>/` prefix. Follow both
+`key-marker` and `upload-id-marker` until `IsTruncated` is false; retain page
+counts, marker continuity and hashes of a sanitized identifier projection.
+Object keys can contain private filenames: keep them in memory and retain a
+hash where a raw key is unnecessary. Do not fetch object bodies or list parts.
+A prefix observation covers only that prefix; historical unscoped uploads
+require their own ownership inventory. A default lifecycle setting or a
+successful abort request is not completion evidence. After separately
+authorized scoped cleanup, a fresh complete empty enumeration must follow the
+last possible upload write. No multipart or queue clearance receipt is
+generated by the AI Gateway helper.
