@@ -7,7 +7,11 @@
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
-    "GSV_BASE_DOMAIN": "example.com"
+    "GSV_BASE_DOMAIN": "example.com",
+    "ENVIRONMENT": "production",
+    "GSV_ADMIN_ORIGIN": "https://accounts.example.com",
+    "GSV_ADMIN_ACCESS_TEAM_DOMAIN": "",
+    "GSV_ADMIN_ACCESS_AUD": ""
   },
   "d1_databases": [{
     "binding": "INSTALLATIONS_DB",

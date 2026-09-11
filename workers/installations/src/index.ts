@@ -9,6 +9,9 @@ import type {
 } from "@humansandmachines/gsv/services/onboarding";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
+import { InstallationAdminApi } from "./admin/api";
+import { CloudflareInstallationAdminAccess } from "./admin/access";
+import { InstallationAdminService } from "./admin/service";
 
 export default class InstallationService extends WorkerEntrypoint<Env>
   implements InstallationDirectoryService, InstallationOnboardingService {
@@ -16,6 +19,21 @@ export default class InstallationService extends WorkerEntrypoint<Env>
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
+    const accounts = this.accounts();
+    const api = new InstallationAdminApi(
+      new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
+        id: "principal_operator_registry", email: "operator@gsv.invalid", displayName: "Operator registry",
+      }, {}),
+      new CloudflareInstallationAdminAccess({
+        environment: this.env.ENVIRONMENT,
+        origin: this.env.GSV_ADMIN_ORIGIN,
+        teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN,
+        audience: this.env.GSV_ADMIN_ACCESS_AUD,
+      }),
+      this.env.GSV_ADMIN_ORIGIN,
+    );
+    const response = await api.handle(request);
+    if (response) return response;
     return new Response("Not Found", { status: 404 });
   }
 

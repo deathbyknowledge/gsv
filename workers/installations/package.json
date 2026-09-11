@@ -5,6 +5,10 @@
   "type": "module",
   "exports": {
     "./administration": "./src/administration.ts",
+    "./admin/access": "./src/admin/access.ts",
+    "./admin/service": "./src/admin/service.ts",
+    "./admin/api": "./src/admin/api.ts",
+    "./http": "./src/http.ts",
     "./store": "./src/store.ts",
     "./domain": "./src/domain.ts",
     "./tokens": "./src/tokens.ts",
@@ -17,7 +21,8 @@
     "cf-typegen": "wrangler types --include-runtime=false"
   },
   "dependencies": {
-    "@humansandmachines/gsv": "0.0.6"
+    "@humansandmachines/gsv": "0.0.6",
+    "jose": "^6.1.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",

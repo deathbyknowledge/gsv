@@ -4,14 +4,36 @@ This is the public Accounts implementation being extracted during hosting
 consolidation. It owns directory identity, principals, ownership, setup claims,
 and durable reset preparation. It does not read or write funding-policy tables.
 
-The Worker exposes the existing directory and onboarding RPC contracts. Its
-HTTP surface currently contains only health. Operator administration HTTP/access, principal
-sign-in/recovery, the common bootstrap, and production adoption are subsequent
-consolidation batches; this is not yet the complete replacement deployment.
-H&M consumes the exported directory/administration stores and reset coordinator
-while its existing Worker still hosts operator administration HTTP and private
-commercial services. Public administration owns installation lists, details and
-active/restricted transitions; its queries require no commercial tables.
+The Worker exposes the existing directory/onboarding RPC contracts and the
+installation administration JSON API. Accounts owns listing, details, creation,
+onboarding reissue, active/restricted transitions and reset orchestration; none
+of these operations requires commercial tables. H&M uses the same API, Access
+verifier and administration service, then adds its private funding summaries.
+Its existing Worker still hosts the HTML administration pages and commercial
+routes. Owner sign-in/recovery, operator-token login, common bootstrap and
+production adoption are subsequent batches; this is not yet the complete
+replacement deployment.
+
+The API uses `/admin/api/installations` for listing and creation, and
+`/admin/api/installations/:id` for details. POST actions are `onboarding`,
+`lifecycle` and `reset`. Mutations require the exact configured Origin; creation
+and reset retain their operation ids, and reset requires the current handle as
+confirmation. JSON bodies are bounded while reading. Claim responses are never
+cached and suppress referrer disclosure.
+
+Production access requires an RS256 Cloudflare Access JWT matching
+`GSV_ADMIN_ACCESS_TEAM_DOMAIN` and `GSV_ADMIN_ACCESS_AUD`; the default empty
+configuration denies access. Set `GSV_ADMIN_ORIGIN` to the operator origin.
+Explicit development mode permits only the exact configured HTTP localhost
+origin. The shared interface allows the forthcoming operator-credential access
+implementation without duplicating routes or lifecycle operations.
+
+The public reference Worker creates reservations under `principal_operator_registry`.
+This deployment-owned placeholder does not prove an individual owner's identity;
+owner linking/recovery remains a separate implementation step. H&M supplies its
+existing registry identity to preserve adoption. Caller-provided principal ids
+cannot change the reservation owner. Reset participants are supplied by the
+hosting composition; the reference Worker currently has no optional services.
 
 Run `npm run typecheck --workspace @humansandmachines/gsv-installations` and
 `npm test --workspace @humansandmachines/gsv-installations` from the repository
