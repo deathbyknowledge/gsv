@@ -10,7 +10,6 @@ export type AccountsDeletionEnvironment = {
   DELETION_INVENTORY?: InstallationDeletionInventoryResolver;
   ACCOUNTS_D1_BACKUP_RETENTION_MS?: number;
   DELETION_OWNER_GATEWAY?: InstallationDeletionService & InstallationDeletionDiscoveryService;
-  [binding: `DELETION_OWNER_${string}`]: InstallationDeletionService | undefined;
 };
 
 export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDeletionEnvironment): AccountsDeletionRuntime {
