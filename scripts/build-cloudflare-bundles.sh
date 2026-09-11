@@ -47,8 +47,10 @@ done
 
 (
   cd "${ROOT_DIR}/workers/gateway"
-  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --define "__GSV_RELEASE__:${GSV_RELEASE_DEFINE}" --outdir "${DIST_DIR}/gateway/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --define "__GSV_RELEASE__:${GSV_RELEASE_DEFINE}" --outdir "${DIST_DIR}/gateway/worker" --metafile "${DIST_DIR}/gateway-bundle-meta.json"
 )
+node "${ROOT_DIR}/scripts/assert-gateway-inference-boundary.mjs" "${DIST_DIR}/gateway-bundle-meta.json"
+rm "${DIST_DIR}/gateway-bundle-meta.json"
 (
   cd "${ROOT_DIR}/workers/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
