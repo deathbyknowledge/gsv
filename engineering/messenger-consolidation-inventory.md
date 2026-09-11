@@ -45,3 +45,40 @@ owners. Adapter/mail owners retain their resource inventories until every owning
 DO acknowledges cleanup. Operator-controlled logs, backups, provider records and
 caches require an explicit deletion/expiry policy; live-state erasure does not
 by itself establish final erasure of retained copies.
+
+## Retirement owners
+
+`TelegramLifecycleEntrypoint`, `SlackLifecycleEntrypoint`, and
+`DiscordLifecycleEntrypoint` accept only the deployment's
+`installation-deletion` authority. Accounts authorizes capture/import only for a
+retained space; cleanup/status also accept deleting/deleted tombstones. Concrete
+provider namespaces validate every physical name against its Durable Object id.
+
+Each provider has one `adapter-installation` index named by immutable
+`installationId`: `TelegramInstallation` (`TELEGRAM_INSTALLATIONS`),
+`SlackInstallation` (`SLACK_INSTALLATIONS`), and `DiscordInstallation`
+(`DISCORD_INSTALLATIONS`). Accounts primes these objects before opening a
+capture epoch. Registration precedes ownership writes, and inventory import
+freezes the exact full participant list. A retained pointer to an understood
+empty or unrelated peer still requires that peer's retirement fence; unknown
+records never become identified merely because an index mentions them.
+
+New inbound, outbound and approval records carry explicit installation and
+route-generation ownership; platform pairing messages are explicitly unowned
+by any space. Duplicate provider ingress keeps its first recorded owner after
+a relink. Historical records without enough durable attribution remain
+`unidentified` and block completion. Existing pairing keys and payload layouts
+remain readable, and an expiry alarm removes the claim without deleting its
+retirement tombstone.
+
+Slack's workspace is a shared `adapter-account`: cleanup removes only the
+retired space's actor routes, attributed user OAuth credentials and attributed
+DM caches. The operator bot token and other people's state remain. Shared
+Discord's operator connection is the separate `adapter-application` kind;
+the legacy `DiscordGateway` namespace remains inventoried as
+`adapter-account` and is not assumed empty or unrelated.
+
+The adapters report live erasure separately from their durable-storage backup
+window. Their receipt retains a 30-day PITR window plus a one-minute precision
+buffer. Final erasure additionally depends on Accounts' independent inventory
+and the other declared retention owners, including external provider records.
