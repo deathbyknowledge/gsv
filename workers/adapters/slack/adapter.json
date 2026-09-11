@@ -50,7 +50,6 @@
       "SLACK_SIGNING_SECRET",
       "SLACK_OAUTH_STATE_SECRET"
     ],
-    "selfUrlBinding": "SLACK_PUBLIC_BASE_URL",
     "lifecycle": {
       "entrypoint": "SlackLifecycleEntrypoint",
       "namespaces": [
@@ -71,6 +70,9 @@
           "kind": "adapter-installation"
         }
       ]
-    }
+    },
+    "requiredVariables": [
+      "SLACK_PUBLIC_BASE_URL"
+    ]
   }
 }

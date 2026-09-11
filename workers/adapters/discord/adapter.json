@@ -78,6 +78,9 @@
           "kind": "adapter-installation"
         }
       ]
-    }
+    },
+    "requiredVariables": [
+      "DISCORD_APPLICATION_ID"
+    ]
   }
 }

@@ -61,6 +61,10 @@
           "kind": "adapter-installation"
         }
       ]
-    }
+    },
+    "requiredVariables": [
+      "TELEGRAM_BOT_USERNAME",
+      "TELEGRAM_WEBHOOK_BASE_URL"
+    ]
   }
 }

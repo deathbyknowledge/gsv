@@ -17,6 +17,7 @@ export const adapterWorkerDeploymentSchema = z.strictObject({
   requiredSecrets: z.array(
     z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
   ),
+  requiredVariables: z.optional(z.array(z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)))),
   lifecycle: z.optional(z.strictObject({
     entrypoint: z.string().check(z.minLength(1), z.maxLength(128)),
     namespaces: z.array(z.strictObject({

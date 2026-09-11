@@ -90,6 +90,11 @@ describe("public operator composition", () => {
     expect(recorded.bindings).toContainEqual({ id: "FixturetelegramDeletionBinding", bindings: [{ type: "service",
       name: "DELETION_OWNER_TELEGRAM", service: "telegram", entrypoint: "TelegramLifecycleEntrypoint",
       props: { authority: "installation-deletion" } }] });
+    expect(recorded.bindings).toContainEqual({ id: "FixturetelegramGatewayBinding", bindings: [
+      { type: "service", name: "ACCOUNTS", service: "directory" },
+      { type: "service", name: "GATEWAY", service: "gateway", entrypoint: "AdapterGatewayEntrypoint",
+        props: { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] } },
+    ] });
   });
 
   it("refuses an adapter without a cleanup owner before allocating runtime storage", async () => {

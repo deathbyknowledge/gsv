@@ -190,6 +190,10 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         {
           bindings: [{
             type: "service",
+            name: "ACCOUNTS",
+            service: directory.workerName,
+          }, {
+            type: "service",
             name: "GATEWAY",
             service: props.names.gateway,
             entrypoint: "AdapterGatewayEntrypoint",

@@ -42,6 +42,9 @@ export const GsvAdapterWorker = (
 ) => {
   const env = props.env ?? {};
   const secrets = props.secrets ?? {};
+  for (const variable of props.deployment.requiredVariables ?? []) {
+    if (!(variable in env)) throw new Error(`${props.adapter.displayName} requires deployment value ${variable}`);
+  }
   for (const secret of props.deployment.requiredSecrets) {
     if (!(secret in secrets)) {
       throw new Error(

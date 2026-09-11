@@ -38,6 +38,18 @@ const workerDeployment = {
       },
     },
     requiredSecrets: { type: "array", items: bindingName },
+    requiredVariables: { type: "array", items: bindingName },
+    crons: { type: "array", items: { type: "string", minLength: 1 } },
+    lifecycle: {
+      type: "object", additionalProperties: false, required: ["entrypoint", "namespaces"],
+      properties: {
+        entrypoint: { type: "string", minLength: 1 },
+        namespaces: { type: "array", items: {
+          type: "object", additionalProperties: false, required: ["binding", "kind"],
+          properties: { binding: bindingName, kind: { type: "string", minLength: 1 } },
+        } },
+      },
+    },
     selfUrlBinding: bindingName,
   },
 };
@@ -125,6 +137,14 @@ function validateAdapter(adapter, directoryName) {
     throw new Error(`Invalid adapter Wrangler path: ${adapter.id}`);
   }
   for (const deployment of [adapter.standalone, adapter.managed].filter(Boolean)) {
+    if (deployment.lifecycle) {
+      if (!SAFE_NAME.test(deployment.lifecycle.entrypoint)) throw new Error(`Invalid adapter lifecycle entrypoint: ${adapter.id}`);
+      const declared = deployment.lifecycle.namespaces.map((namespace) => namespace.binding).sort();
+      const deployed = deployment.durableObjects.map((namespace) => namespace.binding).sort();
+      if (new Set(declared).size !== declared.length || JSON.stringify(declared) !== JSON.stringify(deployed)) {
+        throw new Error(`Adapter lifecycle must inventory every deployed namespace: ${adapter.id}`);
+      }
+    }
     if (!SAFE_PATH.test(deployment.main)) {
       throw new Error(`Invalid adapter Worker path: ${adapter.id}`);
     }

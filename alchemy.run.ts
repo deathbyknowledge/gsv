@@ -33,12 +33,15 @@ export default Alchemy.Stack("gsv", {
   for (const id of requested) {
     const adapter = manifest.adapters.find((candidate) => candidate.id === id);
     if (!adapter?.managed) throw new Error(`No operator adapter deployment is available for ${id}`);
+    const adapterEnvironment: Cloudflare.Workers.WorkerBindingProps = { GSV_ACCOUNT_ORIGIN: adminOrigin };
+    for (const variable of adapter.managed.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.string(variable);
     const worker = yield* GsvAdapterWorker({ logicalId: `GsvAdapter-${id}`, workerName: `${prefix}-channel-${id}`,
       adapter, deployment: adapter.managed,
-      env: { GSV_ACCOUNT_ORIGIN: adminOrigin },
+      env: adapterEnvironment,
       secrets: Object.fromEntries(adapter.managed.requiredSecrets.map((secret) => [secret, { env: secret }])),
     });
-    adapters.push({ id, gatewayBinding: adapter.gatewayBinding, gatewayEntrypoint: adapter.managed.gatewayEntrypoint, worker });
+    adapters.push({ id, gatewayBinding: adapter.gatewayBinding, gatewayEntrypoint: adapter.managed.gatewayEntrypoint,
+      lifecycle: adapter.managed.lifecycle, worker });
   }
   const apiKey = Option.getOrUndefined(yield* Config.redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
@@ -55,9 +58,6 @@ export default Alchemy.Stack("gsv", {
       maxDurationMs: yield* Config.int("GSV_INFERENCE_MAX_DURATION_MS").pipe(Config.withDefault(180_000)),
       apiKey, baseUrl: Option.getOrUndefined(yield* Config.string("GSV_INFERENCE_BASE_URL").pipe(Config.option)),
     },
-  });
-  for (const adapter of adapters) yield* adapter.worker.bind(`GsvAdapter-${adapter.id}-DirectoryBinding`, {
-    bindings: [{ type: "service", name: "INSTALLATION_DIRECTORY", service: deployment.directory.workerName }],
   });
   return { gateway: deployment.gateway.workerName, administration: adminOrigin, accessMode,
     installationDatabase: deployment.database?.databaseId,

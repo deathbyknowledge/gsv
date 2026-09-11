@@ -51,7 +51,11 @@ are created explicitly in administration. Ordinary redeployments do not create
 installations or rotate credentials.
 
 Enabled adapters require their application secrets declared in the adapter
-manifest. Their public callback routes and provider application registration
+manifest, along with its `requiredVariables`. Telegram needs its bot username
+and public webhook origin, Slack its public origin, and Discord its application
+ID. The common runtime binds Accounts, Gateway and each adapter's lifecycle
+service; the manifest inventories every owned Durable Object namespace,
+including retained legacy namespaces. Their public callback routes and provider application registration
 belong to the operator; enabling a Worker alone does not complete that external
 provider setup. People pair their own identities through their installation.
 
