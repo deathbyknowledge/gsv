@@ -44,6 +44,14 @@ dispatch, including retries and fallback attempts. Funded inference keeps
 payload logging disabled; native Workers AI keeps log collection disabled.
 These tags add no prompts, response text, account names, or credentials.
 
+A synthetic request on H&M staging verified this transport on September 11,
+2026, after deploying public `389cf765` and private `eed5d34`. The request
+completed successfully, and an authenticated, metadata-filtered Cloudflare API
+read returned its exact owning installation, request and attempt identifiers.
+Only the log listing was read; no payload endpoint was read and no log was
+deleted. This establishes attribution for that new request, not historical
+coverage or erasure.
+
 The operator can use [metadata-filtered log enumeration](https://developers.cloudflare.com/api/resources/ai_gateway/subresources/logs/methods/list/)
 to verify each exact installation tag and obtain log IDs for scoped deletion
 after live inference has stopped. Gateway `default` is shared by H&M production
