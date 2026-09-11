@@ -14,7 +14,8 @@ export const installationDeletionInspectionSchema = z.strictObject({
   candidateInstallationIds: z.array(installationId).max(500).optional(),
 });
 export const installationResourceObservationSchema = installationResourceProbeSchema.extend({
-  outcome: z.enum(["identified", "empty", "unidentified"]),
+  // "unrelated" is target-relative: understood shared records contain no data owned by the requested installation.
+  outcome: z.enum(["identified", "empty", "unrelated", "unidentified"]),
   installationId: installationId.optional(), localId: z.string().min(1).max(1024).optional(),
 });
 export const installationDeletionInspectionResultSchema = z.strictObject({
