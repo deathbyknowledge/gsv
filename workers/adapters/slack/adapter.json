@@ -5,7 +5,9 @@
   "description": "Slack adapter worker",
   "deployOrder": 4,
   "wranglerConfig": "wrangler.jsonc",
-  "devStateDirectories": ["gsv-channel-slack-SlackAccount"],
+  "devStateDirectories": [
+    "gsv-channel-slack-SlackAccount"
+  ],
   "standalone": {
     "main": "dist/cloudflare/channel-slack/worker/index.js",
     "bundle": false,
@@ -36,6 +38,10 @@
       {
         "binding": "MANAGED_SLACK_PAIRING",
         "className": "ManagedSlackPairing"
+      },
+      {
+        "binding": "SLACK_INSTALLATIONS",
+        "className": "SlackInstallation"
       }
     ],
     "requiredSecrets": [
@@ -44,6 +50,27 @@
       "SLACK_SIGNING_SECRET",
       "SLACK_OAUTH_STATE_SECRET"
     ],
-    "selfUrlBinding": "SLACK_PUBLIC_BASE_URL"
+    "selfUrlBinding": "SLACK_PUBLIC_BASE_URL",
+    "lifecycle": {
+      "entrypoint": "SlackLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "binding": "MANAGED_SLACK_WORKSPACE",
+          "kind": "adapter-account"
+        },
+        {
+          "binding": "MANAGED_SLACK_PEER",
+          "kind": "adapter-peer"
+        },
+        {
+          "binding": "MANAGED_SLACK_PAIRING",
+          "kind": "adapter-pairing"
+        },
+        {
+          "binding": "SLACK_INSTALLATIONS",
+          "kind": "adapter-installation"
+        }
+      ]
+    }
   }
 }

@@ -79,6 +79,31 @@ describe("public operator composition", () => {
     expect(recorded.workers[1].props.env?.INFERENCE_EXECUTION).toBe(executor);
   });
 
+  it("binds adapter cleanup to Accounts with the exact deployment-owned authority", async () => {
+    const adapter = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram", main: "telegram.js" }));
+    await run(GsvDeployment({ ...input, services: { adapters: [{ id: "telegram", worker: adapter,
+      gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel",
+      lifecycle: { entrypoint: "TelegramLifecycleEntrypoint", namespaces: [
+        { binding: "TELEGRAM_INSTALLATIONS", kind: "adapter-installation" },
+      ] },
+    }] } }, dependencies));
+    expect(recorded.bindings).toContainEqual({ id: "FixturetelegramDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_TELEGRAM", service: "telegram", entrypoint: "TelegramLifecycleEntrypoint",
+      props: { authority: "installation-deletion" } }] });
+  });
+
+  it("refuses an adapter without a cleanup owner before allocating runtime storage", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const executor = await run(dependencies.Cloudflare.Worker("Inference", { name: "inference", main: "inference.js" }));
+    const adapter = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram", main: "telegram.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvRuntime({ ...input, mode: "managed", services: { installationDirectory: directory,
+      inferenceExecution: executor, adapters: [{ id: "telegram", worker: adapter,
+        gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel" }] } }, dependencies)))
+      .rejects.toThrow(/requires an owned lifecycle/);
+    expect(recorded.workers).toEqual([]);
+  });
+
   it("refuses missing required services before creating runtime resources", async () => {
     await expect(run(GsvRuntime({ ...input, mode: "managed", services: {} }, dependencies))).rejects.toThrow(/requires an installation directory/);
     expect(recorded.workers).toEqual([]);

@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { retain } from "alchemy/RemovalPolicy";
+import type { AdapterWorkerDeploymentManifest } from "./manifest.ts";
 
 export const GSV_WORKER_COMPATIBILITY = {
   date: "2026-07-29",
@@ -27,6 +28,7 @@ export type GsvAdapterBinding = {
   gatewayEntrypoint: string;
   gatewayBindingLogicalId?: string;
   worker: Cloudflare.Workers.Worker;
+  lifecycle?: AdapterWorkerDeploymentManifest["lifecycle"];
   calls?: readonly string[];
 };
 
@@ -92,6 +94,11 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     }
     const compatibility = props.compatibility ?? GSV_WORKER_COMPATIBILITY;
     const adapters = props.services?.adapters ?? [];
+    for (const adapter of adapters) {
+      if (!/^[a-z][a-z0-9-]*$/.test(adapter.id) || !adapter.lifecycle) {
+        throw new Error(`Adapter ${adapter.id} requires an owned lifecycle before multi-space deployment`);
+      }
+    }
     const storageResource = Cloudflare.R2.Bucket(
       `${props.logicalPrefix}Storage`,
       { name: props.names.storageBucket },
@@ -172,6 +179,11 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     ).pipe(retain());
 
     for (const adapter of adapters) {
+      yield* directory.bind(`${props.logicalPrefix}${adapter.id}DeletionBinding`, {
+        bindings: [{ type: "service", name: `DELETION_OWNER_${adapter.id.replaceAll("-", "_").toUpperCase()}`,
+          service: adapter.worker.workerName, entrypoint: adapter.lifecycle!.entrypoint,
+          props: { authority: "installation-deletion" } }],
+      });
       yield* adapter.worker.bind(
         adapter.gatewayBindingLogicalId ??
           `${props.logicalPrefix}${adapter.id}GatewayBinding`,

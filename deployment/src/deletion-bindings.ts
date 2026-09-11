@@ -1,6 +1,7 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
 import type { InstallationDeletionInspection } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import type { GsvAdapterBinding } from "./runtime.ts";
 
 export type GsvDeletionNamespace = {
   ownerId: string;
@@ -9,6 +10,13 @@ export type GsvDeletionNamespace = {
   kind: InstallationDeletionInspection["resources"][number]["kind"];
 };
 type NamespaceCatalog = Record<string, Pick<GsvDeletionNamespace, "ownerId" | "kind">>;
+
+export function gsvAdapterDeletionNamespaces(adapters: readonly GsvAdapterBinding[]): GsvDeletionNamespace[] {
+  return adapters.flatMap((adapter) => {
+    if (!adapter.lifecycle) throw new Error(`Adapter ${adapter.id} has no lifecycle inventory`);
+    return adapter.lifecycle.namespaces.map((namespace) => ({ ...namespace, ownerId: adapter.id, worker: adapter.worker }));
+  });
+}
 
 /** Physical namespace IDs come from the adopted Worker outputs, never operator-entered IDs. */
 export function GsvDeletionDiscoveryBindings(

@@ -1,6 +1,6 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
-import { GsvDeletionDiscoveryBindings } from "./deletion-bindings.ts";
+import { GsvDeletionDiscoveryBindings, gsvAdapterDeletionNamespaces } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string;
@@ -115,6 +115,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       { ownerId: "gateway", worker: runtime.gateway, binding: "CONVERSATION", kind: "conversation" },
       { ownerId: "gateway", worker: runtime.ripgit, binding: "REPOSITORY", kind: "ripgit" },
       { ownerId: "inference", worker: inferenceWorker, binding: "INFERENCE_EXECUTORS", kind: "inference-executor" },
+      ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
     ]);
   }
   if (props.routing) {

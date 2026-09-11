@@ -81,6 +81,7 @@ export const GsvAdapterWorker = (
     bundle: props.deployment.bundle,
     compatibility: props.compatibility ?? GSV_WORKER_COMPATIBILITY,
     workersDev: props.workersDev ?? false,
+    crons: props.deployment.crons,
     observability: props.observability ?? { enabled: true },
     env: workerEnv,
   }).pipe(runtime.retain());

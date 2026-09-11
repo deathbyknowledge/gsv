@@ -5,7 +5,9 @@
   "description": "Telegram adapter worker",
   "deployOrder": 3,
   "wranglerConfig": "wrangler.jsonc",
-  "devStateDirectories": ["gsv-channel-telegram-TelegramAccount"],
+  "devStateDirectories": [
+    "gsv-channel-telegram-TelegramAccount"
+  ],
   "standalone": {
     "main": "dist/cloudflare/channel-telegram/worker/index.js",
     "bundle": false,
@@ -33,11 +35,32 @@
       {
         "binding": "MANAGED_TELEGRAM_PAIRING",
         "className": "ManagedTelegramPairing"
+      },
+      {
+        "binding": "TELEGRAM_INSTALLATIONS",
+        "className": "TelegramInstallation"
       }
     ],
     "requiredSecrets": [
       "TELEGRAM_BOT_TOKEN",
       "TELEGRAM_WEBHOOK_SECRET"
-    ]
+    ],
+    "lifecycle": {
+      "entrypoint": "TelegramLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "binding": "MANAGED_TELEGRAM_PEER",
+          "kind": "adapter-peer"
+        },
+        {
+          "binding": "MANAGED_TELEGRAM_PAIRING",
+          "kind": "adapter-pairing"
+        },
+        {
+          "binding": "TELEGRAM_INSTALLATIONS",
+          "kind": "adapter-installation"
+        }
+      ]
+    }
   }
 }
