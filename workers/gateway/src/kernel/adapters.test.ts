@@ -453,6 +453,8 @@ function makeContext(
     connection: options.connection,
     installationIdentity: options.installationIdentity,
     auth: {
+      credentialEpoch: vi.fn(() => 0),
+      isAccountDisabled: vi.fn(() => false),
       getPasswdByUid: vi.fn((uid: number) => {
         if (uid === human.uid) return human;
         if (uid === personalAgent.uid) return personalAgent;
@@ -4509,6 +4511,21 @@ describe("managed adapter pairing", () => {
       configured: true,
       botUsername: "official_gsv_bot",
     });
+  });
+
+  it("refuses a link prepared before account revocation without activating its adapter route", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    let epoch = 0;
+    vi.mocked(ctx.auth.credentialEpoch).mockImplementation(() => epoch);
+    service.adapterPairingPrepare.mockImplementationOnce(async () => {
+      epoch += 1;
+      return { candidate, route };
+    });
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("credentials changed");
+    expect(ctx.adapters.identityLinks.get("telegram", "managed", "12345")).toBeNull();
+    expect(service.adapterPairingActivate).not.toHaveBeenCalled();
+    expect(service.adapterPairingFinalize).not.toHaveBeenCalled();
   });
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {

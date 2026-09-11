@@ -143,6 +143,7 @@ export async function handleAdapterPairConfirm(
   ctx: KernelContext,
 ): Promise<AdapterPairConfirmResult> {
   const uid = requireInteractivePairingOwner(ctx, "adapter.pair.confirm");
+  const credentialEpoch = ctx.auth.credentialEpoch(uid);
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
   const service = requirePairingService(ctx, adapter);
@@ -197,6 +198,10 @@ export async function handleAdapterPairConfirm(
     throw new Error("Adapter pairing changed during preparation");
   }
 
+  // A password reset or removal during provider preparation cannot restore the old user's link.
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
   ctx.adapters.identityLinks.link(
     adapter,
     prepared.candidate.accountId,
@@ -221,6 +226,9 @@ export async function handleAdapterPairConfirm(
       canonicalOrigin,
     },
   ), ctx.installationId, uid);
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
   if (
     activated.candidate.actorId !== prepared.candidate.actorId
     || activated.candidate.surfaceId !== prepared.candidate.surfaceId
@@ -432,4 +440,3 @@ function requirePairingPreparation(
   if (previous) result.previousRoute = previous;
   return result;
 }
-

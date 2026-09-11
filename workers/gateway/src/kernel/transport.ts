@@ -286,6 +286,17 @@ async handleReq(
         return;
       }
 
+      if (frame.call === "account.invite.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = await ctx.people.redeem(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch (error) {
+          this.sendError(connection, frame.id, 400, error instanceof Error ? error.message : "Human invitation failed");
+        }
+        return;
+      }
+
       if (!state || state.step !== "connected" || !state.peer) {
         if (this.host.auth.isSetupMode()) {
           if (this.host.onboarding.managedOnboardingService()) {

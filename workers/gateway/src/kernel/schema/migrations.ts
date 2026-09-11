@@ -81,6 +81,7 @@ import { KERNEL_V041_RETIRE_PROCESS_SIGNAL_WATCHES } from "./v041_retire_process
 import { KERNEL_V042_ADD_LEDGER_ERROR } from "./v042_add_ledger_error";
 import { KERNEL_V043_ADD_DEVICE_PAIRINGS } from "./v043_add_device_pairings";
 import { KERNEL_V044_ADD_ACCOUNT_RECOVERY } from "./v044_add_account_recovery";
+import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./v045_add_human_invitations";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -130,6 +131,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V042_ADD_LEDGER_ERROR,
   KERNEL_V043_ADD_DEVICE_PAIRINGS,
   KERNEL_V044_ADD_ACCOUNT_RECOVERY,
+  KERNEL_V045_ADD_HUMAN_INVITATIONS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

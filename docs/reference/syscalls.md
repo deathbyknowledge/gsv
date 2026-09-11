@@ -1574,6 +1574,16 @@ type SystemSyscalls = {
     args: { id: string; secret: string; proof: string; password: string };
     result: { username: "root" };
   };
+  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
+  "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
+  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
+  "account.invite.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { uid: number; username: string };
+  };
+  "account.people.list": { args: {}; result: { people: LocalPerson[] } };
+  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
+  "account.remove": { args: { uid: number }; result: { removed: true } };
 };
 ```
 
@@ -1593,6 +1603,25 @@ updates root's password, and revokes earlier root credentials and sessions.
 The receiving browser persists its random proof before redemption. Identical
 retries recover the receipt without rewriting the password; another proof or
 password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+
+Human invitations use a separate fixed `human-account` purpose; a device pairing
+cannot create a human. A signed-in root human fixes the username and supplies a
+UUID and 32-byte hexadecimal secret, which the Kernel stores hashed. Invitations
+expire after ten minutes; cancellation or root credential revocation prevents
+consumption. `/join` on the space's own hostname reads the invitation from its
+fragment and stores a recipient-generated proof before clearing the fragment.
+`account.invite.redeem` runs before authentication behind the installation work
+gate. It atomically creates the local account and stores the proof-and-password
+receipt; an identical retry completes home setup without changing credentials.
+The account gets its personal agent on first sign-in.
+
+`account.people.list`, invitation administration, `account.password.set` and
+`account.remove` require a root human session with credential provenance; a
+Process acting as root cannot invoke them. Password reset and removal apply to
+ordinary human accounts. Both revoke earlier credentials and linked messengers;
+removal also disables future sign-in and credential issuance. The uid, groups,
+data and already-admitted Processes remain. A removed uid cannot be linked to a
+messenger again. Enrollment secrets and new passwords never enter the ledger.
 
 ## AI: `ai.*`
 

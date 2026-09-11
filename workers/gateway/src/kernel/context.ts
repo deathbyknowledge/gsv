@@ -19,6 +19,7 @@ import type {
 import type { AuthStore } from "./auth-store";
 import type { DevicePairingStore } from "./device-pairings";
 import type { AccountRecoveryStore } from "./account-recovery";
+import type { PeopleStore } from "./people";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { TargetRegistry } from "./target-registry";
@@ -51,6 +52,8 @@ export type KernelContext = {
   auth: AuthStore;
   pairings: DevicePairingStore;
   accountRecovery: AccountRecoveryStore;
+  people: PeopleStore;
+  invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
   targets: TargetRegistry;

@@ -109,6 +109,8 @@ import type {
   AccountCreateResult,
   AccountListArgs,
   AccountListResult,
+  HumanInvitation,
+  LocalPerson,
   ConnectArgs,
   ConnectResult,
   SysBootstrapArgs,
@@ -416,6 +418,13 @@ export type SyscallDomains = {
   "account.list": { args: AccountListArgs; result: AccountListResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
   "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
+  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
+  "account.invite.list": { args: Record<string, never>; result: { invitations: HumanInvitation[] } };
+  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
+  "account.invite.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { uid: number; username: string } };
+  "account.people.list": { args: Record<string, never>; result: { people: LocalPerson[] } };
+  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
+  "account.remove": { args: { uid: number }; result: { removed: true } };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };

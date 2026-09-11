@@ -43,6 +43,7 @@ import {
 import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
 import { AccountRecoveryStore } from "./account-recovery";
+import { PeopleStore } from "./people";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -379,6 +380,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly auth: AuthStore;
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
+  readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
@@ -453,6 +455,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
     this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
+    this.people = new PeopleStore(ctx.storage, this.auth);
 
     this.routes = new RoutingTable(sql);
     this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
@@ -1300,6 +1303,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       auth: this.auth,
       pairings: this.pairings,
       accountRecovery: this.accountRecovery,
+      people: this.people,
+      invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
       targets: this.targets,
@@ -1523,8 +1528,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
+      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem" || frame.call === "account.invite.redeem"
         ? { id: frame.args.id }
+        : frame.call === "account.invite.create" ? { id: frame.args.id, username: frame.args.username }
+        : frame.call === "account.password.set" ? { uid: frame.args.uid }
         : frame.call === "sys.pair.create"
         ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
         : frame.call === "sys.pair.redeem" ? { id: frame.args.id }

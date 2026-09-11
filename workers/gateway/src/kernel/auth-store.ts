@@ -103,6 +103,7 @@ export class AuthStore {
       ON CONFLICT(uid) DO UPDATE SET credential_epoch = credential_epoch + 1`, uid);
     this.sql.exec("UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE uid = ? AND revoked_at IS NULL", Date.now(), reason, uid);
     this.sql.exec("UPDATE device_pairings SET cancelled_at = ? WHERE owner_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
+    this.sql.exec("UPDATE human_invitations SET cancelled_at = ? WHERE issuer_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
   }
 
   getPersonalAgentUid(ownerUid: number): number | null {

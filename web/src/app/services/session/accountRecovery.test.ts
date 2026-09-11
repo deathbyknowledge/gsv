@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readAccountRecoveryAttempt, redeemAccountRecovery } from "./accountRecovery";
+import { readAccountRecoveryAttempt, redeemAccountRecovery, readHumanInvitationAttempt, redeemHumanInvitation } from "./accountRecovery";
 
 describe("root recovery receipt ownership", () => {
   beforeEach(() => {
@@ -33,5 +33,22 @@ describe("root recovery receipt ownership", () => {
     window.history.replaceState(null, "", `/recover#id=${crypto.randomUUID()}&secret=${"s".repeat(43)}`);
     vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
     expect(() => readAccountRecoveryAttempt()).toThrow("storage unavailable");
+  });
+
+  it("keeps human enrollment distinct from root recovery and retries the same receiver proof", async () => {
+    window.history.replaceState(null, "", `/recover#id=${crypto.randomUUID()}&secret=${"a".repeat(64)}`);
+    const recovery = readAccountRecoveryAttempt();
+    window.history.replaceState(null, "", `/join#id=${crypto.randomUUID()}&secret=${"b".repeat(64)}`);
+    const invitation = readHumanInvitationAttempt()!;
+    expect(readAccountRecoveryAttempt()).toEqual(recovery);
+    expect(window.location.hash).toBe("");
+    const requestOnce = vi.fn().mockRejectedValueOnce(new Error("lost reply")).mockResolvedValue({ uid: 1002, username: "member" });
+    await expect(redeemHumanInvitation({ requestOnce }, "wss://space.example.com/ws", invitation, "member-password")).rejects.toThrow("lost reply");
+    expect(readHumanInvitationAttempt()).toEqual(invitation);
+    expect(await redeemHumanInvitation({ requestOnce }, "wss://space.example.com/ws", readHumanInvitationAttempt()!, "member-password")).toEqual({ uid: 1002, username: "member" });
+    expect(requestOnce.mock.calls[0]).toEqual(requestOnce.mock.calls[1]);
+    expect(requestOnce.mock.calls[0][1]).toBe("account.invite.redeem");
+    expect(readHumanInvitationAttempt()).toBeNull();
+    expect(readAccountRecoveryAttempt()).toEqual(recovery);
   });
 });
