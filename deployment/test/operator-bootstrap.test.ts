@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readD1Migrations } from "@cloudflare/vitest-pool-workers";
@@ -26,15 +27,20 @@ async function fixture() {
 }
 
 describe("deployment-owned operator bootstrap", () => {
-  it("refuses noninteractive credential issuance before contacting Cloudflare", () => {
+  it("refuses noninteractive credential issuance before contacting Cloudflare", async () => {
     const command = fileURLToPath(new URL("../src/operator-bootstrap-command.ts", import.meta.url));
-    const result = spawnSync(process.execPath, [command, "issue", "--account", "a".repeat(32), "--database",
+    const child = spawn(process.execPath, [command, "issue", "--account", "a".repeat(32), "--database",
       "11111111-1111-4111-8111-111111111111", "--origin", "https://accounts.example.com", "--mode", "operator"],
-    { detached: true, encoding: "utf8", timeout: 5000, env: { ...process.env, CLOUDFLARE_API_TOKEN: "fixture-never-send" } });
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("No credentials were logged");
-    expect(result.stderr).not.toContain("fixture-never-send");
+    { detached: true, stdio: "pipe", timeout: 5000, env: { ...process.env, CLOUDFLARE_API_TOKEN: "fixture-never-send" } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    await once(child, "close");
+    expect(child.exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("No credentials were logged");
+    expect(stderr).not.toContain("fixture-never-send");
   });
   it("issues once on a fresh public schema and keeps redeployment inert", async () => {
     const { db, database } = await fixture();
