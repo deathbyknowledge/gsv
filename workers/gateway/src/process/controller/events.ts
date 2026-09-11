@@ -19,16 +19,12 @@ export async function deliverProcessEvent(
   const eventId = z.string().regex(/^[a-zA-Z0-9._:-]{1,200}$/).parse(args.eventId);
   const event = procHistoryEventSchema.parse(args.event);
   const definition = procHistoryTargetEventRegistry["target.status"];
-  const registered = event.kind === "process.approval"
-    ? event.severity === "warn" && event.audience === "model"
-    : event.kind === definition.kind && event.severity === definition.severity
-      && definition.allowedAudiences.includes(event.audience);
-  if (!registered || (event.kind !== "process.approval" && event.kind !== "target.connection")) {
+  if (event.kind !== definition.kind || event.severity !== definition.severity ||
+      !definition.allowedAudiences.includes(event.audience)) {
     throw new Error("Process event is not registered for this delivery path");
   }
   const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-  if (event.payload.observedAt <= resetAt || (event.kind === "process.approval"
-    && (event.payload.sourceCreatedAt <= resetAt || host.controller.isAbortedRun(event.payload.sourceRunId)))) {
+  if (event.payload.observedAt <= resetAt) {
     return { eventId, runId: null, queued: false, ignored: true };
   }
   const content = renderHistoryEvent(event);

@@ -4,7 +4,7 @@ import { startOpenAiFixture } from "./openai-fixture";
 import { z } from "zod";
 
 describe("delegated approval journey", () => {
-  it("notifies an idle parent, restores the child request after reconnect, and accepts the human's exact decision", async () => {
+  it("notifies the human without waking the idle parent and restores the exact child approval after reconnect", async () => {
     const runtime = await startProcessRuntimeHarness();
     const childAi = await startOpenAiFixture();
     try {
@@ -25,15 +25,22 @@ describe("delegated approval journey", () => {
           input: "proc delegate --model child-model --label ft-news 'Fetch the latest news'",
         } }] },
         { kind: "tool-calls", calls: [{ id: "yield-parent", name: "Shell", arguments: { input: "yield" } }] },
-        { kind: "message", text: "The delegated news task is waiting for your approval." },
       );
-      childAi.enqueue(
+      const heldChild = childAi.hold(
         { kind: "tool-calls", calls: [{ id: "fetch-news", name: "CodeMode", arguments: {
           code: `const response = await net.fetch({ url: ${JSON.stringify(`${runtime.ai.baseUrl}/approval-fixture`)} }); return response.status;`,
         } }] },
       );
       const sent = await runtime.client.proc.send({ pid: parent.pid, message: "Delegate the news lookup." });
       if (!sent.ok) throw new Error(sent.error);
+      await heldChild.started;
+      await runtime.waitFor(async () => {
+        const state = await runtime.client.proc.history({ pid: parent.pid, format: 2 });
+        return state.ok && state.activeRunId === null;
+      }, "parent to yield before child approval", 20000);
+      const parentBefore = await runtime.client.proc.history({ pid: parent.pid, format: 2 });
+      const parentCalls = runtime.ai.requests.length;
+      heldChild.release();
       await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) => signal === "proc.run.hil.requested"
         && payload.syscall === "net.fetch"), "delegated net.fetch approval", 20000);
       const child = (await runtime.client.proc.list({})).processes.find(({ label }) => label === "ft-news");
@@ -44,15 +51,16 @@ describe("delegated approval journey", () => {
       if (!history.ok || !history.pendingHil) throw new Error("Child approval could not be loaded");
       const request = history.pendingHil;
       expect(request).toMatchObject({ pid: child.pid, runId: child.activeRunId, syscall: "net.fetch", target: "gsv" });
-      await runtime.waitFor(async () => {
-        const state = await runtime.client.proc.history({ pid: parent.pid, format: 2 });
-        return state.ok && state.format === 2 && state.records.some((record) => record.kind === "event"
-          && record.payload.kind === "process.approval" && record.payload.payload.requestId === request.requestId);
-      }, "durable parent approval event", 20000);
-      await runtime.waitFor(() => runtime.ai.requests.some(({ messages }) => JSON.stringify(messages).includes("waiting for human approval")), "parent model to observe the approval", 20000);
+      expect(runtime.signals).toContainEqual(expect.objectContaining({ signal: "proc.changed", payload: expect.objectContaining({
+        pid: child.pid, runtime: expect.objectContaining({ state: "waiting_hil", activeRunId: request.runId }),
+      }) }));
+      expect(await runtime.client.proc.history({ pid: parent.pid, format: 2 })).toEqual(parentBefore);
+      expect(runtime.ai.requests).toHaveLength(parentCalls);
       runtime.client.close();
       await runtime.client.connect();
       expect(await runtime.client.proc.history({ pid: child.pid, includeMessages: false })).toMatchObject({ ok: true, pendingHil: request });
+      expect(await runtime.client.proc.history({ pid: parent.pid, format: 2 })).toEqual(parentBefore);
+      expect(runtime.ai.requests).toHaveLength(parentCalls);
       childAi.enqueue({ kind: "text", chunks: ["The fetch completed."] });
       expect(await runtime.client.proc.hil({ pid: child.pid, requestId: request.requestId, decision: "approve" }))
         .toMatchObject({ ok: true, pid: child.pid, requestId: request.requestId });
