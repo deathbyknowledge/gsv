@@ -203,8 +203,9 @@ describe("installation resource retirement", () => {
     const otherId = crypto.randomUUID();
     const kernel = env.KERNEL.getByName(otherId);
     const discovery = new GatewayDeletionDiscovery(env);
-    const inspected = await discovery.inspect({ installationId: input.installationId, candidateInstallationIds: [crypto.randomUUID(), otherId], resources: [{ kind: "kernel", objectId: kernel.id.toString() }] });
-    expect(inspected.observations).toEqual([{ kind: "kernel", objectId: kernel.id.toString(), name: otherId, installationId: otherId, outcome: "identified" }]);
+    const namespaceId = "a".repeat(32);
+    const inspected = await discovery.inspect({ installationId: input.installationId, candidateInstallationIds: [crypto.randomUUID(), otherId], resources: [{ kind: "kernel", objectId: kernel.id.toString(), namespaceId }] });
+    expect(inspected.observations).toEqual([{ kind: "kernel", objectId: kernel.id.toString(), namespaceId, name: otherId, installationId: otherId, outcome: "identified" }]);
     const foreign = { kind: "mail" as const, objectId: "a".repeat(64), name: input.installationId };
     await expect(discovery.inspect({ installationId: input.installationId, resources: [foreign] })).rejects.toThrow("not owned by Gateway");
     await expect(discovery.import({ installationId: input.installationId, discoverySha256: "a".repeat(64), resources: [foreign] })).rejects.toThrow("not owned by Gateway");

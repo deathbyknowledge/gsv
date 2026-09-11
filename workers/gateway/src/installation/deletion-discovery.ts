@@ -26,6 +26,7 @@ export class GatewayDeletionDiscovery {
     const observations: InstallationResourceObservation[] = [];
     for (const resource of request.resources) {
       const observation: InstallationResourceObservation = { kind: resource.kind, objectId: resource.objectId, outcome: "unidentified" };
+      if (resource.namespaceId) observation.namespaceId = resource.namespaceId;
       let evidence: ResourceStorageInspection;
       let name = resource.name;
       if (resource.kind === "ripgit") {
