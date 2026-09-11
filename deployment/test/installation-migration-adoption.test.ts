@@ -100,6 +100,26 @@ describe("installation migration adoption", () => {
     expect(() => planInstallationMigrationAdoption(state.input)).toThrow(/unverified/);
   });
 
+  it("adopts Wrangler's standard ledger while rejecting null migration names", () => {
+    const state = fixture();
+    state.database.exec(`ALTER TABLE d1_migrations RENAME TO previous_ledger;
+      CREATE TABLE d1_migrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      INSERT INTO d1_migrations SELECT * FROM previous_ledger;
+      DROP TABLE previous_ledger;`);
+    const before = state.database.prepare("SELECT * FROM d1_migrations ORDER BY id").all();
+    const plan = planInstallationMigrationAdoption(state.input);
+    expect(plan.owners[0].seed.map((entry) => entry.id)).toEqual(["1", "2"]);
+    applyOwner(state, plan, 0);
+    expect(planInstallationMigrationAdoption(state.input).owners[0].seed).toEqual([]);
+    expect(state.database.prepare("SELECT * FROM d1_migrations ORDER BY id").all()).toEqual(before);
+    state.database.exec("INSERT INTO d1_migrations (name) VALUES (NULL)");
+    expect(() => planInstallationMigrationAdoption(state.input)).toThrow(/record shape/);
+  });
+
   it("rejects changed provenance, conflicting timestamps, and falsely completed handoffs", () => {
     const state = fixture();
     const first = planInstallationMigrationAdoption(state.input);

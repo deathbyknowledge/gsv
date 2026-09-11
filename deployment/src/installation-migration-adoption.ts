@@ -94,10 +94,18 @@ const schemaObjectSchema = z.object({
 function ledger(db: Reader, name: string): MigrationEntry[] {
   if (!exists(db, name)) return [];
   const columns = query(db, `PRAGMA table_info(${quote(name)})`);
+  const nameColumn = columns.find((column) => column.name === "name");
+  const wranglerNames = nameColumn?.type === "TEXT" && nameColumn.notnull === 0
+    && columns.some((column) => column.name === "id" && column.type === "INTEGER" && column.pk === 1)
+    && columns.some((column) => column.name === "applied_at" && column.type === "TIMESTAMP"
+      && column.dflt_value === "CURRENT_TIMESTAMP")
+    && query(db, `PRAGMA index_list(${quote(name)})`).some((index) => index.unique === 1 && index.partial === 0
+      && query(db, `PRAGMA index_info(${quote(String(index.name))})`).map((column) => column.name).join(",") === "name");
   if (columns.length !== 3 || !["id", "name", "applied_at"].every((column) =>
     columns.some((row) => row.name === column))
     || !columns.some((row) => row.name === "id" && row.pk === 1 && ["TEXT", "INTEGER"].includes(String(row.type).toUpperCase()))
-    || !["name", "applied_at"].every((name) => columns.some((row) => row.name === name && row.notnull === 1))) {
+    || (nameColumn?.notnull !== 1 && !wranglerNames)
+    || !columns.some((row) => row.name === "applied_at" && row.notnull === 1)) {
     throw new Error("Unrecognized migration ledger schema");
   }
   const seen = new Set<string>();
