@@ -1041,7 +1041,9 @@ async function resolveCompleteAiModelConfig(options: {
     provider,
     options.apiKey,
   );
-  const modelContextWindow = await resolveModelContextWindow(options.ctx, provider, model);
+  const modelContextWindow = options.model.contextWindowTokens === undefined
+    ? await resolveModelContextWindow(options.ctx, provider, model)
+    : null;
   const contextWindowTokens = options.model.contextWindowTokens
     ?? modelContextWindow
     ?? null;

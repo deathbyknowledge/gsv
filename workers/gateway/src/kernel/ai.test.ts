@@ -1856,6 +1856,21 @@ describe("handleAiConfig", () => {
     }
   });
 
+  it("resolves an explicit context limit without depending on provider metadata", async () => {
+    const ctx = makeAiConfigContext();
+    const resolveModel = vi.fn(async () => { throw new Error("metadata unavailable"); });
+    ctx.env.INFERENCE_EXECUTION = {
+      resolveModel,
+      getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }),
+    };
+    const result = await handleAiConfig({
+      modelConfig: { provider: "openai", model: "gpt-4.1-mini", apiKey: "request-key", contextWindowTokens: 64000 },
+    }, ctx);
+    expect(result.contextWindowTokens).toBe(64000);
+    expect(result.contextWindowSource).toBe("config");
+    expect(resolveModel).not.toHaveBeenCalled();
+  });
+
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
     const result = await handleAiConfig({
       modelConfig: {

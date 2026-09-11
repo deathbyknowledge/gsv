@@ -49,4 +49,22 @@ describe("gateway media execution ownership", () => {
     await expect(execute({ kind: "transcription", input: { provider: "workers-ai", model: "whisper", maxInputBytes: 100 } }, new ReadableStream({ cancel }), 1000)).rejects.toThrow("not configured");
     expect(cancel).toHaveBeenCalledOnce();
   });
+
+  it("settles an admission timeout even when input cancellation remains pending", async () => {
+    vi.useFakeTimers();
+    const { getExecutor, execute } = fixture();
+    getExecutor.mockImplementation(() => new Promise<never>(() => {}));
+    let finishCancellation!: () => void;
+    const cancel = vi.fn(() => new Promise<void>((resolve) => { finishCancellation = resolve; }));
+    const completed = vi.fn();
+    const pending = execute({ kind: "transcription", input: { provider: "workers-ai", model: "whisper", maxInputBytes: 100 } }, new ReadableStream({ cancel }), 50).catch(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(51);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(completed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: "TimeoutError" }));
+    } finally {
+      finishCancellation();
+      await pending;
+    }
+  });
 });

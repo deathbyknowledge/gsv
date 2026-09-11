@@ -61,7 +61,7 @@ export function createMediaExecutor(env: GatewayEnv, attribution: () => Promise<
       return { ...result, body: responseBody };
     } catch (error) {
       cancel();
-      if (!started) await body?.cancel(error).catch(() => {});
+      if (!started) void body?.cancel(error).catch(() => {});
       cleanup();
       throw error;
     }
