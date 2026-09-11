@@ -107,6 +107,19 @@ real state change clears that retry and installs the record's new deadline, leas
 check condition. This prevents a provider or terminal-action failure from silently
 stranding an otherwise open responsibility without polling deferred or delegated work.
 
+When a human or Process explicitly puts a Ship assignment into `waiting`, the ledger
+sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
+deadline brings that default forward. An explicit check time is preserved, and
+`nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
+it. System producers keep their own wake conditions, including initial onboarding,
+which must wait for the first user interaction.
+
+A due Ship check is actionable even while a blocker remains. Ship must review the
+current conversation and responsibility, then resolve, cancel, delegate, or defer it
+before yielding. Reasserting `waiting` after the check renews the default when no
+explicit time is provided. The check does not itself send a user message; Ship decides
+whether the question still needs an answer and whether a follow-up is appropriate.
+
 ## Context epochs
 
 A context epoch is the stable model-context baseline shared by one or more Process

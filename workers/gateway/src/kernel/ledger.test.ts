@@ -4,8 +4,10 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { Kernel } from "./do";
+import { runKernelSqlMigrations } from "./schema/migrations";
 import {
   LEDGER_ARGS_LIMIT,
+  LEDGER_ERROR_LIMIT,
   LEDGER_ID_LIMIT,
   LEDGER_INDEX_BATCH,
   LEDGER_INDEX_SET_LIMIT,
@@ -20,6 +22,7 @@ import {
   type LedgerObjectStore,
   ledgerTargetOf,
   outcomeOfResponse,
+  errorOfResponse,
   argsText,
   usageOfResponse,
   type LedgerAppend,
@@ -135,6 +138,56 @@ describe("outcomeOfResponse", () => {
 });
 
 describe("LedgerStore", () => {
+  it("upgrades a version 41 ledger without losing earlier calls", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
+      store.append(entry({ requestId: "before-upgrade" }));
+      store.complete("before-upgrade", { outcome: "ok" }, 2000);
+      sql.exec("ALTER TABLE ledger_window DROP COLUMN error");
+      sql.exec("DELETE FROM _gsv_schema_migrations WHERE component = 'kernel' AND id = 42");
+      runKernelSqlMigrations(storage);
+      runKernelSqlMigrations(storage);
+      expect((await store.list({ ownerUid: 1000, limit: 10 })).lines[0]).toMatchObject({ call: "fs.read", args: '{"path":"~/notes.txt"}', outcome: "ok", error: null });
+    });
+  });
+  it("keeps a bounded failure reason through rotation and reads older segments without one", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const bucket = new MemoryBucket();
+      const store = new LedgerStore(sql, storage, bucketOf(bucket));
+      const now = LEDGER_WINDOW_AGE_MS + 5000;
+      store.append(entry({ requestId: "failure" }));
+      store.complete("failure", { outcome: "failed", error: "x".repeat(LEDGER_ERROR_LIMIT + 100) }, 2000);
+      await store.rotate(now);
+      const query = { ownerUid: 1000, limit: 10 };
+      const saved = await store.list(query);
+      expect(saved.lines[0].error).toHaveLength(LEDGER_ERROR_LIMIT);
+      for (const [key, value] of bucket.objects) {
+        bucket.objects.set(key, value.split("\n").filter(Boolean).map((line) => { const data = JSON.parse(line); delete data.error; return JSON.stringify(data); }).join("\n") + "\n");
+      }
+      expect((await store.list(query)).lines[0]).toMatchObject({ call: "fs.read", outcome: "failed" });
+    });
+  });
+  it("publishes persisted capped rows after append, completion and stale cancellation, exactly once per transition", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const changes: { ownerUid: number; line: import("./ledger").LedgerLine }[] = [];
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()), (ownerUid, line) => {
+        expect(sql.exec<{ outcome: string | null }>("SELECT outcome FROM ledger_window WHERE seq = ?", line.seq).one().outcome).toBe(line.outcome);
+        changes.push({ ownerUid, line });
+      });
+      store.append(entry({ requestId: "first", ownerUid: 1001, args: "x".repeat(LEDGER_ARGS_LIMIT + 1) }));
+      store.complete("first", { outcome: "denied", tokens: 15, costNanoUsd: 42 }, 1200);
+      store.complete("first", { outcome: "failed" }, 1300);
+      store.complete("absent", { outcome: "failed" });
+      store.append(entry({ requestId: "stale" }));
+      store.closeStale(LEDGER_WINDOW_AGE_MS + 2000);
+      expect(changes.map(({ ownerUid, line }) => [ownerUid, line.outcome])).toEqual([[1001, null], [1001, "denied"], [1000, null], [1000, "cancelled"]]);
+      expect(changes[0].line.args).toHaveLength(LEDGER_ARGS_LIMIT);
+      expect(changes[1].line).toMatchObject({ durationMs: 200, tokens: 15, costNanoUsd: 42 });
+      expect(changes[0].line).not.toHaveProperty("ownerUid");
+      expect(changes[0].line).not.toHaveProperty("requestId");
+    });
+  });
+
   it("appends open lines, caps every client field, and completes with outcome and duration", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
@@ -587,6 +640,15 @@ describe("LedgerStore", () => {
       expect(await store.pruneMissingSegments()).toBe(1);
       expect(store.segments()).toEqual([]);
     });
+  });
+});
+
+describe("ledger failure reasons", () => {
+  it("records the message without provider metadata or body fields", () => {
+    expect(errorOfResponse({ type: "res", id: "1", ok: false, error: { code: 403, message: "Permission denied" } })).toBe("Permission denied");
+    expect(errorOfResponse({ type: "res", id: "1", ok: true, data: { ok: false, error: { message: "No credits", private: "never copy" }, content: "do not retain" } })).toBe("No credits");
+    expect(errorOfResponse({ type: "res", id: "1", ok: true, data: { ok: true, error: "not a failure" } })).toBeNull();
+    expect(errorOfResponse({ type: "res", id: "1", ok: true, data: { status: "failed", error: "x".repeat(10_000) } })).toHaveLength(LEDGER_ERROR_LIMIT);
   });
 });
 

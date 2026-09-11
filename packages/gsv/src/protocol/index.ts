@@ -1,4 +1,6 @@
 export type * from "./syscalls/system";
+export type * from "./syscalls/pairing";
+export * from "./pairing";
 export type * from "./syscalls/fs";
 export type * from "./syscalls/shell";
 export { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "./syscalls/shell";
@@ -20,6 +22,7 @@ export {
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/ai";
+export { orderAiModelIds } from "./syscalls/ai";
 export type * from "./syscalls/mail";
 export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";

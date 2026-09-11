@@ -199,6 +199,7 @@ const shellExecTimeoutArgumentsSchema = z.looseObject({
 });
 const shellExecSessionArgumentsSchema = z.looseObject({
   sessionId: z.string(),
+  start: z.optional(z.boolean()),
 });
 const shellExecPollingArgumentsSchema = z.looseObject({
   yieldMs: z.optional(z.number().check(z.positive())),
@@ -267,6 +268,7 @@ const SYSCALL_NAMES = [
   "fs.copy",
   "fs.transfer.stat",
   "shell.exec",
+  "shell.cancel",
   "codemode.exec",
   "codemode.run",
   "mail.send",
@@ -350,6 +352,10 @@ const SYSCALL_NAMES = [
   "sys.token.create",
   "sys.token.list",
   "sys.token.revoke",
+  "sys.pair.create",
+  "sys.pair.list",
+  "sys.pair.cancel",
+  "sys.pair.redeem",
   "sys.link",
   "sys.unlink",
   "sys.link.list",
@@ -1177,7 +1183,7 @@ export class GSVClient {
     }
     if (call === "shell.exec") {
       const session = shellExecSessionArgumentsSchema.safeParse(args);
-      if (session.success && session.data.sessionId.trim()) {
+      if (session.success && session.data.sessionId.trim() && !session.data.start) {
         const polling = shellExecPollingArgumentsSchema.safeParse(args);
         const pollingWait = polling.success
           ? polling.data.yieldMs ?? this.defaultRequestTimeoutMs

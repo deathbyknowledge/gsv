@@ -47,6 +47,7 @@ export function tombstoneKilledProcessStorage(
 
 export type ArchivedMessageRecord = {
   id?: number;
+  generation?: number;
   runId?: string;
   role: MessageRole;
   content: string;
@@ -114,8 +115,7 @@ export const SEND_TOOL_DESCRIPTION =
   "Send a message to the person this run is for, end the run, or both. Assistant text is never delivered; this is how the person hears from you. yield true ends the run after the message, or silently when there is no text.";
 
 /** Appended to history when a turn ended in text alone; it names Send, and the tool set stays as it was. */
-export const YIELD_CORRECTION_MESSAGE =
-  "Your last turn was plain assistant text, which is Process activity and was not sent to the user. Call the Send tool: text for the person, with yield true when the work is complete, or yield true alone if there is nothing to say.";
+export { YIELD_CORRECTION_MESSAGE } from "../../prompts/correction-events";
 
 /** What the person hears when the run could not be corrected into sending, rather than nothing. */
 export const CORRECTION_FAILURE_NOTICE = "I wrote a reply but did not send it. Ask me again.";

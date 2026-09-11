@@ -18,19 +18,18 @@ import { handleAccountList } from "../../../kernel/agents";
 import type { ArgsOf, ResultOf } from "../../../syscalls";
 import type {
   JsonObject,
-  JsonValue,
-  ProcHistoryMessage,
   ProcHistoryOverflowPolicy,
   ProcSpawnArgs,
+  ProcAiOptions,
   ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
   jsonObjectSchema,
-  jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import type { RequestFrame } from "../../../protocol/frames";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
+import { renderProcHistoryRecords } from "./history-renderer";
 
 const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
 
@@ -41,10 +40,7 @@ const procSpawnArgsSchema = z.strictObject({
   prompt: z.string().optional(),
   parentPid: z.string().optional(),
   cwd: z.string().optional(),
-});
-const historyDisplayObjectSchema = z.object({
-  text: z.string().optional(),
-  output: z.string().optional(),
+  ai: z.strictObject({ modelId: z.string().optional(), reasoning: z.string().optional() }).optional(),
 });
 
 type ProcHistoryOk = Extract<ResultOf<"proc.history">, { ok: true }>;
@@ -105,6 +101,7 @@ type ParsedProcDelegate = {
   checkInMs?: number;
   responsibilityId?: string;
   message: string;
+  ai?: ProcAiOptions;
 };
 type DelegatedResponsibilityRollback = {
   original: ResponsibilityRecord;
@@ -262,6 +259,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (parsed.runAs) spawnArgs.runAs = parsed.runAs;
       if (parsed.parentPid) spawnArgs.parentPid = parsed.parentPid;
       if (parsed.cwd) spawnArgs.cwd = parsed.cwd;
+      if (parsed.ai) spawnArgs.ai = parsed.ai;
       const spawned = await handleProcSpawn(spawnArgs, ctx);
       if (!spawned.ok) {
         return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
@@ -393,7 +391,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "history": {
       requireCommandCapability(ctx, "proc.history");
       const parsed = parseProcHistoryCommand(rest, ctx);
-      const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid };
+      const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid, format: 2 };
       if (parsed.limit !== undefined) historyArgs.limit = parsed.limit;
       if (parsed.offset !== undefined) historyArgs.offset = parsed.offset;
       if (parsed.beforeMessageId !== undefined) {
@@ -423,6 +421,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       const segmentArgs: ArgsOf<"proc.history.segment.read"> = {
         pid: parsed.pid,
         segmentId: parsed.segmentId,
+        format: 2,
       };
       if (parsed.limit !== undefined) segmentArgs.limit = parsed.limit;
       if (parsed.offset !== undefined) segmentArgs.offset = parsed.offset;
@@ -615,6 +614,7 @@ async function delegateFailureResult(
 }
 
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
+  const ai: ProcAiOptions = {};
   let runAs: string | undefined;
   let label: string | undefined;
   let prompt: string | undefined;
@@ -644,6 +644,14 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     }
     if (current === "--profile") {
       throw new Error("--profile is no longer supported; use --as ACCOUNT");
+    }
+    if (current === "--model") {
+      ai.modelId = requireShellOptionValue(args[++index], current);
+      continue;
+    }
+    if (current === "--effort" || current === "--reasoning") {
+      ai.reasoning = requireShellOptionValue(args[++index], current);
+      continue;
     }
     if (current === "--non-interactive" || current === "--background") {
       interactive = false;
@@ -678,6 +686,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   const parsed: ProcSpawnArgs = {};
+  if (ai.modelId !== undefined || ai.reasoning !== undefined) parsed.ai = ai;
   if (runAs) parsed.runAs = runAs;
   if (label) parsed.label = label;
   if (finalPrompt) parsed.prompt = finalPrompt;
@@ -1141,6 +1150,7 @@ function parseProcMessageCommand(
 }
 
 function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedProcDelegate {
+  const ai: ProcAiOptions = {};
   let runAs: string | undefined;
   let label: string | undefined;
   let parentPid: string | undefined = ctx.processId;
@@ -1151,6 +1161,14 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
+    if (current === "--model") {
+      ai.modelId = requireShellOptionValue(args[++index], current);
+      continue;
+    }
+    if (current === "--effort" || current === "--reasoning") {
+      ai.reasoning = requireShellOptionValue(args[++index], current);
+      continue;
+    }
     if (current === "--as" || current === "--run-as") {
       index += 1;
       runAs = requireShellOptionValue(args[index], current);
@@ -1194,6 +1212,7 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
   const parsed: ParsedProcDelegate = {
     message,
   };
+  if (ai.modelId !== undefined || ai.reasoning !== undefined) parsed.ai = ai;
   if (runAs) parsed.runAs = runAs;
   if (label) parsed.label = label;
   if (parentPid) parsed.parentPid = parentPid;
@@ -1219,6 +1238,9 @@ function formatProcSegmentReadResult(
   result: ProcSegmentReadOk,
   json: boolean | undefined,
 ): string {
+  if (result.format !== 2 || !result.records) {
+    throw new Error("gateway does not support typed process history (format 2)");
+  }
   if (json) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
@@ -1228,15 +1250,7 @@ function formatProcSegmentReadResult(
     `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
     "",
   ];
-  for (let index = 0; index < result.messages.length; index += 1) {
-    const message = result.messages[index];
-    const timestamp = message.timestamp === undefined
-      ? "-"
-      : new Date(message.timestamp).toISOString();
-    lines.push(`[${index + 1}] ${message.role} ${timestamp}`);
-    lines.push(formatProcHistoryMessageContent(message));
-    lines.push("");
-  }
+  lines.push(...renderProcHistoryRecords(result.records));
   return `${lines.join("\n")}\n`;
 }
 
@@ -1244,6 +1258,9 @@ function formatProcHistoryResult(
   result: ProcHistoryOk,
   options: ProcHistoryFormatOptions,
 ): string {
+  if (result.format !== 2 || !result.records) {
+    throw new Error("gateway does not support typed process history (format 2)");
+  }
   if (options.json) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
@@ -1267,47 +1284,8 @@ function formatProcHistoryResult(
   }
   lines.push("");
 
-  for (let index = 0; index < result.messages.length; index += 1) {
-    const message = result.messages[index];
-    const timestamp = message.timestamp === undefined
-      ? "-"
-      : new Date(message.timestamp).toISOString();
-    const id = message.id === undefined ? String(index + 1) : `#${message.id}`;
-    const run = message.runId === undefined ? "" : ` run=${message.runId}`;
-    lines.push(`[${id}] ${message.role} ${timestamp}${run}`);
-    const content = formatProcHistoryMessageContent(message);
-    lines.push(options.full ? content : truncateProcHistoryContent(content, options.maxContentChars));
-    lines.push("");
-  }
+  lines.push(...renderProcHistoryRecords(result.records, options.full ? undefined : options.maxContentChars));
   return `${lines.join("\n")}\n`;
-}
-
-function formatProcHistoryMessageContent(message: ProcHistoryMessage): string {
-  return formatProcHistoryContent(jsonValueSchema.parse(message.content));
-}
-
-function formatProcHistoryContent(content: JsonValue): string {
-  const text = z.string().safeParse(content);
-  if (text.success) {
-    return text.data;
-  }
-  const display = historyDisplayObjectSchema.safeParse(content);
-  if (display.success) {
-    if (display.data.text?.trim()) {
-      return display.data.text;
-    }
-    if (display.data.output !== undefined) {
-      return display.data.output;
-    }
-  }
-  return JSON.stringify(content, null, 2) ?? "null";
-}
-
-function truncateProcHistoryContent(content: string, maxChars: number): string {
-  if (content.length <= maxChars) {
-    return content;
-  }
-  return `${content.slice(0, maxChars)}\n...[truncated ${content.length - maxChars} chars; use --full or --json to inspect all content]`;
 }
 
 function procUsage(): string {
@@ -1316,11 +1294,11 @@ function procUsage(): string {
     "  proc self",
     "  proc list",
     "  proc agents [--json]",
-    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
+    "  proc spawn [--as ACCOUNT] [--model MODEL_ID] [--effort LEVEL] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
     "  proc spawn --json JSON",
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",
-    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--check-after 10m] [--responsibility ID] <task>",
+    "  proc delegate [--as ACCOUNT] [--model MODEL_ID] [--effort LEVEL] [--label LABEL] [--parent PID] [--cwd PATH] [--check-after 10m] [--responsibility ID] <task>",
     "  proc segments [--pid PID]",
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--compact-to N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",

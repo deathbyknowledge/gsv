@@ -233,15 +233,21 @@ as a transport timeout.
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `cp`, `dd`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.cancel` | Owning device | Stop the session's process tree. The gateway resolves its target from the retained session and enforces ordinary target and syscall grants. Cancellation survives a disconnected caller; output remains available through `shell.exec`. Older machines must be updated to expose this operation. |
 
 ```ts
 type ShellSyscalls = {
+  "shell.cancel": {
+    args: { sessionId: string; target?: string };
+    result: { sessionId: string; cancelled: boolean };
+  };
   "shell.exec": {
     args: {
       target?: string;
       cwd?: string;
       input: string;
       sessionId?: string;
+      start?: boolean;
       timeout?: number;
     };
     result:
@@ -259,6 +265,26 @@ Start a command:
 { "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
 ```
 
+Clients that must recover across a lost start response first persist a fresh
+lowercase UUID v4, then send `start: true` with that `sessionId` and an explicit
+remote `target`. The Kernel records its target before forwarding the command and
+rejects reuse of an existing ID. Machines start under that exact ID and detach
+immediately. The start acknowledgement consumes no output; the first poll owns it.
+Recovery polls or cancels the saved ID and never replays the start or stdin.
+Older machines reject the unknown session before executing the command and must
+be updated. Browser targets can accept a named start but remain foreground-only;
+disconnecting their request cancels the operation. The native `gsv` shell also
+remains foreground-only and does not accept named sessions.
+
+When the Kernel rejects a named start before forwarding it, the error includes
+`details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+An unmarked transport error is uncertain: retain the saved session ID and recover
+by polling. A reused ID is also unmarked because its existing command may be live.
+
+```json
+{ "target": "macbook", "sessionId": "73c8fcce-fd24-4ebe-8c85-42f2c2befcf9", "start": true, "input": "npm test" }
+```
+
 Poll a running command:
 
 ```json
@@ -270,6 +296,13 @@ Write stdin to a running command:
 ```json
 { "sessionId": "sh_01JZTEST", "input": "y\n" }
 ```
+
+`shell.cancel` returns `cancelled: true` after stopping a running command, or
+`false` if it had already ended. It does not consume output. Poll with
+`shell.exec` afterwards to read the terminal result. Session output is incremental;
+the optional final `stdout`/`stderr` fields are cumulative summaries. Disconnecting
+or cancelling a poll does not stop a durable session. A reconnect can resume polling
+the same session; completed device sessions remain available for ten minutes.
 
 CodeMode wrappers expose the same result shape:
 
@@ -556,6 +589,7 @@ type ConversationMessage = {
     | { kind: "process"; pid: string; uid: number }
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
+  selectedTarget?: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -580,7 +614,7 @@ type ConversationSyscalls = {
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
   "conversation.send": {
-    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
@@ -589,6 +623,13 @@ type ConversationSyscalls = {
   };
 };
 ```
+
+`conversation.send` and `proc.send` accept optional `selectedTarget` message context.
+The Kernel checks the caller's target visibility, including offline targets. The
+selection is stored with that message and rendered as `[Selected target: ID]` for
+the model. It does not change the message origin, reply endpoint, process defaults,
+or syscall permissions. Omission does not inherit an earlier message's selection.
+Changing the selection changes the conversation message's idempotency payload.
 
 ## Contacts And Cross-GSV Requests: `contact.*`
 
@@ -799,12 +840,12 @@ Runtime behavior:
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
-| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
+| `proc.history` | Process DO | Returns paged Process activity, message count, pending HIL, and context pressure. `format: 2` adds typed records and durable revision/reset metadata; `since` returns complete changed groups from an opaque cursor. Offset paging reads from the beginning; `tail`, `beforeMessageId`, and `afterMessageId` select bounded pages. `includeMessages: false` returns status only. Historical/status pages never advance a synchronization cursor. The original `messages` projection remains available for older clients. See [Process History](../architecture/process-history.md). |
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
-| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
-| `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
+| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. |
+| `proc.history.segment.read` | Process DO | Reads a compacted segment without restoring active history. `format: 2` adds typed records with stable segment ordinals and explicit unknown historical timestamps/linkage. Pages do not have a live synchronization cursor. |
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
@@ -924,7 +965,7 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string } };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
@@ -939,7 +980,7 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; message: string; media?: ResourceBlock[] };
+    args: { pid?: string; message: string; selectedTarget?: string; media?: ResourceBlock[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
@@ -974,8 +1015,8 @@ type ProcessSyscalls = {
   };
 
   "proc.history": {
-    args: { pid?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
-    result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+    args: { pid?: string; format?: 2; since?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
+    result: ProcHistoryResult; // format 2 adds ProcHistoryRecord[], cursor, historyRevision, historyGeneration, historyResetRevision, reset, hasMore
   };
 
   "proc.trace": {
@@ -994,13 +1035,13 @@ type ProcessSyscalls = {
   };
 
   "proc.history.compact": {
-    args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number };
+    args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number; targetPressure?: number };
     result: { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
   };
 
   "proc.history.segment.read": {
-    args: { pid?: string; segmentId: string; limit?: number; offset?: number };
-    result: { ok: true; pid: string; segment: ProcHistorySegment; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean } | OperationError;
+    args: { pid?: string; segmentId: string; format?: 2; limit?: number; offset?: number };
+    result: ProcHistorySegmentReadResult; // format 2 adds ProcHistoryArchivedRecord[]
   };
 
   "proc.history.segments": {
@@ -1045,9 +1086,13 @@ type ProcessSyscalls = {
 };
 ```
 
-`proc.ai.config.get` and `proc.ai.config.set` read and pin the model a process
-runs with. `modelId` names an entry in the owning human's layered model stack;
-`clear: true` returns the process to the account's preferred model.
+`proc.ai.config.get` and `proc.ai.config.set` read and update process-local model
+and reasoning preferences for the next run. `modelId` names an entry in the owning
+human's layered model stack and puts it first; ordinary fallbacks still apply.
+`clear: true` returns both preferences to the agent/account defaults. The optional
+`proc.spawn.ai` object uses the same preferences, validated by the Kernel and
+stored with the Process identity before an initial prompt can start. Omitting
+`ai` inherits account defaults and does not copy a parent's process-local choices.
 
 `proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden
@@ -1070,6 +1115,13 @@ and their ancestor records, and may update only its own assignment.
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
 | `r12y.source.list` | Lists Kernel-defined required contracts and configurable responsibility sources for the caller owner. |
 | `r12y.source.update` | Enables or disables one configurable source for the caller owner. Required contracts are immutable, and source payload storage remains owned by its subsystem. |
+
+Setting a Ship-assigned responsibility to `waiting` defaults `nextCheckAtMs` to
+24 hours later, or an earlier future deadline, when no future check exists. The
+same applies when explicitly returning a waiting assignment to Ship. An explicit
+`patch.nextCheckAtMs` is respected; `null` clears the check. Other metadata edits
+do not renew it. At the check, Ship must review the work before yielding, even if
+its blocker is unchanged. Reasserting `waiting` renews an elapsed default check.
 
 ```ts
 type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
@@ -1291,7 +1343,7 @@ Runtime behavior:
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
 | `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
-| `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
+| `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Failed responses retain their reported `error` message, capped at 4,096 characters; older entries may omit it. Provider metadata and response bodies are not copied into that field. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
@@ -1303,12 +1355,23 @@ Runtime behavior:
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
+| `sys.pair.create` | `handleSysPairCreate` | A signed-in human creates an idempotent, ten-minute device invitation for a free target ID. The Kernel retains its secret hashed and creates no device credential yet. |
+| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
+| `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
+| `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
-`sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
+`sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
+
+Pairing creation uses a client-persisted UUID and 32 random bytes encoded as 64
+lowercase hex characters. The receiving client persists a separate random
+`gsv_machine_` credential with a 64-character hex suffix before redemption.
+Its durable machine token has no automatic expiry; explicit device removal or
+token revocation disconnects it. Creation and redemption secrets are excluded
+from ledger arguments. See [device invitations](../../engineering/device-pairing.md).
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client
@@ -1322,6 +1385,23 @@ metadata document advertises the same URL as its `client_id`.
 
 ```ts
 type SystemSyscalls = {
+  "sys.pair.create": {
+    args: { id: string; secret: string; targetId: string; label: string; replace?: boolean };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.list": {
+    args: {};
+    result: { pairings: DevicePairing[] };
+  };
+  "sys.pair.cancel": {
+    args: { id: string };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.redeem": {
+    args: { id: string; secret: string; credential: string };
+    result: { pairing: DevicePairing; tokenId: string };
+  };
+
   "sys.connect": {
     args: {
       protocol: 4;
@@ -1798,15 +1878,17 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
-| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint or target process by `watchId` or `key`. Returns number removed. |
+| `signal.watch` | `handleSignalWatch` | Process-originated only. Creates or upserts a durable watch for an accessible `targetId` with the registered `target.status` signal. Events default to audience `person`; `model` or `both` may be selected explicitly. TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. |
+| `signal.unwatch` | `handleSignalUnwatch` | Process-originated only. Removes watches owned by the calling process using `watchId` or `key`. Returns number removed. |
 
-Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
+Target watch delivery is handled by the Kernel when the target connects or disconnects. Once-watches are deleted after a matching acknowledgment that the event was accepted; stale events ignored after reset do not consume them. Temporary lifecycle conflicts, service errors, and RPC failures leave the watch active for later transitions without replaying the missed event. Authorization failures, a gone Process, and invalid acknowledgments mark it failed. Generic process signal watches are retired: `processId` registrations are rejected and existing registrations are removed during upgrade. Historical `signal.watched` records remain readable, but delayed watched-signal envelopes do not admit new Process work.
+
+Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
 ```ts
 type SignalSyscalls = {
   "signal.watch": {
-    args: { signal: string; processId?: string; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
+    args: { signal: "target.status"; targetId: string; audience?: "model" | "person" | "both"; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };
   };
 

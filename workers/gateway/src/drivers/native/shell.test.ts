@@ -263,6 +263,7 @@ function makeContext(options?: {
     testEnv.AI = { run: vi.fn(options.aiRun) };
   }
   return focusedFixture<KernelContext>({
+    broadcastToUserUid: vi.fn(),
     env: testEnv,
     installationId: installationIdentity.installationId,
     installationIdentity,
@@ -812,6 +813,30 @@ describe("native shell execution", () => {
       size: bytes.byteLength,
       revision: expect.any(String),
     });
+  });
+
+  it("transfers a generated file's advertised revision and rejects a later edit", async () => {
+    const ctx = makeContext({ config: { "config/server/timezone": "UTC" } });
+    const path = "/sys/config/server/timezone";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000);
+      const read = await handleFsRead({ path, representation: "reference" }, ctx);
+      if (!read.data.ok || !("resource" in read.data) || !read.data.resource) throw new Error("Expected a file reference");
+      const ref = read.data.resource;
+      vi.setSystemTime(2_000);
+      const stat = await handleFsTransferStat({ path }, ctx);
+      expect(stat).toMatchObject({ ok: true, size: ref.size, revision: ref.revision });
+      const sent = await handleFsTransferSend({ path, revision: ref.revision }, ctx, "generated-1");
+      expect(sent.data).toMatchObject({ ok: true, size: ref.size, revision: ref.revision, contentType: ref.contentType });
+      expect(sent.body && await bodyToText(sent.body)).toBe("UTC\n");
+      ctx.config.set("config/server/timezone", "GMT");
+      const stale = await handleFsTransferSend({ path, revision: ref.revision }, ctx, "generated-2");
+      expect(stale.data).toEqual({ ok: false, error: `Source revision is no longer available: ${path}` });
+      expect(stale.body).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses to transfer a different file revision", async () => {
@@ -1621,6 +1646,32 @@ describe("targets native command", () => {
   });
 });
 
+describe("signal native command", () => {
+  it("enforces signal capabilities before attempting watch registration", async () => {
+    const result = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop"}'` },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("Permission denied: signal.watch");
+  });
+
+  it("validates syscall JSON and retains the Process-only watch boundary", async () => {
+    const malformed = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop","audience":"everyone"}'` },
+      makeContext({ capabilities: ["signal.watch"] }),
+    );
+    expect(malformed.status).toBe("failed");
+    expect(malformed.stderr).toContain("Invalid signal.watch arguments");
+    const directHuman = await handleShellExec(
+      { input: `signal watch --json '{"signal":"target.status","targetId":"laptop"}'` },
+      makeContext({ capabilities: ["signal.watch"], processId: null }),
+    );
+    expect(directHuman.status).toBe("failed");
+    expect(directHuman.stderr).toContain("signal.watch is only available to process runtimes");
+  });
+});
+
 describe("proc native command", () => {
   function makeLifecycleContext(capability: "proc.reset" | "proc.kill") {
     const process = {
@@ -1696,9 +1747,10 @@ describe("proc native command", () => {
   it("routes spawn through the native proc command surface", async () => {
     const spawn = vi.fn();
     const result = await handleShellExec(
-      { input: "proc spawn --non-interactive --cwd ~/src --label build" },
+      { input: "proc spawn --non-interactive --cwd ~/src --label build --model quick --effort high" },
       makeContext({
         capabilities: ["proc.spawn"],
+        config: { "users/1000/ai/models": JSON.stringify({ version: 1, models: [{ id: "quick", name: "Quick", provider: "openai", model: "gpt-4o-mini" }] }) },
         procs: {
           get() {
             return {
@@ -1723,6 +1775,9 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("label=\"build\"");
     expect(result.stdout).toContain("cwd=\"/home/sam/src\"");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, expect.any(String), expect.objectContaining({
+      call: "proc.setidentity", args: expect.objectContaining({ ai: { modelId: "quick", reasoning: "high" } }),
+    }));
     expect(spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ cwd: "/home/sam/src" }),
@@ -1773,11 +1828,14 @@ describe("proc native command", () => {
     );
 
     const jsonResult = await handleShellExec(
-      { input: `proc spawn --json '{"label":"json-child"}'` },
+      { input: `proc spawn --json '{"label":"json-child","ai":{"reasoning":"low"}}'` },
       ctx,
     );
     expect(jsonResult.ok).toBe(true);
     expect(spawn).toHaveBeenCalledTimes(2);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, expect.any(String), expect.objectContaining({
+      call: "proc.setidentity", args: expect.objectContaining({ ai: { reasoning: "low" } }),
+    }));
     expect(spawn).toHaveBeenLastCalledWith(
       expect.stringMatching(/^proc:/),
       expect.anything(),
@@ -1951,6 +2009,7 @@ describe("proc native command", () => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       const req = frame;
       if (req.call === "proc.setidentity") {
+        expect(req.args.ai).toEqual({ reasoning: "high" });
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
       if (req.call === "proc.ipc.deliver") {
@@ -1979,7 +2038,7 @@ describe("proc native command", () => {
     });
 
     const result = await handleShellExec(
-      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
+      { input: "proc delegate --label planning --effort high --timeout 10m write a migration plan" },
       makeContext({
         capabilities: ["proc.spawn", "proc.ipc.call"],
         procs: {
@@ -2568,11 +2627,32 @@ describe("proc native command", () => {
       data: {
         ok: true,
         pid: "proc:child",
+        format: 2,
+        historyRevision: 2,
+        historyGeneration: 0,
+        historyResetRevision: 0,
+        reset: false,
+        hasMore: false,
+        records: [
+          {
+            id: 1, messageId: 1, index: 0, generation: 0, runId: null,
+            createdAt: 1_800_000_000_000, source: "typed", kind: "message",
+            payload: { direction: "in", text: "please investigate", media: [], origin: {} },
+          },
+          {
+            id: 2, messageId: 2, index: 0, generation: 0, runId: "run-child",
+            createdAt: 1_800_000_001_000, source: "typed", kind: "result",
+            payload: {
+              callId: "call-child", tool: "Shell", outcome: "completed",
+              output: "x".repeat(40), media: [], resources: [],
+            },
+          },
+        ],
         messages: [
           {
             id: 1,
             role: "user",
-            content: "please investigate",
+            content: "legacy compatibility text is not the surface contract",
             timestamp: 1_800_000_000_000,
           },
           {
@@ -2630,6 +2710,9 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("History proc:child");
     expect(result.stdout).toContain("Messages: 2/2");
+    expect(result.stdout).toContain("[#1:0] message in");
+    expect(result.stdout).toContain("result Shell completed call=call-child");
+    expect(result.stdout).not.toContain("legacy compatibility text");
     expect(result.stdout).toContain("please inves");
     expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
     expect(result.stdout).toContain("xxxxxxxxxxxx");
@@ -2641,6 +2724,7 @@ describe("proc native command", () => {
         call: "proc.history",
         args: {
           pid: "proc:child",
+          format: 2,
           limit: 2,
           tail: true,
         },
@@ -4242,7 +4326,7 @@ describe("native administration shell commands", () => {
         isPersonalAgentUid: vi.fn(() => false),
         getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
       },
-      federation: { cancelInvite },
+      federation: { cancelInvite, invite: vi.fn(() => null) },
       processId: "proc:ship",
     });
     const shipResult = await handleShellExec(

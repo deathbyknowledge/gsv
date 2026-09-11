@@ -6,7 +6,7 @@ import type {
 import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@earendil-works/pi-ai";
 import type { AssistantTurnClassification } from "../run-tick-policy";
 import type { FrameBody, ResponseFrame } from "../../protocol/frames";
-import type { MessageMetadata, QueuedMessage } from "../store";
+import type { MessageMetadata, QueuedRun } from "../store";
 import type { RunDelivery, RunFinishOptions, RunFinishPayload } from "../run/finish";
 import type { RunOutputMedia, RunState } from "../run/state";
 import type { SyscallName } from "../../syscalls";
@@ -158,7 +158,7 @@ export type RunFinishEffects = {
 
 export type CompletedRunTransition = {
   effects: RunFinishEffects;
-  next: QueuedMessage | null;
+  next: QueuedRun | null;
   wakeRunId?: string;
 };
 

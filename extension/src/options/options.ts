@@ -20,6 +20,7 @@ const appEl = app;
 
 let currentState: ExtensionUiState | null = null;
 let busyAction: string | null = null;
+const busyActions = new Set<string>();
 let formDirty = false;
 let loadedInitialConfig = false;
 let tokenVisible = false;
@@ -39,6 +40,31 @@ appEl.innerHTML = `
   </header>
 
   <div class="settings-layout">
+    <form class="panel pairing-panel" data-pairing-form>
+      <header class="section-header"><div><span class="eyebrow">Connection</span><h2>Pair this browser</h2></div></header>
+      <p>In GSV, open Fleet → Connect, name this browser, and create an invitation. Paste it here.</p>
+      <label class="field"><span>Pairing invitation</span><textarea name="pairingCode" rows="3" placeholder="gsv-pair1_…" autocomplete="off" spellcheck="false"></textarea></label>
+      <div class="actions"><button type="submit" class="primary">Pair browser</button></div>
+      <small>If a pairing was interrupted, leave the field empty and retry.</small>
+    </form>
+
+    <aside class="panel status-panel">
+      <header class="section-header">
+        <div>
+          <span class="eyebrow">Current state</span>
+          <h2>Status</h2>
+        </div>
+      </header>
+      <div class="state-summary" data-state-summary>Loading...</div>
+      <dl class="detail-list" data-runtime-details></dl>
+      <div class="actions compact-actions">
+        <button type="button" data-action="open-monitor">Monitor</button>
+        <button type="button" data-action="disconnect">Disconnect</button>
+      </div>
+    </aside>
+
+    <details class="panel manual-panel">
+      <summary>Manual connection settings</summary>
     <form class="panel connection-panel" novalidate>
       <header class="section-header">
         <div>
@@ -91,21 +117,7 @@ appEl.innerHTML = `
         <button type="button" class="danger" data-action="stop-all">Stop All</button>
       </div>
     </form>
-
-    <aside class="panel status-panel">
-      <header class="section-header">
-        <div>
-          <span class="eyebrow">Current state</span>
-          <h2>Status</h2>
-        </div>
-      </header>
-      <div class="state-summary" data-state-summary>Loading...</div>
-      <dl class="detail-list" data-runtime-details></dl>
-      <div class="actions compact-actions">
-        <button type="button" data-action="open-monitor">Monitor</button>
-        <button type="button" data-action="disconnect">Disconnect</button>
-      </div>
-    </aside>
+    </details>
 
     <details class="panel advanced-panel">
       <summary>Advanced</summary>
@@ -126,23 +138,36 @@ appEl.innerHTML = `
   </div>
 `;
 
-const form = appEl.querySelector<HTMLFormElement>("form");
+const form = appEl.querySelector<HTMLFormElement>("form.connection-panel");
+const pairingForm = appEl.querySelector<HTMLFormElement>("[data-pairing-form]");
 const connectionStatus = appEl.querySelector<HTMLElement>("[data-connection-status]");
 const stateSummary = appEl.querySelector<HTMLElement>("[data-state-summary]");
 const runtimeDetails = appEl.querySelector<HTMLElement>("[data-runtime-details]");
 const diagnosticsDetails = appEl.querySelector<HTMLElement>("[data-diagnostics]");
 const noticeEl = appEl.querySelector<HTMLElement>("[data-notice]");
 
-if (!form || !connectionStatus || !stateSummary || !runtimeDetails || !diagnosticsDetails || !noticeEl) {
+if (!form || !pairingForm || !connectionStatus || !stateSummary || !runtimeDetails || !diagnosticsDetails || !noticeEl) {
   throw new Error("Options markup is incomplete");
 }
 
 const formEl = form;
+const pairingFormEl = pairingForm;
 const connectionStatusEl = connectionStatus;
 const stateSummaryEl = stateSummary;
 const runtimeDetailsEl = runtimeDetails;
 const diagnosticsDetailsEl = diagnosticsDetails;
 const noticeNode = noticeEl;
+
+pairingFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const field = pairingFormEl.elements.namedItem("pairingCode");
+  if (!(field instanceof HTMLTextAreaElement)) return;
+  void withBusy("pair", async () => {
+    const response = await sendUiMessage({ type: "pair", code: field.value.trim() });
+    handleResponse(response, { applyConfig: true });
+    if (response.ok) { field.value = ""; setNotice("info", "Browser paired"); }
+  });
+});
 
 formEl.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -308,6 +333,8 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 async function withBusy(action: string, run: () => Promise<void>): Promise<void> {
+  if (busyActions.has(action)) return;
+  busyActions.add(action);
   busyAction = action;
   renderBusyState();
   try {
@@ -316,7 +343,8 @@ async function withBusy(action: string, run: () => Promise<void>): Promise<void>
     // SAFETY: rejected browser operations expose Error-compatible values here.
     setNotice("error", errorMessage(error as Error));
   } finally {
-    busyAction = null;
+    busyActions.delete(action);
+    busyAction = [...busyActions].at(-1) ?? null;
     renderBusyState();
   }
 }
@@ -386,6 +414,8 @@ function renderState(): void {
 
 function renderBusyState(): void {
   const disabled = Boolean(busyAction);
+  const pairingSubmit = pairingFormEl.querySelector<HTMLButtonElement>("button[type='submit']");
+  if (pairingSubmit) { pairingSubmit.disabled = disabled; pairingSubmit.textContent = busyActions.has("pair") ? "Pairing…" : "Pair browser"; }
   const submit = formEl.querySelector<HTMLButtonElement>("button[type='submit']");
   if (submit) {
     submit.disabled = disabled;
@@ -393,7 +423,7 @@ function renderBusyState(): void {
   }
   for (const button of Array.from(appEl.querySelectorAll<HTMLButtonElement>("button[data-action]"))) {
     const action = button.dataset.action ?? "";
-    const keepEnabled = action === "toggle-token" || action === "generate-device-id" || action === "copy-device-id";
+    const keepEnabled = action === "disconnect" || action === "stop-all" || action === "toggle-token" || action === "generate-device-id" || action === "copy-device-id";
     button.disabled = disabled && !keepEnabled;
     if (action === "toggle-token") {
       button.textContent = tokenVisible ? "Hide" : "Show";

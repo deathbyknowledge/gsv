@@ -33,6 +33,9 @@ describe("Conversation Durable Object", () => {
     await expect(runInDurableObject(stub, (instance: Conversation) => (
       instance.append({ ...message(1), text: "changed" })
     ))).rejects.toThrow("idempotency key payload changed");
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...message(1), selectedTarget: "macbook" })
+    ))).rejects.toThrow("idempotency key payload changed");
 
     const history = await stub.history();
     expect(history.messages).toEqual([first.message]);
@@ -44,7 +47,7 @@ describe("Conversation Durable Object", () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
     for (let index = 1; index <= 1_001; index += 1) {
-      await stub.append(message(index));
+      await stub.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
     }
     await stub.compact();
 
@@ -53,7 +56,9 @@ describe("Conversation Durable Object", () => {
     expect(latest.hasMore).toBe(true);
     const archived = await stub.history({ beforeSequence: 3, limit: 2 });
     expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
-    expect(await stub.append(message(1))).toEqual({
+    expect(archived.messages[0]?.selectedTarget).toBe("macbook");
+    expect(archived.messages[1]?.selectedTarget).toBeUndefined();
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
       message: archived.messages[0],
       created: false,
     });

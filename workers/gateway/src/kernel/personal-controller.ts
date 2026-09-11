@@ -5,6 +5,7 @@ import { accountIdentity } from "./accounts";
 import { ensurePersonalAgent } from "./agents";
 import type { KernelContext } from "./context";
 import type { ProcessRecord, ProcessRegistry } from "./processes";
+import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 
 type ControllerState = {
   readyByOwner: Map<number, string>;
@@ -155,6 +156,7 @@ async function spawnPersonalController(
   }
 
   state.readyByOwner.set(ownerUid, pid);
+  notifyProcessChanged(ctx, pid, ["created"]);
   return pid;
 }
 
@@ -214,7 +216,7 @@ async function rollbackPersonalController(
   }
   if (!response.ok) {
     if (response.error.code === 410) {
-      ctx.procs.kill(pid);
+      unregisterProcess(ctx, pid);
       return;
     }
     throw new Error(response.error.message);
@@ -222,7 +224,7 @@ async function rollbackPersonalController(
   if (response.data?.ok !== true) {
     throw new Error("proc.kill rejected rollback");
   }
-  ctx.procs.kill(pid);
+  unregisterProcess(ctx, pid);
 }
 
 function stateFor(procs: ProcessRegistry): ControllerState {

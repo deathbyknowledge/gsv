@@ -21,7 +21,7 @@ import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
-import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
+import type { ShellSessionStore } from "./shell-sessions";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import {
@@ -51,6 +51,8 @@ import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
+import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
+import { DevicePairingCreateError } from "./device-pairings";
 import {
   handleRepoApply,
   handleRepoCompare,
@@ -220,7 +222,7 @@ export async function dispatch(
   if (ctx.requestSignal?.aborted) {
     return {
       handled: true,
-      response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+      response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
     };
   }
   const routingArgs = routableFrameArgs(frame);
@@ -229,11 +231,20 @@ export async function dispatch(
     : routingArgs?.target;
   const contactResourceTarget = (frame.call === "fs.read" || frame.call === "fs.transfer.send")
     && target?.startsWith("contact:") === true;
-  const sessionId = frame.call === "shell.exec"
+  const sessionId = frame.call === "shell.exec" || frame.call === "shell.cancel"
     ? frame.args.sessionId?.trim() ?? ""
     : "";
+  const startSession = frame.call === "shell.exec" && frame.args.start === true;
 
-  if (sessionId) {
+  if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
+    return { handled: true, response: rejectBeforeDispatch(frame, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
+  }
+
+  if (frame.call === "shell.cancel" && !sessionId) {
+    return { handled: true, response: errFrame(frame.id, 400, "Shell session ID is required") };
+  }
+
+  if (sessionId && !startSession) {
     const session = deps.shellSessions.get(sessionId);
     if (!session) {
       return {
@@ -245,19 +256,6 @@ export async function dispatch(
       return {
         handled: true,
         response: errFrame(frame.id, 400, "Shell session target does not match the requested target"),
-      };
-    }
-    if (session.status === "failed" && session.error) {
-      const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
-      if (!sessionTarget) {
-        return {
-          handled: true,
-          response: errFrame(frame.id, 403, `Access denied to device: ${session.targetId}`),
-        };
-      }
-      return {
-        handled: true,
-        response: failedShellSessionFrame(frame.id, session),
       };
     }
     if (routingArgs) delete routingArgs.target;
@@ -282,7 +280,7 @@ export async function dispatch(
     if (!routedTarget) {
       return {
         handled: true,
-        response: errFrame(frame.id, 403, `Access denied to target: ${target}`),
+        response: rejectBeforeDispatch(frame, 403, `Access denied to target: ${target}`),
       };
     }
     return routeToTarget(frame, routedTarget, origin, ctx, deps);
@@ -579,6 +577,22 @@ async function dispatchKernel(
       case "sys.token.create":
         data = await handleSysTokenCreate(frame.args, ctx);
         break;
+      case "sys.pair.create":
+        try {
+          data = await handleSysPairCreate(frame.args, ctx);
+        } catch (error) {
+          if (error instanceof DevicePairingCreateError) return { type: "res", id: frame.id, ok: false, error: { code: 400, message: error.message, details: { pairingCreate: "rejected" } } };
+          throw error;
+        }
+        break;
+      case "sys.pair.list":
+        data = handleSysPairList(ctx);
+        break;
+      case "sys.pair.cancel":
+        data = handleSysPairCancel(frame.args, ctx);
+        break;
+      case "sys.pair.redeem":
+        return errFrame(frame.id, 400, "sys.pair.redeem requires the connection enrollment path");
       case "sys.token.list":
         data = handleSysTokenList(frame.args, ctx);
         break;
@@ -755,15 +769,24 @@ async function routeToTarget(
   if (!target.online) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `Target offline: ${target.targetId}`),
+      response: rejectBeforeDispatch(frame, 503, `Target offline: ${target.targetId}`),
     };
   }
 
   if (!targetCanHandle(target, frame.call)) {
     return {
       handled: true,
-      response: errFrame(frame.id, 400, `Target ${target.targetId} does not implement ${frame.call}`),
+      response: rejectBeforeDispatch(frame, 400, `Target ${target.targetId} does not implement ${frame.call}`),
     };
+  }
+
+  if (frame.call === "shell.exec" && frame.args.start === true) {
+    const sessionId = frame.args.sessionId!.trim();
+    if (deps.shellSessions.get(sessionId)) {
+      return { handled: true, response: errFrame(frame.id, 409, "Shell session already exists; poll it instead of starting it again") };
+    }
+    // Persist the target before any outbound work. This check and write cannot interleave.
+    deps.shellSessions.rememberDeviceSession(sessionId, target.targetId);
   }
 
   const ttlMs = routedFrameTtlMs(frame);
@@ -778,7 +801,7 @@ async function routeToTarget(
   if (!deviceConn) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `No active connection for device: ${target.targetId}`),
+      response: rejectBeforeDispatch(frame, 503, `No active connection for device: ${target.targetId}`),
     };
   }
 
@@ -799,7 +822,7 @@ async function routeToTarget(
       route.cancel();
       return {
         handled: true,
-        response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+        response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
       };
     }
   } catch (error) {
@@ -807,7 +830,7 @@ async function routeToTarget(
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,
-      response: errFrame(frame.id, 500, `Failed to register route for ${frame.call}: ${message}`),
+      response: rejectBeforeDispatch(frame, 500, `Failed to register route for ${frame.call}: ${message}`),
     };
   }
 
@@ -867,27 +890,16 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 
-function requestCancelMessage(signal: AbortSignal): string {
-  return signal.reason instanceof Error ? signal.reason.message : "Request cancelled";
+export function rejectBeforeDispatch(frame: RequestFrame, code: number, message: string): ResponseFrame {
+  const response = errFrame(frame.id, code, message);
+  if (!response.ok && frame.call === "shell.exec" && frame.args.start === true) {
+    response.error.details = { shellStart: "rejected" };
+  }
+  return response;
 }
 
-function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {
-  const data: Extract<
-    NonNullable<ResponseOkFrame<"shell.exec">["data"]>,
-    { status: "failed" }
-  > = {
-    status: "failed",
-    output: "",
-    error: session.error ?? "Shell session failed",
-    sessionId: session.sessionId,
-  };
-  if (session.exitCode !== null) data.exitCode = session.exitCode;
-  return {
-    type: "res",
-    id,
-    ok: true,
-    data,
-  };
+function requestCancelMessage(signal: AbortSignal): string {
+  return signal.reason instanceof Error ? signal.reason.message : "Request cancelled";
 }
 
 function routableFrameArgs(frame: RequestFrame): RoutingTargetArgs | null {

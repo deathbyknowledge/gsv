@@ -863,6 +863,29 @@ test("uses the polling wait budget for shell continuation transport timeouts", a
   }
 });
 
+test("keeps command deadlines for named shell starts instead of treating them as polls", async () => {
+  const { client, socket } = await connectedClient();
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+  try {
+    const sessionId = crypto.randomUUID();
+    const args = { sessionId, start: true, target: "macbook", input: "sleep 1", yieldMs: 1_000, timeout: 120_000 };
+    const starting = client.request("shell.exec", args);
+    const frame = JSON.parse(socket.sent.at(-1));
+    assert.deepEqual(frame.args, args);
+    assert.deepEqual(scheduledDelays, [130_000]);
+    socket.receive(JSON.stringify({ type: "res", id: frame.id, ok: true, data: { status: "running", sessionId, output: "" } }));
+    await starting;
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    client.close();
+  }
+});
+
 test("keeps a caller-owned mail delivery id after a lost response", async () => {
   const client = new GSVClient({
     WebSocket: FakeWebSocket,

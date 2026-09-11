@@ -1,0 +1,318 @@
+import { describe, expect, it } from "vitest";
+import type { ProcHilRequest } from "@humansandmachines/gsv";
+import type { ConsoleProcess, ConsoleTarget } from "../../../domain/system/consoleModels";
+import {
+  CLOUD_TARGET_ID,
+  describeToolCall,
+  mergeLedger,
+  costTodayByProcess,
+  modelByProcess,
+  orderPlaces,
+  orderProcesses,
+  planetVariantForKind,
+  recentlyTouched,
+  relativeTime,
+  rowKeys,
+  runsTodayByPlace,
+  shortPid,
+  humanCall,
+  ledgerFromSysLines,
+  visibleProcesses,
+  reconcileFleetSelection,
+  fleetReferenceRow,
+  isApprovalReference,
+  referencedApproval,
+  placeActions,
+  placeFromTarget,
+  cloudPlace,
+} from "./fleetModel";
+
+describe("Fleet references and supported place actions", () => {
+  it("opens connection controls without selecting a row or treating them as approvals", () => {
+    for (const to of ["place", "contact"] as const) {
+      const reference = { kind: "connect" as const, to };
+      expect(isApprovalReference(reference)).toBe(false);
+      expect(fleetReferenceRow(reference)).toBeNull();
+    }
+    expect(fleetReferenceRow("contact:person:123")).toBe("contact:person:123");
+  });
+
+  it("preserves exact process and request identities without rewriting colon-containing pids", () => {
+    const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
+    expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");
+    expect(reconcileFleetSelection(fleetReferenceRow(reference), fleetReferenceRow(reference), ["proc:another"])).toBe("proc:proc:child:123");
+    expect(fleetReferenceRow("target:browser:profile")).toBe("target:browser:profile");
+    expect(fleetReferenceRow(null)).toBeNull();
+  });
+
+  it("never substitutes a later approval or a request from another process", () => {
+    const pending: ProcHilRequest = { pid: "proc:child", requestId: "request:2", runId: "run:1", callId: "call:1", toolName: "Shell", syscall: "shell.exec", target: "laptop", args: { input: "echo hello" }, createdAt: 1 };
+    expect(referencedApproval(pending, pending.pid, "request:1")).toBeNull();
+    expect(referencedApproval(pending, "proc:other", pending.requestId)).toBeNull();
+    expect(referencedApproval(null, pending.pid, pending.requestId)).toBeNull();
+    expect(referencedApproval(pending, pending.pid, pending.requestId)).toBe(pending);
+    expect(referencedApproval(pending, pending.pid)).toBe(pending);
+  });
+
+  it("offers offline pairing only to the owner and forgetting to the owner or root", () => {
+    const machine = placeFromTarget(target({ online: false }));
+    expect(placeActions(machine, 1000)).toEqual({ pair: true, forget: true });
+    expect(placeActions(machine, null)).toEqual({ pair: false, forget: false });
+    expect(placeActions(machine, 1001)).toEqual({ pair: false, forget: false });
+    expect(placeActions(machine, 0)).toEqual({ pair: false, forget: true });
+    expect(placeActions({ ...machine, online: true }, 1000)).toEqual({ pair: false, forget: true });
+    expect(placeActions({ ...machine, kind: "browser" }, 1000)).toEqual({ pair: true, forget: true });
+    expect(placeActions({ ...machine, kind: "unknown" }, 1000)).toEqual({ pair: false, forget: false });
+    expect(placeActions(cloudPlace(), 0)).toEqual({ pair: false, forget: false });
+  });
+});
+
+function target(overrides: Partial<ConsoleTarget>): ConsoleTarget {
+  return {
+    deviceId: "laptop",
+    kind: "native-device",
+    ownerUid: 1000,
+    ownerUsername: "esteve",
+    label: "MacBook 16",
+    description: "",
+    platform: "darwin",
+    version: "0.4.1",
+    online: true,
+    lastSeenAt: 1_000,
+    implements: ["fs.*"],
+    ...overrides,
+  };
+}
+
+function process(overrides: Partial<ConsoleProcess>): ConsoleProcess {
+  return {
+    pid: "42",
+    label: "inbox-triage",
+    state: "idle",
+    rawState: "idle",
+    uid: 1000,
+    username: "esteve",
+    profile: "agent",
+    cwd: "~",
+    parentPid: null,
+    interactive: false,
+    personal: false,
+    activeRunId: null,
+    queuedCount: 0,
+    createdAt: null,
+    lastActiveAt: 10,
+    ...overrides,
+  };
+}
+
+type SysLine = Parameters<typeof ledgerFromSysLines>[0][number];
+
+function sysLine(overrides: Partial<SysLine>): SysLine {
+  return {
+    seq: 1,
+    timestamp: 5_000,
+    principalKind: "process",
+    uid: 1000,
+    pid: "p1",
+    runId: "r1",
+    target: "laptop",
+    call: "shell.exec",
+    args: JSON.stringify({ input: "ls", target: "laptop" }),
+    outcome: "ok",
+    durationMs: 10,
+    ...overrides,
+  };
+}
+
+describe("places", () => {
+  it("adds the cloud home and orders machines first", () => {
+    const places = orderPlaces([target({ deviceId: "browser-1", kind: "browser", label: "Chrome" }), target({})]);
+    expect(places.map((place) => place.id)).toEqual(["laptop", CLOUD_TARGET_ID, "browser-1"]);
+    expect(places[1].kind).toBe("cloud");
+  });
+
+  it("keeps an existing cloud target instead of adding a second one", () => {
+    const places = orderPlaces([target({ deviceId: CLOUD_TARGET_ID, kind: "unknown", label: "gsv" })]);
+    expect(places).toHaveLength(1);
+  });
+
+  it("maps every kind to a planet", () => {
+    expect(planetVariantForKind("machine")).toBe("orbit");
+    expect(planetVariantForKind("cloud")).toBe("giant");
+    expect(planetVariantForKind("browser")).toBe("disc");
+    expect(planetVariantForKind("contact")).toBe("crescent");
+    expect(planetVariantForKind("unknown")).toBe("moon");
+  });
+});
+
+describe("processes", () => {
+  it.each(["proc:replaced", "target:removed"] as const)("retains an unavailable explicit reference %s until the person leaves it", (requested) => {
+    const rows = ["target:gsv", "proc:current"] as const;
+    expect(reconcileFleetSelection(requested, requested, [])).toBe(requested);
+    expect(reconcileFleetSelection(requested, requested, rows)).toBe(requested);
+    expect(reconcileFleetSelection(requested, requested, [...rows, requested])).toBe(requested);
+    expect(reconcileFleetSelection("proc:current", requested, rows)).toBe("proc:current");
+    expect(reconcileFleetSelection("proc:disappeared", requested, rows)).toBe("target:gsv");
+  });
+  it("leads with the ship, then the most recently active", () => {
+    const ordered = orderProcesses([
+      process({ pid: "42", lastActiveAt: 10 }),
+      process({ pid: "57", lastActiveAt: 90 }),
+      process({ pid: "1", personal: true, lastActiveAt: 1 }),
+    ]);
+    expect(ordered.map((entry) => entry.pid)).toEqual(["1", "57", "42"]);
+  });
+
+  it("lists row keys as places then processes", () => {
+    const keys = rowKeys(orderPlaces([target({})]), [process({ pid: "7" })]);
+    expect(keys).toEqual(["target:laptop", "target:gsv", "proc:7"]);
+  });
+
+  it("reveals a linked process beyond the first page when the list arrives", () => {
+    const selected = "proc:helper:11";
+    expect(visibleProcesses([], selected, 8)).toEqual([]);
+    const loaded = Array.from({ length: 14 }, (_, index) => process({ pid: `helper:${index}` }));
+    const shown = visibleProcesses(loaded, selected, 8);
+    expect(shown.map((entry) => entry.pid)).toEqual(loaded.slice(0, 12).map((entry) => entry.pid));
+    expect(shown.at(-1)?.pid).toBe("helper:11");
+    expect(loaded).toHaveLength(14);
+  });
+
+  it("keeps the selected process visible when refreshed activity changes its position", () => {
+    const linked = process({ pid: "linked", lastActiveAt: 100 });
+    const others = Array.from({ length: 12 }, (_, index) => process({ pid: `other:${index}`, lastActiveAt: 90 - index }));
+    expect(visibleProcesses(orderProcesses([linked, ...others]), "proc:linked", 8)).toHaveLength(8);
+    const reordered = orderProcesses([{ ...linked, lastActiveAt: 0 }, ...others]);
+    const shown = visibleProcesses(reordered, "proc:linked", 8);
+    expect(shown).toHaveLength(13);
+    expect(shown.at(-1)?.pid).toBe("linked");
+  });
+
+  it("preserves expanded pages and does not treat another row kind as a process reference", () => {
+    const processes = Array.from({ length: 30 }, (_, index) => process({ pid: `helper:${index}` }));
+    expect(visibleProcesses(processes, "proc:helper:2", 20)).toHaveLength(20);
+    expect(visibleProcesses(processes, "target:helper:29", 8)).toHaveLength(8);
+    expect(visibleProcesses(processes, "proc:missing", 8)).toHaveLength(8);
+  });
+});
+
+describe("ledger", () => {
+  it("describes a call by the argument a person recognizes", () => {
+    expect(describeToolCall("shell.exec", { input: "ls -la", target: "laptop" })).toBe("ls -la");
+    expect(describeToolCall("fs.read", { path: "~/Downloads" })).toBe("~/Downloads");
+    expect(describeToolCall("ai.text.generate", { prompt: "x" })).toBe("");
+  });
+
+  it("merges newest first and caps", () => {
+    const a = ledgerFromSysLines([sysLine({ seq: 1, timestamp: 100 }), sysLine({ seq: 2, timestamp: 300 })]);
+    const b = ledgerFromSysLines([sysLine({ seq: 3, timestamp: 200 })]);
+    const merged = mergeLedger([a, b], 2);
+    expect(merged.map((line) => line.timestamp)).toEqual([300, 200]);
+  });
+
+  it("counts today's runs per place and lists touched files once", () => {
+    const now = new Date(2026, 8, 5, 20, 0, 0).getTime();
+    const today = new Date(2026, 8, 5, 9, 0, 0).getTime();
+    const yesterday = new Date(2026, 8, 4, 9, 0, 0).getTime();
+    const lines = ledgerFromSysLines([
+      sysLine({ seq: 3, timestamp: today, call: "fs.read", args: JSON.stringify({ path: "~/a", target: "laptop" }) }),
+      sysLine({ seq: 2, timestamp: today, call: "fs.read", args: JSON.stringify({ path: "~/a", target: "laptop" }) }),
+      sysLine({ seq: 1, timestamp: yesterday, call: "fs.write", target: "gsv", args: JSON.stringify({ path: "~/b" }) }),
+    ]);
+    expect(runsTodayByPlace(lines, now).get("laptop")).toBe(2);
+    expect(runsTodayByPlace(lines, now).get(CLOUD_TARGET_ID)).toBeUndefined();
+    expect(recentlyTouched(lines, 5).map((line) => line.detail)).toEqual(["~/a", "~/b"]);
+  });
+
+  it("sums today's cost and finds the model per process from the ai lines", () => {
+    const now = new Date(2026, 8, 5, 20, 0, 0).getTime();
+    const today = new Date(2026, 8, 5, 9, 0, 0).getTime();
+    const yesterday = new Date(2026, 8, 4, 9, 0, 0).getTime();
+    const lines = ledgerFromSysLines([
+      sysLine({ seq: 3, timestamp: today, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/fast" }), costNanoUsd: 1_500_000_000 }),
+      sysLine({ seq: 2, timestamp: today, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/slow" }), costNanoUsd: 500_000_000 }),
+      sysLine({ seq: 1, timestamp: yesterday, pid: "p1", call: "ai.text.generate", args: JSON.stringify({ model: "gsv/old" }), costNanoUsd: 9_000_000_000 }),
+    ]);
+    expect(costTodayByProcess(lines, now).get("p1")).toBeCloseTo(2);
+    expect(modelByProcess(lines).get("p1")).toBe("gsv/fast");
+  });
+});
+
+describe("time", () => {
+  it("formats relative times in plain words", () => {
+    const now = 1_000_000_000;
+    expect(relativeTime(null, now)).toBe("never");
+    expect(relativeTime(now - 10_000, now)).toBe("just now");
+    expect(relativeTime(now - 5 * 60_000, now)).toBe("5m ago");
+    expect(relativeTime(now - 3 * 3_600_000, now)).toBe("3h ago");
+    expect(relativeTime(now - 3 * 86_400_000, now)).toBe("3d ago");
+  });
+});
+
+describe("shortPid", () => {
+  it("keeps short ids and tails long ones", () => {
+    expect(shortPid("42")).toBe("42");
+    expect(shortPid("proc-1")).toBe("proc1");
+    expect(shortPid("3f9a2c7e-11b2-4c1d-9e0f-a1b2c3d4e5f6")).toBe("d4e5f6");
+  });
+});
+
+describe("humanCall", () => {
+  it("names shell work by its first word", () => {
+    expect(humanCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello\nGSV_MESSAGE" })).toBe("sent a message");
+    expect(humanCall("shell.exec", { input: "ls -la ~/Downloads" })).toBe("looked around");
+    expect(humanCall("shell.exec", { input: "cp a b" })).toBe("copied files");
+    expect(humanCall("shell.exec", { input: "./deploy.sh" })).toBe("ran a command");
+  });
+  it("names file and web calls by what they touched", () => {
+    expect(humanCall("fs.read", { path: "/home/e/Downloads/invoice-0231.pdf" })).toBe("read invoice-0231.pdf");
+    expect(humanCall("fs.search", { query: "invoice" })).toBe("searched for invoice");
+    expect(humanCall("net.fetch", { url: "https://api.github.com/repos" })).toBe("fetched api.github.com");
+    expect(humanCall("ai.text.generate", undefined)).toBe("generated text");
+    expect(humanCall("codemode.exec", { code: "const x = 1;\nreturn x;" })).toBe("ran a script");
+  });
+  it("collapses a heredoc to one line in the detail", () => {
+    expect(describeToolCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello there\nGSV_MESSAGE" })).toBe("message ana <<GSV_MESSAGE hello there GSV_MESSAGE");
+  });
+});
+
+describe("ledgerFromSysLines", () => {
+  it("describes the actual records and paths from structured syscall arguments", () => {
+    expect(describeToolCall("sys.target.update", { targetId: "laptop", label: "My laptop" })).toBe("laptop · My laptop");
+    expect(describeToolCall("proc.spawn", { label: "Review", prompt: "private fixture" })).toBe("Review");
+    expect(describeToolCall("contact.alias.set", { contactId: "contact:123", alias: "Alex" })).toBe("Alex");
+    expect(describeToolCall("fs.copy", { source: { target: "gsv", path: "/notes.md" }, destination: { target: "laptop", path: "/tmp/notes.md" } })).toBe("gsv:/notes.md → laptop:/tmp/notes.md");
+  });
+  it("keeps routine reads plain and never fills missing detail with syscall names or arbitrary arguments", () => {
+    const lines = ledgerFromSysLines([
+      sysLine({ call: "sys.ledger.list", args: '{"limit":60}' }),
+      sysLine({ call: "account.list", args: '{}' }),
+      sysLine({ call: "r12y.list", args: '{"states":["open","active","waiting"]}' }),
+      sysLine({ call: "sched.add", args: '{"name":"Morning check","target":{"kind":"process"}}' }),
+      sysLine({ call: "sys.config.set", args: '{"key":"users/1000/ai/reasoning","value":"private fixture"}' }),
+      sysLine({ call: "future.operation", args: '{"secret":"private fixture"}' }),
+    ]);
+    expect(lines.map(({ what, detail }) => ({ what, detail }))).toEqual([
+      { what: "read the ledger", detail: "" },
+      { what: "listed accounts", detail: "" },
+      { what: "listed responsibilities", detail: "open · active · waiting" },
+      { what: "created a schedule", detail: "Morning check" },
+      { what: "changed a setting", detail: "users/1000/ai/reasoning" },
+      { what: "used another capability", detail: "" },
+    ]);
+    expect(lines[4].args).toContain("private fixture");
+  });
+
+  it("draws the kernel's lines from their recorded arguments", () => {
+    const lines = ledgerFromSysLines([
+      sysLine({ seq: 7, timestamp: 5_000, args: JSON.stringify({ input: "ls -la", target: "laptop" }) }),
+      sysLine({ seq: 8, timestamp: 6_000, principalKind: "human", pid: null, runId: null, target: "gsv", call: "fs.read", args: JSON.stringify({ path: "~/notes.md" }), outcome: null, durationMs: null }),
+      sysLine({ seq: 9, timestamp: 7_000, call: "codemode.exec", args: '{"code":"const x = 1;\\nconst y = "…' }),
+    ]);
+    expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", what: "looked around", detail: "ls -la", outcome: "completed", processId: "p1" });
+    expect(lines[1]).toMatchObject({ id: "sys:8", what: "read notes.md", outcome: "running", processId: "you" });
+    // a line cut at the size bound is not JSON any more; it is shown as the text it is
+    // The plain row now omits it; the technical inspector still retains the exact recorded text.
+    expect(lines[2]).toMatchObject({ what: "ran a script", detail: "", args: '{"code":"const x = 1;\\nconst y = "…' });
+  });
+});

@@ -40,6 +40,7 @@ export type PeerTokenAuthResult =
       identity: AuthIdentity;
       kind: AuthTokenKind;
       peerId: string | null;
+      label?: string;
     }
   | { ok: false; error: string };
 
@@ -77,6 +78,8 @@ export type AuthTokenRecord = {
   revokedAt: number | null;
   revokedReason: string | null;
 };
+
+export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string };
 
 type TokenAuthOptions = {
   kind?: AuthTokenKind;
@@ -393,10 +396,11 @@ export class AuthStore {
       token_id: string;
       kind: AuthTokenKind;
       peer_id: string | null;
+      label: string | null;
       expires_at: number | null;
       revoked_at: number | null;
     }>(
-      `SELECT token_id, kind, peer_id, expires_at, revoked_at
+      `SELECT token_id, kind, peer_id, label, expires_at, revoked_at
        FROM auth_tokens
        WHERE uid = ? AND token_hash = ?
        LIMIT 1`,
@@ -423,7 +427,7 @@ export class AuthStore {
     );
 
     const gids = this.resolveGids(username, user.gid);
-    return {
+    const result: PeerTokenAuthResult = {
       ok: true,
       identity: {
         uid: user.uid,
@@ -435,9 +439,16 @@ export class AuthStore {
       kind: tokenRow.kind,
       peerId: tokenRow.peer_id,
     };
+    if (tokenRow.kind === "machine" && tokenRow.label) result.label = tokenRow.label;
+    return result;
   }
 
   async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
+    return this.storePreparedToken(await this.prepareToken(input));
+  }
+
+  /** Prepare hashing before an owning transaction commits a credential and its enrollment together. */
+  async prepareToken(input: AuthTokenIssueInput, credential?: string): Promise<PreparedAuthToken> {
     const user = this.getPasswdByUid(input.uid);
     if (!user) {
       throw new Error(`Unknown uid: ${input.uid}`);
@@ -445,7 +456,7 @@ export class AuthStore {
 
     const now = Date.now();
     const tokenId = crypto.randomUUID();
-    const rawToken = this.generateTokenValue(input.kind);
+    const rawToken = credential ?? this.generateTokenValue(input.kind);
     const tokenPrefix = rawToken.slice(0, 16);
     const tokenHash = await hashToken(rawToken);
     if (input.kind === "machine" && !input.peerId) {
@@ -455,32 +466,30 @@ export class AuthStore {
       throw new Error("peerId is only valid for machine tokens");
     }
 
+    return { hash: tokenHash, issued: {
+      tokenId, token: rawToken, tokenPrefix, uid: input.uid, kind: input.kind,
+      label: input.label ?? null, peerId: input.peerId ?? null, createdAt: now,
+      expiresAt: input.expiresAt ?? null,
+    } };
+  }
+
+  storePreparedToken({ issued, hash }: PreparedAuthToken): IssuedAuthToken {
     this.sql.exec(
       `INSERT INTO auth_tokens
         (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      tokenId,
-      input.uid,
-      input.kind,
-      input.label ?? null,
-      tokenHash,
-      tokenPrefix,
-      input.peerId ?? null,
-      now,
-      input.expiresAt ?? null,
+      issued.tokenId,
+      issued.uid,
+      issued.kind,
+      issued.label,
+      hash,
+      issued.tokenPrefix,
+      issued.peerId,
+      issued.createdAt,
+      issued.expiresAt,
     );
 
-    return {
-      tokenId,
-      token: rawToken,
-      tokenPrefix,
-      uid: input.uid,
-      kind: input.kind,
-      label: input.label ?? null,
-      peerId: input.peerId ?? null,
-      createdAt: now,
-      expiresAt: input.expiresAt ?? null,
-    };
+    return issued;
   }
 
   listTokens(uid?: number): AuthTokenRecord[] {

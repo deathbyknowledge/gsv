@@ -172,6 +172,66 @@ describe("assembleSystemPrompt", () => {
 });
 
 describe("createSystemContextProvider", () => {
+  it.each(["{{r12y}}", "{{ r12y }}", "{{\n\tr12y\t\n}}"])(
+    "records a rendered responsibility baseline for %s without changing the prompt",
+    async (placeholder) => {
+      const input = makeInput({
+        config: {
+          ...CONFIG,
+          systemContextFiles: [{ name: "responsibilities.md", text: `Responsibilities:\n${placeholder}` }],
+        },
+      });
+      const provider = createSystemContextProvider();
+      const sections = await provider.collect(input);
+      const snapshot = await assembleSystemPromptSnapshot(input, [provider]);
+
+      expect(sections[0].responsibilityBaseline).toBe(true);
+      expect(snapshot.sources[0].responsibilityBaseline).toBe(true);
+      expect(snapshot.prompt).toBe([
+        '<system path="/sys/config/ai/context.d/">',
+        "<responsibilities.md>",
+        "Responsibilities:",
+        input.r12y,
+        "</responsibilities.md>",
+        "</system>",
+      ].join("\n"));
+    },
+  );
+
+  it("does not mark system files that do not expand the responsibility baseline", async () => {
+    const input = makeInput({
+      config: {
+        ...CONFIG,
+        systemContextFiles: [
+          { name: "literal.md", text: "Ledger revision 0.\n\nNo unresolved responsibilities." },
+          { name: "lookalike.md", text: "{{r12y-extra}} {{r12y.details}}" },
+          { name: "runtime.md", text: "Run as {{identity.username}}." },
+        ],
+      },
+    });
+    const provider = createSystemContextProvider();
+    const sections = await provider.collect(input);
+    const snapshot = await assembleSystemPromptSnapshot(input, [provider]);
+
+    for (const section of sections) expect(section).not.toHaveProperty("responsibilityBaseline");
+    for (const source of snapshot.sources) expect(source).not.toHaveProperty("responsibilityBaseline");
+    expect(snapshot.prompt).toBe([
+      '<system path="/sys/config/ai/context.d/">',
+      "<literal.md>",
+      input.r12y,
+      "</literal.md>",
+      "",
+      "<lookalike.md>",
+      "{{r12y-extra}}",
+      "</lookalike.md>",
+      "",
+      "<runtime.md>",
+      "Run as root.",
+      "</runtime.md>",
+      "</system>",
+    ].join("\n"));
+  });
+
   it("renders system context files from config and runtime placeholders", async () => {
     const provider = createSystemContextProvider();
     const sections = await provider.collect(

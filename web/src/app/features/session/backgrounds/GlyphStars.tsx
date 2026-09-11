@@ -17,7 +17,7 @@ type StarGrid = {
 
 const FONT_SIZE = 8;
 const CHAR_WIDTH = 5;
-const STAR_DENSITY = 0.022;
+const DEFAULT_DENSITY = 0.022;
 
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -36,13 +36,13 @@ function gridSize(element: HTMLElement) {
   };
 }
 
-function buildGrid(cols: number, rows: number): StarGrid {
+function buildGrid(cols: number, rows: number, density: number): StarGrid {
   const stars: Star[] = [];
   const random = makeRandom(137);
   const total = cols * rows;
 
   for (let i = 0; i < total; i += 1) {
-    if (random() > 1 - STAR_DENSITY) {
+    if (random() > 1 - density) {
       stars.push({
         idx: i,
         phase: random() * Math.PI * 2,
@@ -114,7 +114,13 @@ const STYLE = `
 }
 `;
 
-export function GlyphStars() {
+export type GlyphStarsProps = {
+  /** Fraction of cells that hold a star. The auth screen uses the default; Zen thins it. */
+  density?: number;
+  class?: string;
+};
+
+export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: GlyphStarsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
 
@@ -125,13 +131,13 @@ export function GlyphStars() {
       return;
     }
 
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const initialSize = gridSize(root);
-    let grid = buildGrid(initialSize.cols, initialSize.rows);
+    let grid = buildGrid(initialSize.cols, initialSize.rows, density);
     let raf = 0;
     let lastFrame = 0;
     let start = performance.now();
-    const frameMs = reduced ? Infinity : 1000 / 24;
+    const frameMs = 1000 / 24;
 
     const draw = (elapsed: number) => {
       pre.textContent = renderGrid(grid, elapsed);
@@ -142,7 +148,7 @@ export function GlyphStars() {
       if (size.cols === grid.cols && size.rows === grid.rows) {
         return;
       }
-      grid = buildGrid(size.cols, size.rows);
+      grid = buildGrid(size.cols, size.rows, density);
       start = performance.now();
       draw(0);
     };
@@ -154,26 +160,31 @@ export function GlyphStars() {
       }
       raf = window.requestAnimationFrame(loop);
     };
+    const followMotion = () => {
+      window.cancelAnimationFrame(raf);
+      if (motion?.matches) draw(0);
+      else raf = window.requestAnimationFrame(loop);
+    };
 
     const observer = globalThis.ResizeObserver ? new ResizeObserver(resize) : null;
     observer?.observe(root);
     resize();
     draw(0);
 
-    if (!reduced) {
-      raf = window.requestAnimationFrame(loop);
-    }
+    motion?.addEventListener("change", followMotion);
+    followMotion();
 
     return () => {
       observer?.disconnect();
+      motion?.removeEventListener("change", followMotion);
       if (raf) {
         window.cancelAnimationFrame(raf);
       }
     };
-  }, []);
+  }, [density]);
 
   return (
-    <div ref={rootRef} class="gsv-glyph-stars" aria-hidden="true">
+    <div ref={rootRef} class={className ? `gsv-glyph-stars ${className}` : "gsv-glyph-stars"} aria-hidden="true">
       <style>{STYLE}</style>
       <pre ref={preRef} />
     </div>

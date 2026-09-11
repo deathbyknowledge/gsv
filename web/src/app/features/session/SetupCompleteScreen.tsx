@@ -63,7 +63,7 @@ export function SetupCompleteScreen({
             disabled={busy}
             onClick={busy ? undefined : onContinue}
           >
-            <span class="gsv-btn-label">Open desktop</span>
+            <span class="gsv-btn-label">Open GSV</span>
           </button>
         </div>
 

@@ -326,6 +326,7 @@ async function hashAppendInput(
     messageId: input.messageId,
     author: input.author,
     text: input.text,
+    selectedTarget: input.selectedTarget,
     media: input.media ?? [],
     origin: input.origin,
     processId: input.processId ?? null,

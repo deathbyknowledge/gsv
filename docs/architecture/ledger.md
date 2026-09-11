@@ -127,12 +127,30 @@ segments older than the walk are read whole. A line is therefore neither lost
 nor repeated across a rotation, however many rotations a walk spans. Filters are
 `pid`, `target`, `callPrefix`, `since`, and `until`; `limit` is at most 200.
 Visibility is the rule `proc.list` uses: a caller sees the lines of the human
-who owns them, and root sees every line. The `ledger.appended` signal, sent to
-the owner's connections and to root's, coalesced to a few per second, carries
-the newest sequence and the count since the last signal, so a surface can tail
-the ledger without polling. A read of the ledger is recorded like any other
-call but does not signal, so a surface that lists on every signal does not
-chase itself.
+who owns them, and root sees every line.
+
+The `ledger.changed` signal pushes authoritative inserted or completed rows
+as `{ lines: SysLedgerLine[] }`. It replaces the count-only `ledger.appended`
+notification. Recipients must be connected human peers belonging to the owner
+or root, with both the signal grant and the `sys.ledger.list` call grant.
+The signal grant alone does not expose private arguments. Machines and other
+owners never receive these rows.
+
+Each owner has one short-lived batch, flushed after 500 ms or before exceeding
+32 rows or 128 KiB of encoded data. Completion replaces an open row still in
+that batch. A read of the ledger is recorded normally; its open notification
+is suppressed and its completion pushes the finished row. Successful, failed,
+denied, cancelled and stale-expired calls all use the same store transition
+notification. No recurring timer or history query drives this feed.
+
+Fleet merges by sequence, patches existing rows in place, and preserves page
+cursors. New rows are ordered against the last ordinary snapshot, so delayed
+owner batches seen by root cannot leave holes. Patches arriving during a page
+fetch are applied after its snapshot commits; an open snapshot cannot regress
+a received completion. Initial loading, pagination, reconnect and reopening a
+stale hidden view still use `sys.ledger.list`. Ordinary row changes do not.
+An overflowing client buffer during a stalled fetch recovers with a snapshot;
+failed delivery closes that connection so reconnect recovers it too.
 
 ## Cost
 

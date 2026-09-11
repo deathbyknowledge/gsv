@@ -109,6 +109,13 @@ export async function resolveVisibleTarget(
     ?? null;
 }
 
+export async function resolveSelectedMessageTarget(ctx: KernelContext, targetId: string | undefined): Promise<string | undefined> {
+  if (targetId === undefined || targetId === GSV_TARGET_ID) return targetId;
+  const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
+  if (!target) throw new Error(`Selected target is unavailable: ${targetId}`);
+  return target.targetId;
+}
+
 export function updateTargetMetadata(
   ctx: KernelContext,
   targetId: string,

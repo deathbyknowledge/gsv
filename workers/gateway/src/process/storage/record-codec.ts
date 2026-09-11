@@ -1,32 +1,27 @@
 /** Row codecs and history-boundary normalization for Process storage. */
 
 import {
-  type JsonObject, type ProcTraceSpan, type ResponsibilityRecord, jsonObjectSchema,
+  type JsonObject, type ProcHistoryRecordData, type ProcTraceSpan, type ResponsibilityRecord, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
-import { parseAssistantMessageMeta } from "./message-codec";
+import { inferHistoryRecords } from "./history-records";
 import { messageRoleSchema, traceReferenceSchema } from "./validation";
 import type {
   ContextEpochRecord, ContextEpochRow, MessageRecord, MessageRow, ProcessTraceSpanRow, QueuedMessageRole,
 } from "./records";
 
-function completeToolCallGroupEnd(records: MessageRecord[], start: number): number | null {
-  const record = records[start];
-  if (record?.role !== "assistant") return null;
+function completeToolCallGroupEnd(groups: ProcHistoryRecordData[][], start: number): number | null {
   const unmatched = new Set(
-    parseAssistantMessageMeta(record.toolCalls).toolCalls?.map((call) => call.id) ?? [],
+    groups[start]!.flatMap((record) => record.kind === "call" ? [record.payload.callId] : []),
   );
   if (unmatched.size === 0) return null;
 
-  for (let index = start + 1; index < records.length; index += 1) {
-    const candidate = records[index];
-    if (
-      candidate?.role !== "toolResult"
-      || candidate.toolCallId === null
-      || !unmatched.delete(candidate.toolCallId)
-    ) continue;
+  for (let index = start + 1; index < groups.length; index += 1) {
+    for (const record of groups[index]!) {
+      if (record.kind === "result") unmatched.delete(record.payload.callId);
+    }
     if (unmatched.size === 0) return index + 1;
   }
-  return records.length;
+  return groups.length;
 }
 
 export function normalizeCompactionCut(
@@ -34,9 +29,10 @@ export function normalizeCompactionCut(
   requested: number,
   direction: "backward" | "forward",
 ): number {
+  const groups = records.map((message) => message.records ?? inferHistoryRecords(message));
   let cut = Math.max(0, Math.min(records.length, requested));
   for (let start = 0; start < records.length; start += 1) {
-    const end = completeToolCallGroupEnd(records, start);
+    const end = completeToolCallGroupEnd(groups, start);
     if (end === null) continue;
     if (cut > start && cut < end) {
       cut = direction === "backward" ? start : end;

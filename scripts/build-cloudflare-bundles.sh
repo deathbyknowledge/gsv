@@ -19,8 +19,6 @@ install_dir() {
 echo "==> Installing dependencies"
 (cd "${ROOT_DIR}" && npm ci --ignore-scripts)
 npm run build --workspace packages/gsv
-install_dir "${ROOT_DIR}/workers/gateway"
-install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/workers/ripgit"
 
 ADAPTER_ROWS=()

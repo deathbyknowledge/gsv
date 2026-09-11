@@ -16,6 +16,7 @@ const DEFAULT_CHANGE_LIMIT = 100;
 const MAX_CHANGE_LIMIT = 500;
 const DEFAULT_WAKE_BATCH_LIMIT = 25;
 const RESPONSIBILITY_WAKE_RETRY_MS = 5 * 60_000;
+const DEFAULT_WAITING_CHECK_MS = 24 * 60 * 60_000;
 
 type ResponsibilityRow = {
   responsibility_id: string;
@@ -165,7 +166,7 @@ export type ResponsibilityChangesOutcome = {
 };
 
 export class ResponsibilityStore {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  constructor(private readonly storage: DurableObjectStorage, private readonly onChange?: (ownerUid: number) => void) {}
 
   get(ownerUid: number, id: string): ResponsibilityRecord | null {
     const row = this.getRow(ownerUid, id);
@@ -477,6 +478,7 @@ export class ResponsibilityStore {
       outcome = { record, created: true, revision };
     });
     if (!outcome) throw new Error("Responsibility creation did not produce a result");
+    if (outcome.created) this.onChange?.(input.ownerUid);
     return outcome;
   }
 
@@ -497,6 +499,20 @@ export class ResponsibilityStore {
       const next = applyPatch(current, input.patch, input.now);
       this.assertStateTransition(current.state, next.state);
       this.assertParent(input.ownerUid, next.parentId, input.id);
+      // A person's or agent's waiting decision needs a review; system producers own their wake conditions.
+      if (
+        next.state === "waiting"
+        && next.assignee.kind === "ship"
+        && (input.patch.state === "waiting" || input.patch.assignee?.kind === "ship")
+        && (input.actor.kind === "account" || input.actor.kind === "process")
+        && input.patch.nextCheckAtMs === undefined
+        && (next.nextCheckAtMs === undefined || next.nextCheckAtMs <= input.now)
+      ) {
+        const defaultCheck = input.now + DEFAULT_WAITING_CHECK_MS;
+        next.nextCheckAtMs = next.dueAtMs !== undefined && next.dueAtMs > input.now
+          ? Math.min(defaultCheck, next.dueAtMs)
+          : defaultCheck;
+      }
       const changedFields = changedResponsibilityFields(current, next);
       if (changedFields.length === 0) {
         outcome = {
@@ -573,6 +589,7 @@ export class ResponsibilityStore {
       outcome = { record, revision, changed: true };
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
+    if (outcome.changed) this.onChange?.(input.ownerUid);
     return outcome;
   }
 

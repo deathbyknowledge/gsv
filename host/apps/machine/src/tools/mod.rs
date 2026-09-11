@@ -13,7 +13,7 @@ pub use edit::EditTool;
 pub use net::NetFetchTool;
 pub use read::ReadTool;
 pub use search::SearchTool;
-pub use shell::{running_process_count, subscribe_exec_events, ShellTool};
+pub use shell::{running_process_count, subscribe_exec_events, ShellCancelTool, ShellTool};
 pub use write::WriteTool;
 
 use async_trait::async_trait;
@@ -144,6 +144,7 @@ pub fn all_tools_with_workspace_for_device(
 ) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(ShellTool::new(workspace.clone())),
+        Box::new(ShellCancelTool),
         Box::new(ReadTool::for_device(workspace.clone(), device_id.clone())),
         Box::new(WriteTool::new(workspace.clone())),
         Box::new(DeleteTool::new(workspace.clone())),

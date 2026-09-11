@@ -654,6 +654,8 @@ export type SysLedgerLine = {
   args: string;
   /** Null while the call is still in flight. */
   outcome: SysLedgerOutcome | null;
+  /** The reported failure reason, capped at 4,096 characters; absent on older entries. */
+  error?: string | null;
   durationMs: number | null;
   tokens?: number | null;
   costNanoUsd?: number | null;
@@ -675,4 +677,9 @@ export type SysLedgerListResult = {
   /** Newest first. */
   lines: SysLedgerLine[];
   nextCursor: string | null;
+};
+
+/** Authoritative inserted or completed rows, delivered only to authorized ledger readers. */
+export type SysLedgerChangedSignal = {
+  lines: SysLedgerLine[];
 };

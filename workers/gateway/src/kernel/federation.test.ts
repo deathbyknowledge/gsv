@@ -23,6 +23,8 @@ import type {
   FederationOutboxRecord,
 } from "./federation-store";
 import {
+  handleContactAliasSet,
+  handleContactInviteCancel,
   handleContactInviteAccept,
   handleContactRequestCreate,
   handleContactResourceRead,
@@ -44,6 +46,50 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("notifies the owner after a saved alias change, but not for a no-op or failed write", () => {
+    let contact = activeContact();
+    const broadcastToUserUid = vi.fn();
+    const setAlias = vi.fn((_id: string, _uid: number, alias: string | null) => {
+      contact = { ...contact, localAlias: alias ?? undefined };
+      return contact;
+    });
+    const setTitle = vi.fn();
+    const ctx = focusedContext({
+      federation: focusedFixture({ get: () => contact, setAlias }),
+      conversations: focusedFixture({ setTitle }),
+      broadcastToUserUid,
+    });
+    broadcastToUserUid.mockImplementation(() => {
+      expect(contact.localAlias).toBe("My friend");
+      expect(setTitle).toHaveBeenCalled();
+    });
+    handleContactAliasSet({ contactId: contact.id, alias: "My friend" }, ctx);
+    expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.changed");
+    handleContactAliasSet({ contactId: contact.id, alias: "My friend" }, ctx);
+    setAlias.mockImplementation(() => { throw new Error("write failed"); });
+    expect(() => handleContactAliasSet({ contactId: contact.id, alias: "New name" }, ctx)).toThrow("write failed");
+    expect(broadcastToUserUid).toHaveBeenCalledOnce();
+  });
+
+  it("notifies invitation cancellation once, after the saved transition", () => {
+    let state: "issued" | "cancelled" = "issued";
+    const broadcastToUserUid = vi.fn();
+    const ctx = focusedContext({
+      federation: focusedFixture({
+        invite: () => ({ state }),
+        cancelInvite: () => {
+          state = "cancelled";
+          return { inviteId: "invite:test", state, createdAtMs: 0, cancelledAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };
+        },
+      }),
+      broadcastToUserUid,
+    });
+    broadcastToUserUid.mockImplementation(() => expect(state).toBe("cancelled"));
+    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.invite.changed");
   });
 
   it("aborts invite discovery without contacting the acceptance endpoint", async () => {

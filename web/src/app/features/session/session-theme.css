@@ -57,3 +57,68 @@
   --gsv-auth-pad-y: 48px;
   --gsv-auth-pad-x: clamp(24px, 6vw, 96px);
 }
+
+/* The same paper and violet ink as the instrument; the device preference also applies before sign-in. */
+.gsv-auth-theme.is-light {
+  color-scheme: light;
+  --void: #f4f3fb;
+  --panel: #ffffff;
+  --panel-2: #f0eef8;
+  --node-bg: #f7f6fc;
+  --header-bar: #e9e6f5;
+  --frame-lo: #eeebf7;
+  --frame-hi: #e4e0f2;
+  --border: #d8d4ec;
+  --border-raised: #c4bee3;
+  --rule-inner: #e6e3f2;
+  --rule-section: #d1ccea;
+  --bracket: #6b66c4;
+  --dashed: #a7a3c8;
+  --hover: #edeaf8;
+  --hover-nav: #edeaf8;
+  --active: #e4e0f7;
+  --selected: #e4e0f7;
+  --text-hi: #14112b;
+  --text: #1b1836;
+  --text-title: #221e44;
+  --accent: #5a52a8;
+  --accent-bright: #4a43a0;
+  --label: #4a4677;
+  --node-label: #4a4677;
+  --text-dim: #6d6899;
+  --online: #1e8a55;
+  --error: #c0364f;
+  --idle: #9d98c6;
+  --update: #a46b00;
+  --live: #5a52a8;
+  --primary-hi: #4a43a0;
+  --danger: #a8324a;
+  --danger-hi: #c0364f;
+  --warn: #a46b00;
+}
+.gsv-auth-theme.is-light :is(.gsv-login-panel, .gsv-setup-panel, .gsv-provisioning-panel, .gsv-setup-complete-panel) {
+  box-shadow: 0 12px 40px rgba(37, 29, 84, 0.08);
+}
+.gsv-auth-theme.is-light .gsv-ti-wrap {
+  background: var(--panel-2);
+  border-color: var(--border-raised);
+}
+.gsv-auth-theme.is-light .gsv-ti-wrap:hover { border-color: var(--accent); }
+.gsv-auth-theme.is-light .gsv-ti-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.gsv-auth-theme.is-light .gsv-ti-input { color: var(--text-hi); }
+.gsv-auth-theme.is-light .gsv-ti-wrap:focus-within .gsv-ti-input { text-shadow: none; }
+.gsv-auth-theme.is-light .gsv-ti-input::placeholder,
+.gsv-auth-theme.is-light :is(.gsv-ti-affix, .gsv-ti-btn, .gsv-ti-x, .gsv-ti-counter, .gsv-fld-desc, .gsv-fld-req) { color: var(--text-dim); }
+.gsv-auth-theme.is-light .gsv-fld-lab-t { color: var(--label); }
+.gsv-auth-theme.is-light :is(.gsv-ti-btn, .gsv-ti-x):focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.gsv-auth-theme.is-light :is(.gsv-ti-btn, .gsv-ti-x):hover { color: var(--accent-bright); }
+.gsv-auth-theme.is-light .gsv-btn-primary { box-shadow: none; }
+.gsv-auth-theme.is-light .gsv-btn-primary:not(.is-disabled):is(:hover, :focus-visible) { background: var(--accent-bright); box-shadow: none; }
+.gsv-auth-theme.is-light .gsv-btn-primary.is-disabled { color: var(--text-dim); background: var(--selected); border-color: var(--border-raised); }
+.gsv-auth-theme.is-light .gsv-btn-link { color: var(--accent); border-color: var(--accent); }
+.gsv-auth-theme.is-light .gsv-btn-link:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); border-color: var(--accent-bright); }
+.gsv-auth-theme.is-light .gsv-btn-secondary { color: var(--accent); border-color: var(--border-raised); }
+.gsv-auth-theme.is-light .gsv-btn-secondary:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); border-color: var(--accent); background: var(--hover); }

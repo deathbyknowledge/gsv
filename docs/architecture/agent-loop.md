@@ -37,10 +37,13 @@ queue kind, provenance, and canonical conversation identities. Legacy rows are
 inferred at the storage boundary without rewriting them during migration or
 inventing missing provenance.
 
-The first transition stage keeps the existing `proc.history` wire and provider
-context. Archives and fork imports retain typed records alongside compatibility
-messages, and media retention includes every member of a group. Switching the
-model renderer and public history consumers to records is a later stage.
+The provider renderer, compaction renderer, and public history consumers read
+typed records. The captured provider-context fixtures remain byte-identical;
+compatibility messages are retained for supported older clients and histories.
+Archives and fork imports retain typed records alongside compatibility messages,
+and media retention includes every member of a group. Format-2 clients synchronize
+complete groups using durable history revisions and reset detection. See
+[Process History](./process-history.md) for record identity, rendering, and cursors.
 
 The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
 append canonical input with `conversation.send`, which privately admits the same

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ConfigStore } from "./config";
 import { principalOf } from "./context";
 import { testPeer } from "../test-support/peers";
 import { env } from "cloudflare:workers";
@@ -1263,7 +1265,7 @@ describe("scheduler", () => {
     });
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
-    expect(messages[0].content).toContain("Scheduled event `ops pulse` fired.");
+    expect(messages[0].content).toContain("Schedule `ops pulse` fired.");
     expect(messages[0].content).toContain("Run the scheduled ops pulse.");
 
     const schedule = await runInDurableObject(kernel, (instance: Kernel) => {
@@ -2432,5 +2434,29 @@ describe("scheduler", () => {
         interactive: false,
       }),
     );
+  });
+});
+
+describe("routine preferences and notifications", () => {
+  it("uses the owner's timezone only when the schedule omits its own", async () => {
+    await runWithRealKernelSql((sql) => {
+      const config = new ConfigStore(sql);
+      config.set("users/1000/locale/timezone", "Europe/Amsterdam");
+      const ctx = makeSchedulerContext({ config });
+      expect(normalizeScheduleExpression({ kind: "cron", expr: "0 9 * * *", timezone: "" }, ctx)).toMatchObject({ timezone: "Europe/Amsterdam" });
+      expect(normalizeScheduleExpression({ kind: "cron", expr: "0 9 * * *", timezone: "America/New_York" }, ctx)).toMatchObject({ timezone: "America/New_York" });
+    });
+  });
+  it("announces saved definitions and deletion to their owner", async () => {
+    await runWithRealKernelSql((sql) => {
+      const changes: number[] = [];
+      const store = new ScheduleStore(sql, (uid) => changes.push(uid));
+      const schedule = store.create({ ownerUid: 1000, creator: schedulePrincipal(), runAs: schedulePrincipal(), name: "Review", enabled: false, expression: { kind: "every", everyMs: 60_000 }, target: { kind: "responsibility", message: "Check in" }, now: 1000 });
+      store.setWakeScheduleId(schedule.id, null);
+      store.update(schedule.id, { name: "Updated review", now: 2000 });
+      store.remove(schedule.id);
+      store.remove(schedule.id);
+      expect(changes).toEqual([1000, 1000, 1000]);
+    });
   });
 });

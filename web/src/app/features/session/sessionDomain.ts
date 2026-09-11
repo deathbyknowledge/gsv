@@ -6,6 +6,7 @@ import type {
 import type { SessionSnapshot, SessionSetupInput } from "../../services/session/sessionService";
 import { buildCliInstallCommand, cliReleaseLabel } from "../../domain/cliInstall";
 import { DEVICE_ID_FORMAT_DESCRIPTION, parseDeviceId } from "../../domain/deviceId";
+import { INITIAL_AGENT } from "../../domain/initialAgent";
 import {
   aiProviderDisplayLabel,
   fixedAiProviderModel,
@@ -237,20 +238,15 @@ export function validateSetupDetails(
   for (const step of steps) {
     if (step === "account") {
       const rawUsername = draft.account.username;
-      const rawAgentName = draft.account.agentName;
       const username = rawUsername.trim();
-      const agentName = rawAgentName.trim();
       if (!username) {
         return { message: "Username is required.", step };
       }
       if (!isValidUsername(rawUsername)) {
         return { message: usernameFormatError("Username"), step };
       }
-      if (agentName && !isValidUsername(rawAgentName)) {
-        return { message: usernameFormatError("Personal agent username"), step };
-      }
-      if (agentName && agentName === username) {
-        return { message: "Personal agent username must be different from the desktop username.", step };
+      if (username === INITIAL_AGENT.username) {
+        return { message: `${INITIAL_AGENT.username} is reserved for your personal agent. Choose a different username.`, step };
       }
       if (draft.account.password.length < 8) {
         return { message: "Password must be at least 8 characters.", step };
@@ -326,16 +322,12 @@ export function buildDeviceSummary(draft: OnboardingDraft): string {
 }
 
 export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
-  const agentName = draft.account.agentName.trim();
   const payload: SessionSetupInput = {
     username: draft.account.username.trim(),
+    agentName: INITIAL_AGENT.username,
     password: draft.account.password,
     timezone: draft.system.timezone.trim(),
   };
-
-  if (agentName) {
-    payload.agentName = agentName;
-  }
 
   if (draft.admin.mode === "custom" && draft.admin.password) {
     payload.rootPassword = draft.admin.password;

@@ -118,6 +118,7 @@ export function handleSysTargetDelete(
     throw new Error("Permission denied: machine forgetting is owner-managed");
   }
 
+  ctx.pairings.cancelForTarget(device.owner_uid, targetId);
   const revokedTokens = ctx.auth
     .listTokens(identity.uid === 0 ? undefined : identity.uid)
     .filter((token) =>

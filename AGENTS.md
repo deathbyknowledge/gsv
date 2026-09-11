@@ -40,6 +40,7 @@ This document is the root engineering contract for the repository. It explains h
 - A linked adapter actor may invoke an ordinary syscall only through a Kernel-derived, interaction-scoped human peer whose grant is intersected with the linked account's capabilities.
 - Shell, agent tools, CodeMode, apps, and SDK clients may present results differently, but they must share the same underlying primitive behavior.
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
+- Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
 
 ### Treat targets as Unix-shaped capability environments
@@ -69,6 +70,8 @@ Process history stores typed message, note, call, result, and event records. Run
 
 Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and run-control choices for inspection. `message send` commits a user-visible Message without finishing the active run, so a Process may update the user while continuing work. Every human-facing run must eventually call `yield`; a final send composes as `message send ... && yield`, while a bare `yield` completes silently. These Process-owned commands do not add model tools or require shell approval. A bounded IPC call instead returns ordinary assistant output as its durable Process result, independently of human delivery. Clients may opt into raw Process observation, while adapters receive only exact routed `adapter.send` requests.
 
+Process history uses typed message, note, call, result, and event records. Storage owns legacy inference; model context, compaction, and client presentation each render those records at their owning boundary. Preserve the captured provider-context contract when changing rendering. Person-only events remain inspectable without entering provider context or summary input. Format-2 history synchronization replaces complete message groups, including late companions and media changes; reset and compaction invalidate earlier cursors. See `docs/architecture/process-history.md`.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
@@ -89,7 +92,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
 - `workers/gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
-- `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
+- `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
@@ -111,6 +114,8 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - A stale run must not mutate active state.
 - Cancellation must propagate to the component that owns the active operation.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
+- `shell.cancel` explicitly stops a durable device session and its process tree. The device owns termination independently of the caller connection; polling remains available for the terminal result. Device disconnects leave session identity available for a status check after reconnect.
+- Recoverable shell starts use `shell.exec` with `start: true` and a caller-persisted fresh `sessionId`. The Kernel persists its target before dispatch and the machine claims that exact identity before spawning. Recovery only polls or cancels; it must never replay a start or uncertain stdin.
 - `proc.abort` stops the active run, `proc.reset` resets history while preserving the process, and `proc.kill` tears the process down.
 - A successfully killed pid remains terminal across Durable Object eviction and must never be reused for a replacement process.
 - Archive and media cleanup must remain coherent across reset and kill.
@@ -129,6 +134,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 - Enforce authorization in the Kernel, not only in UI or callers.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
+- A signed-in human issues device enrollment invitations scoped to the installation, account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
 - Canonical Messages store immutable resource references rather than duplicating bytes. A Process must retain an exact source revision before committing a reference whose source lifetime is not already durable.
@@ -177,7 +183,7 @@ gsv/
 │   ├── adapters/  # External-platform Worker implementations and test channel
 │   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
-├── web/           # Desktop shell and embedded app host
+├── web/           # Instrument web UI and browser-side gateway integration
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes

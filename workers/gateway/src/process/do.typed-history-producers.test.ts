@@ -77,6 +77,38 @@ describe("typed history producers", () => {
     });
   });
 
+  it("records native routing defaults without inventing targets for unresolved sessions or CodeMode", async () => {
+    const stub = await initProcess("typed-history-default-targets", ROOT_IDENTITY);
+    await runInProcess(stub, async (process) => {
+      const runId = "typed-default-targets-run";
+      process.runs.active = { runId };
+      const turn = classifyAssistantTurn(assistantResponse([
+        { type: "toolCall", id: "read", name: "Read", arguments: { path: "/root/file" } },
+        { type: "toolCall", id: "write", name: "Write", arguments: { path: "/root/file", content: "text" } },
+        { type: "toolCall", id: "edit", name: "Edit", arguments: { path: "/root/file", oldText: "a", newText: "b" } },
+        { type: "toolCall", id: "delete", name: "Delete", arguments: { path: "/root/file" } },
+        { type: "toolCall", id: "search", name: "Search", arguments: { pattern: "text" } },
+        { type: "toolCall", id: "shell", name: "Shell", arguments: { input: "pwd" } },
+        { type: "toolCall", id: "remote", name: "Read", arguments: { path: "/tmp/file", target: "laptop" } },
+        { type: "toolCall", id: "gateway-name", name: "Read", arguments: { path: "/tmp/file", target: "gateway" } },
+        { type: "toolCall", id: "local-name", name: "Read", arguments: { path: "/tmp/file", target: "local" } },
+        { type: "toolCall", id: "spaced-name", name: "Read", arguments: { path: "/tmp/file", target: " laptop " } },
+        { type: "toolCall", id: "missing-session", name: "Shell", arguments: { sessionId: "unknown-session" } },
+        { type: "toolCall", id: "codemode", name: "CodeMode", arguments: { code: "return 1", target: "laptop" } },
+      ]), ["Read", "Write", "Edit", "Delete", "Search", "Shell", "CodeMode"]);
+      process.run.persistRunTickAssistantHistory(runId, turn, [], undefined);
+      const calls = process.store.messages.getRecords().filter((record) => record.kind === "call");
+      expect(calls.map((record) => [record.payload.callId, record.payload.target])).toEqual([
+        ["read", "gsv"], ["write", "gsv"], ["edit", "gsv"], ["delete", "gsv"],
+        ["search", "gsv"], ["shell", "gsv"], ["remote", "laptop"],
+        ["gateway-name", "gateway"], ["local-name", "local"], ["spaced-name", " laptop "],
+        ["missing-session", null], ["codemode", null],
+      ]);
+      expect(calls.map((record) => record.payload.args)).toEqual(turn.returnedToolCalls.map((call) => call.arguments));
+      process.runs.active = null;
+    });
+  });
+
   it("records Send and Shell run-control outcomes and preserves their display sentences", async () => {
     const stub = await initProcess("typed-history-run-control", ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {
@@ -217,8 +249,8 @@ describe("typed history producers", () => {
       const policy = { overflow: "fail", compactAtPressure: 0.9, compactToPressure: 0.6, updatedAt: 1 };
       process.runs.active = { runId };
       process.sendSignal = vi.fn(async () => {});
-      await process.run.failWithSystemMessage(runId, "context.policy.fail", "Context limit policy stopped this run.", {
-        trigger: "preflight", policy, pressure: 0.95,
+      await process.run.failWithHistoryEvent(runId, {
+        reason: "context.policy.fail", trigger: "preflight", policy, pressure: 0.95,
       });
       const records: ProcHistoryRecord[] = process.store.messages.getRecords();
       expect(records.at(-1)).toMatchObject({
@@ -227,7 +259,12 @@ describe("typed history producers", () => {
           severity: "error", audience: "both",
         },
       });
-      expect(process.store.messages.getMessages()[0].content).toBe("Context limit policy stopped this run.");
+      expect(process.store.messages.getMessages()[0].content).toBe([
+        "Context limit policy stopped this run.",
+        "Policy: fail at 90% context pressure.",
+        "Current estimate: 95%.",
+        "Compact the history or reset the process before sending more work.",
+      ].join("\n"));
     });
   });
 
@@ -277,20 +314,18 @@ describe("typed history producers", () => {
     });
   });
 
-  it("keeps the source and pending-event count when a finish queues a wake", async () => {
+  it("starts a durable continuation for pending events without appending another history record", async () => {
     const stub = await initProcess("typed-history-pending-wake", ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {
       const run = { runId: "typed-wake-run", pendingRuntimeEvents: 2 };
       process.runs.active = run;
       process.store.messages.appendMessage("assistant", "done", { runId: run.runId });
-      process.run.commitRunFinishState(run, { reason: "run.yielded", status: "ok", resultText: null });
-      const records: ProcHistoryRecord[] = process.store.messages.getRecords();
-      expect(records.at(-1)).toMatchObject({
-        kind: "event", payload: {
-          kind: "runtime.wake", payload: { source: "process", reason: "pending-events", pendingEvents: 2 },
-          severity: "info", audience: "model",
-        },
-      });
+      const records = process.store.messages.getRecords();
+      const transition = process.run.commitRunFinishState(run, { reason: "run.yielded", status: "ok", resultText: null });
+      expect(transition.next).toMatchObject({ type: "continuation", runId: transition.wakeRunId });
+      expect(process.runs.active?.runId).toBe(transition.wakeRunId);
+      expect(transition.wakeRunId).not.toBe(run.runId);
+      expect(process.store.messages.getRecords()).toEqual(records);
       process.runs.active = null;
     });
   });

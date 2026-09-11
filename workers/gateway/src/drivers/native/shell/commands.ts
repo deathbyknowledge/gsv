@@ -24,6 +24,7 @@ import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
 import { buildR12yCommand } from "./r12y";
 import { buildSchedCommand } from "./sched";
+import { buildSignalCommand } from "./signal";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
 import { buildTargetsCommands } from "./targets";
@@ -63,6 +64,7 @@ export function buildCustomCommands(
   const rgitCommands = buildRgitCommands(ctx);
   const r12y = buildR12yCommand(ctx);
   const sched = buildSchedCommand(ctx);
+  const signal = buildSignalCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
   const message = buildMessageCommand(fs, ctx);
@@ -93,6 +95,7 @@ export function buildCustomCommands(
     ...rgitCommands,
     r12y,
     sched,
+    signal,
     ...targets,
     ...netCommands,
     oauth,

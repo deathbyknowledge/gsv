@@ -452,7 +452,7 @@ export async function handleFsTransferStat(
       return {
         ok: true,
         path,
-        size: stat.size,
+        size: opened.size,
         isFile: true,
         isDirectory: false,
         contentType,

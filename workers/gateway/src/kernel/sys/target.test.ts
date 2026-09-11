@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
+import { resolveSelectedMessageTarget } from "../targets";
 import {
   handleSysTargetDelete,
   handleSysTargetList,
@@ -127,6 +128,8 @@ function makeContext(
     },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     targets: devices as KernelContext["targets"],
+    adapters: { identityLinks: { list: () => [] } },
+    pairings: { cancelForTarget: vi.fn() },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
@@ -170,6 +173,15 @@ describe("sys.target handlers", () => {
     expect(result.targets[0].label).toBe("Alpha");
     expect(result.targets[0].description).toBe("Linux home server");
     expect(result.targets[0].implements).toEqual(["fs.*", "shell.*"]);
+  });
+
+  it("validates optional message targets without requiring them to be online", async () => {
+    const owner = makeContext(1000, records);
+    await expect(resolveSelectedMessageTarget(owner, undefined)).resolves.toBeUndefined();
+    await expect(resolveSelectedMessageTarget(owner, "gsv")).resolves.toBe("gsv");
+    await expect(resolveSelectedMessageTarget(owner, "node-beta")).resolves.toBe("node-beta");
+    await expect(resolveSelectedMessageTarget(owner, "missing")).rejects.toThrow("Selected target is unavailable");
+    await expect(resolveSelectedMessageTarget(makeContext(1001, records), "node-alpha")).rejects.toThrow("Selected target is unavailable");
   });
 
   it("accepts empty args payloads for list", () => {

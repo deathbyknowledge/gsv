@@ -1,31 +1,33 @@
 import type { ProcessStore } from "../store";
-import type {
-  AssistantMessage, Message, TextContent, ThinkingContent, ToolCall, ToolResultMessage, UserMessage,
-} from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import {
   procHistoryRecordDataSchema, type JsonObject, type JsonValue, type ProcHistoryRecord,
   type ProcHistoryRecordData, type ProcToolResultOutcome, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
-import { buildFallbackMediaBlocks, parseStoredProcessMedia } from "../media";
-import { materializeLegacyToolResultImages } from "../tool-result-media";
+import { parseStoredProcessMedia } from "../media";
 import { syscallToolName } from "../../syscalls/constants";
 import { storedHistoryMedia } from "./history-media";
-import { historyOutputResources, inferHistoryRecords, readHistoryRecord } from "./history-records";
-import { tagAssistantContextIdentity } from "../context-message-metadata";
 import {
-  DEFAULT_MESSAGE_READ_LIMIT, buildFallbackUserContent, messageRecordFromRow, normalizeAssistantStopReason,
-  parseAssistantMessageMeta, parseMessageMetadata, requiredToolCallId, stringifyMessageMetadata,
-  toolResultMetaSchema, usageStateToPiUsage, type MessageMetadata, type MessageRecord, type MessageRole,
+  historyOutputResources, inferHistoryRecords, normalizeModelHistoryGroup, readHistoryRecord,
+} from "./history-records";
+import {
+  renderModelHistory, type ModelHistoryGroup, type ModelHistoryRenderOptions,
+} from "../history/model-renderer";
+import {
+  DEFAULT_MESSAGE_READ_LIMIT, messageRecordFromRow, parseMessageMetadata, stringifyMessageMetadata,
+  type MessageMetadata, type MessageRecord, type MessageRole,
   type MessageRow, type MessageStats, type ToolResultMetadata,
 } from "./store-codecs";
 
-type ModelHistoryOptions = {
+type ModelHistoryOptions = ModelHistoryRenderOptions & {
   limit?: number | null;
   offset?: number;
-  /** Only usage confirmed against this exact prompt epoch is reusable. */
-  contextEpochId?: string;
-  /** Only usage confirmed against this exact system-prompt/tool shape is reusable. */
-  generationContextId?: string;
+};
+
+type HistoryDeltaPage = {
+  messages: MessageRecord[];
+  revision: number | null;
+  hasMore: boolean;
 };
 
 /** Owns durable Process history messages and model-history projection. */
@@ -48,6 +50,7 @@ export class ProcessMessageRepository {
       records?: ProcHistoryRecordData[];
       queueKind?: string;
       provenance?: JsonObject;
+      selectedTarget?: string;
       legacy?: boolean;
     },
   ): number {
@@ -65,15 +68,20 @@ export class ProcessMessageRepository {
     const records = opts?.legacy ? [] : opts?.records ?? (opts?.record
       ? [opts.record]
       : inferHistoryRecords({
-        id: 0, generation, runId, role, content, toolCalls, toolCallId, media, origin,
-        metadata: metadataJson, createdAt,
+        id: 0, runId, role, content, toolCalls, toolCallId, media, origin,
       }, opts));
     const record = records[0];
+    const modelNeutral = (record?.kind === "event" && record.payload.audience === "person") ||
+      (record?.kind === "message" && record.payload.direction === "out");
+    const context = modelNeutral ? this.store.state.getContextState() : null;
+    const priorStats = context ? this.messageStats() : null;
+    const freshContext = context && priorStats && context.messageCount === priorStats.count &&
+      context.lastMessageId === priorStats.lastMessageId ? context : null;
     this.store.sql.exec(
       `INSERT INTO messages (
         generation, run_id, role, content, tool_calls, tool_call_id,
-        media_json, origin_json, metadata_json, created_at, kind, payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        media_json, origin_json, metadata_json, created_at, kind, payload_json, history_revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       generation,
       runId,
       role,
@@ -86,6 +94,7 @@ export class ProcessMessageRepository {
       createdAt,
       record?.kind ?? null,
       record ? JSON.stringify(record.payload) : null,
+      this.store.state.nextHistoryRevision(),
     );
 
     const messageId = this.store.first<{ id: number }>("SELECT last_insert_rowid() as id")?.id ?? -1;
@@ -97,6 +106,17 @@ export class ProcessMessageRepository {
       if (metadata?.usage) {
         this.store.state.addHistoryUsage(metadata.usage);
       }
+    }
+
+    if (freshContext) {
+      const stats = this.messageStats();
+      // The measurement is unchanged; only its durable coordinates and state revision advance.
+      this.store.state.setContextState({
+        ...freshContext,
+        revision: this.store.state.nextContextStateRevision(),
+        messageCount: stats.count,
+        lastMessageId: stats.lastMessageId,
+      });
     }
 
     return messageId;
@@ -121,7 +141,10 @@ export class ProcessMessageRepository {
       parent.generation, parent.run_id, parent.role, parent.created_at,
       record.kind, JSON.stringify(record.payload), messageId,
     );
-    return this.store.first<{ id: number }>("SELECT last_insert_rowid() as id")!.id;
+    const recordId = this.store.first<{ id: number }>("SELECT last_insert_rowid() as id")!.id;
+    this.store.sql.exec("UPDATE messages SET history_revision = ? WHERE id = ?",
+      this.store.state.nextHistoryRevision(), messageId);
+    return recordId;
   }
 
   appendRunRecord(runId: string, record: ProcHistoryRecordData): number {
@@ -171,8 +194,9 @@ export class ProcessMessageRepository {
       record.payload.media = parseStoredProcessMedia(media);
     }
     this.store.sql.exec(
-      "UPDATE messages SET media_json = ?, payload_json = ? WHERE id = ? AND run_id = ?",
-      media, record ? JSON.stringify(record.payload) : null, messageId, runId,
+      "UPDATE messages SET media_json = ?, payload_json = ?, history_revision = ? WHERE id = ? AND run_id = ?",
+      media, record ? JSON.stringify(record.payload) : null,
+      this.store.state.nextHistoryRevision(), messageId, runId,
     );
   }
 
@@ -251,11 +275,11 @@ export class ProcessMessageRepository {
     return this.decodeMessages(rows);
   }
 
-  private relatedRows(rows: MessageRow[]): MessageRow[] {
+  private relatedRows(rows: ReadonlyArray<{ id: number }>): MessageRow[] {
     if (!rows.length) return [];
     return this.store.sql.exec<MessageRow>(
-      `SELECT * FROM messages WHERE group_message_id >= ? AND group_message_id <= ? ORDER BY id ASC`,
-      rows[0]!.id, rows[rows.length - 1]!.id,
+      `SELECT * FROM messages WHERE group_message_id IN (SELECT value FROM json_each(?)) ORDER BY id ASC`,
+      JSON.stringify(rows.map((row) => row.id)),
     ).toArray();
   }
 
@@ -278,12 +302,28 @@ export class ProcessMessageRepository {
   }
 
   getRecords(opts?: Parameters<ProcessMessageRepository["getMessages"]>[0]): ProcHistoryRecord[] {
-    const messages = this.getMessages(opts);
-    if (!messages.length) return [];
-    const related = this.store.sql.exec<MessageRow>(
-      "SELECT * FROM messages WHERE group_message_id >= ? AND group_message_id <= ? ORDER BY id ASC",
-      messages[0]!.id, messages[messages.length - 1]!.id,
+    return this.recordsForMessages(this.getMessages(opts));
+  }
+
+  /** Selects whole changed groups; a late companion or media update moves its parent forward. */
+  getHistoryDelta(afterRevision: number, limit: number): HistoryDeltaPage {
+    const rows = this.store.sql.exec<MessageRow & { history_revision: number }>(
+      `SELECT * FROM messages WHERE group_message_id IS NULL AND history_revision > ?
+       ORDER BY history_revision ASC, id ASC LIMIT ?`,
+      afterRevision, limit + 1,
     ).toArray();
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    return {
+      messages: this.decodeMessages(rows),
+      revision: rows.at(-1)?.history_revision ?? null,
+      hasMore,
+    };
+  }
+
+  recordsForMessages(messages: MessageRecord[]): ProcHistoryRecord[] {
+    if (!messages.length) return [];
+    const related = this.relatedRows(messages);
     const groups = new Map<number, MessageRow[]>();
     for (const row of related) {
       const group = groups.get(row.group_message_id!) ?? [];
@@ -385,6 +425,7 @@ export class ProcessMessageRepository {
 
   clearMessages(): number {
     const count = this.messageCount();
+    this.store.state.invalidateHistoryCursors();
     this.store.sql.exec("DELETE FROM messages");
     this.store.state.deleteContextState();
     this.store.state.deleteHistoryUsage();
@@ -393,8 +434,14 @@ export class ProcessMessageRepository {
 
   // --- Message conversion to pi-ai format ---
 
+  getModelHistoryGroups(
+    opts?: Parameters<ProcessMessageRepository["getMessages"]>[0],
+  ): ModelHistoryGroup[] {
+    return this.getMessages(opts).map(normalizeModelHistoryGroup);
+  }
+
   toMessages(opts?: ModelHistoryOptions): Message[] {
-    return this.getMessages(opts).map((record) => modelHistoryMessage(record, opts));
+    return renderModelHistory(this.getModelHistoryGroups(opts), opts);
   }
 
   /**
@@ -443,95 +490,4 @@ export class ProcessMessageRepository {
       records,
     });
   }
-}
-
-function modelHistoryMessage(
-  record: MessageRecord,
-  options: ModelHistoryOptions | undefined,
-): Message {
-  switch (record.role) {
-    case "user":
-      return userHistoryMessage(record);
-    case "system":
-      return systemHistoryMessage(record);
-    case "assistant":
-      return assistantHistoryMessage(record, options);
-    case "toolResult":
-      return toolResultHistoryMessage(record);
-  }
-}
-
-function userHistoryMessage(record: MessageRecord): UserMessage {
-  const media = parseStoredProcessMedia(record.media);
-  return {
-    role: "user",
-    content: media.length === 0 ? record.content : buildFallbackUserContent(record.content, media),
-    timestamp: record.createdAt,
-  };
-}
-
-function systemHistoryMessage(record: MessageRecord): UserMessage {
-  return {
-    role: "user",
-    content: `[GSV EVENT]\n${record.content}`,
-    timestamp: record.createdAt,
-  };
-}
-
-function assistantHistoryMessage(
-  record: MessageRecord,
-  options: ModelHistoryOptions | undefined,
-): AssistantMessage {
-  const content: (TextContent | ThinkingContent | ToolCall)[] = [];
-  const assistant = parseAssistantMessageMeta(record.toolCalls);
-  const metadata = parseMessageMetadata(record.metadata);
-  const { provider = null, contextEpochId, generationContextId } = metadata ?? {};
-  const { api = "", provider: providerName = "", model = "", stopReason } = provider ?? {};
-  if (assistant.thinking) content.push(...assistant.thinking);
-  if (record.content) content.push({ type: "text", text: record.content });
-  if (assistant.toolCalls) content.push(...assistant.toolCalls);
-  const message: AssistantMessage = {
-    role: "assistant",
-    content,
-    api,
-    provider: providerName,
-    model,
-    usage: usageStateToPiUsage(reusableAssistantUsage(metadata, options)),
-    stopReason: normalizeAssistantStopReason(stopReason),
-    timestamp: record.createdAt,
-  };
-  if (provider?.responseModel) message.responseModel = provider.responseModel;
-  if (provider?.responseId) message.responseId = provider.responseId;
-  tagAssistantContextIdentity(message, contextEpochId, generationContextId);
-  return message;
-}
-
-function reusableAssistantUsage(
-  metadata: MessageMetadata | null,
-  options: ModelHistoryOptions | undefined,
-) {
-  const epochMatches =
-    options?.contextEpochId === undefined || metadata?.contextEpochId === options.contextEpochId;
-  const generationMatches =
-    options?.generationContextId === undefined ||
-    metadata?.generationContextId === options.generationContextId;
-  return epochMatches && generationMatches ? metadata?.usage : undefined;
-}
-
-function toolResultHistoryMessage(record: MessageRecord): ToolResultMessage {
-  const meta = record.toolCalls ? toolResultMetaSchema.parse(JSON.parse(record.toolCalls)) : {};
-  const media = parseStoredProcessMedia(record.media);
-  const legacyImageContent =
-    media.length === 0 ? materializeLegacyToolResultImages(record.content) : null;
-  return {
-    role: "toolResult",
-    toolCallId: requiredToolCallId(record),
-    toolName: meta.toolName ?? "unknown",
-    content: legacyImageContent ?? [
-      { type: "text", text: record.content },
-      ...buildFallbackMediaBlocks(media),
-    ],
-    isError: meta.isError ?? false,
-    timestamp: record.createdAt,
-  };
 }

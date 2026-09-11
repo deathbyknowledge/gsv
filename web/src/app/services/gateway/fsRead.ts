@@ -11,6 +11,8 @@ export type FsReadClient = Pick<GSVClient, "request">;
 type FsReadFileResult = Exclude<Extract<FsReadResult, { ok: true }>, { files: string[] }>;
 const fsReadArgsSchema = z.object({
   path: z.string(),
+  // The target routes the read to a machine or a contact; without it every read lands on the cloud home.
+  target: z.string().optional(),
   offset: z.number().optional(),
   limit: z.number().optional(),
 });

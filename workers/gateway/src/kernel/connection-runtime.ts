@@ -6,6 +6,8 @@ import type {
   ConnectedPeer,
   JsonValue,
   ProcessIdentity,
+  ProcHistoryEventPayload,
+  SysLedgerChangedSignal,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -36,6 +38,8 @@ import {
   restoreKernelWebSocket,
 } from "./connection";
 import type { Kernel } from "./do";
+import { deliverTargetConnectionEvent } from "./target-events";
+import { hasCapability } from "./capabilities";
 import {
   sameRouteOrigin,
 } from "./do-shared";
@@ -43,6 +47,8 @@ import {
 
 export class ConnectionRuntime {
   constructor(readonly host: Kernel) {}
+
+  private readonly pendingTargetEvents = new Map<string, Promise<void>>();
 
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
@@ -282,14 +288,49 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       payload,
     };
     const json = JSON.stringify(frame);
+    const contactRead = signal === "contact.changed" ? "contact.list"
+      : signal === "contact.invite.changed" ? "contact.invite.list"
+      : signal === "contact.request.changed" ? "contact.request.list"
+      : signal === "r12y.changed" ? "r12y.list"
+      : signal === "r12y.source.changed" ? "r12y.source.list"
+      : signal === "sched.changed" ? "sched.list" : null;
+    const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
 
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
       if (!peer || peer.principal.kind !== "human") continue;
       if (!peer.grant.signals.includes(signal)) continue;
+      if (guardedFeed && state.step !== "connected") continue;
+      // Contact notifications reveal private activity even without a payload.
+      if (contactRead && !hasCapability(peer.grant.calls, contactRead)) continue;
       if (peer.principal.account.uid === uid) {
+        if (!guardedFeed) conn.send(json);
+        else {
+          try {
+            conn.send(json);
+          } catch {
+            conn.close(1011, contactRead ? "Contact feed interrupted" : "Process feed interrupted");
+          }
+        }
+      }
+    }
+  }
+
+  /** Ledger rows contain private arguments; the signal grant alone never grants read access. */
+  broadcastLedgerChanges(ownerUid: number, payload: SysLedgerChangedSignal): void {
+    let json: string | undefined;
+    for (const [, conn] of this.host.connections) {
+      const peer = conn.state.peer;
+      if (conn.state.step !== "connected" || !peer || peer.principal.kind !== "human") continue;
+      if (peer.principal.account.uid !== ownerUid && peer.principal.account.uid !== 0) continue;
+      if (!peer.grant.signals.includes("ledger.changed") || !hasCapability(peer.grant.calls, "sys.ledger.list")) continue;
+      json ??= JSON.stringify({ type: "sig", signal: "ledger.changed", payload } satisfies SignalFrame);
+      try {
         conn.send(json);
+      } catch {
+        // Reconnection reloads the authoritative snapshot if this connection cannot accept a patch.
+        conn.close(1011, "Ledger feed interrupted");
       }
     }
   }
@@ -333,6 +374,24 @@ broadcastTargetStatus(
     if (!device) {
       return;
     }
+
+    const payload: ProcHistoryEventPayload<"target.connection"> = {
+      targetId: device.target_id, event, platform: device.platform,
+      version: device.version, observedAt: Date.now(),
+    };
+    if (device.label) payload.label = device.label;
+    const transitionId = `target.connection:${crypto.randomUUID()}`;
+    const watches = this.host.signalWatches.matchTarget(targetId, "target.status");
+    const previous = this.pendingTargetEvents.get(targetId) ?? Promise.resolve();
+    const delivery = previous.then(() => deliverTargetConnectionEvent(this.host, payload, transitionId, watches))
+      .catch((error) => {
+        console.warn(`[Kernel] Target event delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        if (this.pendingTargetEvents.get(targetId) === delivery) this.pendingTargetEvents.delete(targetId);
+      });
+    this.pendingTargetEvents.set(targetId, delivery);
+    this.host.ctx.waitUntil(delivery);
 
     const frame: SignalFrame = {
       type: "sig",

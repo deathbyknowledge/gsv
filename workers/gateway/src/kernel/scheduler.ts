@@ -1,6 +1,7 @@
 import type { KernelContext, PrincipalView } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
+import { normalizeTimezone, ownerTimezone } from "./timezone";
 import { hasCapability } from "./capabilities";
 import type {
   ScheduleExpression,
@@ -100,7 +101,7 @@ const scheduleNumberSchema = z.number();
 const scheduleTextSchema = z.string();
 
 export class ScheduleStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(private readonly sql: SqlStorage, private readonly onChange?: (ownerUid: number) => void) {}
 
   create(input: {
     ownerUid: number;
@@ -147,6 +148,7 @@ export class ScheduleStore {
     if (!record) {
       throw new Error(`Failed to create schedule ${id}`);
     }
+    this.onChange?.(record.ownerUid);
     return record;
   }
 
@@ -286,6 +288,7 @@ export class ScheduleStore {
     if (!record) {
       throw new Error(`Schedule not found after update: ${id}`);
     }
+    this.onChange?.(record.ownerUid);
     return record;
   }
 
@@ -295,6 +298,7 @@ export class ScheduleStore {
       return null;
     }
     this.sql.exec("DELETE FROM schedules WHERE schedule_id = ?", id);
+    this.onChange?.(existing.ownerUid);
     return existing;
   }
 
@@ -338,6 +342,7 @@ export class ScheduleStore {
       startedAt,
       id,
     );
+    this.onChange?.(current.ownerUid);
     return this.getStored(id);
   }
 
@@ -452,6 +457,7 @@ export class ScheduleStore {
       JSON.stringify(input.result ?? null),
     );
 
+    this.onChange?.(input.ownerUid);
     return this.get(input.scheduleId);
   }
 
@@ -699,7 +705,7 @@ export function normalizeScheduleExpression(
   if (expression.kind === "cron") {
     const expr = normalizeRequiredText(expression.expr, "cron expression");
     parseCronFields(expr);
-    const timezone = normalizeTimezone(expression.timezone || ctx?.config.get("config/server/timezone") || "UTC");
+    const timezone = normalizeTimezone(expression.timezone || (ctx ? ownerTimezone(ctx.config, resolveCallerOwnerUid(ctx)) : "UTC"));
     return { kind: "cron", expr, timezone };
   }
   // SAFETY: the discriminated ScheduleExpression union is exhausted above.
@@ -1163,16 +1169,6 @@ function normalizePlainObject<T>(value: T, label: string): ScheduleJsonObject {
   }
   // SAFETY: the JSON-object schema validates a persisted schedule payload at this boundary.
   return parsed.data as ScheduleJsonObject;
-}
-
-function normalizeTimezone<T>(value: T): string {
-  const timezone = normalizeRequiredText(value, "timezone");
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
-  } catch {
-    throw new Error("timezone must be a valid IANA timezone");
-  }
-  return timezone;
 }
 
 function clampListLimit<T>(value: T): number {

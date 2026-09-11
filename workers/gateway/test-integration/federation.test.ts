@@ -9,6 +9,7 @@ import type {
   ContactSendArgs,
   ContactSendResult,
   ContactSummary,
+  JsonValue,
   ConversationHistoryResult,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
@@ -57,6 +58,22 @@ describe("cross-GSV federation integration", () => {
   });
 
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
+    const firstRequestSignals: (JsonValue | undefined)[] = [];
+    const secondRequestSignals: (JsonValue | undefined)[] = [];
+    first.onSignal((signal, payload) => { if (signal === "contact.request.changed") firstRequestSignals.push(payload); });
+    second.onSignal((signal, payload) => { if (signal === "contact.request.changed") secondRequestSignals.push(payload); });
+    const firstSignals: { signal: string; payload: JsonValue | undefined }[] = [];
+    const secondSignals: typeof firstSignals = [];
+    for (const [client, events] of [[first, firstSignals], [second, secondSignals]] as const) {
+      client.onSignal((signal, payload) => {
+        if (signal === "contact.changed" || signal === "contact.invite.changed") events.push({ signal, payload });
+      });
+    }
+    const checkSignals = async (events: typeof firstSignals, contacts: number, invites: number) => {
+      await expect.poll(() => events.filter((event) => event.signal === "contact.changed").length).toBe(contacts);
+      await expect.poll(() => events.filter((event) => event.signal === "contact.invite.changed").length).toBe(invites);
+      expect(events.every((event) => event.payload === undefined)).toBe(true);
+    };
     const [firstDiscovery, secondDiscovery] = await Promise.all([
       fetch(new URL("/.well-known/gsv/federation/v1/ship", firstOrigin)),
       fetch(new URL("/.well-known/gsv/federation/v1/ship", secondOrigin)),
@@ -74,6 +91,7 @@ describe("cross-GSV federation integration", () => {
     expect(invalidAcceptance.status).toBe(400);
 
     const cancelledInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await checkSignals(firstSignals, 0, 1);
     const pendingInvites = await first.contact.invite.list({});
     expect(pendingInvites.invites).toEqual([
       expect.objectContaining({
@@ -83,6 +101,7 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(pendingInvites.invites[0]).not.toHaveProperty("code");
     await first.contact.invite.cancel({ inviteId: cancelledInvite.inviteId });
+    await checkSignals(firstSignals, 0, 2);
     await expect(second.contact.invite.accept({ code: cancelledInvite.code }))
       .rejects.toThrow("410");
     expect(await first.contact.invite.list({ includeTerminal: true })).toEqual({
@@ -98,6 +117,8 @@ describe("cross-GSV federation integration", () => {
       second.contact.invite.accept({ code: invite.code }),
     ]);
     expect(acceptanceReplay.contact).toEqual(accepted.contact);
+    await checkSignals(firstSignals, 1, 4);
+    await checkSignals(secondSignals, 1, 0);
     const [initialInviterResponsibilities, initialAccepterResponsibilities] = await Promise.all([
       contactAddedResponsibilities(first),
       contactAddedResponsibilities(second),
@@ -153,6 +174,8 @@ describe("cross-GSV federation integration", () => {
     await expect(second.contact.invite.accept({ code: invite.code }))
       .rejects.toThrow("pairing attempt was superseded");
     const currentContacts = await second.contact.list({});
+    await checkSignals(firstSignals, 2, 6);
+    await checkSignals(secondSignals, 2, 0);
     expect(currentContacts.contacts).toEqual([
       expect.objectContaining({ generation: replacement.contact.generation }),
     ]);
@@ -168,6 +191,7 @@ describe("cross-GSV federation integration", () => {
       alias: "Second Ship",
     });
     expect(aliased.contact.localAlias).toBe("Second Ship");
+    await checkSignals(firstSignals, 3, 6);
     expect((await second.contact.list({})).contacts[0]).not.toHaveProperty("localAlias");
 
     const messageArgs: ContactSendArgs = {
@@ -261,6 +285,17 @@ describe("cross-GSV federation integration", () => {
     });
     await waitForRequest(second, { id: reverse.request.id, state: "completed" });
 
+    await expect.poll(() => firstRequestSignals.length).toBe(5);
+    await expect.poll(() => secondRequestSignals.length).toBe(5);
+    expect(firstRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: firstContact.id })));
+    expect(secondRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: secondContact.id })));
+    await expect(first.contact.request.update({
+      requestId: reverseIncoming.id,
+      expectedRevision: 1,
+      state: "active",
+    })).rejects.toThrow("revision changed");
+    expect(firstRequestSignals).toHaveLength(5);
+
     const resourceBytes = Uint8Array.from([
       137, 80, 78, 71, 13, 10, 26, 10,
       71, 83, 86, 45, 70, 69, 68, 69, 82, 65, 84, 73, 79, 78,
@@ -344,6 +379,8 @@ describe("cross-GSV federation integration", () => {
     await first.contact.revoke({ contactId: firstContact.id });
     const revoked = await waitForContact(second, undefined, true, secondContact.id, "revoked");
     expect(revoked.state).toBe("revoked");
+    await checkSignals(firstSignals, 4, 6);
+    await checkSignals(secondSignals, 3, 0);
     await expect(second.contact.send({
       contactId: secondContact.id,
       text: "this must not cross a revoked relationship",

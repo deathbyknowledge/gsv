@@ -77,6 +77,18 @@ already running, the Process persists the event immediately and includes it in t
 context; if no provider request is in flight, the current loop can react without waiting for a
 separate queued run.
 
+If the active run finishes before its model context includes an admitted event, a durable
+continuation starts another run from the existing history. It uses the same FIFO queue as
+ordinary input but adds no message or synthetic event to history. Already-queued input can
+provide that next turn, so finishing does not add a redundant continuation behind it. A reply
+for a different source run queues its continuation without changing the active run.
+If the last historical input named another reply destination, model context ends
+with the continuation's current destination annotation. This runtime metadata is
+not a stored history event and does not change the frozen system prompt.
+
+Queued wake messages from older versions are accepted as these silent continuations.
+Wake events already retained in history remain inspectable with their original records.
+
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 
@@ -94,6 +106,14 @@ the next personal entry point creates a fresh ordinary process and marks it.
 Other processes may run as the same personal agent account, but they are work
 with independent histories and never become the personal process by recency or
 label. `proc.list` reports the distinction explicitly.
+
+`proc.spawn.ai` optionally selects the new process's first-choice model and
+reasoning effort. The Kernel validates the model against the owning human's
+catalog before registering the process, then Process stores these preferences
+with its identity in one transaction before admitting the initial task. Omitted
+fields inherit agent/account settings; process-local settings are not copied
+from a parent. Later `proc.ai.config.set` changes apply to the next run. Choosing
+a model retains the owner's normal fallback stack.
 
 The personal agent's account home contains its role, voice, and durable memory.
 Unresolved work lives in the Kernel responsibility ledger and is projected into

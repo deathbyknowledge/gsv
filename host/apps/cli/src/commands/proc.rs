@@ -1,3 +1,4 @@
+use gateway_client::history::{HistoryDirection, HistoryOutcome, HistoryRecordData, ProcHistory};
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -35,6 +36,8 @@ pub(crate) async fn run_proc(
         }
         ProcAction::Spawn {
             run_as,
+            model,
+            effort,
             label,
             prompt,
             parent_pid,
@@ -51,6 +54,16 @@ pub(crate) async fn run_proc(
             }
             if let Some(parent_pid) = parent_pid {
                 args["parentPid"] = json!(parent_pid);
+            }
+            if model.is_some() || effort.is_some() {
+                let mut ai = json!({});
+                if let Some(model) = model {
+                    ai["modelId"] = json!(model);
+                }
+                if let Some(effort) = effort {
+                    ai["reasoning"] = json!(effort);
+                }
+                args["ai"] = ai;
             }
             let payload = client.request_ok("proc.spawn", Some(args)).await?;
             match serde_json::from_value::<ProcSpawnPayload>(payload.clone()) {
@@ -84,7 +97,7 @@ pub(crate) async fn run_proc(
             limit,
             offset,
         } => {
-            let mut args = json!({ "pid": pid });
+            let mut args = json!({ "pid": pid, "format": 2 });
             if tail {
                 args["tail"] = json!(true);
             }
@@ -95,35 +108,25 @@ pub(crate) async fn run_proc(
                 args["offset"] = json!(offset);
             }
             let payload = client.request_ok("proc.history", Some(args)).await?;
-            match serde_json::from_value::<ProcHistoryPayload>(payload.clone()) {
-                Ok(result) => {
-                    if !result.ok {
-                        return Err(result
-                            .error
-                            .unwrap_or_else(|| "proc.history failed".to_string())
-                            .into());
-                    }
-                    let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
-                    let count = result.message_count.unwrap_or(result.messages.len());
-                    println!("History for {} ({} messages):", pid, count);
-                    for message in result.messages {
-                        let ts = message
-                            .timestamp
-                            .map(format_unix_ms)
-                            .map(|value| format!("[{}] ", value))
-                            .unwrap_or_default();
-                        println!(
-                            "{}{}: {}",
-                            ts,
-                            message.role,
-                            render_message_content(&message.content)
-                        );
-                    }
-                    if result.truncated.unwrap_or(false) {
-                        println!("(truncated)");
-                    }
-                }
-                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            let result = ProcHistory::decode(payload)?;
+            println!(
+                "History for {} ({} message groups, generation {}, revision {}):",
+                result.pid,
+                result.message_count,
+                result.history_generation,
+                result.history_revision
+            );
+            for record in result.records {
+                println!(
+                    "[{}] {}:{} {}",
+                    format_unix_ms(record.created_at as i64),
+                    record.message_id,
+                    record.index,
+                    render_history_record(&record.data)
+                );
+            }
+            if result.truncated {
+                println!("(truncated)");
             }
         }
         ProcAction::Reset { pid } => {
@@ -214,24 +217,6 @@ struct ProcSpawnPayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProcHistoryPayload {
-    ok: bool,
-    pid: Option<String>,
-    messages: Vec<ProcHistoryMessagePayload>,
-    message_count: Option<usize>,
-    truncated: Option<bool>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcHistoryMessagePayload {
-    role: String,
-    content: Value,
-    timestamp: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct ProcResetPayload {
     ok: bool,
     pid: Option<String>,
@@ -274,9 +259,149 @@ fn print_proc_list(processes: &[ProcListEntryPayload]) {
     }
 }
 
-fn render_message_content(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
+fn render_history_record(record: &HistoryRecordData) -> String {
+    match record {
+        HistoryRecordData::Message(message) => format!(
+            "message/{}{}: {}{}",
+            match message.direction {
+                HistoryDirection::In => "in",
+                HistoryDirection::Out => "out",
+            },
+            message
+                .selected_target
+                .as_ref()
+                .map(|target| format!(" [selected target: {target}]"))
+                .unwrap_or_default(),
+            message.text,
+            render_media(&message.media)
+        ),
+        HistoryRecordData::Note(note) => {
+            let thinking = note
+                .thinking
+                .iter()
+                .filter(|thinking| !thinking.redacted.unwrap_or(false))
+                .map(|thinking| thinking.thinking.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "note: {}{}{}",
+                note.text,
+                if thinking.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nthinking: {thinking}")
+                },
+                render_media(&note.media)
+            )
+        }
+        HistoryRecordData::Call(call) => format!(
+            "call {} {} syscall={} target={}: {}",
+            call.call_id,
+            call.tool,
+            call.syscall.as_deref().unwrap_or("-"),
+            call.target.as_deref().unwrap_or("-"),
+            serde_json::to_string(&call.args).unwrap_or_default()
+        ),
+        HistoryRecordData::Result(result) => format!(
+            "result {} {} {}: {}{}{}{}",
+            result.call_id,
+            result.tool,
+            match result.outcome {
+                HistoryOutcome::Completed => "completed",
+                HistoryOutcome::Failed => "failed",
+                HistoryOutcome::Denied => "denied",
+                HistoryOutcome::Cancelled => "cancelled",
+            },
+            match &result.output {
+                Value::String(text) => text.clone(),
+                output => output.to_string(),
+            },
+            result
+                .error
+                .as_ref()
+                .map(|error| format!("\nerror: {}", error.message))
+                .unwrap_or_default(),
+            render_media(&result.media),
+            render_media(&result.resources)
+        ),
+        HistoryRecordData::Event(event) => format!(
+            "event {} [{:?}/{:?}]: {}",
+            event.kind,
+            event.severity,
+            event.audience,
+            serde_json::to_string(&event.payload).unwrap_or_default()
+        ),
     }
-    serde_json::to_string(content).unwrap_or_else(|_| "<unrenderable>".to_string())
+}
+
+fn render_media(media: &[Value]) -> String {
+    if media.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nresources: {}",
+            serde_json::to_string(media).unwrap_or_default()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_retains_message_selection_separately_from_literal_text() {
+        for (selection, expected) in [
+            (
+                Some("macbook"),
+                "message/in [selected target: macbook]:   inspect this\n",
+            ),
+            (None, "message/in:   inspect this\n"),
+        ] {
+            let mut value = json!({"kind":"message","payload":{"direction":"in","text":"  inspect this\n","media":[],"origin":{}}});
+            if let Some(target) = selection {
+                value["payload"]["selectedTarget"] = json!(target);
+            }
+            let record = serde_json::from_value(value).expect("typed message");
+            assert_eq!(render_history_record(&record), expected);
+        }
+    }
+
+    #[test]
+    fn history_renders_explicit_calls_outcomes_and_events() {
+        let rows = [
+            (
+                json!({"kind":"call","payload":{"callId":"c","tool":"Send","syscall":null,
+                "target":null,"runId":"r","args":{"text":"hello","finish":false}}}),
+                "call c Send syscall=- target=-:",
+            ),
+            (
+                json!({"kind":"result","payload":{"callId":"c","tool":"Send","outcome":"denied",
+                "output":{"finish":false},"media":[],"resources":[],"error":{"message":"denied"}}}),
+                "result c Send denied:",
+            ),
+            (
+                json!({"kind":"event","payload":{"kind":"correction.exhausted","payload":{"attempts":3,"limit":3},
+                "severity":"warn","audience":"person"}}),
+                "event correction.exhausted [Warn/Person]:",
+            ),
+        ];
+        for (value, expected) in rows {
+            let record = serde_json::from_value(value).expect("typed record");
+            assert!(render_history_record(&record).starts_with(expected));
+        }
+    }
+
+    #[test]
+    fn notes_preserve_text_and_hide_redacted_thinking() {
+        let record = serde_json::from_value(
+            json!({"kind":"note","payload":{"text":"  literal spacing\n",
+            "thinking":[{"type":"thinking","thinking":"visible"},{"type":"thinking","thinking":"redacted","redacted":true}]}}),
+        )
+        .expect("note");
+        assert_eq!(
+            render_history_record(&record),
+            "note:   literal spacing\n\nthinking: visible"
+        );
+    }
 }

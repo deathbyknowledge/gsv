@@ -8,6 +8,7 @@
 
 import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
 import { resolveEffectiveAiModelStack } from "./ai";
+import { createProcessAiConfig, processAiConfigInputError } from "../process/ai-config";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { principalOf, requirePrincipal } from "./context";
@@ -41,6 +42,8 @@ import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
+import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
+import { resolveSelectedMessageTarget } from "./targets";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -127,6 +130,16 @@ export async function handleProcSpawn(
   // caller's personal agent. A delegated child inherits this identity unless
   // a specialized agent is selected explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  const aiError = args.ai && processAiConfigInputError(args.ai);
+  if (aiError) return { ok: false, error: aiError };
+  const ai = args.ai ? createProcessAiConfig(args.ai) : null;
+  if (ai?.modelId) {
+    try {
+      ai.modelId = validatedProcessModelId(ctx, ownerUid, ai.modelId);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
     parentRunsAsCaller ||
@@ -183,6 +196,11 @@ export async function handleProcSpawn(
       autoTitle: label === undefined,
     };
     if (label) identityArgs.title = label;
+    if (ai) {
+      identityArgs.ai = {};
+      if (ai.modelId) identityArgs.ai.modelId = ai.modelId;
+      if (ai.reasoning) identityArgs.ai.reasoning = ai.reasoning;
+    }
     const response = await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: requestId,
@@ -235,6 +253,8 @@ export async function handleProcSpawn(
       error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+
+  notifyProcessChanged(ctx, pid, ["created"]);
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
@@ -755,6 +775,9 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.set"
       ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
       : frame;
+  if (processFrame.call === "proc.send" && processFrame.args.selectedTarget !== undefined) {
+    processFrame.args.selectedTarget = await resolveSelectedMessageTarget(ctx, processFrame.args.selectedTarget);
+  }
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
   }
@@ -853,7 +876,7 @@ function reconcileKilledProcess(
     now: Date.now(),
   });
   ctx.runRoutes.clearForProcess(pid);
-  ctx.procs.kill(pid);
+  unregisterProcess(ctx, pid);
   if (reclaimed.length > 0) {
     ctx.defer(ctx.reconcileResponsibilityWake(ownerUid).catch((error) => {
       console.warn(
@@ -878,6 +901,13 @@ function withValidatedProcAiConfig(
   if (!modelId) {
     return frame;
   }
+  return {
+    ...frame,
+    args: { ...args, modelId: validatedProcessModelId(ctx, ownerUid, modelId) },
+  };
+}
+
+function validatedProcessModelId(ctx: KernelContext, ownerUid: number, modelId: string): string {
   // Validate against the same layered stack generation and ai.models use, so
   // shared and base models are as selectable for a process as personal ones.
   const storedModel = resolveEffectiveAiModelStack(ctx, ownerUid)
@@ -886,13 +916,7 @@ function withValidatedProcAiConfig(
     throw new Error(`AI model not found: ${modelId}`);
   }
 
-  return {
-    ...frame,
-    args: {
-      ...args,
-      modelId: storedModel.id,
-    },
-  };
+  return storedModel.id;
 }
 
 function normalizeText(value: string | undefined): string {

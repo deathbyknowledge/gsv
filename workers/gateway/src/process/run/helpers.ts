@@ -4,7 +4,7 @@ import type { AiConfigResult, AiContextResult } from "@humansandmachines/gsv/pro
 import {
   MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES, RUN_CONTROL_INSTRUCTION,
 } from "../internal/lifecycle";
-import type { Message, Tool } from "@earendil-works/pi-ai";
+import type { Tool } from "@earendil-works/pi-ai";
 import { RUN_CONTROL_SHELL_TOOL, SEND_TOOL, conversationProvenanceSchema } from "../internal/schemas";
 import type { RunControlResult } from "../internal/contracts";
 import type { RunState } from "./state";
@@ -124,28 +124,6 @@ export function runControlFailureAttempt(
     };
 }
 
-export function formatRunControlToolResult(
-  result: RunControlResult,
-  attempt: RunControlFailureAttempt | null,
-): string {
-  if (result.ok) {
-    if (result.action === "yield") return "Run yielded";
-    return result.finish
-      ? "Message committed and run yielded"
-      : "Message committed; run remains active";
-  }
-  const failureAttempt = attempt ?? {
-    count: 1,
-    limit: result.failureKind === "command"
-      ? MAX_TERMINAL_COMMAND_FAILURES
-      : MAX_TERMINAL_DELIVERY_FAILURES,
-  };
-  if (result.failureKind === "command") {
-    return `Run-control command rejected (attempt ${failureAttempt.count} of ${failureAttempt.limit}): ${result.error}\nCall Send with the text for the person, and yield true only when the work is complete. To attach files, stage them first with \`message attach PATH...\` in the Shell. In the Shell, \`message send ...\` as its own call with no other tool calls is the same action; omit --to and --also.`;
-  }
-  return `Message delivery failed (attempt ${failureAttempt.count} of ${failureAttempt.limit}): ${result.error}\nRetry the exact same message command unchanged.`;
-}
-
 export function isRunControlFailureExhausted(
   run: RunState,
   failureKind: RunControlFailureKind,
@@ -153,58 +131,4 @@ export function isRunControlFailureExhausted(
   return failureKind === "command"
     ? (run.terminalCommandFailures ?? 0) >= MAX_TERMINAL_COMMAND_FAILURES
     : (run.terminalDeliveryFailures ?? 0) >= MAX_TERMINAL_DELIVERY_FAILURES;
-}
-
-export function orderMessagesForProvider(messages: Message[]): Message[] {
-  const ordered: Message[] = [];
-  type PendingToolBlock = {
-    expected: Set<string>;
-    deferred: Message[];
-  };
-  type MessageOrderState = { pendingToolBlock: PendingToolBlock | null; };
-  const state: MessageOrderState = { pendingToolBlock: null };
-
-  const append = (message: Message): void => {
-    const pendingToolBlock = state.pendingToolBlock;
-    if (pendingToolBlock) {
-      // Providers require tool results to immediately follow the assistant tool-call message.
-      if (message.role === "toolResult" && pendingToolBlock.expected.has(message.toolCallId)) {
-        pendingToolBlock.expected.delete(message.toolCallId);
-        ordered.push(message);
-
-        if (pendingToolBlock.expected.size === 0) {
-          const deferred = pendingToolBlock.deferred;
-          state.pendingToolBlock = null;
-          for (const deferredMessage of deferred) {
-            append(deferredMessage);
-          }
-        }
-        return;
-      }
-
-      pendingToolBlock.deferred.push(message);
-      return;
-    }
-
-    ordered.push(message);
-    const toolCallIds = message.role === "assistant"
-      ? message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : [])
-      : [];
-    if (toolCallIds.length > 0) {
-      state.pendingToolBlock = {
-        expected: new Set(toolCallIds),
-        deferred: [],
-      };
-    }
-  };
-
-  for (const message of messages) {
-    append(message);
-  }
-
-  if (state.pendingToolBlock) {
-    ordered.push(...state.pendingToolBlock.deferred);
-  }
-
-  return ordered;
 }

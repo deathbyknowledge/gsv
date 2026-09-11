@@ -6,6 +6,7 @@ import type {
   SysSetupResult,
   SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
+import { createPairingCredential, createPairingSecret } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
@@ -123,6 +124,42 @@ describe("gateway authentication integration", () => {
     });
   });
 
+  it("enrolls an exact device through a resumable invitation without exposing a human credential", async () => {
+    await setup();
+    const user = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("pairing-human") });
+    await user.connect();
+    const invitation = { id: crypto.randomUUID(), secret: createPairingSecret(), label: "My macbook", targetId: "my-macbook" };
+    const invalid = { ...invitation, targetId: "gsv" };
+    await expect(user.sys.pair.create(invalid)).rejects.toMatchObject({ code: 400, details: { pairingCreate: "rejected" } });
+    const pending = await user.sys.pair.create(invitation);
+    expect(await user.sys.pair.create(invitation)).toEqual(pending);
+    expect((await user.sys.token.list({})).tokens).toHaveLength(0);
+    const ledger = await user.sys.ledger.list({ limit: 50 });
+    expect(JSON.stringify(ledger)).not.toContain(invitation.secret);
+
+    const credential = createPairingCredential();
+    const redemption = { id: invitation.id, secret: invitation.secret, credential };
+    const oneShot = new GSVClient();
+    const receipt = await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", redemption);
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: SINGLETON_INSTALLATION_ID, webSockets: "hibernate" });
+    expect(await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", redemption)).toEqual(receipt);
+    await expect(oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", { ...redemption, credential: createPairingCredential() })).rejects.toMatchObject({ details: { pairing: "used" } });
+    expect((await user.sys.pair.cancel({ id: invitation.id })).pairing.state).toBe("paired");
+    expect((await user.sys.token.list({})).tokens).toHaveLength(1);
+    await expect(connectOnce({ protocol: 4, peer: peerInfo("wrong-device", ["fs.*"]), auth: { username: USERNAME, token: credential } })).rejects.toMatchObject({ code: 401 });
+    const machine = createClient({ username: USERNAME, token: credential, peer: peerInfo("my-macbook", ["fs.*"]) });
+    expect((await machine.connect()).peer.principal.kind).toBe("machine");
+    expect((await user.sys.target.list({})).targets).toContainEqual(expect.objectContaining({ targetId: "my-macbook", label: "My macbook", online: true }));
+    await expect(machine.sys.pair.create({ ...invitation, id: crypto.randomUUID(), targetId: "another" })).rejects.toBeInstanceOf(GsvClientError);
+    await user.sys.target.update({ targetId: "my-macbook", label: "Edited name" });
+    machine.close();
+    const reconnect = createClient({ username: USERNAME, token: credential, peer: peerInfo("my-macbook", ["fs.*"]) });
+    await reconnect.connect();
+    expect((await user.sys.target.list({})).targets).toContainEqual(expect.objectContaining({ targetId: "my-macbook", label: "Edited name" }));
+    await user.sys.target.delete({ targetId: "my-macbook" });
+    await expect(connectOnce({ protocol: 4, peer: peerInfo("my-macbook", ["fs.*"]), auth: { username: USERNAME, token: credential } })).rejects.toMatchObject({ code: 401 });
+  });
+
   it("infers machine authority from a device-bound token and registers its implementations", async () => {
     const setupResult = await setup({
       machine: { peerId: "integration-device", label: "Integration device" },
@@ -186,6 +223,10 @@ describe("gateway authentication integration", () => {
       username: USERNAME,
       password: PASSWORD,
       peer: peerInfo("device-observer"),
+    });
+    await expect(driver.request("shell.exec", { target: "integration-device", sessionId: crypto.randomUUID(), start: true, input: "must not run" })).rejects.toMatchObject({
+      code: 403,
+      details: { shellStart: "rejected" },
     });
     await user.connect();
     expect((await user.call("sys.target.list", {})).targets).toContainEqual(

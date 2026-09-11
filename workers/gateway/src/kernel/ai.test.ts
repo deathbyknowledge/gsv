@@ -432,6 +432,16 @@ describe("handleAiConfig", () => {
     ].join(".");
   }
 
+  it("uses the owner's timezone for both standing context and live context facts", async () => {
+    const ctx = makeAiConfigContext({
+      "config/server/timezone": "UTC",
+      "users/1000/locale/timezone": "Europe/Amsterdam",
+      "users/2000/locale/timezone": "America/New_York",
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+  });
+
   it("resolves the generation streaming switch", async () => {
     await expect(handleAiConfig({}, makeAiConfigContext()))
       .resolves.toMatchObject({ generationStreaming: "auto", system: { timezone: "UTC" } });
@@ -1414,6 +1424,50 @@ describe("handleAiConfig", () => {
         apiKey: "",
       }),
     ]);
+  });
+
+  it("reorders an inherited-only deployment stack without creating personal models", async () => {
+    const order = ["workers-ai-kimi-k2-6", "workers-ai-glm-5-3-flash"];
+    const context = makeAiConfigContext({ "users/1000/ai/model_order": JSON.stringify(order) });
+    const result = await handleAiConfig({}, context);
+    expect(result.model).toBe("@cf/moonshotai/kimi-k2.6");
+    expect(result.fallbacks?.map((model) => model.modelId)).toEqual(["workers-ai-glm-5-3-flash"]);
+    expect(handleAiModels(context)).toMatchObject({
+      modelOrder: order,
+      models: [{ id: order[1], source: "base" }, { id: order[0], source: "base" }],
+    });
+  });
+
+  it("uses the owner's cross-layer order for agents and keeps process and agent preferences first", async () => {
+    const values = {
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [{ id: "mine", name: "Mine", provider: "custom", model: "mine", baseUrl: "https://mine.invalid" }] }),
+      "users/1000/ai/models/mine/api_key": "owner-fixture-key",
+      "config/ai/models": JSON.stringify({ version: 1, models: [{ id: "shared", name: "Shared", provider: "custom", model: "shared", baseUrl: "https://shared.invalid" }] }),
+      "config/ai/models/shared/api_key": "system-fixture-key",
+      "users/1000/ai/model_order": '["removed","gsv-included","shared","mine"]',
+      "users/2000/ai/model_order": '["mine"]',
+    };
+    const process = { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true };
+    const context = makeAiConfigContext(values, process);
+    const result = await handleAiConfig({}, context);
+    expect(result.model).toBe("default");
+    expect(result.fallbacks?.map((model) => [model.modelId, model.apiKey])).toEqual([
+      ["shared", "system-fixture-key"], ["mine", "owner-fixture-key"],
+    ]);
+    expect(handleAiModels(context).modelOrder).toEqual(JSON.parse(values["users/1000/ai/model_order"]));
+    expect(JSON.stringify(handleAiModels(context))).not.toContain("fixture-key");
+    const requested = await handleAiConfig({ modelId: "mine" }, context);
+    expect(requested.model).toBe("mine");
+    expect(requested.fallbacks?.map((model) => model.modelId)).toEqual(["gsv-included", "shared"]);
+    const agent = await handleAiConfig({}, makeAiConfigContext({ ...values, "users/2000/ai/preferred_model": "shared" }, process));
+    expect(agent.model).toBe("shared");
+    expect(agent.fallbacks?.map((model) => model.modelId)).toEqual(["gsv-included", "mine"]);
+  });
+
+  it("rejects malformed saved order instead of silently trying another model", async () => {
+    const context = makeAiConfigContext({ "users/1000/ai/model_order": '{"wrong":"shape"}' });
+    await expect(handleAiConfig({}, context)).rejects.toThrow("Invalid AI model order at /sys/users/1000/ai/model_order");
+    expect(() => handleAiModels(context)).toThrow("Invalid AI model order");
   });
 
   it("moves a Process model preference ahead of the owner's remaining stack", async () => {

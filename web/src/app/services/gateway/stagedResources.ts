@@ -6,6 +6,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 
 import { frameBodyFromBlob } from "./frameBody";
+import { randomId } from "../ids";
 
 export type StagedResourceUpload = {
   type: "image" | "audio" | "video" | "document";
@@ -25,8 +26,10 @@ export async function withStagedResources<T>(
   client: ResourceUploadClient,
   uploads: readonly StagedResourceUpload[],
   operation: (resources: ResourceBlock[]) => Promise<T>,
-  stagingNamespace: string = crypto.randomUUID(),
+  stagingNamespace: string = randomId(),
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted();
   if (uploads.some(({ body }) => body.size > MAX_STAGED_RESOURCE_BYTES)) {
     throw new Error("Attachments cannot exceed 25 MiB");
   }
@@ -34,7 +37,7 @@ export async function withStagedResources<T>(
   const settled = await Promise.allSettled(uploads.map(async (upload, index) => {
     const path = uploadPath(stagingNamespace, index, upload.filename);
     paths.push(path);
-    return uploadResource(client, path, upload);
+    return uploadResource(client, path, upload, signal);
   }));
   const resources = settled.flatMap((result) => (
     result.status === "fulfilled" ? [result.value] : []
@@ -45,6 +48,7 @@ export async function withStagedResources<T>(
     throw failure.reason;
   }
   try {
+    signal?.throwIfAborted();
     return await operation(resources);
   } finally {
     await deleteUploads(client, paths);
@@ -55,11 +59,12 @@ async function uploadResource(
   client: ResourceUploadClient,
   path: string,
   upload: StagedResourceUpload,
+  signal?: AbortSignal,
 ): Promise<ResourceBlock> {
   const received = await client.request("fs.transfer.receive", {
     path,
     contentType: upload.mimeType,
-  }, { body: frameBodyFromBlob(upload.body) });
+  }, { body: frameBodyFromBlob(upload.body), signal });
   await received.body?.stream.cancel("fs.transfer.receive does not return a body").catch(() => {});
   const receiveResult = requireSuccess<Extract<FsTransferReceiveResult, { ok: true }>>(
     received.data,
@@ -67,7 +72,7 @@ async function uploadResource(
   if (receiveResult.bytesWritten !== upload.body.size) {
     throw new Error("GSV stored an unexpected attachment length");
   }
-  const stat = await client.request("fs.transfer.stat", { path: receiveResult.path });
+  const stat = await client.request("fs.transfer.stat", { path: receiveResult.path }, { signal });
   await stat.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
   const statResult = requireSuccess<Extract<FsTransferStatResult, { ok: true }>>(stat.data);
   if (

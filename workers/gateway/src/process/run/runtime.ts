@@ -1,6 +1,7 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
 import type { AssistantMessage, Context, ToolCall, Tool } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
@@ -9,7 +10,7 @@ import type {
   PersistedRunTick, RunTickContextState, RunTickInputs,
 } from "../internal/contracts";
 import {
-  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
+  CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, YIELD_CORRECTION_MESSAGE,
   MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
@@ -34,13 +35,14 @@ import {
 import type { Process } from "../do";
 import type { RunFinishOptions, RunFinishPayload, RunResult } from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
-import type { ArgsOf } from "../../syscalls";
+import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
 import {
   adaptContextMessage, adaptContextTool, adaptGeneratedAssistantMessage, buildAssistantMessageMetadata,
-  modelMetadataFromAiConfig, normalizeOptionalString,
+  modelMetadataFromAiConfig,
 } from "../internal/messages";
-import { formatAiModelStackLabel, formatGenerationFailure } from "../context/formatters";
+import { formatAiModelStackLabel } from "../context/formatters";
+import { formatGenerationFailure } from "../history/event-renderer";
 import {
   nextAiConfigFallback, classifyAssistantTurn, type AssistantTurnClassification,
 } from "../run-tick-policy";
@@ -48,11 +50,8 @@ import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
-import {
-  formatRunControlToolResult, incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt,
-  PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun,
-  withRunControlInstructions,
-} from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
@@ -605,24 +604,17 @@ export class ProcessRun {
     else if (transition) await this.completeRunTransition(transition);
   }
 
-  async failWithSystemMessage(
+  async failWithHistoryEvent(
     runId: string,
-    reason: string,
-    message: string,
-    details?: Omit<ProcHistoryEventPayload<"context.failed">, "reason">,
+    payload: ProcHistoryEventPayload<"context.failed">,
   ): Promise<void> {
-    const detail = details ?? { error: message };
-    await this.host.history.appendSystemMessage(runId, message, {
-      kind: "event",
-      payload: {
-        kind: "context.failed",
-        payload: { reason, ...detail },
-        severity: "error",
-        audience: "both",
-      },
-    });
+    const event = {
+      kind: "context.failed", payload, severity: "error", audience: "both",
+    } as const;
+    const message = renderHistoryEvent(event);
+    await this.host.history.appendSystemMessage(runId, message, { kind: "event", payload: event });
     await this.finishRun(runId, {
-      reason,
+      reason: payload.reason,
       status: "error",
       resultText: null,
       error: message,
@@ -638,27 +630,7 @@ export class ProcessRun {
 
     const wakeRunId = shouldQueueRuntimeWake ? crypto.randomUUID() : undefined;
     if (wakeRunId) {
-      this.host.store.queue.enqueue(wakeRunId, RUNTIME_EVENT_WAKE_MESSAGE, {
-        role: "system",
-        kind: "runtime.wake",
-        provenance: JSON.stringify({
-          source: "process",
-          eventType: "runtime.wake",
-        }),
-        record: {
-          kind: "event",
-          payload: {
-            kind: "runtime.wake",
-            payload: {
-              source: "process",
-              reason: "pending-events",
-              pendingEvents: run.pendingRuntimeEvents ?? 0,
-            },
-            severity: "info",
-            audience: "model",
-          },
-        },
-      });
+      this.host.store.queue.enqueueContinuation(wakeRunId);
     }
     const next = this.host.controller.claimNextQueuedRun();
 
@@ -1457,7 +1429,7 @@ export class ProcessRun {
       if (this.host.killed || !active || active.runId !== runId) return;
       const registration = runControlRegistration(this.host, runId, dispatchId, toolCallId);
       if (!registration) return;
-      const message = `Run-control execution failed: ${error}`;
+      const message = renderToolExecutionError(error, "run-control");
       this.host.store.tools.fail(dispatchId, message, "failed");
       this.host.store.messages.appendToolResult(
         toolCallId,
@@ -1604,8 +1576,11 @@ export class ProcessRun {
           runId,
           runControlCallIds: turn.runControlCalls.map(({ toolCall }) => toolCall.id),
           resolveTarget: (syscall, args) => {
-            const { target } = this.host.tools.prepareToolArgs(syscall, args).args;
-            return normalizeOptionalString(target) ?? null;
+            if (!isRoutableSyscall(syscall)) return null;
+            const prepared = this.host.tools.prepareToolArgs(syscall, args);
+            if (prepared.missingShellSessionTarget) return null;
+            const target = z.string().optional().safeParse(prepared.args.target);
+            return target.success ? target.data || "gsv" : null;
           },
         }),
       };

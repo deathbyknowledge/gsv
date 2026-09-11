@@ -7,27 +7,25 @@ import {
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { InfoTip } from "../../../components/ui/InfoTip";
 import { readInstallationOnboardingToken } from "../../../services/session/installationOnboarding";
+import { INITIAL_AGENT } from "../../../domain/initialAgent";
 import "./ReviewStage.css";
 
 export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
   const managedInferenceIncluded = readInstallationOnboardingToken() !== null;
   const username = draft.account.username.trim();
-  const agentName = draft.account.agentName.trim();
-  const accountSummary = agentName
-    ? `${username} · ${agentName} (agent)`
-    : `${username} · default personal agent`;
+  const accountSummary = `${username} · ${INITIAL_AGENT.displayName} (${INITIAL_AGENT.username})`;
 
   return (
     <section class="gsv-setup-stage gsv-setup-stage-review" data-setup-stage="review" hidden={draft.stage !== "review"}>
       <div class="gsv-setup-head">
         <span class="gsv-setup-head-kicker gsv-sublabel">Create account · Step 3 / 3</span>
         <h2 class="gsv-setup-head-title gsv-prose-display">Review and deploy</h2>
-        <p class="gsv-setup-head-sub gsv-prose">This is the setup plan that will be applied before the desktop opens.</p>
+        <p class="gsv-setup-head-sub gsv-prose">This is the setup plan that will be applied before GSV opens.</p>
       </div>
       <div class="review-table">
         <div class="review-row">
           <span class="review-row-k gsv-label">Account</span>
-          <Tooltip text="First desktop user and personal agent account." position="left">
+          <Tooltip text="First user and personal agent account." position="left">
             <span class="review-row-v gsv-listitem" data-setup-summary-account>{accountSummary}</span>
           </Tooltip>
         </div>
@@ -64,7 +62,7 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
       <aside class="gsv-setup-review-notes">
         <div>
           <strong class="gsv-sublabel">You can change this later</strong>
-          <p class="gsv-prose-sm">AI defaults and system settings can be adjusted from the desktop after setup.</p>
+          <p class="gsv-prose-sm">You can adjust model preferences and your timezone in Settings after setup.</p>
         </div>
       </aside>
     </section>

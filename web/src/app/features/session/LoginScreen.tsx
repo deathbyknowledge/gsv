@@ -1,9 +1,7 @@
-import { useState } from "preact/hooks";
 import { Alert } from "../../components/ui/Alert";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
-import { StatusBar } from "../../components/ui/StatusBar";
 import { AuthLayout } from "./AuthLayout";
 import "./LoginScreen.css";
 
@@ -15,10 +13,8 @@ type LoginScreenProps = {
   error: string | null;
   username: string;
   password: string;
-  token: string;
   onUsername: (value: string) => void;
   onPassword: (value: string) => void;
-  onToken: (value: string) => void;
   onSubmit: (event: Event) => void;
 };
 
@@ -46,22 +42,16 @@ export function LoginScreen({
   error,
   username,
   password,
-  token,
   onUsername,
   onPassword,
-  onToken,
   onSubmit,
 }: LoginScreenProps) {
-  const [showToken, setShowToken] = useState(false);
-
   return (
-    <AuthLayout background="galaxy" visible={visible}>
+    <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-login">
       <div class="gsv-login-panel" data-session-login-view>
           <SectionHeader title="WELCOME BACK" titleSize="title" divider />
 
           <div class="gsv-login-body">
-            <span class="gsv-section gsv-login-section">SIGN IN</span>
-
             {loading ? (
               <LoginSkeleton />
             ) : (
@@ -83,26 +73,8 @@ export function LoginScreen({
                 inputProps={{ autoComplete: "current-password", "data-session-password": true }}
               />
 
+              {/* Historical placement of the removed token control: */}
               {/* "Use token instead" — directly under the password input. */}
-              <div class="gsv-login-tokenlink">
-                <Button
-                  variant="link"
-                  label={showToken ? "USE PASSWORD INSTEAD" : "USE TOKEN INSTEAD"}
-                  onClick={() => setShowToken((v) => !v)}
-                />
-              </div>
-
-              {showToken ? (
-                <TextInput
-                  label="ACCESS TOKEN"
-                  type="password"
-                  placeholder="gsv_tok_…"
-                  description="Paste a console token to sign in without a password."
-                  value={token}
-                  onChange={onToken}
-                  inputProps={{ autoComplete: "off" }}
-                />
-              ) : null}
 
               {error ? (
                 <div class="gsv-login-error" role="alert">
@@ -123,7 +95,9 @@ export function LoginScreen({
             )}
           </div>
 
-          <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" />
+          <footer class="gsv-sublabel gsv-login-credit">
+            <span>BY <a href="https://humansandmachin.es" target="_blank" rel="noreferrer">HUMANS &amp; MACHINES</a></span>
+          </footer>
         </div>
     </AuthLayout>
   );

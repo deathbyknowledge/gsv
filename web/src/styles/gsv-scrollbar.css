@@ -6,7 +6,8 @@
    ============================================================ */
 
 .gsv-scroll,
-.gsv-auth-theme {
+.gsv-auth-theme,
+.instrument {
   /* Firefox (scrollbar-color inherits to scrollable descendants) */
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--accent) 60%, transparent) transparent;
@@ -14,27 +15,42 @@
 
 /* WebKit / Blink (Chrome, Edge, Safari) */
 .gsv-scroll::-webkit-scrollbar,
-.gsv-auth-theme ::-webkit-scrollbar {
+.gsv-auth-theme ::-webkit-scrollbar,
+.instrument ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 .gsv-scroll::-webkit-scrollbar-track,
-.gsv-auth-theme ::-webkit-scrollbar-track {
+.gsv-auth-theme ::-webkit-scrollbar-track,
+.instrument ::-webkit-scrollbar-track {
   background: transparent;
 }
 .gsv-scroll::-webkit-scrollbar-thumb,
-.gsv-auth-theme ::-webkit-scrollbar-thumb {
+.gsv-auth-theme ::-webkit-scrollbar-thumb,
+.instrument ::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--accent) 42%, transparent);
   /* transparent border + padding-box clip insets the thumb so it reads ~4px */
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 .gsv-scroll::-webkit-scrollbar-thumb:hover,
-.gsv-auth-theme ::-webkit-scrollbar-thumb:hover {
+.gsv-auth-theme ::-webkit-scrollbar-thumb:hover,
+.instrument ::-webkit-scrollbar-thumb:hover {
   background-color: color-mix(in srgb, var(--accent) 72%, transparent);
   background-clip: padding-box;
 }
 .gsv-scroll::-webkit-scrollbar-corner,
-.gsv-auth-theme ::-webkit-scrollbar-corner {
+.gsv-auth-theme ::-webkit-scrollbar-corner,
+.instrument ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+:where(.instrument, .gsv-auth-theme) {
+  color-scheme: dark;
+}
+:where(.instrument, .gsv-auth-theme)::selection,
+:where(.instrument, .gsv-auth-theme) ::selection {
+  color: var(--text-hi);
+  background: var(--selected);
+  text-shadow: none;
 }

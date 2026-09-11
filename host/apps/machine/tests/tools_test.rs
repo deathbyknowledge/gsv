@@ -220,7 +220,7 @@ async fn test_shell_session_poll_returns_new_output() {
 }
 
 #[tokio::test]
-async fn test_shell_session_is_removed_after_final_poll() {
+async fn test_shell_session_keeps_terminal_status_after_final_poll() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
     let _shell_test_guard = serialize_shell_test().await;
@@ -249,15 +249,16 @@ async fn test_shell_session_is_removed_after_final_poll() {
         .unwrap();
 
     assert_eq!(poll.data["status"], "completed");
-    let err = shell
+    let repeated = shell
         .execute(json!({
             "sessionId": poll.data["sessionId"].as_str().unwrap(),
             "input": ""
         }))
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert!(err.contains("Unknown shell session"));
+    assert_eq!(repeated.data["status"], "completed");
+    assert_eq!(repeated.data["output"], "");
 }
 
 #[tokio::test]
@@ -493,10 +494,12 @@ fn test_all_tools_with_workspace() {
     let tools = all_tools_with_workspace(workspace);
 
     // Should have 8 tools: Shell, Read, Write, Delete, Edit, Copy, Search, Fetch
-    assert_eq!(tools.len(), 8);
+    // CancelShell adds session control to the original eight driver operations.
+    assert_eq!(tools.len(), 9);
 
     let names: Vec<_> = tools.iter().map(|t| t.definition().name).collect();
     assert!(names.contains(&"Shell".to_string()));
+    assert!(names.contains(&"CancelShell".to_string()));
     assert!(names.contains(&"Read".to_string()));
     assert!(names.contains(&"Write".to_string()));
     assert!(names.contains(&"Delete".to_string()));

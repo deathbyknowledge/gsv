@@ -2,45 +2,107 @@ import type { ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
 import {
   jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema,
   type JsonObject, type JsonValue, type ProcHistoryEventKind, type ProcHistoryRecordData,
-  type ResourceBlock, type ProcHistoryMedia,
+  type ResourceBlock, type ProcHistoryMedia, type InteractionOrigin,
+  type ProcHistoryArchivedResultPayload,
 } from "@humansandmachines/gsv/protocol";
-import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
+import { TOOL_TO_SYSCALL, type ToolSyscallName } from "../../syscalls/constants";
 import { parseStoredProcessMedia } from "../media";
-import { unwrapStoredToolResult } from "../tool-result-media";
+import { materializeLegacyToolResultImages, unwrapStoredToolResult } from "../tool-result-media";
+import type { ModelHistoryGroup } from "../history/model-renderer";
 import { interactionOriginSchema } from "../internal/schemas";
 import { normalizeToolResultOutcome } from "../internal/messages";
 import { parseAssistantMessageMeta } from "./message-codec";
+import { parseMessageMetadata } from "./metadata-codec";
 import type { MessageRecord, MessageRow } from "./records";
 import { toolResultMetaSchema } from "./validation";
 
 type MessageHistoryOptions = {
   queueKind?: string;
   provenance?: JsonObject;
+  selectedTarget?: string;
 };
+
+const LEGACY_COMPACTION_PREFIX = "Process history compacted.\n";
 
 export function readHistoryRecord(row: MessageRow): ProcHistoryRecordData | undefined {
   if (row.kind == null && row.payload_json == null) return undefined;
   if (row.kind == null || row.payload_json == null) {
     throw new Error(`Incomplete typed history record ${row.id}`);
   }
-  return procHistoryRecordDataSchema.parse({ kind: row.kind, payload: JSON.parse(row.payload_json) });
+  const record = procHistoryRecordDataSchema.parse({ kind: row.kind, payload: JSON.parse(row.payload_json) });
+  // Earlier inference also promoted near-miss prefixes; reading must not turn them into summaries.
+  if (record.kind === "event" && record.payload.kind === "legacy"
+    && record.payload.payload.recognizedKind === "history.compacted"
+    && !record.payload.payload.text.startsWith(LEGACY_COMPACTION_PREFIX)) {
+    delete record.payload.payload.recognizedKind;
+  }
+  return record;
+}
+
+/** Preserve source projection data alongside the original message's typed members. */
+export function normalizeModelHistoryGroup(message: MessageRecord): ModelHistoryGroup {
+  const records = message.records ?? inferHistoryRecords(message);
+  const primary = records[0];
+  if (!primary) throw new Error(`History message ${message.id} has no records`);
+  const media = parseStoredProcessMedia(message.media);
+  const result = primary.kind === "result";
+  const resultMeta = result && message.toolCalls
+    ? toolResultMetaSchema.parse(JSON.parse(message.toolCalls))
+    : {};
+  return {
+    messageId: message.id,
+    generation: message.generation,
+    runId: message.runId ?? null,
+    createdAt: message.createdAt,
+    records: [primary, ...records.slice(1)],
+    metadata: parseMessageMetadata(message.metadata),
+    origin: parseInteractionOrigin(message.origin),
+    compatibility: {
+      text: message.content,
+      media,
+      mediaJson: message.media,
+      hasMedia: Boolean(message.media),
+      isError: resultMeta.isError ?? false,
+      legacyImageContent: result && media.length === 0
+        ? materializeLegacyToolResultImages(message.content)
+        : null,
+    },
+  };
+}
+
+export function parseInteractionOrigin(value: string | null | undefined): InteractionOrigin | undefined {
+  if (!value) return undefined;
+  try {
+    return parseInteractionOriginRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseInteractionOriginRecord(
+  value: Parameters<typeof interactionOriginSchema.safeParse>[0],
+): InteractionOrigin | undefined {
+  const result = interactionOriginSchema.safeParse(value);
+  return result.success ? result.data : undefined;
 }
 
 /** Legacy shape recovery is confined to this boundary; lost source data stays unknown. */
 export function inferHistoryRecords(
-  message: MessageRecord,
+  message: Pick<MessageRecord, "id" | "role" | "content" | "toolCalls" | "toolCallId" | "media" | "origin" | "runId">,
   options: MessageHistoryOptions = {},
 ): ProcHistoryRecordData[] {
   const media = parseStoredProcessMedia(message.media);
   switch (message.role) {
     case "user": {
       const origin: Extract<ProcHistoryRecordData, { kind: "message" }>["payload"]["origin"] = {};
-      if (message.origin) origin.interaction = interactionOriginSchema.parse(JSON.parse(message.origin));
+      const interactionOrigin = parseInteractionOrigin(message.origin);
+      if (interactionOrigin) origin.interaction = interactionOrigin;
       if (options.queueKind) origin.kind = options.queueKind;
       if (options.provenance) origin.provenance = options.provenance;
       const payload: Extract<ProcHistoryRecordData, { kind: "message" }>["payload"] = {
         direction: "in", text: message.content, media, origin,
       };
+      if (options.selectedTarget !== undefined) payload.selectedTarget = options.selectedTarget;
       const interaction = jsonObjectSchema.safeParse(options.provenance);
       if (interaction.success) {
         const messageId = interaction.data.messageId;
@@ -59,16 +121,7 @@ export function inferHistoryRecords(
     }
     case "toolResult": {
       if (message.toolCallId === null) throw new Error(`Stored tool result message ${message.id} has no tool call id`);
-      const meta = message.toolCalls ? toolResultMetaSchema.parse(JSON.parse(message.toolCalls)) : {};
-      const stored = unwrapStoredToolResult(legacyToolOutput(message.content));
-      const output = stored.output;
-      const payload: Extract<ProcHistoryRecordData, { kind: "result" }>["payload"] = {
-        callId: message.toolCallId, tool: meta.toolName ?? "unknown",
-        outcome: normalizeToolResultOutcome(meta.outcome, meta.isError ?? false, message.content),
-        output, media: media.length > 0 ? media : stored.media, resources: historyOutputResources(output),
-      };
-      if (meta.isError) payload.error = { message: message.content };
-      return [{ kind: "result", payload }];
+      return [{ kind: "result", payload: { ...inferHistoryResultPayload(message), callId: message.toolCallId } }];
     }
     case "system": {
       const payload: Extract<ProcHistoryRecordData, { kind: "event" }>["payload"] = {
@@ -81,6 +134,23 @@ export function inferHistoryRecords(
   }
 }
 
+/** Shared result decoding preserves explicitly missing linkage in older archives. */
+export function inferHistoryResultPayload(
+  message: Pick<MessageRecord, "toolCallId" | "content" | "toolCalls" | "media">,
+): ProcHistoryArchivedResultPayload {
+  const media = parseStoredProcessMedia(message.media);
+  const meta = message.toolCalls ? toolResultMetaSchema.parse(JSON.parse(message.toolCalls)) : {};
+  const stored = unwrapStoredToolResult(legacyToolOutput(message.content));
+  const output = stored.output;
+  const payload: ProcHistoryArchivedResultPayload = {
+    callId: message.toolCallId, tool: meta.toolName ?? "unknown",
+    outcome: normalizeToolResultOutcome(meta.outcome, meta.isError ?? false, message.content),
+    output, media: media.length > 0 ? media : stored.media, resources: historyOutputResources(output),
+  };
+  if (meta.isError) payload.error = { message: message.content };
+  return payload;
+}
+
 export function assistantHistoryRecords(input: {
   text: string;
   thinking: ThinkingContent[];
@@ -88,7 +158,7 @@ export function assistantHistoryRecords(input: {
   media: ProcHistoryMedia[];
   runId: string | null;
   runControlCallIds?: readonly string[];
-  resolveTarget?: (syscall: string, args: JsonObject) => string | null;
+  resolveTarget?: (syscall: ToolSyscallName, args: JsonObject) => string | null;
 }): ProcHistoryRecordData[] {
   const note: Extract<ProcHistoryRecordData, { kind: "note" }> = {
     kind: "note", payload: { text: input.text, thinking: input.thinking },
@@ -124,7 +194,7 @@ function legacyToolOutput(content: string): JsonValue {
 }
 
 function legacyEventKind(text: string): ProcHistoryEventKind | undefined {
-  if (text.startsWith("Process history compacted.")) return "history.compacted";
+  if (text.startsWith(LEGACY_COMPACTION_PREFIX)) return "history.compacted";
   if (text.startsWith("Your last turn was plain assistant text")) return "correction.text-only";
   if (text.startsWith("Scheduled event")) return "schedule.fired";
   if (text.startsWith("Observed watched signal")) return "signal.watched";

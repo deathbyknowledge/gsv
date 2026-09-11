@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bodyFromBytes, bodyFromText } from "@humansandmachines/gsv/protocol";
-import { materializeFsRead } from "./fsRead";
+import { materializeFsRead, requestFsRead, type FsReadClient } from "./fsRead";
 
 describe("materializeFsRead", () => {
   it("decodes text response bodies", async () => {
@@ -50,5 +50,22 @@ describe("materializeFsRead", () => {
       kind: "text",
       contentType: "text/plain",
     })).rejects.toThrow("did not include a body");
+  });
+});
+
+describe("requestFsRead", () => {
+  it("forwards the target so a read reaches the machine it names", async () => {
+    const calls: { call: string; args: { target?: string; path: string } }[] = [];
+    const directory = { ok: true as const, path: "~", files: [], directories: ["Downloads"] };
+    const request = async (call: string, args: { target?: string; path: string }) => {
+      calls.push({ call, args });
+      return { data: directory };
+    };
+    // SAFETY: the stub answers the single fs.read this test makes with a directory result, which is the shape the helper reads.
+    const client = { request } as FsReadClient;
+    await requestFsRead(client, { target: "laptop", path: "~" });
+    await requestFsRead(client, { path: "~" });
+    expect(calls.map((entry) => entry.args.target)).toEqual(["laptop", undefined]);
+    expect(calls.every((entry) => entry.call === "fs.read")).toBe(true);
   });
 });

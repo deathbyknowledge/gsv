@@ -48,7 +48,6 @@ export function useSessionScreensState({
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
   const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
-  const [loginToken, setLoginToken] = useState("");
   const [guideMessage, setGuideMessage] = useState("");
   const screenRef = useRef<HTMLElement>(null);
   const guideInputRef = useRef<HTMLTextAreaElement>(null);
@@ -90,7 +89,6 @@ export function useSessionScreensState({
     }
     if (snapshot.phase === "ready") {
       setLoginPassword("");
-      setLoginToken("");
     }
   }, [snapshot.phase]);
 
@@ -119,18 +117,13 @@ export function useSessionScreensState({
 
     const username = loginUsername.trim();
     const password = loginPassword.trim();
-    const token = loginToken.trim();
 
     if (!username) {
       setLoginValidationError("Username is required.");
       return;
     }
-    if (!password && !token) {
-      setLoginValidationError("Provide password or token.");
-      return;
-    }
-    if (password && token) {
-      setLoginValidationError("Use either password or token.");
+    if (!password) {
+      setLoginValidationError("Password is required.");
       return;
     }
 
@@ -138,7 +131,7 @@ export function useSessionScreensState({
     setPendingAction("login");
     void session.login({
       username,
-      ...(token ? { token } : { password }),
+      password,
     }).catch(() => {
       // Error is reflected through session snapshot.
     });
@@ -285,7 +278,6 @@ export function useSessionScreensState({
       error: loginError,
       username: loginUsername,
       password: loginPassword,
-      token: loginToken,
       onUsername: (value: string) => {
         setLoginValidationError(null);
         setLoginUsername(value);
@@ -294,10 +286,6 @@ export function useSessionScreensState({
       onPassword: (value: string) => {
         setLoginValidationError(null);
         setLoginPassword(value);
-      },
-      onToken: (value: string) => {
-        setLoginValidationError(null);
-        setLoginToken(value);
       },
       onSubmit: submitLogin,
     },

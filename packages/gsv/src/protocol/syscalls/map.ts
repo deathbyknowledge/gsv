@@ -18,7 +18,7 @@ import type {
   FsWriteArgs,
   FsWriteResult,
 } from "./fs";
-import type { ShellExecArgs, ShellExecResult } from "./shell";
+import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
 import type {
   CodeModeExecArgs,
@@ -179,6 +179,10 @@ import type {
   SchedulerUpdateResult,
 } from "./scheduler";
 import type {
+  SysPairCreateArgs, SysPairCreateResult, SysPairListArgs, SysPairListResult,
+  SysPairCancelArgs, SysPairCancelResult, SysPairRedeemArgs, SysPairRedeemResult,
+} from "./pairing";
+import type {
   ResponsibilityChangesArgs,
   ResponsibilityChangesResult,
   ResponsibilityCreateArgs,
@@ -305,6 +309,7 @@ export type SyscallDomains = {
   "fs.transfer.receive": { args: FsTransferReceiveArgs; result: FsTransferReceiveResult };
 
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+  "shell.cancel": { args: ShellCancelArgs; result: ShellCancelResult };
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
 
@@ -398,6 +403,10 @@ export type SyscallDomains = {
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };
+  "sys.pair.create": { args: SysPairCreateArgs; result: SysPairCreateResult };
+  "sys.pair.list": { args: SysPairListArgs; result: SysPairListResult };
+  "sys.pair.cancel": { args: SysPairCancelArgs; result: SysPairCancelResult };
+  "sys.pair.redeem": { args: SysPairRedeemArgs; result: SysPairRedeemResult };
   "sys.link": { args: SysLinkArgs; result: SysLinkResult };
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };

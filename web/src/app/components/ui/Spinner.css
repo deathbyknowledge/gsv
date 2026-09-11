@@ -1,14 +1,24 @@
 /* Ported from Spinner.dc.html — values transcribed verbatim. */
-@keyframes gsvSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 .gsv-spinner {
-  display: inline-block;
+  display: inline-flex;
   flex: none;
-  border: 2px solid var(--idle);
-  border-top-color: var(--accent-bright);
-  border-radius: 50%;
-  animation: gsvSpin 0.9s linear infinite;
+  vertical-align: middle;
+  overflow: hidden;
 }
+.gsv-spinner .gsv-spinner-orbit {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  --ascii-foreground: var(--accent);
+  --ascii-foreground-glow: none;
+}
+.gsv-spinner .gsv-ascii-galaxy-nebula, .gsv-spinner .gsv-ascii-galaxy-stars { display: none; }
+.gsv-spinner .gsv-ascii-galaxy-foreground { font-family: "Departure Mono", ui-monospace, monospace; }
+.gsv-loading-state { display: inline-flex; align-items: center; gap: 9px; max-width: 100%; }
+.gsv-loading-state > span:last-child { min-width: 0; }
+.gsv-loading-state.is-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; box-sizing: border-box; padding: 20px 0; gap: 12px; text-align: center; }

@@ -4,6 +4,19 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 
 describe("ResponsibilitySourcePolicyStore", () => {
+  it("announces an actual saved preference once for its owner", async () => {
+    await runWithRealKernelSql((sql) => {
+      const changes: number[] = [];
+      const store = new ResponsibilitySourcePolicyStore(sql, (uid) => {
+        expect(store.isEnabled(uid, "mail.received")).toBe(false);
+        changes.push(uid);
+      });
+      store.set(1000, "mail.received", true, 1);
+      store.set(1000, "mail.received", false, 2);
+      store.set(1000, "mail.received", false, 3);
+      expect(changes).toEqual([1000]);
+    });
+  });
   it("uses built-in defaults and isolates persisted owner overrides", async () => {
     await runWithRealKernelSql((sql) => {
       const policies = new ResponsibilitySourcePolicyStore(sql);

@@ -96,18 +96,6 @@ export class ShellSessionStore {
     );
   }
 
-  failForDevice(targetId: string, error: string): void {
-    const now = Date.now();
-    this.sql.exec(
-      `UPDATE shell_sessions
-       SET status = 'failed', error = ?, updated_at = ?
-       WHERE target_id = ? AND status = 'running'`,
-      error,
-      now,
-      targetId,
-    );
-  }
-
   pruneExpired(now = Date.now()): void {
     this.sql.exec(
       `DELETE FROM shell_sessions WHERE expires_at IS NOT NULL AND expires_at <= ?`,

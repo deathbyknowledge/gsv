@@ -17,8 +17,6 @@ export function AccountDetails({
 }) {
   const usernameValue = draft.account.username;
   const usernameInvalid = usernameValue.length > 0 && !isValidUsername(usernameValue);
-  const agentValue = draft.account.agentName;
-  const agentInvalid = agentValue.trim().length > 0 && !isValidUsername(agentValue);
 
   return (
     <section class="onboarding-section" data-setup-detail-step="account" hidden={draft.stage !== "details" || activeStep !== "account"}>
@@ -36,21 +34,6 @@ export function AccountDetails({
           onChange={(value) => updateDraft((current) => ({
             ...current,
             account: { ...current.account, username: value.toLowerCase() },
-          }))}
-        />
-        <TextInput
-          label="Personal agent username"
-          type="text"
-          requirement="optional"
-          placeholder="e.g. friday"
-          info={`Leave blank to use the next available default name. ${USERNAME_FORMAT_DESCRIPTION}`}
-          value={draft.account.agentName}
-          status={agentInvalid ? "error" : "none"}
-          message={agentInvalid ? FORMAT_ERROR : ""}
-          inputProps={{ autoComplete: "off" }}
-          onChange={(value) => updateDraft((current) => ({
-            ...current,
-            account: { ...current.account, agentName: value.toLowerCase() },
           }))}
         />
         <TextInput

@@ -12,6 +12,7 @@
  */
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { ownerTimezone } from "./timezone";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
@@ -111,6 +112,7 @@ import {
   isSameAiModelCredentialScope,
   layerAiModelStacks,
   orderEffectiveAiModels,
+  parseAiModelOrder,
   parseAiModelStack,
   type EffectiveAiModelEntry,
   SYSTEM_AI_MODELS_CONFIG_KEY,
@@ -219,7 +221,7 @@ export async function handleAiContext(
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
-      timezone: config.get("config/server/timezone") ?? "UTC",
+      timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
     },
     skillIndexMode,
   };
@@ -266,7 +268,7 @@ export async function handleAiConfig(
     config,
     accountConfigUids,
   );
-  const timezone = config.get("config/server/timezone") ?? "UTC";
+  const timezone = principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC";
   await builtinSkillsReady;
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
@@ -815,17 +817,24 @@ async function resolveAiTextModelStack(options: {
   modelId: string | null | undefined;
   reasoning: string | null | undefined;
 }): Promise<ResolvedAiTextModelStack> {
-  const effective = resolveEffectiveAiModelStack(
-    options.ctx,
-    resolveAiModelOwnerUid(options.ctx, options.uid, options.owner),
-  );
+  const ownerUid = resolveAiModelOwnerUid(options.ctx, options.uid, options.owner);
+  const effective = resolveEffectiveAiModelStack(options.ctx, ownerUid);
   if (options.modelConfig) {
     return await resolveRequestAiModelConfig({
       ...options,
       modelConfig: options.modelConfig,
     }, effective);
   }
-  return await resolveStoredAiTextModelStack(options, effective);
+  return await resolveStoredAiTextModelStack(options, effective, readConfiguredAiModelOrder(options.ctx, ownerUid));
+}
+
+function readConfiguredAiModelOrder(ctx: KernelContext, ownerUid: number): string[] | undefined {
+  const key = `users/${ownerUid}/ai/model_order`;
+  const raw = ctx.config.getExplicit(key);
+  if (raw === null) return undefined;
+  const order = parseAiModelOrder(raw);
+  if (!order) throw new Error(`Invalid AI model order at /sys/${key}`);
+  return order;
 }
 
 /**
@@ -892,11 +901,13 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   }
   const uid = principal.account.uid;
   const owner = resolveOwnerIdentity(ctx);
-  const effective = resolveEffectiveAiModelStack(ctx, resolveAiModelOwnerUid(ctx, uid, owner));
+  const ownerUid = resolveAiModelOwnerUid(ctx, uid, owner);
+  const effective = resolveEffectiveAiModelStack(ctx, ownerUid);
+  const modelOrder = readConfiguredAiModelOrder(ctx, ownerUid);
   const accountUids = resolveAiConfigAccountUids(uid, owner);
   const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
   // Layered order on purpose: clients re-serialize a layer from this listing.
-  return {
+  const result: AiModelsResult = {
     models: effective.map((item) => ({
       ...item.entry,
       source: item.source,
@@ -910,6 +921,8 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
     })),
     preferredModelId,
   };
+  if (modelOrder) result.modelOrder = modelOrder;
+  return result;
 }
 
 async function resolveStoredAiTextModelStack(
@@ -921,6 +934,7 @@ async function resolveStoredAiTextModelStack(
     reasoning: string | null | undefined;
   },
   effective: readonly EffectiveAiModelEntry[],
+  modelOrder?: readonly string[],
 ): Promise<ResolvedAiTextModelStack> {
   const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
   const requestedModelId = normalizeOptionalString(options.modelId);
@@ -932,7 +946,7 @@ async function resolveStoredAiTextModelStack(
   }
   const preferredModelId = requestedModelId
     ?? resolvePreferredAiModelId(options.ctx, options.accountUids, effective);
-  const models = orderEffectiveAiModels(effective, preferredModelId);
+  const models = orderEffectiveAiModels(effective, preferredModelId, modelOrder);
   const reasoning = normalizeOptionalString(options.reasoning)
     ?? normalizeOptionalString(resolveConfig("reasoning"));
   const generationTimeoutMs = resolveConfig("generation/timeout_ms", parsePositiveInt)

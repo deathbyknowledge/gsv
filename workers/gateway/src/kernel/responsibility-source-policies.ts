@@ -93,7 +93,7 @@ type PolicyRow = {
 };
 
 export class ResponsibilitySourcePolicyStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(private readonly sql: SqlStorage, private readonly onChange?: (ownerUid: number) => void) {}
 
   list(ownerUid: number): ResponsibilitySourcePolicy[] {
     const overrides = new Map(
@@ -153,6 +153,7 @@ export class ResponsibilitySourcePolicyStore {
     if (definition.control !== "configurable") {
       throw new Error(`Responsibility source is always on: ${sourceId}`);
     }
+    const previous = this.get(ownerUid, sourceId);
     this.sql.exec(
       `INSERT INTO responsibility_source_policies (owner_uid, source_id, enabled, updated_at)
        VALUES (?, ?, ?, ?)
@@ -164,6 +165,7 @@ export class ResponsibilitySourcePolicyStore {
       enabled ? 1 : 0,
       now,
     );
+    if (previous.enabled !== enabled) this.onChange?.(ownerUid);
     return this.get(ownerUid, sourceId);
   }
 

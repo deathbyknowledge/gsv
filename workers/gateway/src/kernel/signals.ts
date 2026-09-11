@@ -1,7 +1,11 @@
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type { SignalWatchTargetInput } from "./signal-watches";
-import type { SignalUnwatchArgs, SignalUnwatchResult, SignalWatchArgs, SignalWatchResult } from "@humansandmachines/gsv/protocol";
+import {
+  procHistoryTargetEventRegistry, type SignalUnwatchArgs, type SignalUnwatchResult,
+  type SignalWatchArgs, type SignalWatchResult,
+} from "@humansandmachines/gsv/protocol";
+import { getVisibleTarget } from "./targets";
 
 const DEFAULT_SIGNAL_WATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SIGNAL_WATCH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -10,7 +14,8 @@ export function handleSignalWatch(
   args: SignalWatchArgs,
   ctx: KernelContext,
 ): SignalWatchResult {
-  const target = resolveSignalWatchTarget(ctx, args);
+  const target = resolveSignalWatchTarget(ctx);
+  // Signal watches are scoped to the process owner, not the run-as account.
   const ownerUid = resolveCallerOwnerUid(ctx);
 
   const signal = args.signal.trim();
@@ -18,19 +23,14 @@ export function handleSignalWatch(
     throw new Error("signal is required");
   }
 
-  const processId = args.processId?.trim() || null;
-  if (processId) {
-    const proc = ctx.procs.get(processId);
-    if (!proc || proc.ownerUid !== ownerUid) {
-      throw new Error(`Unknown process: ${processId}`);
-    }
+  const sourceTargetId = args.targetId?.trim();
+  if (!sourceTargetId || !getVisibleTarget(ctx, sourceTargetId, { includeOffline: true })) {
+    throw new Error("Unknown or inaccessible target");
   }
-  if (!processId) {
-    throw new Error("process runtimes must watch an explicit processId");
-  }
-  if (processId === target.processId) {
-    throw new Error("process runtimes cannot watch their own signals");
-  }
+  if (signal !== "target.status") throw new Error("Target watches require a registered target signal");
+  const definition = procHistoryTargetEventRegistry[signal];
+  const audience = args.audience ?? definition.defaultAudience;
+  if (!definition.allowedAudiences.includes(audience)) throw new Error("Unsupported target event audience");
 
   const expiresAt = Date.now() + clampSignalWatchTtl(args.ttlMs);
   const key = args.key?.trim() || null;
@@ -39,7 +39,8 @@ export function handleSignalWatch(
     uid: ownerUid,
     target,
     signal,
-    processId,
+    sourceTargetId,
+    audience,
     key,
     state: args.state,
     once: args.once,
@@ -58,7 +59,7 @@ export function handleSignalUnwatch(
   args: SignalUnwatchArgs,
   ctx: KernelContext,
 ): SignalUnwatchResult {
-  const target = resolveSignalWatchTarget(ctx, args);
+  const target = resolveSignalWatchTarget(ctx);
   const uid = resolveCallerOwnerUid(ctx);
 
   if (args.watchId !== undefined) {
@@ -78,7 +79,6 @@ export function handleSignalUnwatch(
 
 function resolveSignalWatchTarget(
   ctx: KernelContext,
-  _args: SignalWatchArgs | SignalUnwatchArgs,
 ): SignalWatchTargetInput {
   if (ctx.processId) {
     return {

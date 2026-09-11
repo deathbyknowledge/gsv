@@ -123,9 +123,6 @@ function formatTarget(target: ContextProjectionTarget): string {
     target.label && target.label !== target.id ? `label ${quote(target.label)}` : null,
     target.platform ? `platform ${quote(target.platform)}` : null,
     target.description ? `description ${quote(target.description)}` : null,
-    target.implements.length > 0
-      ? `implements ${target.implements.map((value) => `\`${value}\``).join(", ")}`
-      : null,
   ].filter((value): value is string => Boolean(value));
   return `\`${target.id}\`${details.length > 0 ? ` (${details.join("; ")})` : ""}`;
 }

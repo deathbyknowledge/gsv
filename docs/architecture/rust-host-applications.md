@@ -37,7 +37,7 @@ rooted at `host/`. Its lockfile and build output belong to that boundary;
 ## `gsvd`
 
 `gsvd` is the machine driver. It connects to the gateway with the driver role
-and owns concrete `fs.*`, `shell.exec`, and `net.fetch` execution, subprocess
+and owns concrete `fs.*`, `shell.exec`, `shell.cancel`, and `net.fetch` execution, subprocess
 and shell-session lifecycles, request and body cancellation, reconnection,
 logging, health, and shutdown.
 

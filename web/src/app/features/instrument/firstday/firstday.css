@@ -1,0 +1,178 @@
+/* The first day: onboarding is Fleet with empty rows. A row lights when the place says hello. */
+/* Zen owns the original introduction and its inline connection rows. */
+.zen-first-day { align-self: center; width: min(860px, 100%); max-height: 100%; min-height: 0; overflow-y: auto; padding-block: calc(var(--instrument-header-height) + 1rem) 2rem; box-sizing: border-box; margin: auto; }
+.zen-first-day .fd-body { padding: 0; overflow: visible; }
+.firstday {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.fd-body {
+  overflow-y: auto;
+  padding: 6vh 56px 4vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+@media (max-width: 720px) {
+  .fd-body { padding: 4vh 18px 3vh; }
+}
+.fd-inner {
+  width: min(860px, 100%);
+}
+.fd-hello {
+  font-family: var(--gsv-font-prose);
+  font-size: clamp(20px, 2.3vw, 30px);
+  line-height: 1.28;
+  color: var(--text-hi);
+  margin: 0 0 28px;
+  text-wrap: pretty;
+}
+.fd-hello .place { color: var(--target); }
+.fd-row {
+  border-top: 1px solid var(--rule-inner);
+  padding: 14px 0;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 14px;
+  align-items: baseline;
+}
+.fd-row:last-child {
+  border-bottom: 1px solid var(--rule-inner);
+}
+.fd-row .ring {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--border-raised);
+  display: inline-block;
+  vertical-align: middle;
+}
+.fd-row.is-lit .ring {
+  background: var(--online);
+  border-color: var(--online);
+  box-shadow: 0 0 8px var(--online);
+}
+.fd-row.is-pending .ring {
+  border-color: var(--live);
+}
+.fd-row .name {
+  font-size: 15px;
+  color: var(--text);
+}
+.fd-row .name small {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 3px;
+  letter-spacing: 0.02em;
+}
+.fd-row.is-lit .name small { color: var(--online); }
+.fd-row .state {
+  color: var(--faint);
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.fd-row.is-pending .state { color: var(--live); }
+.fd-panel {
+  grid-column: 1 / -1;
+  padding: 8px 0 6px 38px;
+  display: none;
+}
+.fd-row.is-open .fd-panel { display: block; }
+.fd-panel p {
+  margin: 0 0 12px;
+  font-family: var(--gsv-font-prose);
+  font-size: 15px;
+  color: var(--label);
+  max-width: 60ch;
+  line-height: 1.5;
+}
+.fd-panel .choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.fd-panel .code {
+  font-size: 22px;
+  letter-spacing: 0.3em;
+  color: var(--accent-bright);
+  text-shadow: var(--glow-soft);
+  margin: 4px 0 12px;
+  user-select: all;
+}
+.fd-panel details { margin-top: 8px; }
+.fd-panel summary {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  list-style: none;
+}
+.fd-panel summary::before { content: "▸ "; color: var(--faint); }
+.fd-panel details[open] summary::before { content: "▾ "; color: var(--accent); }
+.fd-panel pre {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  white-space: pre-wrap;
+  user-select: all;
+}
+.fd-foot {
+  padding: 0 56px 22px;
+}
+@media (max-width: 720px) {
+  .fd-foot { padding: 0 18px 14px; }
+}
+
+/* connect panels */
+.fd-commands {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.fd-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.fd-command pre {
+  margin: 0;
+  font-size: 13px;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+.fd-command pre.is-dim { color: var(--text-dim); user-select: none; }
+.fd-command pre.is-error, .fd-note.is-error { color: var(--error); }
+.fd-note {
+  font-size: 13px !important;
+  color: var(--text-dim) !important;
+}
+.fd-panel .ibtn { text-decoration: none; display: inline-block; }
+.fd-flow {
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
+.fd-flow-step {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: var(--space-3);
+}

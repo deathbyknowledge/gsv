@@ -170,6 +170,7 @@ export async function handleConnect(
       implementsList,
       args.peer.platform,
       args.peer.version,
+      !targets.get(peerId) && authenticated.targetLabel ? { label: authenticated.targetLabel } : {},
     );
     if (!registered.ok) {
       return { ok: false, code: 103, message: registered.error };
@@ -212,6 +213,7 @@ type PeerAuthenticationOutcome =
       ok: true;
       identity: ProcessIdentity;
       principalKind: PeerPrincipalKind;
+      targetLabel?: string;
     }
   | { ok: false; error: string };
 
@@ -269,6 +271,7 @@ async function authenticatePeer(
       ok: true,
       identity: withDefaultProcessContext(result.identity),
       principalKind: result.kind,
+      targetLabel: result.label,
     };
   }
 

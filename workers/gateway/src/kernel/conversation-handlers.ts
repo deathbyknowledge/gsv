@@ -26,6 +26,7 @@ import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
+import { resolveSelectedMessageTarget } from "./targets";
 import * as z from "zod/mini";
 
 const conversationClientStateSchema = z.object({
@@ -113,6 +114,7 @@ export async function handleConversationSend(
   const runId = `run:${messageId}`;
   const origin = conversationOrigin(ctx);
   const interactionOrigin = processInteractionOrigin(ctx);
+  const selectedTarget = await resolveSelectedMessageTarget(ctx, args.selectedTarget);
   const media = await retainConversationResources(
     args.media,
     conversation.handlerPid,
@@ -125,6 +127,7 @@ export async function handleConversationSend(
     idempotencyKey,
     author: { kind: "user", uid: conversation.ownerUid },
     text,
+    selectedTarget,
     media,
     mediaOwner: processMediaOwner(conversation.handlerPid, handler),
     origin,
@@ -152,6 +155,7 @@ export async function handleConversationSend(
     args: {
       pid: conversation.handlerPid,
       message: text,
+      selectedTarget,
       media,
       origin: interactionOrigin,
       interaction: {

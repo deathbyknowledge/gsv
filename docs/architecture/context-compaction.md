@@ -11,7 +11,7 @@ knowledge files.
 The Process Durable Object owns compaction because it owns process history,
 the active run, and cancellation. `ProcessStore` owns its SQLite messages,
 policies, and segment records. The implementation lives in
-`workers/gateway/src/process/do.ts`, `store.ts`, and `context-pressure.ts`; the public
+`workers/gateway/src/process/history/`, `storage/`, and `context-pressure.ts`; the public
 boundary is the `proc.history.*` syscall family.
 
 ## Context pressure
@@ -99,6 +99,7 @@ overflow policy.
 
 - `keepLast` retains a recent tail.
 - `throughMessageId` selects a prefix through a stored message id.
+- `targetPressure` estimates the prefix needed to reach a fraction of the input budget.
 
 The caller must also provide a summary or set `generateSummary: true`. Explicit
 compaction rejects an active process. Automatic compaction runs inside the
@@ -110,7 +111,7 @@ A successful compaction:
 1. selects an old prefix without separating an assistant tool call from its tool
    results;
 2. archives those records as gzipped JSONL in R2;
-3. replaces the live prefix with a system summary and archive path; and
+3. replaces the live prefix with a typed `history.compacted` event containing the summary and archive path; and
 4. records a `compaction` segment with the archived message range.
 
 The process then rebuilds context before calling the model. Summary or archive
@@ -119,6 +120,11 @@ Successful installation clears the old pressure estimate because it no longer
 describes the live history. Generated summaries use the selected AI
 configuration's normal generation deadline rather than a separate shorter
 compaction timeout.
+
+Summary input is bounded typed-record JSONL, rendered separately from the exact
+archive representation. Person-only notices remain in the archive and are
+excluded from both model context and summary input. See
+[Process History](./process-history.md) for rendering and group boundaries.
 
 ## Archives and restoration
 

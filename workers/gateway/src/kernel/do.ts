@@ -41,6 +41,7 @@ import {
   adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
+import { DevicePairingStore } from "./device-pairings";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -64,7 +65,7 @@ import { IpcCallStore } from "./ipc-calls";
 import {
   ScheduleStore,
 } from "./scheduler";
-import { dispatch, type DispatchDeps } from "./dispatch";
+import { dispatch, rejectBeforeDispatch, type DispatchDeps } from "./dispatch";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
@@ -117,7 +118,8 @@ import {
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
@@ -370,6 +372,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly installationStorage: R2Bucket;
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
+  readonly pairings: DevicePairingStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
@@ -442,9 +445,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.config = new ConfigStore(sql);
 
     this.targets = new TargetRegistry(sql);
+    this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
 
     this.routes = new RoutingTable(sql);
-    this.ledger = new LedgerStore(sql, ctx.storage, this.storage);
+    this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
+      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
+      // Only its open notification is suppressed; completion now pushes the row without requesting another read.
+      if (line.call !== "sys.ledger.list" || line.outcome !== null) this.ledgerFeed.changed(ownerUid, line);
+    });
 
     this.shellSessions = new ShellSessionStore(sql);
 
@@ -460,12 +468,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.ipcCalls = new IpcCallStore(sql);
 
-    this.schedules = new ScheduleStore(sql);
+    this.schedules = new ScheduleStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "sched.changed"));
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage);
-    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
+    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
@@ -1260,6 +1268,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationId: this.installationId,
       installationIdentity,
       auth: this.auth,
+      pairings: this.pairings,
       caps: this.caps,
       config: this.config,
       targets: this.targets,
@@ -1368,7 +1377,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<ResponseFrame | null> {
     const peer = ctx.peer;
     if (!peer) {
-      return errFrame(inputFrame.id, 403, "Request has no authenticated peer");
+      return rejectBeforeDispatch(inputFrame, 403, "Request has no authenticated peer");
     }
     // Internal-only syscalls are reachable solely through Process provenance;
     // every other call is gated by the peer's grant.
@@ -1379,7 +1388,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     // a denied call is recorded with its arguments and closed as denied.
     this.recordLedgerDispatch(inputFrame, ctx, origin);
     if (!allowed) {
-      const denied = errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+      const denied = rejectBeforeDispatch(inputFrame, 403, `Permission denied: ${inputFrame.call}`);
       this.completeLedger(denied);
       return denied;
     }
@@ -1473,7 +1482,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
                                                       /* ---------- the ledger: one line per dispatched syscall ---------- */
 
-  private readonly ledgerSignals = new Map<number, { timer: ReturnType<typeof setTimeout>; count: number; seq: number }>();
+  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
+  private readonly ledgerFeed = new LedgerFeed((ownerUid, payload) => this.connectionRuntime.broadcastLedgerChanges(ownerUid, payload));
 
   private recordLedgerDispatch(frame: RequestFrame, ctx: KernelContext, origin: RouteOrigin): void {
     try {
@@ -1481,7 +1491,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (!principal) return;
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
-      const args = frame.args as JsonLike;
+      // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
+      const args = (frame.call === "sys.pair.create"
+        ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
+        : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
+        : frame.args) as JsonLike;
       const seq = this.ledger.append({
         requestId: frame.id,
         timestamp: Date.now(),
@@ -1494,8 +1508,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         call: frame.call,
         args: argsText(args),
       });
-      // a read of the ledger is a line like any other, but it does not signal: a surface that lists on every signal must not chase itself
-      this.noteLedgerAppend(ownerUid, seq, frame.call !== "sys.ledger.list");
+      void this.armLedgerRotation(seq);
     } catch (error) {
       console.warn(`[ledger] append failed: ${error instanceof Error ? error.name : "error"}`);
     }
@@ -1504,7 +1517,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   /** Closes the line for a response, whether it came back inline or over a route. Idempotent. */
   completeLedger(frame: ResponseFrame): void {
     try {
-      this.ledger.complete(frame.id, { outcome: outcomeOfResponse(frame), ...usageOfResponse(frame) });
+      this.ledger.complete(frame.id, { outcome: outcomeOfResponse(frame), error: errorOfResponse(frame), ...usageOfResponse(frame) });
     } catch (error) {
       console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
     }
@@ -1516,26 +1529,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } catch (error) {
       console.warn(`[ledger] complete failed: ${error instanceof Error ? error.name : "error"}`);
     }
-  }
-
-  /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
-  private noteLedgerAppend(ownerUid: number, seq: number, signal: boolean): void {
-    for (const uid of signal ? (ownerUid === 0 ? [0] : [ownerUid, 0]) : []) {
-      const pending = this.ledgerSignals.get(uid);
-      if (pending) {
-        pending.count += 1;
-        pending.seq = seq;
-        continue;
-      }
-      const timer = setTimeout(() => {
-        const entry = this.ledgerSignals.get(uid);
-        this.ledgerSignals.delete(uid);
-        if (!entry) return;
-        this.connectionRuntime.broadcastToUserUid(uid, "ledger.appended", { seq: entry.seq, count: entry.count });
-      }, 500);
-      this.ledgerSignals.set(uid, { timer, count: 1, seq });
-    }
-    void this.armLedgerRotation(seq);
   }
 
   /**

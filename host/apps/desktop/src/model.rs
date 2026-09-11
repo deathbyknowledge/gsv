@@ -182,6 +182,8 @@ pub enum MomentState {
 pub struct Moment {
     pub id: String,
     pub role: MomentRole,
+    pub event_severity: Option<gateway_client::history::HistorySeverity>,
+    pub selected_target: Option<Arc<str>>,
     /// The immutable presentation snapshot is also the canonical body. GPUI can wrap this in a
     /// `SharedString` without copying it, so a live update never retains a second full body solely
     /// for rendering.
@@ -220,6 +222,8 @@ impl Moment {
         Self {
             id: id.into(),
             role,
+            event_severity: None,
+            selected_target: None,
             text_fingerprint: text_fingerprint(text.as_ref()),
             text,
             content_revision: next_moment_revision(),
@@ -237,6 +241,8 @@ impl Moment {
         Self {
             id: id.into(),
             role: MomentRole::Intelligence,
+            event_severity: None,
+            selected_target: None,
             text: Arc::from(text),
             content_revision: next_moment_revision(),
             media: Arc::new(Vec::new()),
@@ -260,6 +266,8 @@ impl Moment {
         Self {
             id,
             role,
+            event_severity: None,
+            selected_target: None,
             text_fingerprint: text_fingerprint(render_text.as_ref()),
             text: render_text,
             content_revision: next_moment_revision(),
@@ -1422,7 +1430,7 @@ pub fn parse_tool_finished_activity(value: &Value) -> Option<LiveActivityFinishe
 
 #[cfg(test)]
 pub fn parse_history_with_activity(payload: &Value) -> (Vec<Moment>, HistoryActivity) {
-    let snapshot = crate::history::normalize_history(payload);
+    let snapshot = crate::history::normalize_fixture(payload);
     (
         moments_from_history(&snapshot),
         activity_from_history(&snapshot.activity),
@@ -1431,13 +1439,13 @@ pub fn parse_history_with_activity(payload: &Value) -> (Vec<Moment>, HistoryActi
 
 #[cfg(test)]
 fn derive_history_activity(payload: &Value) -> HistoryActivity {
-    let snapshot = crate::history::normalize_history(payload);
+    let snapshot = crate::history::normalize_fixture(payload);
     activity_from_history(&snapshot.activity)
 }
 
 #[cfg(test)]
 fn history_is_authoritative(payload: &Value, _visible_message_count: usize) -> bool {
-    let snapshot = crate::history::normalize_history(payload);
+    let snapshot = crate::history::normalize_fixture(payload);
     snapshot.activity.authoritative
 }
 
@@ -1459,14 +1467,17 @@ pub fn moments_from_history(snapshot: &HistorySnapshot) -> Vec<Moment> {
                 HistoryMomentRole::Intelligence => MomentRole::Intelligence,
                 HistoryMomentRole::System => MomentRole::System,
             };
-            Moment::from_shared_history(
+            let mut rendered = Moment::from_shared_history(
                 moment.id.to_string(),
                 role,
                 moment.render_text.clone(),
                 moment.media.clone(),
                 moment.run_id.as_deref().map(str::to_string),
                 preparations.get(moment.id.as_ref()).copied(),
-            )
+            );
+            rendered.event_severity = moment.event_severity;
+            rendered.selected_target = moment.selected_target.clone();
+            rendered
         })
         .collect()
 }
@@ -1750,10 +1761,10 @@ mod tests {
     fn history_keeps_human_moments_and_hides_tool_plumbing() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "role": "user", "content": "Plan my day" },
-                { "id": 2, "role": "toolResult", "content": { "output": "private details" } },
-                { "id": 3, "role": "assistant", "content": [{ "type": "text", "text": "Done." }] }
+            "records": [
+                { "id": 1, "index": 0, "kind": "message", "payload": { "direction": "in", "text": "Plan my day", "media": [], "origin": {} } },
+                { "id": 2, "index": 0, "kind": "result", "payload": { "callId": "fixture-call", "tool": "Read", "outcome": "completed", "output": "private details", "media": [], "resources": [] } },
+                { "id": 3, "index": 0, "kind": "note", "payload": { "text": "Done.", "thinking": [], "media": [] } }
             ]
         });
         let moments = parse_history(&history);
@@ -1765,9 +1776,9 @@ mod tests {
     fn history_filters_blank_content_without_normalizing_visible_whitespace() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "role": "user", "content": " \n\t " },
-                { "id": 2, "role": "assistant", "content": "\n  keep this spacing  \n" }
+            "records": [
+                { "id": 1, "index": 0, "kind": "message", "payload": { "direction": "in", "text": " \n\t ", "media": [], "origin": {} } },
+                { "id": 2, "index": 0, "kind": "note", "payload": { "text": "\n  keep this spacing  \n", "thinking": [], "media": [] } }
             ]
         });
 
@@ -1781,14 +1792,8 @@ mod tests {
     fn history_retains_process_media_and_media_only_moments() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                {
-                    "id": 7,
-                    "role": "assistant",
-                    "runId": "run-media",
-                    "content": {
-                        "text": "",
-                        "media": [
+            "records": [
+                { "id": 7, "runId": "run-media", "index": 0, "kind": "note", "payload": { "text": "", "thinking": [], "media": [
                             {
                                 "type": "image",
                                 "mimeType": "image/png",
@@ -1805,9 +1810,7 @@ mod tests {
                                 "duration": 2.5,
                                 "transcription": "Done"
                             }
-                        ]
-                    }
-                }
+                        ] } }
             ]
         });
 
@@ -1849,14 +1852,9 @@ mod tests {
         conversation.stream_text(Some("run-adopt"), "A **stable** answer");
         assert!(conversation.finish_run(Some("run-adopt"), None));
         let transient_id = conversation.moments[0].id.clone();
-        let snapshot = crate::history::normalize_history(&json!({
-            "messages": [
-                {
-                    "id": 91,
-                    "runId": "run-adopt",
-                    "role": "assistant",
-                    "content": "A **stable** answer"
-                }
+        let snapshot = crate::history::normalize_fixture(&json!({
+            "records": [
+                { "id": 91, "runId": "run-adopt", "index": 0, "kind": "note", "payload": { "text": "A **stable** answer", "thinking": [], "media": [] } }
             ]
         }));
         let history = moments_from_history(&snapshot);
@@ -1886,14 +1884,9 @@ mod tests {
             ("run-stale", "Current answer"),
             ("run-current", "Current answer plus a stale tail"),
         ] {
-            let snapshot = crate::history::normalize_history(&json!({
-                "messages": [
-                    {
-                        "id": 92,
-                        "runId": run_id,
-                        "role": "assistant",
-                        "content": text
-                    }
+            let snapshot = crate::history::normalize_fixture(&json!({
+                "records": [
+                    { "id": 92, "runId": run_id, "index": 0, "kind": "note", "payload": { "text": text, "thinking": [], "media": [] } }
                 ]
             }));
             assert!(conversation
@@ -1901,21 +1894,15 @@ mod tests {
                 .is_empty());
         }
 
-        let media_mismatch = crate::history::normalize_history(&json!({
-            "messages": [
-                {
-                    "id": 92,
-                    "runId": "run-current",
-                    "role": "assistant",
-                    "content": "Current answer",
-                    "media": [
+        let media_mismatch = crate::history::normalize_fixture(&json!({
+            "records": [
+                { "id": 92, "runId": "run-current", "index": 0, "kind": "note", "payload": { "text": "Current answer", "thinking": [], "media": [
                         {
                             "type": "image",
                             "mimeType": "image/png",
                             "key": "home/alice/.gsv/media/different"
                         }
-                    ]
-                }
+                    ] } }
             ]
         }));
         assert!(conversation
@@ -1928,13 +1915,8 @@ mod tests {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-repeat-live");
         conversation.stream_text(Some("run-repeat-live"), "Done.");
-        let snapshot = crate::history::normalize_history(&json!({
-            "messages": [{
-                "id": 90,
-                "runId": "run-repeat-live",
-                "role": "assistant",
-                "content": "Done."
-            }]
+        let snapshot = crate::history::normalize_fixture(&json!({
+            "records": [{ "id": 90, "runId": "run-repeat-live", "index": 0, "kind": "note", "payload": { "text": "Done.", "thinking": [], "media": [] } }]
         }));
 
         assert!(conversation
@@ -1948,20 +1930,10 @@ mod tests {
         conversation.start_run("run-repeat");
         conversation.stream_text(Some("run-repeat"), "Repeated answer");
         assert!(conversation.finish_run(Some("run-repeat"), None));
-        let snapshot = crate::history::normalize_history(&json!({
-            "messages": [
-                {
-                    "id": 93,
-                    "runId": "run-repeat",
-                    "role": "assistant",
-                    "content": "Repeated answer"
-                },
-                {
-                    "id": 94,
-                    "runId": "run-repeat",
-                    "role": "assistant",
-                    "content": "Repeated answer"
-                }
+        let snapshot = crate::history::normalize_fixture(&json!({
+            "records": [
+                { "id": 93, "runId": "run-repeat", "index": 0, "kind": "note", "payload": { "text": "Repeated answer", "thinking": [], "media": [] } },
+                { "id": 94, "runId": "run-repeat", "index": 0, "kind": "note", "payload": { "text": "Repeated answer", "thinking": [], "media": [] } }
             ]
         }));
 
@@ -1986,10 +1958,10 @@ mod tests {
 
     #[test]
     fn history_moments_share_the_background_render_snapshot() {
-        let snapshot = crate::history::normalize_history(&json!({
-            "messages": [
-                { "id": 1, "role": "user", "content": "A large immutable thought" },
-                { "id": 2, "role": "assistant", "content": "A prepared answer" }
+        let snapshot = crate::history::normalize_fixture(&json!({
+            "records": [
+                { "id": 1, "index": 0, "kind": "message", "payload": { "direction": "in", "text": "A large immutable thought", "media": [], "origin": {} } },
+                { "id": 2, "index": 0, "kind": "note", "payload": { "text": "A prepared answer", "thinking": [], "media": [] } }
             ]
         }));
         let moments = moments_from_history(&snapshot);
@@ -2256,9 +2228,9 @@ mod tests {
         conversation.stream_text(Some("run-1"), "Partial answer");
         conversation.reconcile_history_activity(derive_history_activity(&json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "call-reused", "name": "Read" }] } },
-                { "id": 2, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "call-reused", "outcome": "completed", "output": "private old result" } }
+            "records": [
+                { "id": 1, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "call-reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": {} } },
+                { "id": 2, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "call-reused", "tool": "Read", "outcome": "completed", "output": "private old result", "media": [], "resources": [] } }
             ]
         })));
         assert!(conversation.set_live_activity(
@@ -2273,9 +2245,9 @@ mod tests {
 
         conversation.reconcile_history_activity(derive_history_activity(&json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "call-reused", "name": "Read" }] } },
-                { "id": 2, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "call-reused", "outcome": "completed", "output": "private old result" } }
+            "records": [
+                { "id": 1, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "call-reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": {} } },
+                { "id": 2, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "call-reused", "tool": "Read", "outcome": "completed", "output": "private old result", "media": [], "resources": [] } }
             ]
         })));
         conversation.reconcile_active_run(Some("run-1"), Some("Partial answer"));
@@ -2289,11 +2261,11 @@ mod tests {
 
         conversation.reconcile_history_activity(derive_history_activity(&json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "call-reused", "name": "Read" }] } },
-                { "id": 2, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "call-reused", "outcome": "completed", "output": "private old result" } },
-                { "id": 3, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "call-reused", "name": "Read" }] } },
-                { "id": 4, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "call-reused", "outcome": "failed", "output": "private new result" } }
+            "records": [
+                { "id": 1, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "call-reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": {} } },
+                { "id": 2, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "call-reused", "tool": "Read", "outcome": "completed", "output": "private old result", "media": [], "resources": [] } },
+                { "id": 3, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "call-reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": {} } },
+                { "id": 4, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "call-reused", "tool": "Read", "outcome": "failed", "output": "private new result", "media": [], "resources": [] } }
             ]
         })));
         conversation.reconcile_active_run(Some("run-1"), Some("Partial answer"));
@@ -2335,39 +2307,23 @@ mod tests {
     #[test]
     fn history_counts_only_completed_correlated_results_in_fixed_order() {
         let history = json!({
-            "truncated": false,
-            "messages": [
-                {
-                    "id": 1,
-                    "runId": "run-1",
-                    "role": "assistant",
-                    "content": {
-                        "text": "",
-                        "toolCalls": [
-                            { "id": "read-ok", "name": "Read", "arguments": { "path": "/private/read" } },
-                            { "id": "write-failed", "name": "Write", "arguments": { "content": "secret" } },
-                            { "id": "delete-denied", "name": "Delete", "arguments": { "path": "/private/delete" } },
-                            { "id": "shell-cancelled", "name": "Shell", "arguments": { "input": "private" } },
-                            { "id": "code-ok", "name": "CodeMode", "arguments": { "code": "private" } }
-                        ]
-                    }
-                },
-                { "id": 2, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-ok", "outcome": "completed", "output": "private contents" } },
-                { "id": 3, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Write", "toolCallId": "write-failed", "outcome": "failed", "output": "private error" } },
-                { "id": 4, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Delete", "toolCallId": "delete-denied", "outcome": "denied", "output": "private denial" } },
-                { "id": 5, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "shell-cancelled", "outcome": "cancelled", "output": "private cancellation" } },
-                { "id": 6, "runId": "run-1", "role": "toolResult", "content": { "toolName": "CodeMode", "toolCallId": "code-ok", "outcome": "completed", "output": "private result" } },
-                { "id": 7, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "unknown", "outcome": "completed", "output": "must not count" } },
-                { "id": 8, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-ok", "outcome": "completed", "output": "duplicate" } },
-                {
-                    "id": 9,
-                    "runId": "run-1",
-                    "role": "assistant",
-                    "content": "Done.",
-                    "metadata": { "activitySummary": [{ "category": "deleting_files", "count": 99, "unit": "operations" }] }
-                }
-            ]
-        });
+                    "truncated": false,
+                    "records": [
+                        { "id": 1, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "read-ok", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": { "path": "/private/read" } } },
+        { "id": 1, "runId": "run-1", "index": 1, "kind": "call", "payload": { "callId": "write-failed", "tool": "Write", "syscall": "fs.write", "target": null, "runId": "run-1", "args": { "content": "secret" } } },
+        { "id": 1, "runId": "run-1", "index": 2, "kind": "call", "payload": { "callId": "delete-denied", "tool": "Delete", "syscall": "fs.delete", "target": null, "runId": "run-1", "args": { "path": "/private/delete" } } },
+        { "id": 1, "runId": "run-1", "index": 3, "kind": "call", "payload": { "callId": "shell-cancelled", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-1", "args": { "input": "private" } } },
+        { "id": 1, "runId": "run-1", "index": 4, "kind": "call", "payload": { "callId": "code-ok", "tool": "CodeMode", "syscall": "codemode.exec", "target": null, "runId": "run-1", "args": { "code": "private" } } },
+                        { "id": 2, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-ok", "tool": "Read", "outcome": "completed", "output": "private contents", "media": [], "resources": [] } },
+                        { "id": 3, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "write-failed", "tool": "Write", "outcome": "failed", "output": "private error", "media": [], "resources": [] } },
+                        { "id": 4, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "delete-denied", "tool": "Delete", "outcome": "denied", "output": "private denial", "media": [], "resources": [] } },
+                        { "id": 5, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "shell-cancelled", "tool": "Shell", "outcome": "cancelled", "output": "private cancellation", "media": [], "resources": [] } },
+                        { "id": 6, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "code-ok", "tool": "CodeMode", "outcome": "completed", "output": "private result", "media": [], "resources": [] } },
+                        { "id": 7, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "unknown", "tool": "Search", "outcome": "completed", "output": "must not count", "media": [], "resources": [] } },
+                        { "id": 8, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-ok", "tool": "Read", "outcome": "completed", "output": "duplicate", "media": [], "resources": [] } },
+                        { "id": 9, "runId": "run-1", "metadata": { "activitySummary": [{ "category": "deleting_files", "count": 99, "unit": "operations" }] }, "index": 0, "kind": "note", "payload": { "text": "Done.", "thinking": [], "media": [] } }
+                    ]
+                });
         let activity = derive_history_activity(&history);
         let summaries = &activity.summaries;
         assert_eq!(summaries.len(), 1);
@@ -2394,13 +2350,13 @@ mod tests {
     fn history_correlates_repeated_call_ids_in_sequential_tool_rounds() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "runId": "run-repeat", "role": "user", "content": "Do both" },
-                { "id": 2, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
-                { "id": 3, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
-                { "id": 4, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
-                { "id": 5, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
-                { "id": 6, "runId": "run-repeat", "role": "assistant", "content": "Done" }
+            "records": [
+                { "id": 1, "runId": "run-repeat", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "Do both", "media": [], "origin": {} } },
+                { "id": 2, "runId": "run-repeat", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-repeat", "args": {} } },
+                { "id": 3, "runId": "run-repeat", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 4, "runId": "run-repeat", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-repeat", "args": {} } },
+                { "id": 5, "runId": "run-repeat", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Shell", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 6, "runId": "run-repeat", "index": 0, "kind": "note", "payload": { "text": "Done", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2435,13 +2391,13 @@ mod tests {
     fn failed_repeated_call_occurrence_does_not_shift_later_success_category() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 1, "runId": "run-repeat", "role": "user", "content": "Try it" },
-                { "id": 2, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
-                { "id": 3, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "failed", "output": "private" } },
-                { "id": 4, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
-                { "id": 5, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
-                { "id": 6, "runId": "run-repeat", "role": "assistant", "content": "Done" }
+            "records": [
+                { "id": 1, "runId": "run-repeat", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "Try it", "media": [], "origin": {} } },
+                { "id": 2, "runId": "run-repeat", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-repeat", "args": {} } },
+                { "id": 3, "runId": "run-repeat", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Read", "outcome": "failed", "output": "private", "media": [], "resources": [] } },
+                { "id": 4, "runId": "run-repeat", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-repeat", "args": {} } },
+                { "id": 5, "runId": "run-repeat", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Shell", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 6, "runId": "run-repeat", "index": 0, "kind": "note", "payload": { "text": "Done", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2460,9 +2416,9 @@ mod tests {
     fn complete_legacy_history_uses_fixed_tool_name_without_call_context() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 20, "runId": "run-tail", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "call-before-window", "outcome": "completed", "output": "private" } },
-                { "id": 21, "runId": "run-tail", "role": "assistant", "content": "Found it." }
+            "records": [
+                { "id": 20, "runId": "run-tail", "index": 0, "kind": "result", "payload": { "callId": "call-before-window", "tool": "Search", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 21, "runId": "run-tail", "index": 0, "kind": "note", "payload": { "text": "Found it.", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2483,9 +2439,9 @@ mod tests {
     fn truncated_mid_sequence_history_never_creates_a_partial_summary() {
         let history = json!({
             "hasMoreBefore": true,
-            "messages": [
-                { "id": 20, "runId": "run-tail", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "call-before-window", "outcome": "completed", "output": "private" } },
-                { "id": 21, "runId": "run-tail", "role": "assistant", "content": "Found it." }
+            "records": [
+                { "id": 20, "runId": "run-tail", "index": 0, "kind": "result", "payload": { "callId": "call-before-window", "tool": "Search", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 21, "runId": "run-tail", "index": 0, "kind": "note", "payload": { "text": "Found it.", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2499,18 +2455,10 @@ mod tests {
     fn truncated_history_starting_at_a_later_tool_round_is_incomplete() {
         let history = json!({
             "hasMoreBefore": true,
-            "messages": [
-                {
-                    "id": 30,
-                    "runId": "run-multi-round",
-                    "role": "assistant",
-                    "content": {
-                        "text": "",
-                        "toolCalls": [{ "id": "later-read", "name": "Read", "arguments": { "path": "/private" } }]
-                    }
-                },
-                { "id": 31, "runId": "run-multi-round", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "later-read", "outcome": "completed", "output": "private" } },
-                { "id": 32, "runId": "run-multi-round", "role": "assistant", "content": "Done" }
+            "records": [
+                { "id": 30, "runId": "run-multi-round", "index": 0, "kind": "call", "payload": { "callId": "later-read", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-multi-round", "args": { "path": "/private" } } },
+                { "id": 31, "runId": "run-multi-round", "index": 0, "kind": "result", "payload": { "callId": "later-read", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 32, "runId": "run-multi-round", "index": 0, "kind": "note", "payload": { "text": "Done", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2530,13 +2478,13 @@ mod tests {
     fn truncated_history_still_derives_a_later_run_with_an_in_page_boundary() {
         let history = json!({
             "hasMoreBefore": true,
-            "messages": [
-                { "id": 20, "runId": "run-partial", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "before-window", "outcome": "completed", "output": "private" } },
-                { "id": 21, "runId": "run-partial", "role": "assistant", "content": "Earlier answer" },
-                { "id": 22, "runId": "run-complete", "role": "user", "content": "New request" },
-                { "id": 23, "runId": "run-complete", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "write-1", "name": "Write", "arguments": { "path": "/private" } }] } },
-                { "id": 24, "runId": "run-complete", "role": "toolResult", "content": { "toolName": "Write", "toolCallId": "write-1", "outcome": "completed", "output": "private" } },
-                { "id": 25, "runId": "run-complete", "role": "assistant", "content": "New answer" }
+            "records": [
+                { "id": 20, "runId": "run-partial", "index": 0, "kind": "result", "payload": { "callId": "before-window", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 21, "runId": "run-partial", "index": 0, "kind": "note", "payload": { "text": "Earlier answer", "thinking": [], "media": [] } },
+                { "id": 22, "runId": "run-complete", "index": 0, "kind": "message", "payload": { "direction": "in", "text": "New request", "media": [], "origin": {} } },
+                { "id": 23, "runId": "run-complete", "index": 0, "kind": "call", "payload": { "callId": "write-1", "tool": "Write", "syscall": "fs.write", "target": null, "runId": "run-complete", "args": { "path": "/private" } } },
+                { "id": 24, "runId": "run-complete", "index": 0, "kind": "result", "payload": { "callId": "write-1", "tool": "Write", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 25, "runId": "run-complete", "index": 0, "kind": "note", "payload": { "text": "New answer", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2554,32 +2502,35 @@ mod tests {
     }
 
     #[test]
-    fn history_completeness_accepts_only_proven_full_legacy_payloads() {
+    fn history_completeness_uses_typed_group_counts_and_page_metadata() {
         assert!(!history_is_authoritative(
-            &json!({ "messages": [], "truncated": true, "messageCount": 0 }),
+            &json!({ "records": [], "truncated": true, "messageCount": 0 }),
             0
         ));
         assert!(history_is_authoritative(
-            &json!({ "messages": [], "truncated": false }),
+            &json!({ "records": [], "truncated": false }),
             0
         ));
         assert!(history_is_authoritative(
-            &json!({ "messages": [{ "id": 1 }], "messageCount": 1 }),
+            &json!({ "records": [{ "id": 1, "kind": "note", "payload": { "text": "", "thinking": [] } }], "messageCount": 1 }),
             1
         ));
         assert!(!history_is_authoritative(
-            &json!({ "messages": [{ "id": 1 }], "messageCount": 2 }),
+            &json!({ "records": [{ "id": 1, "kind": "note", "payload": { "text": "", "thinking": [] } }], "messageCount": 2 }),
             1
         ));
         assert!(history_is_authoritative(
-            &json!({ "messages": [], "hasMoreBefore": false, "hasMoreAfter": false }),
+            &json!({ "records": [], "hasMoreBefore": false, "hasMoreAfter": false }),
             0
         ));
         assert!(!history_is_authoritative(
-            &json!({ "messages": [], "hasMoreBefore": false }),
+            &json!({ "records": [], "hasMoreBefore": false }),
             0
         ));
-        assert!(!history_is_authoritative(&json!({ "messages": [] }), 0));
+        assert!(history_is_authoritative(
+            &json!({ "records": [], "messageCount": 0 }),
+            0
+        ));
     }
 
     #[test]
@@ -2588,11 +2539,11 @@ mod tests {
             "hasMoreBefore": false,
             "hasMoreAfter": false,
             "truncated": false,
-            "messages": [
-                { "id": 1, "role": "system", "content": "Process history compacted.\n\nSummary:\nprivate earlier work" },
-                { "id": 2, "runId": "run-compacted", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "later", "name": "Read" }] } },
-                { "id": 3, "runId": "run-compacted", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "later", "outcome": "completed", "output": "private" } },
-                { "id": 4, "runId": "run-compacted", "role": "assistant", "content": "Done" }
+            "records": [
+                { "id": 1, "index": 0, "kind": "event", "payload": { "kind": "history.compacted", "payload": { "summary": "private earlier work" }, "severity": "info", "audience": "both" } },
+                { "id": 2, "runId": "run-compacted", "index": 0, "kind": "call", "payload": { "callId": "later", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-compacted", "args": {} } },
+                { "id": 3, "runId": "run-compacted", "index": 0, "kind": "result", "payload": { "callId": "later", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 4, "runId": "run-compacted", "index": 0, "kind": "note", "payload": { "text": "Done", "thinking": [], "media": [] } }
             ]
         });
         let activity = derive_history_activity(&history);
@@ -2618,17 +2569,7 @@ mod tests {
         ));
 
         conversation.reconcile_history_activity(derive_history_activity(&json!({
-            "messages": [{
-                "id": 1,
-                "runId": "run-live",
-                "role": "toolResult",
-                "content": {
-                    "toolName": "Read",
-                    "toolCallId": "call-other",
-                    "outcome": "completed",
-                    "output": "private"
-                }
-            }]
+            "records": [{ "id": 1, "runId": "run-live", "index": 0, "kind": "result", "payload": { "callId": "call-other", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } }]
         })));
         assert_eq!(
             conversation.live_activity_entries(),
@@ -2639,24 +2580,9 @@ mod tests {
         );
 
         conversation.reconcile_history_activity(derive_history_activity(&json!({
-            "messages": [
-                {
-                    "id": 2,
-                    "runId": "run-live",
-                    "role": "assistant",
-                    "content": { "text": "", "toolCalls": [{ "id": "call-active", "name": "Shell" }] }
-                },
-                {
-                    "id": 3,
-                    "runId": "run-live",
-                    "role": "toolResult",
-                    "content": {
-                        "toolName": "Shell",
-                        "toolCallId": "call-active",
-                        "outcome": "failed",
-                        "output": "private"
-                    }
-                }
+            "records": [
+                { "id": 2, "runId": "run-live", "index": 0, "kind": "call", "payload": { "callId": "call-active", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-live", "args": {} } },
+                { "id": 3, "runId": "run-live", "index": 0, "kind": "result", "payload": { "callId": "call-active", "tool": "Shell", "outcome": "failed", "output": "private", "media": [], "resources": [] } }
             ]
         })));
         assert!(conversation.live_activity_entries().is_empty());
@@ -2677,10 +2603,10 @@ mod tests {
         ));
         conversation.reconcile_history_activity(derive_history_activity(&json!({
             "truncated": false,
-            "messages": [
-                { "id": 10, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
-                { "id": 11, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
-                { "id": 12, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } }
+            "records": [
+                { "id": 10, "runId": "run-live", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-live", "args": {} } },
+                { "id": 11, "runId": "run-live", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 12, "runId": "run-live", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-live", "args": {} } }
             ]
         })));
         assert_eq!(
@@ -2693,11 +2619,11 @@ mod tests {
 
         conversation.reconcile_history_activity(derive_history_activity(&json!({
             "truncated": false,
-            "messages": [
-                { "id": 10, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
-                { "id": 11, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
-                { "id": 12, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
-                { "id": 13, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "failed", "output": "private" } }
+            "records": [
+                { "id": 10, "runId": "run-live", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-live", "args": {} } },
+                { "id": 11, "runId": "run-live", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Read", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 12, "runId": "run-live", "index": 0, "kind": "call", "payload": { "callId": "reused", "tool": "Shell", "syscall": "shell.exec", "target": null, "runId": "run-live", "args": {} } },
+                { "id": 13, "runId": "run-live", "index": 0, "kind": "result", "payload": { "callId": "reused", "tool": "Shell", "outcome": "failed", "output": "private", "media": [], "resources": [] } }
             ]
         })));
         assert!(conversation.live_activity_entries().is_empty());
@@ -2734,14 +2660,15 @@ mod tests {
     #[test]
     fn derived_summary_reconstructs_on_reconnect_and_survives_a_truncated_refresh() {
         let history = json!({
-            "truncated": false,
-            "messages": [
-                { "id": 40, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "read-1", "name": "Read", "arguments": { "path": "/private/a" } }, { "id": "read-2", "name": "Read", "arguments": { "path": "/private/b" } }] } },
-                { "id": 41, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-1", "outcome": "completed", "output": "private a" } },
-                { "id": 42, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-2", "outcome": "completed", "output": "private b" } },
-                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
-            ]
-        });
+                    "truncated": false,
+                    "records": [
+                        { "id": 40, "runId": "run-1", "index": 0, "kind": "call", "payload": { "callId": "read-1", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": { "path": "/private/a" } } },
+        { "id": 40, "runId": "run-1", "index": 1, "kind": "call", "payload": { "callId": "read-2", "tool": "Read", "syscall": "fs.read", "target": null, "runId": "run-1", "args": { "path": "/private/b" } } },
+                        { "id": 41, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-1", "tool": "Read", "outcome": "completed", "output": "private a", "media": [], "resources": [] } },
+                        { "id": 42, "runId": "run-1", "index": 0, "kind": "result", "payload": { "callId": "read-2", "tool": "Read", "outcome": "completed", "output": "private b", "media": [], "resources": [] } },
+                        { "id": 43, "runId": "run-1", "index": 0, "kind": "note", "payload": { "text": "Finished", "thinking": [], "media": [] } }
+                    ]
+                });
         let expected = [ActivitySummaryEntry {
             category: ActivityCategory::ReadingFiles,
             count: 2,
@@ -2768,8 +2695,8 @@ mod tests {
 
         let truncated = json!({
             "hasMoreBefore": true,
-            "messages": [
-                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
+            "records": [
+                { "id": 43, "runId": "run-1", "index": 0, "kind": "note", "payload": { "text": "Finished", "thinking": [], "media": [] } }
             ]
         });
         let (moments, activity) = parse_history_with_activity(&truncated);
@@ -2783,8 +2710,8 @@ mod tests {
         let authoritative_without_tools = json!({
             "hasMoreBefore": false,
             "hasMoreAfter": false,
-            "messages": [
-                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
+            "records": [
+                { "id": 43, "runId": "run-1", "index": 0, "kind": "note", "payload": { "text": "Finished", "thinking": [], "media": [] } }
             ]
         });
         let (moments, activity) = parse_history_with_activity(&authoritative_without_tools);
@@ -2799,10 +2726,10 @@ mod tests {
     fn a_blank_final_response_is_kept_when_completed_work_belongs_to_it() {
         let history = json!({
             "truncated": false,
-            "messages": [
-                { "id": 50, "runId": "run-blank", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "edit-1", "name": "Edit", "arguments": { "path": "/private" } }] } },
-                { "id": 51, "runId": "run-blank", "role": "toolResult", "content": { "toolName": "Edit", "toolCallId": "edit-1", "outcome": "completed", "output": "private" } },
-                { "id": 52, "runId": "run-blank", "role": "assistant", "content": "" }
+            "records": [
+                { "id": 50, "runId": "run-blank", "index": 0, "kind": "call", "payload": { "callId": "edit-1", "tool": "Edit", "syscall": "fs.edit", "target": null, "runId": "run-blank", "args": { "path": "/private" } } },
+                { "id": 51, "runId": "run-blank", "index": 0, "kind": "result", "payload": { "callId": "edit-1", "tool": "Edit", "outcome": "completed", "output": "private", "media": [], "resources": [] } },
+                { "id": 52, "runId": "run-blank", "index": 0, "kind": "note", "payload": { "text": "", "thinking": [], "media": [] } }
             ]
         });
         let (moments, activity) = parse_history_with_activity(&history);

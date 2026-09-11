@@ -24,10 +24,8 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
           error={state.login.error}
           username={state.login.username}
           password={state.login.password}
-          token={state.login.token}
           onUsername={state.login.onUsername}
           onPassword={state.login.onPassword}
-          onToken={state.login.onToken}
           onSubmit={state.login.onSubmit}
         />
         <SetupScreen
