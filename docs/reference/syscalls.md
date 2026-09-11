@@ -1823,6 +1823,13 @@ Runtime behavior:
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
+For explicit sends, the Kernel resolves the authorized linked actor for the
+requested surface and supplies its current route generation to the adapter.
+Neither value is a public `adapter.send` argument. Multiple matching actors,
+disabled owners, and missing generations on shared routes are rejected before
+provider dispatch. The adapter rechecks that generation before sending to the
+provider, rejecting a delayed send if the link has since moved.
+
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
 Every private adapter-worker RPC result is validated before the gateway persists
 or publishes it. In particular, a successful `adapterConnect` response must state

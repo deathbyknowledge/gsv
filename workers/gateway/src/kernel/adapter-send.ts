@@ -26,9 +26,6 @@ import { principalOf,
 import type {
   RequestFrame,
 } from "../protocol/frames";
-import type {
-  IdentityLinkRecord,
-} from "./identity-links";
 import {
   assertAdapterMessageDestinationAccess,
   identityLinkAllowsSurface,
@@ -113,8 +110,9 @@ export async function handleAdapterSend(
       "This target is the current run's directed endpoint. Finish with Message, or use --also to intentionally send a separate message.",
     );
   }
-  if (!canSendToAdapterSurface(ctx, adapter, accountId, surface)) {
-    return rejectAdapterSend(body, "Permission denied");
+  const destination = authorizeAdapterSendDestination(ctx, adapter, accountId, surface);
+  if (!destination.ok) {
+    return rejectAdapterSend(body, destination.error);
   }
 
   return deliverAdapterMessage({
@@ -122,6 +120,8 @@ export async function handleAdapterSend(
     adapter,
     accountId,
     surface,
+    actorId: destination.actorId,
+    routeGeneration: destination.routeGeneration,
     replyToId: args.replyToId?.trim() || undefined,
   }, ctx, body);
 }
@@ -410,45 +410,23 @@ function isCurrentAutomaticReplyDestination(
     && (destination.surface.threadId ?? "") === (surface.threadId?.trim() ?? "");
 }
 
-function canSendToAdapterSurface(
+function authorizeAdapterSendDestination(
   ctx: KernelContext,
   adapter: string,
   accountId: string,
   surface: AdapterSurface,
-): boolean {
+): { ok: false; error: string } | { ok: true; actorId?: string; routeGeneration?: string } {
   const identity = principalOf(ctx);
-  if (!identity) {
-    return false;
+  if (!identity || (identity.kind !== "human" && identity.kind !== "service")) {
+    return { ok: false, error: "Permission denied" };
   }
-  if (identity.kind === "service") {
-    return true;
-  }
-  if (identity.kind !== "human") {
-    return false;
-  }
-  if (identity.account.uid === 0) {
-    return true;
-  }
-  const ownerUid = resolveCallerOwnerUid(ctx);
+  const privileged = identity.kind === "service" || identity.account.uid === 0;
+  const ownerUid = privileged ? undefined : resolveCallerOwnerUid(ctx);
   const links = ctx.adapters.identityLinks.list(ownerUid).filter((link) =>
     link.adapter.trim().toLowerCase() === adapter && link.accountId.trim() === accountId
   );
-  if (links.length === 0) {
-    return false;
-  }
-  return links.some((link) => identityLinkAllowsSurface(link, surface))
-    || callerOwnsAdapterSurfaceRoute(ctx, adapter, accountId, surface, ownerUid, links);
-}
-
-function callerOwnsAdapterSurfaceRoute(
-  ctx: KernelContext,
-  adapter: string,
-  accountId: string,
-  surface: AdapterSurface,
-  ownerUid: number,
-  links: IdentityLinkRecord[],
-): boolean {
-  return links.some((link) => {
+  const matches = links.filter((link) => {
+    if (identityLinkAllowsSurface(link, surface)) return true;
     const route = ctx.adapters.surfaceRoutes.get({
       adapter,
       accountId,
@@ -457,8 +435,23 @@ function callerOwnsAdapterSurfaceRoute(
       surfaceId: surface.id.trim(),
       threadId: surface.threadId,
     });
-    return route?.uid === ownerUid;
+    return route?.uid === link.uid;
   });
+  if (matches.length > 1) {
+    return { ok: false, error: "Adapter destination matches more than one linked actor" };
+  }
+  const link = matches[0];
+  if (!link) {
+    // Privileged standalone sends can address provider surfaces without a local identity link.
+    if (privileged && !links.some((candidate) => candidate.metadata?.managed === true)) return { ok: true };
+    return { ok: false, error: "Permission denied" };
+  }
+  if (ctx.auth.isAccountDisabled(link.uid)) return { ok: false, error: "Permission denied" };
+  const routeGeneration = identityLinkRouteGeneration(link, surface);
+  if (link.metadata?.managed === true && routeGeneration === undefined) {
+    return { ok: false, error: "Adapter destination has no current route generation" };
+  }
+  return { ok: true, actorId: link.actorId, routeGeneration };
 }
 
 export function validateAdapterMediaItems(
@@ -508,4 +501,3 @@ export function validateAdapterMediaItems(
     }
   }
 }
-

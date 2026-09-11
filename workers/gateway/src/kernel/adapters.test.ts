@@ -32,6 +32,7 @@ import * as personalController from "./personal-controller";
 import {
   bodyFromBytes,
   bodyToBytes,
+  adapterSendArgsSchema,
   type AdapterInboundArgs,
   type BinaryBody,
   type ConversationSummary,
@@ -3979,6 +3980,124 @@ describe("adapter lifecycle handlers", () => {
     });
     expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  describe("explicit adapter.send ownership", () => {
+    const surface = { kind: "dm" as const, id: "D-OWNER" };
+    const send = { adapter: "slack", accountId: "workspace:T1", surface, text: "Owned delivery" };
+    function link(actorId: string, uid = 1000): IdentityLinkRecord {
+      return { adapter: send.adapter, accountId: send.accountId, actorId, uid, linkedByUid: uid, createdAt: 1,
+        metadata: { managed: true, routeScope: "actor", routeGeneration: `generation-${actorId}`, surfaceKind: "dm", surfaceId: surface.id } };
+    }
+    function fixture(links: IdentityLinkRecord[], peer = userIdentity()) {
+      const adapterFrame = successfulAdapterFrame("slack", "explicit-owned");
+      const ctx = makeContext({ CHANNEL_SLACK: { adapterFrame } }, { upsert: vi.fn() }, { peer });
+      vi.mocked(ctx.adapters.identityLinks.list).mockImplementation((uid) => links.filter((entry) => uid === undefined || entry.uid === uid));
+      vi.mocked(ctx.adapters.identityLinks.get).mockImplementation((adapter, accountId, actorId) => links.find((entry) =>
+        entry.adapter === adapter && entry.accountId === accountId && entry.actorId === actorId) ?? null);
+      return { ctx, adapterFrame };
+    }
+
+    it("derives the current actor and generation from the caller's linked DM without adding public authority fields", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([link("U-OTHER", 2000), owned]);
+      expect(adapterSendArgsSchema.safeParse({ ...send, actorId: "U-OTHER" }).success).toBe(false);
+      expect(adapterSendArgsSchema.safeParse({ ...send, routeGeneration: "caller-chosen" }).success).toBe(false);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
+      expect(ctx.adapters.identityLinks.list).toHaveBeenCalledWith(1000);
+      expect(adapterFrame).toHaveBeenCalledWith({ installationId: TEST_INSTALLATION_ID },
+        expect.objectContaining({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER", surface }),
+        expect.objectContaining({ args: expect.objectContaining(send) }));
+      const sent = adapterFrame.mock.calls[0][2];
+      if (sent.type !== "req") throw new Error("Expected a request frame");
+      expect(sent.args).not.toHaveProperty("actorId");
+      expect(sent.args).not.toHaveProperty("routeGeneration");
+    });
+
+    it("selects only the actor whose observed shared surface belongs to the caller", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([link("U-OTHER", 2000), link("U-SECOND"), owned]);
+      vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => key.actorId === owned.actorId && key.surfaceId === "C-SHARED"
+        ? { ...key, uid: 1000, pid: "pid-1", mode: "surface", updatedAt: 1, updatedByUid: 1000 } : null);
+      expect(await handleAdapterSend({ ...send, surface: { kind: "channel", id: "C-SHARED" } }, ctx)).toMatchObject({ ok: true });
+      expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER",
+        surface: { kind: "channel", id: "C-SHARED" } });
+    });
+
+    it.each(["other owner", "disabled owner", "wrong route owner", "missing route", "missing generation"] as const)(
+      "refuses %s before dispatch and cancels the accepted body", async (reason) => {
+        const owned = link("U-OWNER", reason === "other owner" ? 2000 : 1000);
+        if (reason === "missing generation") delete owned.metadata!.routeGeneration;
+        const { ctx, adapterFrame } = fixture([owned]);
+        if (reason === "disabled owner") vi.mocked(ctx.auth.isAccountDisabled).mockReturnValue(true);
+        if (reason === "wrong route owner") {
+          vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => ({ ...key, uid: 2000, pid: "other-pid", mode: "surface", updatedAt: 1, updatedByUid: 2000 }));
+        }
+        const cancel = vi.fn();
+        const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel }) };
+        const target = reason === "wrong route owner" || reason === "missing route" ? { kind: "channel" as const, id: "C-SHARED" } : surface;
+        expect(await handleAdapterSend({ ...send, surface: target }, ctx, body)).toMatchObject({ ok: false, retryable: false });
+        expect(adapterFrame).not.toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalledOnce();
+      },
+    );
+
+    it("refuses ambiguous actors on the same shared surface and cancels its body", async () => {
+      const { ctx, adapterFrame } = fixture([link("U-FIRST"), link("U-SECOND")]);
+      vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => ({ ...key, uid: 1000, pid: "pid-1", mode: "surface", updatedAt: 1, updatedByUid: 1000 }));
+      const cancel = vi.fn();
+      const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel }) };
+      expect(await handleAdapterSend({ ...send, surface: { kind: "channel", id: "C-SHARED" } }, ctx, body))
+        .toMatchObject({ ok: false, retryable: false, error: expect.stringContaining("more than one") });
+      expect(adapterFrame).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+
+    it.each(["human", "service"] as const)("preserves unlinked legacy sends for privileged %s peers", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([], peer);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
+      expect(adapterFrame.mock.calls[0][1]).not.toHaveProperty("actorId");
+      expect(adapterFrame.mock.calls[0][1]).not.toHaveProperty("routeGeneration");
+    });
+
+    it.each(["human", "service"] as const)("does not use privileged %s legacy fallback on an unrelated managed surface", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([link("U-OWNER")], peer);
+      expect(await handleAdapterSend({ ...send, surface: { kind: "dm", id: "D-UNLINKED" } }, ctx)).toMatchObject({ ok: false });
+      expect(adapterFrame).not.toHaveBeenCalled();
+    });
+
+    it("keeps the generation captured before awaited delivery and cleans up both owned bodies", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([owned]);
+      const reply = adapterFrame.getMockImplementation()!;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let entered!: () => void;
+      const accepted = new Promise<void>((resolve) => { entered = resolve; });
+      const cancelRequest = vi.fn();
+      const cancelResponse = vi.fn();
+      const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel: cancelRequest }) };
+      const responseBody: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel: cancelResponse }) };
+      adapterFrame.mockImplementationOnce(async (...args) => {
+        entered();
+        await held;
+        return { ...await reply(...args), body: responseBody };
+      });
+      const pending = handleAdapterSend({ ...send, media: [{ type: "document", mimeType: "application/octet-stream", body: { offset: 0, length: 1 } }] }, ctx, body);
+      await accepted;
+      try {
+        owned.metadata!.routeGeneration = "replacement-generation";
+        expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER" });
+        expect(adapterFrame.mock.calls[0][2].body).toBe(body);
+      } finally { release(); }
+      expect(await pending).toMatchObject({ ok: true });
+      expect(cancelRequest).toHaveBeenCalledOnce();
+      expect(cancelResponse).toHaveBeenCalledOnce();
+    });
   });
 
   it("denies adapter.send for non-root users without a linked account", async () => {
