@@ -149,6 +149,7 @@ describe("gateway runtime integration", () => {
       const streamPayloads = signals
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === runId)
         .map(({ payload }) => payload);
+      expect(streamPayloads.filter(({ event }) => event?.type === "error")).toEqual([]);
       expect(streamPayloads.map(({ event }) =>
         // SAFETY: Stream events in this fixture always carry a string type.
         (event as { type: string }).type

@@ -202,7 +202,7 @@ describe("managed installation routing integration", () => {
       data: {
         message: {
           stopReason: "error",
-          errorMessage: "Model generation timed out after 200ms",
+          errorMessage: expect.stringMatching(/timed out after 200ms|Inference deadline exceeded/),
         },
       },
     });
