@@ -23,7 +23,7 @@ const EMAIL_CONFIG_PATH = resolve(
 );
 type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
 
-function integrationGatewayConfig(options: {
+export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
   managed?: boolean;
@@ -119,7 +119,7 @@ function integrationGatewayConfig(options: {
   };
 }
 
-function integrationExecutionConfig(workersAi = true): Unstable_RawConfig {
+export function integrationExecutionConfig(workersAi = true): Unstable_RawConfig {
   return {
     name: EXECUTION_WORKER,
     main: resolve(GATEWAY_ROOT, "test-integration/fixtures/inference-execution.ts"),
@@ -182,7 +182,7 @@ function integrationEmailConfig(
   };
 }
 
-function integrationDependencyConfig(
+export function integrationDependencyConfig(
   gatewayService: string,
 ): Unstable_RawConfig {
   const config = unstable_readConfig(
