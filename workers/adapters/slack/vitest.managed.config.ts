@@ -54,8 +54,8 @@ export default defineConfig({
                     },
                   };
                 }
-                async unlinkManagedAdapterIdentity(installation, input) {
-                  calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
+                async unlinkAdapterIdentity(installation, input) {
+                  calls.push({ call: "unlinkAdapterIdentity", installation, input });
                   return { removed: true };
                 }
                 async fetch() {

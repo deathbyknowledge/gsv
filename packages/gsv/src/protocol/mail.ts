@@ -132,6 +132,6 @@ export type ManagedMailIntakePage = {
 };
 
 export type {
-  MailGatewayService as ManagedMailGatewayService,
+  ManagedMailGatewayService,
   MailService as ManagedMailService,
 } from "../services/mail";

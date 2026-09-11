@@ -593,7 +593,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       // SAFETY: Durable storage contains metadata written by this adapter's serializer.
       const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
       body = this.rawMessageBody(row);
-      const result = await this.env.GATEWAY.acceptManagedInboundMail(
+      const result = await this.env.GATEWAY.acceptInboundMail(
         { installationId: this.installationId },
         metadata,
         body,
@@ -905,7 +905,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         throw new Error("Completed mail summary is missing durable state");
       }
       const summary = validateSummary(JSON.parse(row.summary_json));
-      await this.env.GATEWAY.completeManagedInboundMail(
+      await this.env.GATEWAY.completeInboundMail(
         { installationId: this.installationId },
         {
           version: 1,

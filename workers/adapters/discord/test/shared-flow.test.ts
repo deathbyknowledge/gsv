@@ -188,7 +188,7 @@ describe("shared Discord provider → peer → Gateway", () => {
         finalizePairing: async () => preparation,
         sendPairingConfirmation: async () => undefined,
       };
-      const owner = new AdapterPairingClaim(context.storage, "claim-fixture", (record) => record.peerName, () => peer, { unlinkManagedAdapterIdentity: async () => ({ removed: true }) }, (task) => context.waitUntil(task));
+      const owner = new AdapterPairingClaim(context.storage, "claim-fixture", (record) => record.peerName, () => peer, { unlinkAdapterIdentity: async () => ({ removed: true }) }, (task) => context.waitUntil(task));
       await owner.initialize({ version: 1, peerName: "fixture-peer", claimId: "fixture-claim", expiresAt: Date.now() + 60_000 });
       const input = { code: "ABCDEFGHJKLM", operationId: "fixture-operation", installationId: "race-space", localUid: 1000, canonicalOrigin: "https://race-space.gsv.test" };
       const pending = owner.prepare(input);

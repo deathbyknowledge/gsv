@@ -440,7 +440,7 @@ describe("managed Telegram clean-instance flow", () => {
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation_test" },
-        call: "unlinkManagedAdapterIdentity",
+        call: "unlinkAdapterIdentity",
         input: expect.objectContaining({
           accountId: "managed",
           actorId: "12345",

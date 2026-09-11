@@ -77,7 +77,7 @@ export default defineConfig({
               const failedOutboundCompletion = new Set();
               const outboundClaimAttempts = new Map();
               export default class GatewayTest extends WorkerEntrypoint {
-                async acceptManagedInboundMail(installation, metadata, body) {
+                async acceptInboundMail(installation, metadata, body) {
                   if (installation.installationId.length === 0) {
                     throw new Error("missing installation");
                   }
@@ -122,7 +122,7 @@ export default defineConfig({
                   );
                   return { messageId };
                 }
-                async completeManagedInboundMail(installation, completion) {
+                async completeInboundMail(installation, completion) {
                   if (
                     installation.installationId.length === 0
                     || !completion.messageId.startsWith("message_")
@@ -134,7 +134,7 @@ export default defineConfig({
                     throw new Error("invalid completion");
                   }
                 }
-                async claimManagedOutboundMail(installation, reference) {
+                async claimOutboundMail(installation, reference) {
                   if (
                     installation.installationId.length === 0
                     || reference.version !== 1
@@ -230,7 +230,7 @@ export default defineConfig({
                     },
                   };
                 }
-                async completeManagedOutboundMail(installation, completion) {
+                async completeOutboundMail(installation, completion) {
                   if (
                     installation.installationId.length === 0
                     || completion.version !== 1

@@ -93,7 +93,7 @@ describe("mail installation retirement", () => {
       let completions = 0;
       const instance = new MailInstallation(state, { ...mailEnv,
         INFERENCE: { summarizeMail: async () => { started(); await gate; return { summary: "late fixture", category: "personal", requiresAttention: false, confidence: 1 }; }, getMailSummaryStatus: async () => ({ state: "missing" }) },
-        GATEWAY: { ...mailEnv.GATEWAY, completeManagedInboundMail: async () => { completions++; } },
+        GATEWAY: { ...mailEnv.GATEWAY, completeInboundMail: async () => { completions++; } },
       });
       const running = instance.alarm();
       await entered;
@@ -134,10 +134,10 @@ describe("mail installation retirement", () => {
       const instance = new MailInstallation(state, { ...mailEnv,
         EMAIL: { send: async () => { sends++; started(); await gate; return { messageId: "provider_retirement" }; } },
         GATEWAY: {
-          acceptManagedInboundMail: (...args) => mailEnv.GATEWAY.acceptManagedInboundMail(...args),
-          completeManagedInboundMail: (...args) => mailEnv.GATEWAY.completeManagedInboundMail(...args),
-          claimManagedOutboundMail: (...args) => mailEnv.GATEWAY.claimManagedOutboundMail(...args),
-          completeManagedOutboundMail: async () => { completions++; },
+          acceptInboundMail: (...args) => mailEnv.GATEWAY.acceptInboundMail(...args),
+          completeInboundMail: (...args) => mailEnv.GATEWAY.completeInboundMail(...args),
+          claimOutboundMail: (...args) => mailEnv.GATEWAY.claimOutboundMail(...args),
+          completeOutboundMail: async () => { completions++; },
         },
       });
       const ref = { version: 1 as const, outboundId: "outbound-retirement", fingerprint: `sha256:${"a".repeat(64)}` };

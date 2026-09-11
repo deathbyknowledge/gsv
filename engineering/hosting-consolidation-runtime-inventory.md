@@ -33,10 +33,25 @@ The alias implementation now exposes `unlinkAdapterIdentity` on the attenuated
 adapter entrypoint; `acceptInboundMail`, `completeInboundMail`,
 `claimOutboundMail`, and `completeOutboundMail` on the mail Gateway entrypoint;
 and `getInferencePolicy` / `recordInferenceUsage` on H&M Accounts. The old names
-remain callable and the current consumers still use them. These methods share
+remain callable. These methods share
 the existing admission, body ownership, route-generation, and idempotency paths.
 This records the source checkpoint, not deployment evidence. The next consumer
 batch must follow verification of the alias release on staging.
+
+Following that staging alias verification, the consumer source now calls the
+neutral methods from shared adapter pairing cleanup, email intake/outbound, and
+H&M funded inference. The SDK's neutral service interfaces describe those calls;
+legacy interfaces retain their original method shapes for existing consumers.
+The operator must advance both independently pinned SDK copies and the private
+inference revision before deploying this consumer batch. This paragraph records
+the source migration, not a claim that the consumer release is deployed.
+
+Consumer fixtures expose only the neutral RPCs, so pairing cleanup, mail retry
+and completion, and inference policy/usage tests fail if an old outbound call
+returns. Gateway and Accounts alias tests continue exercising both server names
+against the same authority, body, and idempotency paths. Kernel-internal mail
+methods and the persisted `onManagedOutboundEnqueue` scheduler callback retain
+their current names; they are outside this service-consumer migration.
 
 ## Resource identities retained by the H&M overlay
 

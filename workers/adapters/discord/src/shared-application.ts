@@ -8,7 +8,7 @@ import { discordAccount, discordActor, discordId, discordPeerName } from "./shar
 import type { DiscordPeer } from "./shared-peer";
 import type { DiscordPairing } from "./shared-pairing";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
-import type { ManagedAdapterGatewayService } from "../../../../packages/gsv/src/protocol/managed.js";
+import type { AdapterGatewayService } from "../../../../packages/gsv/src/services/adapters.js";
 
 export interface SharedDiscordEnv {
   DISCORD_GATEWAY?: DurableObjectNamespace<DiscordGateway>;
@@ -20,7 +20,7 @@ export interface SharedDiscordEnv {
   DISCORD_APPLICATION_ID?: string;
   DISCORD_BOT_TOKEN?: string;
   DISCORD_API?: Fetcher;
-  GATEWAY: Fetcher & AdapterGatewayBinding & ManagedAdapterGatewayService;
+  GATEWAY: Fetcher & AdapterGatewayBinding & AdapterGatewayService;
 }
 
 /** One operator-owned provider connection. It never accepts an installation route or a human token. */

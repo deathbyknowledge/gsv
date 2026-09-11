@@ -297,7 +297,7 @@ export class OutboundDeliveryCoordinator {
     try {
       let outcome: ManagedOutboundMailClaimOutcome;
       try {
-        outcome = await this.env.GATEWAY.claimManagedOutboundMail(
+        outcome = await this.env.GATEWAY.claimOutboundMail(
           { installationId: this.installationId },
           reference,
         );
@@ -725,7 +725,7 @@ export class OutboundDeliveryCoordinator {
     };
     const now = Date.now();
     try {
-      await this.env.GATEWAY.completeManagedOutboundMail(
+      await this.env.GATEWAY.completeOutboundMail(
         { installationId: this.installationId },
         completion,
       );

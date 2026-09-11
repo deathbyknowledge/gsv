@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AdapterPairingActivateInput, AdapterPairingPrepareInput } from "./types";
-import type { ManagedAdapterGatewayService } from "../../../../packages/gsv/src/protocol/managed.js";
+import type { AdapterGatewayService } from "../../../../packages/gsv/src/services/adapters.js";
 import type { InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
 import { AdapterPairingClaim, type AdapterPairingClaimState } from "../../shared/src/pairing-claim";
 import { AdapterRetirement } from "../../shared/src/retirement";
@@ -35,7 +35,7 @@ export type ManagedSlackPairingRecord = AdapterPairingClaimState & {
 export interface ManagedSlackPairingEnv {
   MANAGED_SLACK_PEER: DurableObjectNamespace<ManagedSlackPeer>;
   SLACK_INSTALLATIONS: DurableObjectNamespace<SlackInstallation>;
-  GATEWAY: Fetcher & ManagedAdapterGatewayService;
+  GATEWAY: Fetcher & AdapterGatewayService;
 }
 
 const RECORD_KEY = "managed_slack_pairing:v1";

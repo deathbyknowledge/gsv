@@ -60,6 +60,6 @@ export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
     calls.push({ installation, call: frame.call, args: frame.args, bytes });
     return { type: "res", id: frame.id, ok: true, data: { ok: true, reply: { deliveryId: "reply:" + frame.args.deliveryId, text: "Fixture reply", replyToId: frame.args.message?.messageId } } };
   }
-  async unlinkManagedAdapterIdentity(installation, input) { calls.push({ installation, call: "unlink", input }); return { removed: true }; }
+  async unlinkAdapterIdentity(installation, input) { calls.push({ installation, call: "unlink", input }); return { removed: true }; }
   async fetch(request) { if (request.method === "DELETE") calls.length = 0; return Response.json(calls); }
 }`;

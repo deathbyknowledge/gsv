@@ -234,3 +234,22 @@ export interface AdapterService {
     requestId: string,
   ) => Promise<AdapterTargetCancelResult>;
 }
+
+export type UnlinkAdapterIdentityInput = {
+  operationId: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  expectedLocalUid: number;
+  expectedGeneration: string;
+};
+
+export type UnlinkAdapterIdentityResult = { removed: boolean };
+
+/** Identity cleanup on an attenuated, deployment-owned adapter Gateway binding. */
+export interface AdapterGatewayService {
+  unlinkAdapterIdentity(
+    installation: AdapterInstallationContext,
+    input: UnlinkAdapterIdentityInput,
+  ): Promise<UnlinkAdapterIdentityResult>;
+}

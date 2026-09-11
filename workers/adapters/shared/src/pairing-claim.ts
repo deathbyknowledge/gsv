@@ -3,7 +3,7 @@ import type { PairingOwnership } from "./pairing-retirement";
 import type {
   AdapterPairingActivateInput, AdapterPairingCandidate, AdapterPairingPreparation, AdapterPairingPrepareInput,
 } from "./types";
-import type { ManagedAdapterGatewayService } from "../../../../packages/gsv/src/protocol/managed.js";
+import type { AdapterGatewayService } from "../../../../packages/gsv/src/services/adapters.js";
 
 type Stage = "prepared" | "active" | "finalized";
 export type AdapterPairingClaimState = PairingOwnership & {
@@ -31,7 +31,7 @@ export class AdapterPairingClaim<Record extends AdapterPairingClaimState = Adapt
     private readonly key: string,
     private readonly peerName: (record: Record) => string,
     private readonly peer: (name: string) => AdapterPairingPeer,
-    private readonly gateway: ManagedAdapterGatewayService,
+    private readonly gateway: AdapterGatewayService,
     private readonly waitUntil: (task: Promise<void>) => void,
     private readonly retirement?: AdapterRetirement,
     private readonly legacyAccountId?: string,
@@ -135,7 +135,7 @@ export class AdapterPairingClaim<Record extends AdapterPairingClaimState = Adapt
     if (!cleanup.accountId && !this.legacyAccountId) throw new Error("Pairing cleanup account is unavailable");
     const release = this.retirement?.start(cleanup);
     try {
-      await this.gateway.unlinkManagedAdapterIdentity({ installationId: cleanup.installationId }, {
+      await this.gateway.unlinkAdapterIdentity({ installationId: cleanup.installationId }, {
         operationId: `${cleanup.operationId}:previous`, accountId: cleanup.accountId ?? this.legacyAccountId!, actorId: cleanup.actorId,
         surfaceId: cleanup.surfaceId, expectedLocalUid: cleanup.localUid, expectedGeneration: cleanup.generation,
       });
