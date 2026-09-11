@@ -5,11 +5,13 @@ consolidation. It owns directory identity, principals, ownership, setup claims,
 and durable reset preparation. It does not read or write funding-policy tables.
 
 The Worker exposes the existing directory and onboarding RPC contracts. Its
-HTTP surface currently contains only health. Operator administration, principal
+HTTP surface currently contains only health. Operator administration HTTP/access, principal
 sign-in/recovery, the common bootstrap, and production adoption are subsequent
 consolidation batches; this is not yet the complete replacement deployment.
-H&M consumes the exported stores and reset coordinator while its existing
-Worker still hosts operator administration and private commercial services.
+H&M consumes the exported directory/administration stores and reset coordinator
+while its existing Worker still hosts operator administration HTTP and private
+commercial services. Public administration owns installation lists, details and
+active/restricted transitions; its queries require no commercial tables.
 
 Run `npm run typecheck --workspace @humansandmachines/gsv-installations` and
 `npm test --workspace @humansandmachines/gsv-installations` from the repository
