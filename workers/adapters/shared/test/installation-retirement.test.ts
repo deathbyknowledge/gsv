@@ -140,6 +140,31 @@ describe("adapter installation deletion coordinator", () => {
     expect(other.quiesce).not.toHaveBeenCalled();
   });
 
+  it("starts its final backup window after removing routing records and preserves it across restart and a late child reply", async () => {
+    const f = fixture();
+    await f.seal();
+    await f.coordinator.quiesceInstallation(f.input);
+    await f.coordinator.eraseInstallation(f.input);
+    f.advance(lifetime);
+    // The original timer has elapsed, but polling still needs the peer address.
+    expect(f.storage.rows("SELECT name FROM adapter_installation_resources")).toEqual([{ name: "peer-1" }]);
+    let release!: (value: InstallationDeletionReceipt) => void;
+    f.status.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const late = f.coordinator.installationDeletionStatus(f.input);
+    const expected = { phase: "live-erased", outcome: "retention-pending", pendingResources: 0,
+      retainedCopies: [{ kind: "backup", expiresAt: 1000 + lifetime * 2 }] };
+    expect(await f.coordinator.installationDeletionStatus(f.input)).toMatchObject(expected);
+    expect(f.storage.rows("SELECT * FROM adapter_installation_resources")).toEqual([]);
+    release(receipt(f.input, "erased"));
+    expect(await late).toMatchObject(expected);
+    f.restart();
+    f.advance(lifetime - 1);
+    expect(await f.coordinator.installationDeletionStatus(f.input)).toMatchObject(expected);
+    f.advance(1);
+    expect(await f.coordinator.installationDeletionStatus(f.input)).toMatchObject({ phase: "erased", outcome: "complete", retainedCopies: [] });
+    expect(f.status).toHaveBeenCalledTimes(2);
+  });
+
   it("does not regress progress when a timed-out quiesce response arrives after another retry erased the child", async () => {
     const f = fixture();
     await f.seal();

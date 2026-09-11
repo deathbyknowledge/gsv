@@ -142,12 +142,21 @@ export class AdapterInstallationRetirement implements InstallationDeletionServic
     const outcome = await this.visit(input, "status", rows);
     if (rows.length) this.storage.sql.exec("UPDATE adapter_installation_retirement SET status_cursor = ? WHERE id = 1 AND phase = 'live-erased'", rows.at(-1)!.seq);
     if (outcome) return this.receipt(input, outcome);
-    if (this.state().phase === "live-erased" && !this.count("live-erased") && state.backup_expires_at !== null && this.clock() >= state.backup_expires_at) {
+    if (this.state().phase === "live-erased" && !this.count("live-erased")) {
       this.storage.transactionSync(() => {
-        this.storage.sql.exec("DELETE FROM adapter_installation_resources");
-        this.storage.sql.exec("DELETE FROM sqlite_sequence WHERE name = 'adapter_installation_resources'");
-        this.storage.sql.exec(`UPDATE adapter_installation_retirement SET phase = 'erased', discovery_sha256 = NULL, manifest_sha256 = NULL,
-          manifest_count = 0, import_cursor = 0, status_cursor = 0, updated_at = ? WHERE id = 1`, this.clock());
+        if (this.count("erased")) {
+          this.storage.sql.exec("DELETE FROM adapter_installation_resources");
+          this.storage.sql.exec("DELETE FROM sqlite_sequence WHERE name = 'adapter_installation_resources'");
+          // Physical peer names identify people. Their backup lifetime starts
+          // when these final routing records are removed, after child polling.
+          const now = this.clock();
+          this.storage.sql.exec("UPDATE adapter_installation_retirement SET backup_expires_at = ?, updated_at = ? WHERE id = 1", now + backupLifetimeMs, now);
+        }
+        const current = this.state();
+        if (current.backup_expires_at !== null && this.clock() >= current.backup_expires_at) {
+          this.storage.sql.exec(`UPDATE adapter_installation_retirement SET phase = 'erased', discovery_sha256 = NULL, manifest_sha256 = NULL,
+            manifest_count = 0, import_cursor = 0, status_cursor = 0, updated_at = ? WHERE id = 1`, this.clock());
+        }
       });
     }
     return this.receipt(input);

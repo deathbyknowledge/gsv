@@ -86,5 +86,8 @@ identity blocks cleanup. The shared application and other spaces remain intact.
 
 The adapters report live erasure separately from their durable-storage backup
 window. Their receipt retains a 30-day PITR window plus a one-minute precision
-buffer. Final erasure additionally depends on Accounts' independent inventory
+buffer. The installation coordinator keeps physical routing records until child
+owners finish, then removes them and starts its own final backup window from
+that removal. A previously elapsed child-backup window does not clear these
+newly retained registry copies. Final erasure additionally depends on Accounts' independent inventory
 and the other declared retention owners, including external provider records.
