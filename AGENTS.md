@@ -84,14 +84,15 @@ Process history uses typed message, note, call, result, and event records. Stora
 
 ## System ownership
 
-- `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
+- `packages/gsv/src/services/`: public Worker RPC contracts for Accounts, inference execution, lifecycle, optional commercial services, mail, and adapters. Operators compose public implementations with their own optional services.
 - `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
-- `workers/installations/`: public Accounts directory, ownership, onboarding, and reset preparation. During extraction the operator Worker consumes these stores while administration and commercial services are separated.
+- `workers/installations/`: required public Accounts directory, ownership, onboarding, operator administration, recovery authorization, reset preparation and durable deletion coordination. Commercial policy and usage remain owned by the optional operator service.
 - `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
 - `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
-- `workers/gateway/src/inference/`: provider integration and model transport.
+- `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
+- `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
