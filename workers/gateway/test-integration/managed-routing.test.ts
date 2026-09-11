@@ -148,7 +148,7 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
-  it("derives managed inference identity behind the private service binding", async () => {
+  it("preserves managed identity and timeout failures across the service binding", async () => {
     await beginProvisioning(harness, "first");
     const socket = await openManagedSocket(harness, "first");
     await expectManagedRpcOk(socket, "setup-inference", "sys.setup", {
@@ -192,6 +192,26 @@ describe("managed installation routing integration", () => {
         text: "managed:inst_integration_first:uid:1000:pid:none:run:none",
       },
     });
+    const timedOut = await managedRpc(socket, "generate-managed-timeout", "ai.text.generate", {
+      messages: [{ role: "user", content: "wait for cancellation" }],
+      config: { modelConfig: { provider: "gsv", model: "default", apiKey: "" } },
+      options: { maxTokens: 128, timeoutMs: 200 },
+    });
+    expect(timedOut).toMatchObject({
+      ok: true,
+      data: {
+        message: {
+          stopReason: "error",
+          errorMessage: "Model generation timed out after 200ms",
+        },
+      },
+    });
+    const { INTEGRATION_STATE } = await harness.getWorker<{
+      INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+    }>("gsv-test-dependencies").getEnv();
+    const state = INTEGRATION_STATE.getByName("singleton");
+    await waitForManagedInferenceCancellation(state, "inst_integration_first");
+    expect(await state.managedInferenceAbortReason("inst_integration_first")).toBe("timeout");
     socket.close(1000, "test complete");
   });
 
