@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ManagedOutboundMailCommand } from "@humansandmachines/gsv/protocol";
 import type { Conversation } from "../conversation/do";
 import type { Kernel } from "../kernel/do";
 import type { Process } from "../process/do";
@@ -133,6 +134,90 @@ describe("installation resource retirement", () => {
       expect(await fence.abortMultipart(env.STORAGE)).toBe(0);
       expect([...state.storage.kv.list({ prefix: MULTIPART_UPLOAD_PREFIX })]).toHaveLength(0);
       expect((await env.STORAGE.list({ prefix: installationStoragePrefix(input.installationId) })).objects).toEqual([]);
+    });
+  });
+
+  it.each(["send", "sendBatch"] as const)("drains an admitted queue %s before erasure and refuses later producers", async (method) => {
+    const input = request();
+    const stub = env.KERNEL.getByName(input.installationId);
+    await runInDurableObject(stub, async (instance: Kernel) => {
+      const previous = instance.env.MANAGED_MAIL_OUTBOUND;
+      let settle!: () => void;
+      const response = { metadata: { metrics: { backlogCount: 1, backlogBytes: 32 } } };
+      const pending = new Promise<QueueSendResponse>((resolve, reject) => {
+        settle = () => method === "send" ? resolve(response) : reject(new Error("queue rejected the batch"));
+      });
+      const metrics = { backlogCount: 1, backlogBytes: 32 };
+      const producer: Queue<ManagedOutboundMailCommand> = {
+        send: vi.fn(function () { expect(this).toBe(producer); return pending; }),
+        sendBatch: vi.fn(function () { expect(this).toBe(producer); return pending; }),
+        metrics: vi.fn(async function () { expect(this).toBe(producer); return metrics; }),
+      };
+      instance.env.MANAGED_MAIL_OUTBOUND = producer;
+      try {
+        const queue = instance.buildKernelContext({}).env.MANAGED_MAIL_OUTBOUND!;
+        const command: ManagedOutboundMailCommand = { version: 1, installationId: input.installationId, outboundId: "held", fingerprint: "sha256:fixture" };
+        const messages = [{ body: command, contentType: "json" as const, delaySeconds: 3 }];
+        const options = { delaySeconds: 7 };
+        const admitted = (method === "send" ? queue.send(command, options) : queue.sendBatch(messages, options))
+          .then((value) => ({ ok: true as const, value }), (error: Error) => ({ ok: false as const, error: error.message }));
+        expect(producer[method]).toHaveBeenCalledWith(method === "send" ? command : messages, options);
+        expect(await queue.metrics()).toEqual(metrics);
+        let quiesced = false;
+        const quiescence = instance.quiesceInstallation(input).then((receipt) => { quiesced = true; return receipt; });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(quiesced).toBe(false);
+        expect((await instance.eraseInstallation(input)).phase).toBe("quiescing");
+        await expect(queue.send(command)).rejects.toThrow("retired");
+        await expect(queue.sendBatch(messages)).rejects.toThrow("retired");
+        settle();
+        expect(await admitted).toEqual(method === "send" ? { ok: true, value: response } : { ok: false, error: "queue rejected the batch" });
+        expect((await quiescence).phase).toBe("quiesced");
+        expect((await instance.eraseInstallation(input)).phase).toBe("live-erased");
+        await expect(queue.send(command)).rejects.toThrow("retired");
+        await expect(queue.sendBatch(messages)).rejects.toThrow("retired");
+        expect(producer.send).toHaveBeenCalledTimes(method === "send" ? 1 : 0);
+        expect(producer.sendBatch).toHaveBeenCalledTimes(method === "sendBatch" ? 1 : 0);
+      } finally { settle(); instance.env.MANAGED_MAIL_OUTBOUND = previous; }
+    });
+  });
+
+  it("drains a scheduled outbound-mail retry through the real Kernel context", async () => {
+    const input = request();
+    const stub = env.KERNEL.getByName(input.installationId);
+    await runInDurableObject(stub, async (instance: Kernel) => {
+      const previous = instance.env.MANAGED_MAIL_OUTBOUND;
+      let release!: () => void;
+      let entered!: () => void;
+      const pending = new Promise<QueueSendResponse>((resolve) => { release = () => resolve({ metadata: { metrics: { backlogCount: 1, backlogBytes: 32 } } }); });
+      const accepted = new Promise<void>((resolve) => { entered = resolve; });
+      const send = vi.fn(() => { entered(); return pending; });
+      instance.env.MANAGED_MAIL_OUTBOUND = { send, sendBatch: vi.fn(async () => { throw new Error("Unexpected batch"); }), metrics: vi.fn(async () => ({ backlogCount: 0, backlogBytes: 0 })) };
+      try {
+        const text = "scheduled retry fixture";
+        const bytes = new TextEncoder().encode(text);
+        const digest = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+        instance.mailboxes.ensureOutbound({ version: 1, outboundId: "retry", ownerUid: 1000, deliveryId: "retry", fingerprint: digest,
+          from: "person@example.test", to: "recipient@example.test", subject: "Fixture", bodyDigest: digest,
+          bodyPath: "/home/person/outbox/retry.txt", textSize: bytes.byteLength, createdAt: Date.now() });
+        await instance.bindings.STORAGE.put("home/person/outbox/retry.txt", bytes);
+        const retry = instance.onManagedOutboundEnqueue("retry");
+        await accepted;
+        expect(send).toHaveBeenCalledWith({ version: 1, installationId: input.installationId, outboundId: "retry", fingerprint: digest });
+        let finished = false;
+        const quiescence = instance.quiesceInstallation(input).then((receipt) => { finished = true; return receipt; });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(finished).toBe(false);
+        expect((await instance.eraseInstallation(input)).phase).toBe("quiescing");
+        release();
+        await retry;
+        expect((await quiescence).phase).toBe("quiesced");
+        expect((await instance.eraseInstallation(input)).phase).toBe("erasing");
+        expect((await instance.eraseInstallation(input)).phase).toBe("live-erased");
+        await expect(instance.onManagedOutboundEnqueue("retry")).rejects.toThrow("retired");
+        expect(send).toHaveBeenCalledOnce();
+        expect(() => instance.mailboxes.markOutboundEnqueued("retry", digest)).toThrow("retired");
+      } finally { release(); instance.env.MANAGED_MAIL_OUTBOUND = previous; }
     });
   });
 

@@ -461,6 +461,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       env.RIPGIT
         ? createInstallationRipgit(env.RIPGIT, this.installationId)
         : undefined,
+      this.retirement,
     );
 
     this.auth = new AuthStore(sql);
@@ -1803,11 +1804,22 @@ function envWithInstallationResources(
   env: GatewayEnv,
   storage: R2Bucket,
   ripgit: Fetcher | undefined,
+  retirement: InstallationRetirement,
 ): GatewayEnv {
   return new Proxy(env, {
     get(target, property) {
       if (property === "STORAGE") return storage;
       if (property === "RIPGIT") return ripgit;
+      if (property === "MANAGED_MAIL_OUTBOUND") {
+        const queue = target.MANAGED_MAIL_OUTBOUND;
+        if (!queue) return undefined;
+        const guarded: NonNullable<GatewayEnv["MANAGED_MAIL_OUTBOUND"]> = {
+          send: (...args) => retirement.write(() => queue.send(...args)),
+          sendBatch: (...args) => retirement.write(() => queue.sendBatch(...args)),
+          metrics: () => queue.metrics(),
+        };
+        return guarded;
+      }
       // SAFETY: Proxy keys outside these overrides are ordinary Env properties.
       return target[property as keyof GatewayEnv];
     },
