@@ -5,11 +5,14 @@ import {
 } from "../src/manifest.ts";
 
 const manifest = {
-  version: 1 as const,
+  version: 2 as const,
   runtime: {
     gatewayBundle: "gateway.js",
     webAssets: "assets",
     ripgitBundle: "ripgit.js",
+    installationsBundle: "installations.js",
+    installationsMigrations: "migrations",
+    inferenceBundle: "inference.js",
   },
   adapters: [{
     id: "matrix",

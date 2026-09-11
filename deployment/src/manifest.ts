@@ -1,6 +1,6 @@
 import * as z from "zod/mini";
 
-export const GSV_DEPLOYMENT_MANIFEST_VERSION = 1;
+export const GSV_DEPLOYMENT_MANIFEST_VERSION = 2;
 
 const durableObjectSchema = z.strictObject({
   binding: z.string().check(z.minLength(1), z.maxLength(128)),
@@ -34,7 +34,7 @@ export const adapterDeploymentSchema = z.strictObject({
 });
 
 export const adapterSourceManifestSchema = z.strictObject({
-  version: z.literal(GSV_DEPLOYMENT_MANIFEST_VERSION),
+  version: z.literal(1),
   id: z.string().check(
     z.minLength(1),
     z.maxLength(64),
@@ -53,6 +53,9 @@ const runtimeDeploymentSchema = z.strictObject({
   gatewayBundle: z.string().check(z.minLength(1)),
   webAssets: z.string().check(z.minLength(1)),
   ripgitBundle: z.string().check(z.minLength(1)),
+  installationsBundle: z.string().check(z.minLength(1)),
+  installationsMigrations: z.string().check(z.minLength(1)),
+  inferenceBundle: z.string().check(z.minLength(1)),
 });
 
 export const gsvDeploymentManifestSchema = z.strictObject({

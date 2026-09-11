@@ -39,6 +39,7 @@ echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}/gateway/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
+mkdir -p "${DIST_DIR}/installations/worker" "${DIST_DIR}/inference/worker"
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
   mkdir -p "${DIST_DIR}/${component}/worker"
@@ -52,6 +53,12 @@ done
   cd "${ROOT_DIR}/workers/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
+for component in installations inference; do
+  (
+    cd "${ROOT_DIR}/workers/${component}"
+    npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/${component}/worker"
+  )
+done
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r _adapter_id _display_name component source_dir wrangler_config _dev_state <<< "${row}"
   (
@@ -85,6 +92,18 @@ cat > "${DIST_DIR}/ripgit/manifest.json" <<'EOF'
   }
 }
 EOF
+
+for component in installations inference; do
+  cp "${ROOT_DIR}/workers/${component}/wrangler.jsonc" "${DIST_DIR}/${component}/wrangler.jsonc"
+  node --input-type=module - "${DIST_DIR}/${component}/manifest.json" "${component}" <<'NODE'
+import { writeFileSync } from "node:fs";
+const [output, component] = process.argv.slice(2);
+const manifest = { component, worker: { entrypoint: "worker/index.js", sourceMap: "worker/index.js.map", wranglerConfig: "wrangler.jsonc" } };
+if (component === "installations") manifest.migrationsDir = "migrations";
+writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+done
+cp -R "${ROOT_DIR}/workers/installations/migrations" "${DIST_DIR}/installations/migrations"
 
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r adapter_id display_name component source_dir wrangler_config _dev_state <<< "${row}"
@@ -125,6 +144,8 @@ cp "${DIST_DIR}/deployment-manifest.json" \
 
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
+tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-installations.tar.gz" installations
+tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-inference.tar.gz" inference
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
   tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-${component}.tar.gz" "${component}"

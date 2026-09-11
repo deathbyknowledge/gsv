@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-installations-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "GSV_BASE_DOMAIN": "localhost",
+    "ENVIRONMENT": "development",
+    "GSV_ADMIN_ORIGIN": "http://localhost:8976",
+    "GSV_OPERATOR_ACCESS_MODE": "access",
+    "GSV_INSTALLATION_ORIGIN_TEMPLATE": "http://{handle}.localhost:8976",
+    "GSV_ADMIN_ACCESS_TEAM_DOMAIN": "",
+    "GSV_ADMIN_ACCESS_AUD": "",
+    "GSV_OWNER_OIDC_ISSUER": "",
+    "GSV_OWNER_OIDC_CLIENT_ID": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "INSTALLATIONS_DB",
+      "database_name": "gsv-installations-dev",
+      "migrations_dir": "migrations",
+      "migrations_table": "installation_migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "ACCOUNTS_GATEWAY_RECOVERY",
+      "service": "gsv-gateway-dev",
+      "entrypoint": "GatewayRecoveryEntrypoint",
+      "props": {
+        "authority": "installation-owner-recovery"
+      }
+    }
+  ]
+}

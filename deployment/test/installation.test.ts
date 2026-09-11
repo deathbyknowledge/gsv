@@ -76,7 +76,8 @@ describe("public operator composition", () => {
     await expect(run(GsvRuntime({ ...input, mode: "managed", services: {} }, dependencies))).rejects.toThrow(/requires an installation directory/);
     expect(recorded.workers).toEqual([]);
     expect(recorded.databases).toEqual([]);
-    await expect(run(StandaloneGsvDeployment({ manifest: { version: 1, runtime: input.paths, adapters: [] }, adapterIds: [] })))
+    await expect(run(StandaloneGsvDeployment({ manifest: { version: 2, runtime: { ...input.paths,
+      installationsBundle: "installations.js", installationsMigrations: "migrations", inferenceBundle: "inference.js" }, adapters: [] }, adapterIds: [] })))
       .rejects.toThrow(/migrate existing state/);
   });
 });
