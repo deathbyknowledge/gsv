@@ -894,6 +894,8 @@ describe("adapter lifecycle handlers", () => {
     expect((await handleAdapterList({}, ctx)).adapters).toEqual([{
       adapter: "matrix",
       available: true,
+      enabled: true,
+      canLink: false,
       descriptor,
       supportsConnect: true,
       supportsDisconnect: true,
@@ -4468,8 +4470,13 @@ describe("managed adapter pairing", () => {
   function pairingService(
     pairingCandidate = candidate,
     pairingRoute = route,
+    adapter = "telegram",
   ) {
     return {
+      adapterDescribe: vi.fn(async () => ({ version: 1 as const, id: adapter, displayName: adapter, capabilities: {
+        connect: false, disconnect: false, send: true, status: true, activity: true, pairing: true,
+        surfaces: ["dm"], media: { inbound: [], outbound: [] },
+      } })),
       adapterPairingInfo: vi.fn(async () => ({
         accountId: "managed",
         configured: true,
@@ -4491,6 +4498,39 @@ describe("managed adapter pairing", () => {
       adapterPairingDisconnect: vi.fn(async () => ({ disconnected: true })),
     };
   }
+
+  it("reports configured operator apps and the current human's actual linking authority", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ available: true, enabled: true, supportsPairing: true, canLink: true });
+    ctx.peer!.peer.grant.calls = ["adapter.list", "adapter.pair.confirm"];
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("cannot complete");
+    expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
+    ctx.peer = userIdentity();
+    ctx.peer.provenance = { kind: "process-registry", processId: "agent" };
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).rejects.toThrow("direct signed-in");
+    ctx.peer = userIdentity();
+    vi.mocked(ctx.auth.isAccountDisabled).mockReturnValue(true);
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+  });
+
+  it("refuses new pairing when the operator app is unconfigured or does not advertise pairing", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    service.adapterPairingInfo.mockResolvedValue({ accountId: "managed", configured: false, botUsername: "official_gsv_bot" });
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ available: true, enabled: false, canLink: false });
+    expect(await handleAdapterPairInfo({ adapter: "telegram" }, ctx)).toMatchObject({ configured: false });
+    await expect(handleAdapterPairInspect({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("not enabled");
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("not enabled");
+    expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
+    service.adapterPairingInfo.mockRejectedValueOnce(new Error("worker failed"));
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: false, canLink: false });
+    const descriptor = await service.adapterDescribe();
+    service.adapterDescribe.mockResolvedValue({ ...descriptor, capabilities: { ...descriptor.capabilities, pairing: false } });
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).rejects.toThrow("does not advertise");
+  });
 
   it("invokes pairing methods through their RPC receiver", async () => {
     const service = pairingService();
@@ -4741,7 +4781,7 @@ describe("managed adapter pairing", () => {
       expiresAt: Date.now() + 60_000,
       linked: false,
     };
-    const service = pairingService(slackCandidate);
+    const service = pairingService(slackCandidate, route, "slack");
     const link = vi.fn();
     const ctx = makeContext(
       { CHANNEL_SLACK: service },

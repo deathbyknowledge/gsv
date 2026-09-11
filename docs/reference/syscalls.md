@@ -1811,7 +1811,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, and caller-visible account status. Older bindings without a descriptor temporarily fall back to method discovery. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and the current human’s linking authority (`canLink`). Shared pairing requires the same advertised capability, configured application, and direct human authority at its Kernel boundary. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
@@ -1834,7 +1834,7 @@ ignored with payload-free diagnostics.
 type AdapterSyscalls = {
   "adapter.list": {
     args: Record<string, never>;
-    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
+    result: { adapters: Array<{ adapter: string; available: boolean; enabled: boolean; canLink: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
   };
 
   "adapter.connect": {

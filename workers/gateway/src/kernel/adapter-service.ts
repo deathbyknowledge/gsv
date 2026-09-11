@@ -1,3 +1,5 @@
+import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
+import { canLinkAdapter } from "./adapter-pairing-policy";
 import type {
   AdapterActivity,
   AdapterAccountStatus,
@@ -99,6 +101,22 @@ export function resolveAdapterService(
   return (env as AdapterBindingEnv)[key] ?? null;
 }
 
+const pairingInfoSchema = z.object({
+  accountId: z.string().check(z.minLength(1)),
+  configured: z.boolean(),
+  botUsername: z.optional(z.string()),
+  installUrl: z.optional(z.string().check(z.minLength(1))),
+});
+
+export function adapterSupportsPairing(service: AdapterServiceBinding | null): service is AdapterServiceBinding & AdapterPairingWorkerInterface {
+  return Boolean(service?.adapterPairingInfo && service.adapterPairingInspect && service.adapterPairingPrepare
+    && service.adapterPairingActivate && service.adapterPairingFinalize && service.adapterPairingDisconnect);
+}
+
+export async function readAdapterPairingInfo(service: Pick<AdapterPairingWorkerInterface, "adapterPairingInfo">, ctx: KernelContext) {
+  return pairingInfoSchema.parse(await service.adapterPairingInfo(adapterInstallationContext(ctx)));
+}
+
 export async function handleAdapterStatus(
   args: AdapterStatusArgs,
   ctx: KernelContext,
@@ -168,7 +186,18 @@ export async function handleAdapterList(
   await Promise.all(deployed.map(async (adapter) => {
     const service = resolveAdapterService(ctx.env, adapter);
     const descriptor = await describeAdapterService(adapter, service);
-    entries.set(adapter, adapterListEntry(adapter, service, descriptor));
+    const entry = adapterListEntry(adapter, service, descriptor);
+    if (entry.supportsPairing) {
+      entry.enabled = false;
+      if (ctx.installationId !== SINGLETON_INSTALLATION_ID && adapterSupportsPairing(service)) {
+        try {
+          const info = await readAdapterPairingInfo(service, ctx);
+          entry.enabled = info.configured;
+        } catch { /* A failed observation cannot advertise a working link flow. */ }
+      }
+      entry.canLink = entry.enabled && canLinkAdapter(ctx);
+    }
+    entries.set(adapter, entry);
   }));
 
   const statuses = visibleAdapterStatusRecords(ctx);
@@ -343,6 +372,8 @@ function adapterListEntry(
   return {
     adapter,
     available: service !== null,
+    enabled: service !== null && descriptor !== null,
+    canLink: false,
     descriptor: descriptor ?? undefined,
     supportsConnect: capabilities?.connect ?? false,
     supportsDisconnect: capabilities?.disconnect ?? false,
@@ -354,7 +385,7 @@ function adapterListEntry(
   };
 }
 
-async function describeAdapterService(
+export async function describeAdapterService(
   adapter: string,
   service: AdapterServiceBinding | null,
 ): Promise<AdapterServiceDescriptor | null> {

@@ -19,7 +19,6 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
   const [pairing, setPairing] = useState<"telegram" | "slack" | null>(null);
   const [removing, setRemoving] = useState<ConsoleIdentityLink | null>(null);
   const canList = canConfigure(account, "adapter.list") && canConfigure(account, "sys.link.list");
-  const canPair = account.uid >= 1000 && ["adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"].every((call) => canConfigure(account, call));
   const canUnlink = account.uid >= 1000 && canConfigure(account, "adapter.pair.disconnect");
   const connections = useQuery({
     queryKey: [...INSTRUMENT_MESSENGERS_KEY, account.uid],
@@ -44,7 +43,8 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
-      const available = adapter?.available && adapter.supportsPairing;
+      const available = adapter?.enabled && adapter.supportsPairing;
+      const canPair = adapter?.canLink === true;
       const canConnect = connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
