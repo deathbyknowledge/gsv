@@ -131,8 +131,11 @@ function integrationExecutionConfig(workersAi = true): Unstable_RawConfig {
     migrations: [{ tag: "v1", new_sqlite_classes: ["InferenceExecutor"] }],
     services: [
       { binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER },
-      { binding: "FUNDED_INFERENCE", service: DEPENDENCY_WORKER, entrypoint: "ManagedInferenceFixture" },
-      ...(workersAi ? [{ binding: "AI", service: DEPENDENCY_WORKER }] : []),
+      // Error journeys disable the operator-funded fallback alongside native AI.
+      ...(workersAi ? [
+        { binding: "FUNDED_INFERENCE", service: DEPENDENCY_WORKER, entrypoint: "ManagedInferenceFixture" },
+        { binding: "AI", service: DEPENDENCY_WORKER },
+      ] : []),
     ],
   };
 }

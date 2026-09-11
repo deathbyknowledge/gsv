@@ -4,11 +4,13 @@ import { createGsvInferenceProviderFactory, GSV_INFERENCE_MODEL_METADATA } from 
 import type { InferenceService as FundedInferenceService } from "@humansandmachines/gsv/services/inference";
 import type { InferenceExecutionService, InferenceExecutor as ExecutorContract, InferenceModelMetadata } from "@humansandmachines/gsv/services/inference-execution";
 
-type ExecutionEnvironment = InferenceServiceEnvironment & { FUNDED_INFERENCE: FundedInferenceService };
+type ExecutionEnvironment = InferenceServiceEnvironment & { FUNDED_INFERENCE?: FundedInferenceService };
 
 /** Exercise the real executor and provider transport against deterministic provider fixtures. */
 export class InferenceExecutor extends SharedInferenceExecutor<ExecutionEnvironment> {
-  protected providerFactories() { return [createGsvInferenceProviderFactory(this.env.FUNDED_INFERENCE)]; }
+  protected providerFactories() {
+    return this.env.FUNDED_INFERENCE ? [createGsvInferenceProviderFactory(this.env.FUNDED_INFERENCE)] : [];
+  }
 }
 
 export default class ExecutionService extends WorkerEntrypoint<ExecutionEnvironment> implements InferenceExecutionService {
