@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { D1Database } from "@cloudflare/workers-types";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const ownerIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
