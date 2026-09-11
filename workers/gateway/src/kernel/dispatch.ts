@@ -623,6 +623,8 @@ async function dispatchKernel(
       case "account.owner.link":
         data = await handleOwnerLink(frame.args, ctx);
         break;
+      case "account.recovery.code.start":
+      case "account.recovery.code.redeem":
       case "account.recovery.redeem":
         return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
       case "account.invite.create":

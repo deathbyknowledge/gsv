@@ -96,6 +96,7 @@ export function LoginScreen({
                 />
                 {passkeysSupported && <Button variant="secondary" label="USE A PASSKEY" block type="button" disabled={busy || !username.trim()} onClick={onPasskey} />}
               </div>
+              <a href="/recover-member">Forgot your password?</a>
               </form>
             )}
           </div>

@@ -110,6 +110,8 @@ const labels = {
   "account.list": "listed accounts",
   "account.owner.link": "started owner verification",
   "account.recovery.redeem": "redeemed root recovery",
+  "account.recovery.code.start": "requested member recovery",
+  "account.recovery.code.redeem": "redeemed member recovery",
   "account.invite.create": "invited a person",
   "account.invite.list": "listed human invitations",
   "account.invite.cancel": "cancelled a human invitation",

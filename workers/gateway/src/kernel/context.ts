@@ -18,6 +18,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
 import type { DevicePairingStore } from "./device-pairings";
+import type { MemberRecoveryStore } from "./member-recovery";
 import type { AccountRecoveryStore } from "./account-recovery";
 import type { PeopleStore } from "./people";
 import type { PasskeyStore } from "./passkeys";
@@ -53,6 +54,7 @@ export type KernelContext = {
   auth: AuthStore;
   pairings: DevicePairingStore;
   accountRecovery: AccountRecoveryStore;
+  memberRecovery: MemberRecoveryStore;
   people: PeopleStore;
   passkeys: PasskeyStore;
   invalidateAccountConnections: (uid: number) => void;

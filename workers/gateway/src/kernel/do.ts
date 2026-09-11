@@ -42,6 +42,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
+import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
 import { PeopleStore } from "./people";
 import { PasskeyStore } from "./passkeys";
@@ -381,6 +382,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly auth: AuthStore;
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
+  readonly memberRecovery: MemberRecoveryStore;
   readonly people: PeopleStore;
   readonly passkeys: PasskeyStore;
   readonly caps: CapabilityStore;
@@ -459,6 +461,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
     this.people = new PeopleStore(ctx.storage, this.auth);
     this.passkeys = new PasskeyStore(ctx.storage, this.auth);
+    this.memberRecovery = new MemberRecoveryStore(ctx.storage, this.auth);
 
     this.routes = new RoutingTable(sql);
     this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
@@ -1306,6 +1309,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       auth: this.auth,
       pairings: this.pairings,
       accountRecovery: this.accountRecovery,
+      memberRecovery: this.memberRecovery,
       people: this.people,
       passkeys: this.passkeys,
       invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
@@ -1533,6 +1537,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
       const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem" || frame.call === "account.invite.redeem"
+        || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
         ? { id: frame.args.id }
         : frame.call === "account.invite.create" ? { id: frame.args.id, username: frame.args.username }
         : frame.call === "account.password.set" ? { uid: frame.args.uid }

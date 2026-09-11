@@ -107,6 +107,17 @@ export class AuthStore {
     this.sql.exec("DELETE FROM account_passkeys WHERE uid = ?", uid);
   }
 
+  /** The caller commits its reset receipt in the same transaction as these credential changes. */
+  replaceHumanPassword(uid: number, passwordHash: string, reason: string): void {
+    const user = this.getPasswdByUid(uid);
+    const shadow = user && this.getShadowByUsername(user.username);
+    if (!user || !shadow || (uid !== 0 && (uid < 1000 || isLocked(shadow))) || this.isAccountDisabled(uid)) throw new Error("Local human account is unavailable");
+    // A verified owner may recover locked root; locked member identities include agents.
+    this.setShadow(makeShadowEntry(user.username, passwordHash));
+    this.invalidateCredentials(uid, reason);
+    this.sql.exec("DELETE FROM identity_links WHERE uid = ?", uid);
+  }
+
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(
       "SELECT agent_uid FROM personal_agents WHERE owner_uid = ?",

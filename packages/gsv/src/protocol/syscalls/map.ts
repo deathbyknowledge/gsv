@@ -419,6 +419,8 @@ export type SyscallDomains = {
   "account.list": { args: AccountListArgs; result: AccountListResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
   "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
+  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
   "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
   "account.invite.list": { args: Record<string, never>; result: { invitations: HumanInvitation[] } };
   "account.invite.cancel": { args: { id: string }; result: HumanInvitation };

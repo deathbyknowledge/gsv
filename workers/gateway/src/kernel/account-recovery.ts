@@ -1,5 +1,5 @@
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
-import { hashPassword, hashToken, makeShadowEntry } from "../auth/shadow";
+import { hashPassword, hashToken } from "../auth/shadow";
 import type { AuthStore } from "./auth-store";
 
 type RecoveryClaim = { id: string; secret_hash: string; credential_epoch: number; expires_at: number; redeemed_at: number | null; redemption_hash: string | null };
@@ -52,9 +52,7 @@ export class AccountRecoveryStore {
         return { username: "root" };
       }
       if (claim.expires_at <= Date.now() || claim.credential_epoch !== this.auth.credentialEpoch(0)) throw new Error("Root recovery claim expired or was superseded");
-      this.auth.setShadow(makeShadowEntry("root", passwordHash));
-      this.auth.invalidateCredentials(0, "owner recovery");
-      this.storage.sql.exec("DELETE FROM identity_links WHERE uid = 0");
+      this.auth.replaceHumanPassword(0, passwordHash, "owner recovery");
       this.storage.sql.exec("UPDATE account_recovery_claims SET redeemed_at = ?, redemption_hash = ? WHERE id = ?", Date.now(), redemptionHash, input.id);
       return { username: "root" };
     });

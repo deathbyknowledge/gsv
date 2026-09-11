@@ -48,6 +48,16 @@ describe("Accounts-authorized Kernel root recovery", () => {
     });
   });
 
+  it("lets the verified owner recover locked root while preserving the existing human", async () => {
+    await fixture(async (recovery, auth) => {
+      auth.setShadow(makeShadowEntry("root", "!"));
+      const { request } = await grant(recovery);
+      expect(await recovery.redeem(request)).toEqual({ username: "root" });
+      expect(await auth.authenticate("root", request.password)).toMatchObject({ ok: true });
+      expect(await auth.authenticate("human", "human-password")).toMatchObject({ ok: true });
+    });
+  });
+
   it("allows exactly one concurrent receiver and fences every older outstanding claim", async () => {
     await fixture(async (recovery, auth) => {
       const first = await grant(recovery);

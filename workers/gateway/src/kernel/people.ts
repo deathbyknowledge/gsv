@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { HumanInvitation, ResultOf } from "@humansandmachines/gsv/protocol";
-import { hashPassword, hashToken, isLocked, makeShadowEntry } from "../auth/shadow";
+import { hashPassword, hashToken, isLocked } from "../auth/shadow";
 import type { AuthStore } from "./auth-store";
 import { accountIdentity, ACCOUNT_USERNAME_RE, commitAccount, isUsernameAvailable, prepareAccount, prepareAccountHome } from "./accounts";
 import { principalOf, type KernelContext } from "./context";
@@ -108,9 +108,7 @@ export class PeopleStore {
       this.assertRootEpoch(rootEpoch);
       this.member(args.uid);
       if (this.auth.credentialEpoch(member.uid) !== memberEpoch) throw new Error("Account credentials changed; try again");
-      this.auth.setShadow(makeShadowEntry(member.username, passwordHash));
-      this.auth.invalidateCredentials(member.uid, "root password reset");
-      this.storage.sql.exec("DELETE FROM identity_links WHERE uid = ?", member.uid);
+      this.auth.replaceHumanPassword(member.uid, passwordHash, "root password reset");
     });
     ctx.invalidateAccountConnections(member.uid);
     return { updated: true };

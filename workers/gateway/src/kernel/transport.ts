@@ -286,6 +286,19 @@ async handleReq(
         return;
       }
 
+      if (frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = frame.call === "account.recovery.code.start"
+            ? await ctx.memberRecovery.start(frame.args, ctx)
+            : await ctx.memberRecovery.redeem(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch {
+          this.sendError(connection, frame.id, 400, "Member recovery failed. Check the code and password, or request a new code.");
+        }
+        return;
+      }
+
       if (frame.call === "account.invite.redeem") {
         try {
           const ctx = this.host.buildContext(connection);

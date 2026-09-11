@@ -1574,6 +1574,8 @@ type SystemSyscalls = {
     args: { id: string; secret: string; proof: string; password: string };
     result: { username: "root" };
   };
+  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
   "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
   "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
   "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
@@ -1609,6 +1611,21 @@ updates root's password, and revokes earlier root credentials and sessions.
 The receiving browser persists its random proof before redemption. Identical
 retries recover the receipt without rewriting the password; another proof or
 password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+
+Member recovery is available before authentication through `account.recovery.code.start`
+and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
+before requesting a code. The Kernel resolves a previously direct-human-confirmed
+private messenger link for that member; callers cannot select the recipient, uid,
+or space. Manual and legacy links without that confirmation are ineligible. Root
+uses verified owner recovery instead. The start response does not disclose whether
+an account or eligible link exists. At most one code is sent per member per minute;
+the eight hexadecimal digits expire after five minutes and permit five incorrect
+attempts with the matching browser proof. Delivery is a direct adapter request and
+never creates a Process event or wakes a model. A lost response retains the browser
+proof; lost delivery requires a new code after the cooldown or a root password reset.
+Redemption rechecks the exact link generation and account credential epoch, then
+atomically replaces the member password, revokes existing credentials and messenger
+links, and commits the receipt. Identical retries cannot overwrite later credentials.
 
 Human invitations use a separate fixed `human-account` purpose; a device pairing
 cannot create a human. A signed-in root human fixes the username and supplies a
