@@ -181,6 +181,37 @@ argument, but it must account for retries and later forwarding into the DLQ.
 The current live-resource contract does not accept retention metadata alone
 for queues. Keep this scope pending until an appropriate proof is supported.
 
+Elapsed time is not currently an accepted queue proof. Cloudflare documents
+that [messages expire at their retention limit](https://developers.cloudflare.com/queues/platform/limits/),
+including [paused queues](https://developers.cloudflare.com/queues/configuration/pause-purge/).
+Those guarantees require a reliable bound on the last possible publication.
+The [producer API](https://developers.cloudflare.com/queues/configuration/javascript-apis/)
+confirms durable storage when a send promise resolves; it does not provide a
+terminal acceptance bound for a failed or interrupted send. A Kernel binding
+fence prevents new sends and drains outstanding promises before quiescence,
+including admitted alarm retries. That closes the same-runtime race; it does
+not turn an ambiguous failure or restart into proof that no provider write can
+complete later.
+
+The [DLQ contract](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/)
+also allows independently produced messages and forwards failed source
+messages after the retry limit. It does not expose a verified final transfer
+time or a maximum completion delay for an in-flight or failed transfer. The
+consumer's wall-time limit is not such a publication bound. Therefore adding
+source TTL, DLQ TTL and a guessed consumer grace period to a deletion timestamp
+would fabricate a deadline. Each physical queue needs verified publication
+bounds, applicable settings/enforcement history and coverage of all producers
+and transfer paths. None can be replaced by an operator `complete` checkbox.
+
+Accounts owns and validates each application's installation/operation receipt,
+but those receipts do not certify Cloudflare's terminal queue transfers.
+Likewise, an installation's producer fence cannot prove an entire shared queue
+empty when the catalog selector is `*` and other installations remain active.
+Until the missing provider bounds or a complete scoped inventory can be
+established, queue evidence stays unknown or pending across elapsed time and
+restarts. The API continues rejecting retention-policy facts for live queues;
+no elapsed-retention attestation shape is enabled.
+
 For unfinished R2 uploads, use existing operator S3 credentials and
 [ListMultipartUploads](https://developers.cloudflare.com/r2/api/s3/api/)
 with the exact `installations/<encoded-immutable-id>/` prefix. Follow both

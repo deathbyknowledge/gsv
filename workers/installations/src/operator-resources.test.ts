@@ -128,6 +128,31 @@ describe("operator resource evidence", () => {
     await expect(rebuilt.eraseInstallation({ ...state.input, operationId: "another" })).rejects.toThrow("does not match");
   });
 
+  it("does not age an unknown or incompletely observed live queue into clearance after application erasure", async () => {
+    const state = await fixture();
+    await state.cleanApplications();
+    await state.resources.record(state.input.installationId, await state.attest("multipart"));
+    await state.resources.record(state.input.installationId, await state.attest("provider"));
+    const application = (await state.runtime.status(state.input.installationId)).owners.find((owner) => owner.id === "gateway");
+    expect(application?.receipt).toMatchObject({ installationId: state.input.installationId, operationId: state.input.operationId, phase: "erased" });
+
+    state.tick(365 * 86400000);
+    const rebuilt = new AccountsOperatorResources(state.db, catalog, state.clock);
+    expect(await rebuilt.eraseInstallation(state.input)).toMatchObject({ phase: "erasing", pendingResources: 1, retainedCopies: [] });
+    expect((await rebuilt.inspect(state.input.installationId)).resources.find((resource) => resource.id === "queue"))
+      .toMatchObject({ state: "unknown", expiresAt: null, evidence: null });
+
+    await rebuilt.record(state.input.installationId, await state.attest("queue", { kind: "enumeration", pages: [
+      { requestedCursor: null, nextCursor: "unobserved-remainder", itemCount: 0, responseSha256: "d".repeat(64) },
+    ] }));
+    state.tick(365 * 86400000);
+    const restarted = new AccountsOperatorResources(state.db, catalog, state.clock);
+    expect(await restarted.installationDeletionStatus(state.input)).toMatchObject({ phase: "erasing", pendingResources: 1, retainedCopies: [] });
+    expect((await restarted.inspect(state.input.installationId)).resources.find((resource) => resource.id === "queue"))
+      .toMatchObject({ namespace: "mail-queue", disposition: "live", state: "pending", expiresAt: null });
+    expect(await state.directory.resolveInstallation(state.input.installationId)).toMatchObject({ state: "retained" });
+  });
+
   it("rejects wrong scope, changed hashes, stale capture, incomplete pagination and aggregate assertions", async () => {
     const state = await fixture();
     const early = await state.attest("multipart");
