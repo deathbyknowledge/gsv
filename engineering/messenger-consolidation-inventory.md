@@ -76,7 +76,13 @@ retired space's actor routes, attributed user OAuth credentials and attributed
 DM caches. The operator bot token and other people's state remain. Shared
 Discord's operator connection is the separate `adapter-application` kind;
 the legacy `DiscordGateway` namespace remains inventoried as
-`adapter-account` and is not assumed empty or unrelated.
+`adapter-account`. Its stored local account ID and directory-verified candidate
+space IDs must reproduce the exact namespace object ID before ownership is
+accepted. The supported standalone name projection remains distinct, including
+local names that resemble a scoped account name. A proven legacy account owns
+its complete KV state, so retirement fences its connection, provider work and
+ledger writes before bounded cleanup; unknown application SQL or unproven
+identity blocks cleanup. The shared application and other spaces remain intact.
 
 The adapters report live erasure separately from their durable-storage backup
 window. Their receipt retains a 30-day PITR window plus a one-minute precision

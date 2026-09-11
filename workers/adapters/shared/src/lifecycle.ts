@@ -4,7 +4,7 @@ import type { InstallationDirectoryService } from "../../../../packages/gsv/src/
 import type { AdapterResourceInspection } from "./peer-retirement";
 
 export interface AdapterDeletionResource extends InstallationDeletionService {
-  inspectInstallationResource(installationId: string): Promise<AdapterResourceInspection>;
+  inspectInstallationResource(installationId: string, candidateInstallationIds?: string[]): Promise<AdapterResourceInspection>;
 }
 export interface AdapterDeletionCoordinator extends InstallationDeletionService {
   importInstallationDeletionInventory(input: InstallationDeletionInventoryImport): Promise<InstallationDeletionInventoryImported>;
@@ -53,6 +53,14 @@ export class AdapterLifecycle {
     // Accounts invokes this empty probe before opening the capture epoch. The
     // named index must exist before either namespace enumeration is taken.
     await this.options.coordinator(input.installationId).inspectInstallationResource(input.installationId);
+    const candidates = [input.installationId];
+    if (input.resources.some((resource) => resource.kind === "adapter-account")) {
+      for (const id of new Set(input.candidateInstallationIds ?? [])) {
+        if (id === input.installationId) continue;
+        const resolved = await this.options.directory.resolveInstallation(id);
+        if (resolved.found && resolved.installationId === id) candidates.push(id);
+      }
+    }
     const observations: InstallationResourceObservation[] = [];
     for (const resource of input.resources) {
       const observation: InstallationResourceObservation = { ...resource, outcome: "unidentified" };
@@ -69,7 +77,7 @@ export class AdapterLifecycle {
       } else {
         const namespace = this.options.namespace(resource.kind);
         if (namespace && (!resource.name || namespace.idFromName(resource.name).toString() === resource.objectId)) {
-          const result = await namespace.get(namespace.idFromString(resource.objectId)).inspectInstallationResource(input.installationId);
+          const result = await namespace.get(namespace.idFromString(resource.objectId)).inspectInstallationResource(input.installationId, resource.kind === "adapter-account" ? candidates : undefined);
           const registered = result.outcome === "empty" || result.outcome === "unrelated"
             ? await this.options.coordinator(input.installationId).registeredResource(resource.kind, resource.objectId) : null;
           if (registered && namespace.idFromName(registered.name).toString() === resource.objectId && (!result.name || result.name === registered.name)) {

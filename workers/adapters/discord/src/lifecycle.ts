@@ -31,7 +31,7 @@ export class DiscordLifecycleEntrypoint extends WorkerEntrypoint<SharedDiscordEn
     return new AdapterLifecycle({ authority: this.ctx.props?.authority, directory: this.env.ACCOUNTS,
       coordinator: (id) => this.env.DISCORD_INSTALLATIONS.getByName(id),
       coordinatorId: (id) => this.env.DISCORD_INSTALLATIONS.idFromName(id).toString(),
-      namespace: (kind) => kind === "adapter-peer" ? this.env.DISCORD_PEER : kind === "adapter-pairing" ? this.env.DISCORD_PAIRING : kind === "adapter-application" ? this.env.DISCORD_APPLICATION : null,
+      namespace: (kind) => kind === "adapter-peer" ? this.env.DISCORD_PEER : kind === "adapter-pairing" ? this.env.DISCORD_PAIRING : kind === "adapter-application" ? this.env.DISCORD_APPLICATION : kind === "adapter-account" ? this.env.DISCORD_GATEWAY ?? null : null,
     });
   }
   async inspectInstallationDeletion(input: InstallationDeletionInspection) { return await this.service().inspectInstallationDeletion(input); }
@@ -42,8 +42,8 @@ export class DiscordLifecycleEntrypoint extends WorkerEntrypoint<SharedDiscordEn
 }
 
 function resolveResource(env: SharedDiscordEnv, resource: AdapterInstallationResource) {
-  const namespace = resource.kind === "adapter-peer" ? env.DISCORD_PEER : resource.kind === "adapter-pairing" ? env.DISCORD_PAIRING : null;
+  const namespace = resource.kind === "adapter-peer" ? env.DISCORD_PEER : resource.kind === "adapter-pairing" ? env.DISCORD_PAIRING : resource.kind === "adapter-account" ? env.DISCORD_GATEWAY : null;
   if (!namespace) return null;
   if (namespace.idFromName(resource.name).toString() !== resource.objectId) throw new Error("Discord resource identity mismatch");
-  return namespace.get(namespace.idFromName(resource.name));
+  return namespace.getByName(resource.name);
 }

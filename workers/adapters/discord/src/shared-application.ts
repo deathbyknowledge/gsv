@@ -11,6 +11,7 @@ import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import type { ManagedAdapterGatewayService } from "../../../../packages/gsv/src/protocol/managed.js";
 
 export interface SharedDiscordEnv {
+  DISCORD_GATEWAY?: DurableObjectNamespace<DiscordGateway>;
   DISCORD_INSTALLATIONS: DurableObjectNamespace<DiscordInstallation>;
   ACCOUNTS: InstallationDirectoryService;
   DISCORD_APPLICATION: DurableObjectNamespace<DiscordApplication>;
