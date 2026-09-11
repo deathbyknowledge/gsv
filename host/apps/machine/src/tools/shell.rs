@@ -980,12 +980,21 @@ mod tests {
         assert_eq!(acknowledgement.data["output"], "");
         drop(acknowledgement);
 
-        let recovered = tool
-            .execute(json!({ "sessionId": session_id, "input": "", "yieldMs": 250 }))
-            .await
-            .unwrap();
-        assert_eq!(recovered.data["status"], "running");
-        assert_eq!(recovered.data["output"], "recoverable");
+        let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut output = String::new();
+            while output.len() < "recoverable".len() {
+                let poll = tool
+                    .execute(json!({ "sessionId": session_id, "input": "", "yieldMs": 250 }))
+                    .await
+                    .unwrap();
+                assert_eq!(poll.data["status"], "running");
+                output.push_str(poll.data["output"].as_str().unwrap());
+            }
+            output
+        })
+        .await
+        .expect("named session never produced its initial output");
+        assert_eq!(recovered, "recoverable");
         ShellCancelTool
             .execute(json!({ "sessionId": session_id }))
             .await
@@ -995,6 +1004,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(terminal.data["status"], "failed");
+        assert_eq!(terminal.data["output"], "");
         assert!(tool
             .execute(json!({ "sessionId": session_id, "start": true, "input": "echo duplicate" }))
             .await
