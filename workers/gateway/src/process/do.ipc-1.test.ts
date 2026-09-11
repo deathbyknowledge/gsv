@@ -130,7 +130,7 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, identity);
     const target = await initProcess(targetPid, identity);
     await runInProcess(source, (process) => {
-      process.scheduleTick = async () => {};
+      process.run.scheduleTick = async () => {};
     });
     await runInProcess(target, (process) => {
       process.runs.active = {
@@ -222,7 +222,7 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, ROOT_IDENTITY);
     await initProcess(targetPid, ROOT_IDENTITY);
     await runInProcess(source, (process) => {
-      process.scheduleTick = vi.fn(async () => {});
+      process.run.scheduleTick = vi.fn(async () => {});
     });
 
     const kernel = await getKernelPtr();
@@ -282,7 +282,7 @@ describe("proc.ipc.*", () => {
     const target = await initProcess(targetPid, ROOT_IDENTITY);
 
     await runInProcess(source, (process) => {
-      process.scheduleTick = vi.fn(async () => {});
+      process.run.scheduleTick = vi.fn(async () => {});
     });
     await runInProcess(target, (process) => {
       process.runs.active = { runId: "target-busy-run" };
@@ -881,7 +881,7 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, ROOT_IDENTITY);
     await initProcess(targetPid, ROOT_IDENTITY);
     await runInProcess(source, (process) => {
-      process.scheduleTick = async () => {};
+      process.run.scheduleTick = async () => {};
     });
 
     const kernel = await getKernelPtr();

@@ -154,7 +154,7 @@ describe("proc.kill", () => {
       },
     });
     expect(killed.alarm).toBeNull();
-    expect(killed.keys).toEqual(["__gsv_process_killed__"]);
+    expect(killed.keys).toEqual(["__gsv_process_killed__", "__gsv_resource_identity__"]);
     expect(killed.tables).not.toEqual(
       expect.arrayContaining(["conversations", "messages", "process_kv"]),
     );

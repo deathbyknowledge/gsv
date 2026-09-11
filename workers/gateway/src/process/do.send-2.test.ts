@@ -295,7 +295,6 @@ describe("proc.send", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
 
     const result = await runInProcess(stub, async (process) => {
-      const originalStorage = process.storage;
       const objects = new Map<
         string,
         {
@@ -326,7 +325,7 @@ describe("proc.send", () => {
           return { key, size: bytes.byteLength };
         },
       );
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         head: vi.fn(async (key: string) => {
           const object = objects.get(key);
           return object
@@ -342,7 +341,7 @@ describe("proc.send", () => {
         delete: vi.fn(async (key: string) => {
           objects.delete(key);
         }),
-      };
+      });
 
       // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -373,7 +372,7 @@ describe("proc.send", () => {
           storedBytes: stored ? [...stored.bytes] : [],
         };
       } finally {
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
         releasePut();
       }
     });
@@ -387,7 +386,6 @@ describe("proc.send", () => {
     const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
-      const originalStorage = process.storage;
       const get = vi.fn();
       process.store.messages.appendMessage("user", "Review this diagram.", {
         media: JSON.stringify([
@@ -399,7 +397,7 @@ describe("proc.send", () => {
           },
         ]),
       });
-      process.storage = { get };
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({ get });
 
       try {
         const messages = await process.history.buildContextMessages("default");
@@ -412,7 +410,7 @@ describe("proc.send", () => {
           },
         ]);
       } finally {
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
       }
     });
   });
@@ -504,7 +502,6 @@ describe("proc.send", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
-      const originalStorage = process.storage;
       const objects = new Map<string, Uint8Array>();
       const { promise: putBlocked, resolve: releasePut } = deferred();
       const { promise: putStarted, resolve: markPutStarted } = deferred();
@@ -513,7 +510,7 @@ describe("proc.send", () => {
           objects.delete(item);
         }
       });
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
           markPutStarted();
           await putBlocked;
@@ -528,7 +525,7 @@ describe("proc.send", () => {
           truncated: false,
         })),
         delete: deleteObject,
-      };
+      });
 
       try {
         const writing = process.resources.storeIncomingResource(
@@ -546,7 +543,7 @@ describe("proc.send", () => {
         expect(objects.size).toBe(0);
         expect(deleteObject).toHaveBeenCalledWith(expect.stringContaining(`/0/${pid}/`));
       } finally {
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
         releasePut();
       }
     });
@@ -557,7 +554,6 @@ describe("proc.send", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
-      const originalStorage = process.storage;
       const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
       const prefix = `var/media/0/${pid}/`;
       process.store.messages.appendMessage("user", "Review these images.", {
@@ -567,13 +563,13 @@ describe("proc.send", () => {
           { type: "image", mimeType: "image/png", key: `${prefix}second` },
         ]),
       });
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         get: vi.fn(async (key: string) => ({
           size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
           arrayBuffer,
           body: { cancel: vi.fn(async () => {}) },
         })),
-      };
+      });
 
       try {
         const messages = await process.history.buildContextMessages("default");
@@ -582,7 +578,7 @@ describe("proc.send", () => {
           expect.arrayContaining([expect.objectContaining({ type: "image", data: "AQ==" })]),
         );
       } finally {
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
       }
     });
   });
@@ -591,7 +587,6 @@ describe("proc.send", () => {
     const stub = await initProcess("mech-foreign-context-media", ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
-      const originalStorage = process.storage;
       const get = vi.fn(async () => ({
         size: 3,
         arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -605,7 +600,7 @@ describe("proc.send", () => {
           },
         ]),
       });
-      process.storage = { get };
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({ get });
 
       try {
         const messages = await process.history.buildContextMessages("default");
@@ -614,7 +609,7 @@ describe("proc.send", () => {
           expect.arrayContaining([expect.objectContaining({ type: "image" })]),
         );
       } finally {
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
       }
     });
   });
