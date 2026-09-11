@@ -12,7 +12,7 @@ import type {
   InferenceService as ManagedInferenceService,
   InferenceTarget as ManagedInferenceTarget,
 } from "@humansandmachines/gsv/services/inference";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createGsvInferenceProviderFactory,
   gsvInferenceFeaturesFromEnv,
@@ -49,6 +49,8 @@ const RESULT: ManagedInferenceResult = {
 };
 
 describe("GSV inference provider", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("advertises the default 32k output budget", () => {
     const service: ManagedInferenceService = {
       getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
@@ -255,6 +257,96 @@ describe("GSV inference provider", () => {
     expect(target.abort).not.toHaveBeenCalled();
   });
 
+  it("bounds acquisition by the original factory deadline and disposes a late target", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = Date.now() + 1_000;
+    const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
+    const { target, dispose } = managedService(vi.fn());
+    const service = { getInstallation: vi.fn(() => acquisition.promise) };
+    const factory = createGsvInferenceProviderFactory(service);
+    await vi.advanceTimersByTimeAsync(400);
+    const stream = providerStreamFromFactory(factory, new AbortController().signal, deadlineAt);
+
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "error",
+      errorMessage: "Model generation timed out after 1000ms",
+    });
+    acquisition.resolve(target);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(target.generateStream).not.toHaveBeenCalled();
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled stream RPC after delayed acquisition and cancels its late body", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = Date.now() + 1_000;
+    const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
+    const body = Promise.withResolvers<ReadableStream<Uint8Array>>();
+    const disposeBodyRpc = vi.fn();
+    Object.defineProperty(body.promise, Symbol.dispose, { value: disposeBodyRpc });
+    const abort = vi.fn(() => new Promise<void>(() => {}));
+    const { target, dispose } = managedService(vi.fn(() => body.promise), abort);
+    const service = { getInstallation: vi.fn(() => acquisition.promise) };
+    const stream = providerStream(service, new AbortController().signal);
+
+    await vi.advanceTimersByTimeAsync(400);
+    acquisition.resolve(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(target.generateStream).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: 1_000,
+      deadlineAt,
+    }));
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "error" });
+    expect(abort).toHaveBeenCalledExactlyOnceWith(ATTRIBUTION.logicalRequestId, "timeout");
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(disposeBodyRpc).toHaveBeenCalledOnce();
+
+    const cancel = vi.fn();
+    body.resolve(new ReadableStream({ cancel }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "error", content: [] });
+  });
+
+  it("times out an active stream without waiting for source cancellation", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const { service, target, dispose } = managedService(vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoded({
+          type: "start",
+          partial: { ...RESULT, content: [], stopReason: "pending" },
+        }));
+      },
+      cancel,
+    })));
+    const stream = providerStream(service, new AbortController().signal);
+    const events = stream[Symbol.asyncIterator]();
+    await expect(events.next()).resolves.toMatchObject({ value: { type: "start" } });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(events.next()).resolves.toMatchObject({ value: { type: "error", reason: "error" } });
+    await expect(events.next()).resolves.toMatchObject({ done: true });
+    expect(target.abort).toHaveBeenCalledExactlyOnceWith(ATTRIBUTION.logicalRequestId, "timeout");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("clears the generation deadline after success", async () => {
+    vi.useFakeTimers();
+    const { service, target } = managedService(vi.fn(async () => eventStream({
+      type: "done", reason: "stop", message: RESULT,
+    })));
+    const stream = providerStream(service, new AbortController().signal);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "stop" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
   it("aborts when cancellation overtakes the stream RPC", async () => {
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
@@ -275,12 +367,14 @@ describe("GSV inference provider", () => {
     const stream = providerStream(service, controller.signal);
     await started;
     controller.abort(reason);
-    releaseStream(eventStream({ type: "done", reason: "stop", message: RESULT }));
 
     await expect(stream.result()).resolves.toMatchObject({
       stopReason: "aborted",
       errorMessage: "test cancellation",
     });
+    const cancel = vi.fn();
+    releaseStream(new ReadableStream({ cancel }));
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     expect(abort).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledOnce();
   });
@@ -299,8 +393,9 @@ function providerStream(
 function providerStreamFromFactory(
   factory: ReturnType<typeof createGsvInferenceProviderFactory>,
   signal: AbortSignal,
+  deadlineAt?: number,
 ) {
-  const provider = factory.create(ATTRIBUTION);
+  const provider = factory.create(ATTRIBUTION, deadlineAt === undefined ? undefined : { deadlineAt });
   const models = createModels();
   models.setProvider(provider);
   const model = models.getModel("gsv", GSV_INFERENCE_MODEL)!;

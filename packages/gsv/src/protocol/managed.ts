@@ -14,6 +14,7 @@ export {
 } from "../services/inference";
 export type {
   InferenceService as ManagedInferenceService,
+  ManagedInferenceAbortReason,
   ManagedInferenceAbortRequest,
   ManagedInferenceActor,
   ManagedInferencePartial,

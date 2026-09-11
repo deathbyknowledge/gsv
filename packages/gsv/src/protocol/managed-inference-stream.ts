@@ -186,7 +186,7 @@ export async function* decodeManagedInferenceStream(
     }
   } finally {
     signal?.removeEventListener("abort", cancelForAbort);
-    if (!completed) await reader.cancel().catch(() => {});
+    if (!completed) void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

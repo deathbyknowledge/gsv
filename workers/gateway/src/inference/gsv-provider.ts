@@ -29,6 +29,7 @@ import type {
   InferenceProviderFactory,
 } from "./provider";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
+import { createGenerationAbort, TimeoutError } from "./timeout";
 import { raceWithAbort } from "../shared/abort";
 import type { GatewayEnv } from "../runtime-env";
 
@@ -100,7 +101,7 @@ function createGsvInferenceProviderFactoryForAccess(
 ): InferenceProviderFactory {
   return {
     id: GSV_INFERENCE_PROVIDER,
-    create: (attribution) => createProvider({
+    create: (attribution, options) => createProvider({
       id: GSV_INFERENCE_PROVIDER,
       name: "GSV",
       auth: {
@@ -115,7 +116,7 @@ function createGsvInferenceProviderFactoryForAccess(
         },
       },
       models: [GSV_INFERENCE_MODEL_METADATA],
-      api: gsvInferenceStreams(access, attribution),
+      api: gsvInferenceStreams(access, attribution, options?.deadlineAt),
     }),
   };
 }
@@ -123,6 +124,7 @@ function createGsvInferenceProviderFactoryForAccess(
 function gsvInferenceStreams(
   access: ManagedInferenceAccess,
   attribution: InferenceAttribution,
+  deadlineAt?: number,
 ): ProviderStreams {
   return {
     stream: (_model, context, options) => streamGsvInference(
@@ -130,12 +132,14 @@ function gsvInferenceStreams(
       attribution,
       context,
       options,
+      deadlineAt,
     ),
     streamSimple: (_model, context, options) => streamGsvInference(
       access,
       attribution,
       context,
       options,
+      deadlineAt,
     ),
   };
 }
@@ -145,23 +149,26 @@ function streamGsvInference(
   attribution: InferenceAttribution,
   context: Context,
   options?: StreamOptions | SimpleStreamOptions,
+  deadlineAt?: number,
 ): AssistantMessageEventStream {
   if (options?.fetch) {
     throw new Error("GSV inference cannot originate model requests from a connected machine.");
   }
   const stream = createAssistantMessageEventStream();
+  const abort = createGenerationAbort(options?.signal, options?.timeoutMs ?? 180_000, deadlineAt);
   void pumpGsvInference(
     access,
-    buildManagedInferenceRequest(attribution, context, options),
+    buildManagedInferenceRequest(attribution, context, abort.deadlineAt, options),
     stream,
-    options?.signal,
-  );
+    abort.signal,
+  ).finally(abort.clear);
   return stream;
 }
 
 function buildManagedInferenceRequest(
   attribution: InferenceAttribution,
   context: Context,
+  deadlineAt: number,
   options?: StreamOptions | SimpleStreamOptions,
 ): ManagedInferenceRequest {
   const reasoning = options && "reasoning" in options
@@ -178,6 +185,7 @@ function buildManagedInferenceRequest(
     messages,
     maxOutputTokens: options?.maxTokens ?? GSV_INFERENCE_MODEL_METADATA.maxTokens,
     timeoutMs: options?.timeoutMs ?? 180_000,
+    deadlineAt,
   };
   if (attribution.workload) request.workload = attribution.workload;
   if (context.systemPrompt) request.systemPrompt = context.systemPrompt;
@@ -203,7 +211,11 @@ async function pumpGsvInference(
     if (target && generationStarted && !generationAbort) {
       generationAbort = (async () => {
         try {
-          await target.abort(request.logicalRequestId);
+          if (signal?.reason instanceof TimeoutError) {
+            await target.abort(request.logicalRequestId, "timeout");
+          } else {
+            await target.abort(request.logicalRequestId);
+          }
         } catch {}
       })();
     }
@@ -242,7 +254,16 @@ async function pumpGsvInference(
     const bodyPromise = target.generateStream(request);
     generationStarted = true;
     if (signal?.aborted) abortGeneration();
-    const body = await bodyPromise;
+    const body = await raceWithAbort(bodyPromise, signal, {
+      onAbort: () => {
+        // SAFETY: Workers RPC promises expose a disposer; local promises may omit it.
+        const disposable = bodyPromise as typeof bodyPromise & { [Symbol.dispose]?(): void };
+        disposable[Symbol.dispose]?.();
+      },
+      onLateResolve: (lateBody) => {
+        void lateBody.cancel(signal?.reason).catch(() => {});
+      },
+    });
     let partial: AssistantMessage | undefined;
     let terminal = false;
     for await (const raw of decodeManagedInferenceStream(body, signal)) {
@@ -263,7 +284,6 @@ async function pumpGsvInference(
     stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal));
   } finally {
     signal?.removeEventListener("abort", abortGeneration);
-    await generationAbort;
     disposeManagedInferenceTarget(target);
   }
 }
@@ -504,12 +524,14 @@ function gsvInferenceErrorEvent(
   aborted: boolean,
   abortSignal?: AbortSignal,
 ): Extract<AssistantMessageEvent, { type: "error" }> {
+  const timedOut = aborted && abortSignal?.reason instanceof TimeoutError;
+  const cancelled = aborted && !timedOut;
   const abortMessage = abortSignal?.reason instanceof Error
     ? abortSignal.reason.message.trim()
     : "";
   return {
     type: "error",
-    reason: aborted ? "aborted" : "error",
+    reason: cancelled ? "aborted" : "error",
     error: {
       role: "assistant",
       content: [],
@@ -524,7 +546,7 @@ function gsvInferenceErrorEvent(
         totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: aborted ? "aborted" : "error",
+      stopReason: cancelled ? "aborted" : "error",
       errorMessage: aborted
         ? abortMessage || "GSV inference cancelled"
         : "GSV inference is unavailable",

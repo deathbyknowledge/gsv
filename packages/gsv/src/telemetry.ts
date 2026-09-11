@@ -204,6 +204,10 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
     failureStage: inferenceFailureStageSchema,
     retryable: z.boolean(),
     providerStatusCode: z.optional(httpStatusCodeSchema),
+    timeoutKind: z.optional(z.enum(["first_output", "generation"])),
+    firstActivityMs: z.optional(nonNegativeIntegerSchema),
+    lastActivityMs: z.optional(nonNegativeIntegerSchema),
+    outputExposed: z.optional(z.boolean()),
   }),
 });
 
