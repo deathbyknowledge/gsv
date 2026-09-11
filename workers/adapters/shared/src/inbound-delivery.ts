@@ -117,7 +117,8 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
         if (removed.length > 0) await txn.delete(removed);
       }
       const existing = await txn.get<PendingInboundDelivery<Payload, ResponseContext>>(key);
-      if (existing?.owner !== undefined && !sameAdapterDataOwner(existing.owner, owner)) throw new Error("Inbound delivery owner changed");
+      // A repeated provider delivery keeps its original route even after this peer relinks.
+      if (existing?.owner !== undefined && !sameAdapterDataOwner(existing.owner, owner)) return;
       if (existing?.state === "completed" && existing.expiresAt <= now) {
         await txn.delete(key);
       }
@@ -390,6 +391,8 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       const owned = [...records.entries()].filter(([, record]) => record.owner?.installationId === installationId);
       const keys = owned.slice(0, limit).map(([key]) => key);
       if (keys.length) await txn.delete(keys);
+      const erased = new Set(keys);
+      if (![...records.entries()].some(([key, record]) => !erased.has(key) && record.state !== "completed")) await txn.deleteAlarm();
       return owned.length - keys.length;
     });
   }

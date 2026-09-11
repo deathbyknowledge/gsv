@@ -13,7 +13,9 @@ export default defineConfig({
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
               const calls = [];
+              let approvalReleased = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
+                async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
                   const bodyBytes = frame.body
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
@@ -36,6 +38,10 @@ export default defineConfig({
                 }
                 async linkedPeerFrame(installation, context, frame) {
                   calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  if (frame.args.requestId === "held-retirement-approval") {
+                    const until = Date.now() + 5000;
+                    while (!approvalReleased && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+                  }
                   return {
                     type: "res",
                     id: frame.id,
@@ -54,7 +60,8 @@ export default defineConfig({
                   calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
                   return { removed: true };
                 }
-                async fetch() {
+                async fetch(request) {
+                  if (new URL(request.url).pathname === "/release-approval") approvalReleased = true;
                   return Response.json(calls);
                 }
               }
@@ -146,6 +153,6 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/status-query.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/status-query.test.ts", "test/retirement.test.ts"],
   },
 });

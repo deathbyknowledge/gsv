@@ -3,7 +3,9 @@
   "name": "gsv-managed-telegram-test",
   "main": "src/managed.ts",
   "compatibility_date": "2026-07-29",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "vars": {
     "TELEGRAM_BOT_TOKEN": "test-token",
     "TELEGRAM_BOT_USERNAME": "official_gsv_bot",
@@ -19,13 +21,26 @@
       {
         "name": "MANAGED_TELEGRAM_PAIRING",
         "class_name": "ManagedTelegramPairing"
+      },
+      {
+        "name": "TELEGRAM_INSTALLATIONS",
+        "class_name": "TelegramInstallation"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ManagedTelegramPeer", "ManagedTelegramPairing"]
+      "new_sqlite_classes": [
+        "ManagedTelegramPeer",
+        "ManagedTelegramPairing"
+      ]
+    },
+    {
+      "tag": "v2-installation-retirement",
+      "new_sqlite_classes": [
+        "TelegramInstallation"
+      ]
     }
   ],
   "services": [
@@ -35,12 +50,28 @@
       "entrypoint": "AdapterGatewayEntrypoint",
       "props": {
         "id": "telegram",
-        "calls": ["adapter.inbound", "adapter.state.update"]
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
       }
     },
     {
       "binding": "TELEGRAM_API",
       "service": "managed-telegram-api-test"
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "managed-telegram-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint"
+    },
+    {
+      "binding": "LIFECYCLE",
+      "service": "gsv-managed-telegram-test",
+      "entrypoint": "TelegramLifecycleEntrypoint",
+      "props": {
+        "authority": "installation-deletion"
+      }
     }
   ]
 }

@@ -3,6 +3,8 @@ import { ADAPTER_RETIREMENT_PREFIX, AdapterRetirement, type AdapterDataScope } f
 import type { AdapterResourceInspection } from "./peer-retirement";
 
 export type PairingOwnership = {
+  expiresAt: number;
+  retainUntil?: number;
   resourceName?: string;
   owner?: AdapterDataScope;
   retired?: boolean;
@@ -18,7 +20,7 @@ export class AdapterPairingRetirement<Record extends PairingOwnership> {
   async inspect(installationId: string): Promise<AdapterResourceInspection> {
     const record = await this.storage.get<Record>(this.key);
     if ([...this.storage.kv.list()].some(([key]) => key !== this.key && !key.startsWith(ADAPTER_RETIREMENT_PREFIX))) return { outcome: "unidentified" };
-    const tables = this.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name NOT IN ('_cf_KV', '_cf_METADATA')").toArray();
+    const tables = this.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name NOT IN ('_cf_KV', '_cf_METADATA', '__miniflare_do_name')").toArray();
     if (tables.length) return { outcome: "unidentified" };
     if (!record) return { outcome: "empty" };
     if (!record.resourceName || record.owner === undefined) return { outcome: "unidentified" };
@@ -52,6 +54,7 @@ export class AdapterPairingRetirement<Record extends PairingOwnership> {
       if (record.cleanup?.installationId === input.installationId) {
         delete record.cleanup;
         record.cleanupComplete = true;
+        await txn.setAlarm(Math.max(Date.now() + 1, record.retainUntil ?? record.expiresAt));
       }
       await txn.put(this.key, record);
     });

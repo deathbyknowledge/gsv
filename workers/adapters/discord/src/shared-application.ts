@@ -29,6 +29,8 @@ export class DiscordApplication extends DiscordGateway {
   async inspectInstallationResource(_installationId: string): Promise<AdapterResourceInspection> {
     const id = discordId(this.applicationEnv.DISCORD_APPLICATION_ID ?? "");
     const values = await this.ctx.storage.list();
+    const tables = this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray();
+    if (tables.some(({ name }) => !name.startsWith("sqlite_") && !name.startsWith("__cf_") && !["_cf_KV", "_cf_METADATA", "__miniflare_do_name"].includes(name))) return { outcome: "unidentified" };
     if (!values.size) return { outcome: "empty" };
     const allowed = [...values.keys()].every((key) => key === "state" || key === "botUser" || key.startsWith("guild:"));
     const state = await this.ctx.storage.get<{ botToken?: string | null }>("state");

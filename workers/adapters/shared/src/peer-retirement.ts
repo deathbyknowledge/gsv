@@ -39,7 +39,7 @@ export class AdapterPeerRetirement<State extends AdapterPeerLink> {
       || key.startsWith("outbound_delivery:v1:record:") || key.startsWith(this.options.inboundPrefix)
       || key.startsWith(ADAPTER_RETIREMENT_PREFIX));
     const knownTables = this.storage.sql.exec<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name NOT IN ('_cf_METADATA', '_cf_KV')",
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name NOT IN ('_cf_METADATA', '_cf_KV', '__miniflare_do_name')",
     ).toArray().every(({ name }) => name === "_gsv_schema_migrations" || this.options.hil && name === "adapter_hil_approvals");
     if (!knownKeys || !knownTables || identity && !identity.understood || ownership.unattributed) {
       return { outcome: "unidentified" };

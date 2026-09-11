@@ -43,13 +43,13 @@ export class AdapterLifecycle {
   async importInstallationDeletionInventory(value: InstallationDeletionInventoryImport) {
     this.authority();
     const input = installationDeletionInventoryImportSchema.parse(value);
-    await this.requireRetired(input.installationId);
+    await this.requireRetired(input.installationId, true);
     return await this.options.coordinator(input.installationId).importInstallationDeletionInventory(input);
   }
   async inspectInstallationDeletion(value: InstallationDeletionInspection): Promise<InstallationDeletionInspectionResult> {
     this.authority();
     const input = installationDeletionInspectionSchema.parse(value);
-    await this.requireRetired(input.installationId);
+    await this.requireRetired(input.installationId, true);
     // Accounts invokes this empty probe before opening the capture epoch. The
     // named index must exist before either namespace enumeration is taken.
     await this.options.coordinator(input.installationId).inspectInstallationResource(input.installationId);
@@ -96,8 +96,8 @@ export class AdapterLifecycle {
     await this.requireRetired(input.installationId);
     return input;
   }
-  private async requireRetired(installationId: string): Promise<void> {
+  private async requireRetired(installationId: string, capture = false): Promise<void> {
     const result = await this.options.directory.resolveInstallation(installationId);
-    if (!result.found || result.installationId !== installationId || !["retained", "deleting", "deleted"].includes(result.state)) throw new Error("Adapter deletion requires a retired installation");
+    if (!result.found || result.installationId !== installationId || !(capture ? ["retained"] : ["retained", "deleting", "deleted"]).includes(result.state)) throw new Error("Adapter deletion requires a retired installation");
   }
 }

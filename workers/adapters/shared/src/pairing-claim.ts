@@ -6,12 +6,13 @@ import type {
 import type { ManagedAdapterGatewayService } from "../../../../packages/gsv/src/protocol/managed.js";
 
 type Stage = "prepared" | "active" | "finalized";
-export type AdapterPairingClaimRecord = PairingOwnership & {
-  version: 1; claimId: string; peerName: string; expiresAt: number;
+export type AdapterPairingClaimState = PairingOwnership & {
+  version: 1; claimId: string; expiresAt: number;
   operationId?: string; stage?: Stage; retainUntil?: number;
-  cleanup?: { operationId: string; accountId: string; actorId: string; surfaceId: string; installationId: string; localUid: number; generation: string };
+  cleanup?: { operationId: string; accountId?: string; actorId: string; surfaceId: string; installationId: string; localUid: number; generation: string };
   cleanupComplete?: boolean;
 };
+export type AdapterPairingClaimRecord = AdapterPairingClaimState & { peerName: string };
 export interface AdapterPairingPeer {
   inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate>;
   preparePairing(claimId: string, expiresAt: number, input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation>;
@@ -24,24 +25,26 @@ const RETRY_MS = 30_000;
 const STAGES = { prepared: 0, active: 1, finalized: 2 };
 
 /** The claim reserves an operation; the peer remains the sole owner of route authority. */
-export class AdapterPairingClaim {
+export class AdapterPairingClaim<Record extends AdapterPairingClaimState = AdapterPairingClaimRecord> {
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly key: string,
+    private readonly peerName: (record: Record) => string,
     private readonly peer: (name: string) => AdapterPairingPeer,
     private readonly gateway: ManagedAdapterGatewayService,
     private readonly waitUntil: (task: Promise<void>) => void,
     private readonly retirement?: AdapterRetirement,
+    private readonly legacyAccountId?: string,
   ) {}
 
-  async initialize(input: AdapterPairingClaimRecord): Promise<{ created: boolean }> {
-    if (input.version !== 1 || !input.claimId || !input.peerName || !Number.isSafeInteger(input.expiresAt) || input.expiresAt <= Date.now()) {
+  async initialize(input: Record): Promise<{ created: boolean }> {
+    if (input.version !== 1 || !input.claimId || !Number.isSafeInteger(input.expiresAt) || input.expiresAt <= Date.now()) {
       throw new Error("Pairing claim is invalid");
     }
     return await this.storage.transaction(async (txn) => {
-      const current = await txn.get<AdapterPairingClaimRecord>(this.key);
-      if (current) return { created: current.claimId === input.claimId && current.peerName === input.peerName && current.expiresAt === input.expiresAt };
-      await txn.put(this.key, { version: 1, claimId: input.claimId, peerName: input.peerName, expiresAt: input.expiresAt, resourceName: input.resourceName, owner: input.owner } satisfies AdapterPairingClaimRecord);
+      const current = await txn.get<Record>(this.key);
+      if (current) return { created: current.claimId === input.claimId && this.peerName(current) === this.peerName(input) && current.expiresAt === input.expiresAt };
+      await txn.put(this.key, input);
       await txn.setAlarm(input.expiresAt);
       return { created: true };
     });
@@ -49,26 +52,26 @@ export class AdapterPairingClaim {
 
   async inspect(): Promise<AdapterPairingCandidate> {
     const record = await this.record();
-    return await this.peer(record.peerName).inspectPairing(record.claimId, record.expiresAt);
+    return await this.peer(this.peerName(record)).inspectPairing(record.claimId, record.expiresAt);
   }
 
   async prepare(input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation> {
     const record = await this.reserve(input.operationId, { installationId: input.installationId, generation: input.operationId });
-    const result = await this.peer(record.peerName).preparePairing(record.claimId, record.expiresAt, input);
+    const result = await this.peer(this.peerName(record)).preparePairing(record.claimId, record.expiresAt, input);
     await this.advance(record, "prepared");
     return result;
   }
 
   async activate(input: AdapterPairingActivateInput): Promise<AdapterPairingPreparation> {
     const record = await this.reserve(input.operationId, input.route);
-    const result = await this.peer(record.peerName).activatePairing(record.claimId, record.expiresAt, input);
+    const result = await this.peer(this.peerName(record)).activatePairing(record.claimId, record.expiresAt, input);
     await this.advance(record, "active");
     return result;
   }
 
   async finalize(input: AdapterPairingActivateInput): Promise<AdapterPairingPreparation> {
     const record = await this.reserve(input.operationId, input.route);
-    const peer = this.peer(record.peerName);
+    const peer = this.peer(this.peerName(record));
     const result = await peer.finalizePairing(record.claimId, record.expiresAt, input);
     const previous = result.previousRoute;
     const cleanup = previous && previous.generation !== result.route.generation ? {
@@ -84,23 +87,23 @@ export class AdapterPairingClaim {
   }
 
   async alarm(): Promise<void> {
-    const record = await this.storage.get<AdapterPairingClaimRecord>(this.key);
+    const record = await this.storage.get<Record>(this.key);
     if (!record) return;
     if (record.cleanup && !record.cleanupComplete) { await this.completeCleanup(); return; }
     if ((record.retainUntil ?? record.expiresAt) <= Date.now()) await this.storage.delete(this.key);
   }
 
-  private async record(): Promise<AdapterPairingClaimRecord> {
-    const record = await this.storage.get<AdapterPairingClaimRecord>(this.key);
+  private async record(): Promise<Record> {
+    const record = await this.storage.get<Record>(this.key);
     if (!record || record.retired || this.retirement?.retired(record.owner)) throw new Error("Pairing code is invalid");
     if ((record.retainUntil ?? record.expiresAt) <= Date.now()) throw new Error("Pairing code expired");
     return record;
   }
 
-  private async reserve(operationId: string, owner: AdapterDataOwner): Promise<AdapterPairingClaimRecord> {
+  private async reserve(operationId: string, owner: AdapterDataOwner): Promise<Record> {
     if (!operationId.trim()) throw new Error("Pairing operation is invalid");
     return await this.storage.transaction(async (txn) => {
-      const record = await txn.get<AdapterPairingClaimRecord>(this.key);
+      const record = await txn.get<Record>(this.key);
       this.retirement?.requireLive(owner);
       if (!record || record.retired || (record.retainUntil ?? record.expiresAt) <= Date.now()) throw new Error("Pairing code expired");
       if (record.owner && record.owner.installationId !== owner.installationId) throw new Error("Pairing operation identity changed");
@@ -112,9 +115,9 @@ export class AdapterPairingClaim {
     });
   }
 
-  private async advance(record: AdapterPairingClaimRecord, stage: Stage, cleanup?: AdapterPairingClaimRecord["cleanup"]): Promise<void> {
+  private async advance(record: Record, stage: Stage, cleanup?: AdapterPairingClaimState["cleanup"]): Promise<void> {
     await this.storage.transaction(async (txn) => {
-      const current = await txn.get<AdapterPairingClaimRecord>(this.key);
+      const current = await txn.get<Record>(this.key);
       if (!current || current.retired || this.retirement?.retired(current.owner) || current.claimId !== record.claimId || current.operationId !== record.operationId) throw new Error("Pairing claim changed");
       if (current.stage && STAGES[current.stage] >= STAGES[stage]) return;
       const next = { ...current, stage };
@@ -125,18 +128,19 @@ export class AdapterPairingClaim {
   }
 
   private async completeCleanup(): Promise<void> {
-    const record = await this.storage.get<AdapterPairingClaimRecord>(this.key);
+    const record = await this.storage.get<Record>(this.key);
     if (!record?.cleanup || record.cleanupComplete || this.retirement?.retired(record.cleanup)) return;
     await this.storage.setAlarm(Date.now() + RETRY_MS);
     const cleanup = record.cleanup;
+    if (!cleanup.accountId && !this.legacyAccountId) throw new Error("Pairing cleanup account is unavailable");
     const release = this.retirement?.start(cleanup);
     try {
       await this.gateway.unlinkManagedAdapterIdentity({ installationId: cleanup.installationId }, {
-        operationId: `${cleanup.operationId}:previous`, accountId: cleanup.accountId, actorId: cleanup.actorId,
+        operationId: `${cleanup.operationId}:previous`, accountId: cleanup.accountId ?? this.legacyAccountId!, actorId: cleanup.actorId,
         surfaceId: cleanup.surfaceId, expectedLocalUid: cleanup.localUid, expectedGeneration: cleanup.generation,
       });
       await this.storage.transaction(async (txn) => {
-        const current = await txn.get<AdapterPairingClaimRecord>(this.key);
+        const current = await txn.get<Record>(this.key);
         if (!current || this.retirement?.retired(current.owner) || current.claimId !== record.claimId || current.operationId !== record.operationId || current.cleanup?.installationId !== cleanup.installationId) return;
         await txn.put(this.key, { ...current, cleanupComplete: true });
         await txn.setAlarm(Math.max(Date.now() + 1, current.retainUntil ?? current.expiresAt));

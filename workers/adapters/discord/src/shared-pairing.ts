@@ -9,7 +9,7 @@ import type { SharedDiscordEnv } from "./shared-application";
 export class DiscordPairing extends DurableObject<SharedDiscordEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
   private readonly lifecycle = new AdapterPairingRetirement<AdapterPairingClaimRecord>(this.ctx.storage, this.retirement, "discord_pairing:v1");
-  private readonly claim = new AdapterPairingClaim(this.ctx.storage, "discord_pairing:v1", (name) => this.env.DISCORD_PEER.getByName(name), this.env.GATEWAY, (task) => this.ctx.waitUntil(task), this.retirement);
+  private readonly claim = new AdapterPairingClaim(this.ctx.storage, "discord_pairing:v1", (record) => record.peerName, (name) => this.env.DISCORD_PEER.getByName(name), this.env.GATEWAY, (task) => this.ctx.waitUntil(task), this.retirement);
   async initialize(input: AdapterPairingClaimRecord) { if (!this.ctx.id.name) throw new Error("Discord pairing name is unavailable"); return await this.claim.initialize({ ...input, resourceName: this.ctx.id.name, owner: null }); }
   async inspect() { return await this.claim.inspect(); }
   async prepare(input: AdapterPairingPrepareInput) {

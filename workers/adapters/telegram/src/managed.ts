@@ -42,10 +42,9 @@ import { handleManagedTelegramRequest } from "./managed-http";
 
 export { ManagedTelegramPairing } from "./managed-pairing";
 export { ManagedTelegramPeer } from "./managed-peer";
+export { TelegramInstallation, TelegramLifecycleEntrypoint } from "./lifecycle";
 
 interface Env extends ManagedTelegramPeerEnv {
-  MANAGED_TELEGRAM_PEER: DurableObjectNamespace;
-  MANAGED_TELEGRAM_PAIRING: DurableObjectNamespace;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
