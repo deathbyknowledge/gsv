@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { ROOT_IDENTITY } from "../process/do-test-harness";
+import { deferred, ROOT_IDENTITY } from "../process/do-test-harness";
 import * as utils from "../shared/utils";
 import { ProcessRegistry } from "./processes";
 import { IpcCallStore } from "./ipc-calls";
@@ -35,12 +35,15 @@ async function build(sql: SqlStorage) {
     onboarding: { managedWorkGate: vi.fn(async () => ({ allowed: true as const })) },
     schedule: vi.fn(async () => ({ id: "retry", time: 1, callback: "onProcessApprovalNotice" as const, payload: notice })),
   };
-  const send = vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => ({
-    type: "res", id: frame.id, ok: true,
-    data: frame.type === "req" && frame.call === "proc.history"
-      ? { ok: true, pid: "child", messages: [], messageCount: 0, pendingHil: approval }
-      : { eventId: "notice", runId: "notice-run", queued: false },
-  }));
+  const send = vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
+    if (frame.type !== "req") throw new Error("Expected a process request");
+    return {
+      type: "res", id: frame.id, ok: true,
+      data: frame.call === "proc.event.deliver"
+        ? { eventId: frame.args.eventId, runId: "notice-run", queued: false }
+        : { ok: true, pid: "child", messages: [], messageCount: 0, pendingHil: approval },
+    };
+  });
   return { host, send, procs, ipcCalls };
 }
 
@@ -70,6 +73,70 @@ describe("delegated approval notices", () => {
       }
       await deliverProcessApprovalNotice(host, notice);
       expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("stops ancestry when an intermediate caller ignores the notice", async () => {
+    await fixture(async ({ host, send, ipcCalls }) => {
+      const implementation = send.getMockImplementation()!;
+      send.mockImplementation(async (...args) => {
+        const frame = args[2];
+        if (args[1] === "parent" && frame.type === "req" && frame.call === "proc.event.deliver") {
+          return { type: "res", id: frame.id, ok: true,
+            data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: true } };
+        }
+        return implementation(...args);
+      });
+      await deliverProcessApprovalNotice(host, notice);
+      expect(ipcCalls.get("parent-call")?.status).toBe("pending");
+      expect(send.mock.calls.map(([, pid]) => pid)).toEqual(["child", "parent"]);
+    });
+  });
+
+  it.each([
+    { name: "malformed", data: { eventId: "approval:request:parent-call", ignored: true } },
+    { name: "mismatched", data: { eventId: "another-notice", runId: null, queued: false } },
+  ])("rejects a $name acknowledgment before notifying the next ancestor", async ({ data }) => {
+    await fixture(async ({ host, send }) => {
+      const implementation = send.getMockImplementation()!;
+      send.mockImplementation(async (...args) => args[1] === "parent"
+        ? { type: "res", id: args[2].id, ok: true, data }
+        : implementation(...args));
+      await expect(deliverProcessApprovalNotice(host, notice)).rejects.toThrow("acknowledgment did not match");
+      expect(send.mock.calls.map(([, pid]) => pid)).toEqual(["child", "parent"]);
+    });
+  });
+
+  it.each(["cancelled", "completed", "replaced"])("stops ancestry when the delivered delegation is %s while awaiting acceptance", async (change) => {
+    await fixture(async ({ host, send, ipcCalls }) => {
+      const implementation = send.getMockImplementation()!;
+      const started = deferred();
+      const accepted = deferred();
+      send.mockImplementation(async (...args) => {
+        if (args[1] === "parent") {
+          started.resolve();
+          await accepted.promise;
+        }
+        return implementation(...args);
+      });
+      const delivery = deliverProcessApprovalNotice(host, notice);
+      await started.promise;
+      try {
+        if (change === "completed") {
+          ipcCalls.completeByRun({ uid: 1000, targetPid: "child", runId: "child-run", response: "finished" });
+        } else {
+          ipcCalls.cancelBySourceRun({ uid: 1000, sourcePid: "parent", sourceRunId: "parent-run" });
+          if (change === "replaced") {
+            ipcCalls.create({ callId: "replacement-call", uid: 1000, sourcePid: "parent",
+              sourceRunId: "parent-run", targetPid: "child", targetRunId: "child-run", deadlineAt: Date.now() + 60000 });
+          }
+        }
+      } finally {
+        accepted.resolve();
+      }
+      await delivery;
+      expect(ipcCalls.get("ship-call")?.status).toBe("pending");
+      expect(send.mock.calls.map(([, pid]) => pid)).toEqual(["child", "parent"]);
     });
   });
 

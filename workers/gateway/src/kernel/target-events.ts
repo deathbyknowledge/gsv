@@ -1,21 +1,14 @@
 import {
   procHistoryTargetEventRegistry, type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
-import { z } from "zod";
-import type { ProcessEventDeliverResult, InternalRequestFrame, InternalResponseFrame } from "../protocol/process-frames";
+import {
+  processEventDeliverResultSchema, type InternalRequestFrame, type InternalResponseFrame,
+} from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { Kernel } from "./do";
 import { getVisibleTarget } from "./targets";
 import { peerAllowsCall } from "./peer";
 import type { SignalWatchRecord } from "./signal-watches";
-
-const eventDeliveryResultSchema: z.ZodType<ProcessEventDeliverResult> = z.strictObject({
-  eventId: z.string(),
-  runId: z.string().nullable(),
-  queued: z.boolean(),
-  messageId: z.number().int().positive().optional(),
-  ignored: z.boolean().optional(),
-});
 
 /** Kernel lifecycle facts are the only producer; claimed machine frames never enter this path. */
 export async function deliverTargetConnectionEvent(
@@ -62,7 +55,7 @@ export async function deliverTargetConnectionEvent(
       if (!response || response.type !== "res" || !response.ok) {
         throw new Error("Target event delivery was not acknowledged");
       }
-      const result = eventDeliveryResultSchema.safeParse(response.data);
+      const result = processEventDeliverResultSchema.safeParse(response.data);
       if (!result.success || result.data.eventId !== eventId) {
         throw new Error("Target event acknowledgment did not match the delivery");
       }
