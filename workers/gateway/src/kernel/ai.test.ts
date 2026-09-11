@@ -6,7 +6,7 @@ import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import type { OAuthAccountRecord } from "./oauth-store";
-import type { InferenceExecutor, InferenceMediaResult } from "@humansandmachines/gsv/services/inference-execution";
+import type { InferenceExecutor, InferenceMediaResult, InferenceModelMetadata } from "@humansandmachines/gsv/services/inference-execution";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 const generateMock = vi.fn();
@@ -1869,6 +1869,54 @@ describe("handleAiConfig", () => {
     expect(result.contextWindowTokens).toBe(64000);
     expect(result.contextWindowSource).toBe("config");
     expect(resolveModel).not.toHaveBeenCalled();
+  });
+
+  it.each([200, 180_000])("bounds metadata resolution with generation timeout %i and disposes a late RPC", async (generationTimeoutMs) => {
+    vi.useFakeTimers();
+    const ctx = makeAiConfigContext({ "users/1000/ai/generation/timeout_ms": String(generationTimeoutMs) });
+    let resolve!: (value: InferenceModelMetadata) => void;
+    const dispose = vi.fn();
+    const rpc = Object.assign(new Promise<InferenceModelMetadata>((done) => { resolve = done; }), { [Symbol.dispose]: dispose });
+    const resolveModel = vi.fn(() => rpc);
+    ctx.env.INFERENCE_EXECUTION = { resolveModel, getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }) };
+    const completed = vi.fn();
+    const failed = vi.fn();
+    const pending = handleAiConfig({ modelConfig: { provider: "openai", model: "gpt-4.1-mini", apiKey: "request-key" } }, ctx).then(completed, failed);
+    const timeoutMs = Math.min(generationTimeoutMs, 5000);
+    try {
+      await vi.advanceTimersByTimeAsync(timeoutMs - 1);
+      expect(resolveModel).toHaveBeenCalledOnce();
+      expect(failed).not.toHaveBeenCalled();
+      expect(dispose).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        name: "TimeoutError", message: `Model metadata resolution timed out after ${timeoutMs}ms`,
+      }));
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      resolve({ provider: "openai", model: "gpt-4.1-mini", contextWindowTokens: 128000 });
+      await pending;
+      vi.useRealTimers();
+    }
+    expect(completed).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a resolved unknown context and clears its metadata deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = makeAiConfigContext();
+      ctx.env.INFERENCE_EXECUTION = {
+        resolveModel: vi.fn(async () => ({ provider: "custom", model: "unknown", contextWindowTokens: null })),
+        getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }),
+      };
+      const result = await handleAiConfig({ modelConfig: { provider: "custom", model: "unknown", apiKey: "request-key" } }, ctx);
+      expect(result.contextWindowTokens).toBeNull();
+      expect(result.contextWindowSource).toBe("unknown");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
