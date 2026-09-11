@@ -265,7 +265,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
 
   async inspectInstallationResource(): Promise<{ installationId: string; empty: boolean; understood: boolean }> {
     const tables = this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name != '_cf_METADATA'").toArray();
-    const known: readonly string[] = [...MAIL_OWNED_TABLES, "mail_retirement", "_gsv_schema_migrations"];
+    // Wrangler's local runtime stores only the Durable Object name in this exact metadata table.
+    const known: readonly string[] = [...MAIL_OWNED_TABLES, "mail_retirement", "_gsv_schema_migrations", "__miniflare_do_name"];
     const understood = tables.every((table) => known.includes(table.name)) && [...this.ctx.storage.kv.list()].length === 0;
     return { installationId: this.installationId, empty: MAIL_OWNED_TABLES.every((table) => !this.ctx.storage.sql.exec<{ present: number }>(`SELECT EXISTS(SELECT 1 FROM ${table} LIMIT 1) AS present`).one().present), understood };
   }

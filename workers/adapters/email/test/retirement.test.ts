@@ -21,6 +21,23 @@ const runtimeBindings: unknown = env;
 const mailEnv = runtimeBindings as MailEnv;
 
 describe("mail installation retirement", () => {
+  it("recognizes exact runtime identity metadata while rejecting unknown application tables", async () => {
+    const id = "installation_runtime_metadata";
+    const stub = mailEnv.MAIL_INSTALLATIONS.getByName(id);
+    await runInDurableObject(stub, async (value, state) => {
+      // SAFETY: MAIL_INSTALLATIONS binds the MailInstallation class in Wrangler.
+      const instance = value as MailInstallation;
+      state.storage.sql.exec("CREATE TABLE IF NOT EXISTS __miniflare_do_name (name TEXT)");
+      expect(await instance.inspectInstallationResource()).toMatchObject({ understood: true });
+      state.storage.sql.exec("CREATE TABLE __miniflare_application_data (value TEXT)");
+      expect(await instance.inspectInstallationResource()).toMatchObject({ understood: false });
+      expect(await instance.eraseInstallation(request(id))).toMatchObject({ outcome: "missing-inventory" });
+      state.storage.sql.exec("DROP TABLE __miniflare_application_data");
+      expect(await instance.eraseInstallation(request(id))).toMatchObject({ phase: "live-erased", pendingResources: 0 });
+      expect(state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = '__miniflare_do_name'").toArray()).toHaveLength(1);
+    });
+  });
+
   it("erases every owned row, retains a fence and preserves another space", async () => {
     const id = "installation_retirement";
     const stub = await populate(id);
