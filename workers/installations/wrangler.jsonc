@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-installations",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "GSV_BASE_DOMAIN": "example.com"
+  },
+  "d1_databases": [{
+    "binding": "INSTALLATIONS_DB",
+    "database_name": "gsv-installations",
+    "migrations_dir": "migrations",
+    "migrations_table": "installation_migrations"
+  }]
+}

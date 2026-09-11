@@ -86,6 +86,7 @@ Process history uses typed message, note, call, result, and event records. Stora
 
 - `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
 - `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
+- `workers/installations/`: public Accounts directory, ownership, onboarding, and reset preparation. During extraction the operator Worker consumes these stores while administration and commercial services are separated.
 - `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
 - `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.

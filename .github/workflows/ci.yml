@@ -22,6 +22,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       extension: ${{ steps.filter.outputs.extension }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      installations: ${{ steps.filter.outputs.installations }}
       adapters: ${{ steps.filter.outputs.adapters }}
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
@@ -96,6 +97,12 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'workers/gateway/**'
+            installations:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'workers/installations/**'
             adapters:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -226,7 +233,8 @@ jobs:
     if: >-
       needs.changes.outputs.sdk == 'true' ||
       needs.changes.outputs.web == 'true' ||
-      needs.changes.outputs.extension == 'true'
+      needs.changes.outputs.extension == 'true' ||
+      needs.changes.outputs.installations == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -251,6 +259,14 @@ jobs:
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'
         run: npm run check --workspace web
+
+      - name: Check installation services
+        if: needs.changes.outputs.installations == 'true'
+        run: npm run typecheck --workspace @humansandmachines/gsv-installations
+
+      - name: Test installation services
+        if: needs.changes.outputs.installations == 'true'
+        run: npm test --workspace @humansandmachines/gsv-installations
 
       - name: Test web shell
         if: needs.changes.outputs.web == 'true'

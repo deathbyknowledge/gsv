@@ -7,6 +7,7 @@
     "deployment",
     "extension",
     "workers/gateway",
+    "workers/installations",
     "web",
     "packages/*"
   ],
