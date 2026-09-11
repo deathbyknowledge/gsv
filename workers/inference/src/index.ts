@@ -10,3 +10,5 @@ export default class InferenceService extends WorkerEntrypoint<InferenceServiceE
   async getExecutor(installationId: string): Promise<ExecutorContract> { return getInferenceExecutor(this.env, installationId); }
   async resolveModel(provider: string, model: string): Promise<InferenceModelMetadata> { return resolveInferenceModel(this.env, provider, model); }
 }
+
+export { InferenceLifecycleEntrypoint } from "./lifecycle";

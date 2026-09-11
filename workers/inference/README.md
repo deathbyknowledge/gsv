@@ -58,3 +58,14 @@ Run `npm run typecheck --workspace workers/inference` and
 installation scopes, directory admission, quotas, streaming, selected-target
 transport, cancellation, media bodies, restart, and expiry. Test bindings are
 local fakes and do not call a live provider.
+
+Accounts may bind `InferenceLifecycleEntrypoint` with deployment props
+`{ authority: "installation-deletion" }` as an application-data deletion owner.
+The entrypoint checks the exact retired installation in the directory before
+addressing its executor. Quiescence persists an immutable retirement operation,
+cancels active streams and alarms, and fences later requests and settlement.
+Erasure removes request and usage rows in batches of at most 200 rows per table;
+Accounts repeats it until the content-free receipt reports completion. Only the
+identity, schema metadata, and retirement tombstone remain. Ordinary execution
+targets expose no lifecycle methods. Operator logs, provider copies and backups
+remain separate deletion/retention owners in the deployment inventory.

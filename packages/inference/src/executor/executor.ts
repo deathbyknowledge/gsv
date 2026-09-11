@@ -16,6 +16,9 @@ import { requestBinding } from "./bodies";
 import * as z from "zod/mini";
 import { errorMessageFromUnknown, formatProviderErrorMessage } from "../text/errors";
 
+import { InferenceRetirement } from "./retirement";
+import type { InstallationDeletionRequest, InstallationDeletionReceipt, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+
 type RequestIdentity = Pick<InferenceExecutionRequest, "version" | "installationId" | "logicalRequestId" | "actor" | "timeoutMs" | "deadlineAt">;
 
 type ActiveRequest = {
@@ -30,8 +33,9 @@ type ActiveRequest = {
 
 /** Shared request ownership for reference hosting and commercial composition. */
 export class InferenceExecutor<Environment extends ExecutorEnvironment = ExecutorEnvironment>
-  extends DurableObject<Environment> implements ExecutorContract {
+  extends DurableObject<Environment> implements ExecutorContract, InstallationDeletionService {
   private readonly store: ExecutorStore;
+  private readonly retirement: InferenceRetirement;
   private readonly active = new Map<string, ActiveRequest>();
   private readonly installationId: string;
 
@@ -39,6 +43,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
     super(ctx, env);
     this.store = new ExecutorStore(ctx.storage);
     this.installationId = this.store.installationId(ctx.id.name ? opaqueId(ctx.id.name) : undefined);
+    this.retirement = new InferenceRetirement(ctx.storage, this.installationId);
     // Provider operations do not survive an isolate restart. Never replay them.
     this.store.recover();
     this.scheduleExpiry();
@@ -132,6 +137,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
 
   async abort(id: string, reason: ManagedInferenceAbortReason = "cancelled"): Promise<void> {
     opaqueId(id);
+    if (this.retirement.get()) return;
     if (reason !== "cancelled" && reason !== "timeout") throw new Error("Invalid inference abort reason");
     const active = this.active.get(id);
     if (active) {
@@ -222,6 +228,36 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
     });
   }
 
+  async quiesceInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    this.retirement.begin(input);
+    for (const request of this.active.values()) this.finish(request, "cancelled");
+    await this.ctx.storage.deleteAlarm();
+    if (this.retirement.get()?.phase === "quiescing") this.retirement.phase("quiesced");
+    return this.installationDeletionStatus(input);
+  }
+
+  async eraseInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    this.retirement.validate(input);
+    if (!this.retirement.get()) throw new Error("Inference deletion must quiesce first");
+    if (this.active.size !== 0) return this.quiesceInstallation(input);
+    this.ctx.storage.transactionSync(() => {
+      this.retirement.phase("erasing");
+      this.ctx.storage.sql.exec("DELETE FROM executor_requests WHERE request_id IN (SELECT request_id FROM executor_requests LIMIT 200)");
+      this.ctx.storage.sql.exec("DELETE FROM executor_usage WHERE month IN (SELECT month FROM executor_usage LIMIT 200)");
+      if (this.deletionResources() === 0) this.retirement.phase("erased");
+    });
+    await this.ctx.storage.deleteAlarm();
+    return this.installationDeletionStatus(input);
+  }
+
+  async installationDeletionStatus(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    return this.retirement.receipt(input, this.deletionResources());
+  }
+
+  private deletionResources(): number {
+    return this.ctx.storage.sql.exec<{ count: number }>("SELECT (SELECT COUNT(*) FROM executor_requests) + (SELECT COUNT(*) FROM executor_usage) AS count").one().count + this.active.size;
+  }
+
   async alarm(): Promise<void> {
     for (const id of this.store.expire(Date.now())) {
       const request = this.active.get(id);
@@ -235,6 +271,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
   }
 
   private open(input: RequestIdentity, transport?: InferenceTransport): ActiveRequest {
+    this.retirement.requireLive();
     if (input.version !== 1 || input.installationId !== this.installationId) throw new Error("Inference installation scope mismatch");
     opaqueId(input.logicalRequestId);
     if (!Number.isSafeInteger(input.actor?.localUid) || input.actor.localUid < 0) throw new Error("Invalid inference actor");

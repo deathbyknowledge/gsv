@@ -39,6 +39,8 @@ export class ExecutorStore {
     return name;
   }
 
+  retired(): boolean { return this.storage.sql.exec("SELECT 1 FROM inference_retirement").toArray().length !== 0; }
+
   get(id: string): RequestRow | undefined {
     return this.storage.sql.exec<RequestRow>(
       "SELECT * FROM executor_requests WHERE request_id = ?", id,
@@ -47,6 +49,7 @@ export class ExecutorStore {
 
   admit(id: string, uid: number, deadline: number, tokens: number, limits: ExecutorLimits): void {
     this.storage.transactionSync(() => {
+      if (this.retired()) throw new Error("Inference installation is retired");
       if (this.get(id)) throw new Error("Inference request identity has already been used");
       const now = Date.now();
       const month = new Date(now).toISOString().slice(0, 7);
@@ -73,6 +76,7 @@ export class ExecutorStore {
 
   finish(id: string, state: TerminalState, outputTokens?: number): TerminalState {
     return this.storage.transactionSync(() => {
+      if (this.retired()) return "cancelled";
       const row = this.get(id);
       if (!row) {
         const now = Date.now();
@@ -98,12 +102,14 @@ export class ExecutorStore {
   }
 
   recover(): void {
+    if (this.retired()) return;
     for (const row of this.storage.sql.exec<RequestRow>("SELECT * FROM executor_requests WHERE state = 'active'").toArray()) {
       this.finish(row.request_id, Date.now() >= row.deadline_at ? "timeout" : "interrupted");
     }
   }
 
   expire(now: number): string[] {
+    if (this.retired()) return [];
     const expired = this.storage.sql.exec<RequestRow>(
       "SELECT * FROM executor_requests WHERE state = 'active' AND deadline_at <= ?", now,
     ).toArray();
@@ -117,6 +123,7 @@ export class ExecutorStore {
   }
 
   nextAlarm(): number | undefined {
+    if (this.retired()) return undefined;
     return this.storage.sql.exec<{ at: number | null }>(
       "SELECT MIN(CASE WHEN state = 'active' THEN deadline_at ELSE expires_at END) AS at FROM executor_requests",
     ).one().at ?? undefined;

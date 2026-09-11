@@ -1,6 +1,8 @@
 import { EXECUTOR_V001_INITIAL } from "./v001_initial";
 
-export const EXECUTOR_MIGRATIONS = [EXECUTOR_V001_INITIAL] as const;
+import { EXECUTOR_V002_RETIREMENT } from "./v002_retirement";
+
+export const EXECUTOR_MIGRATIONS = [EXECUTOR_V001_INITIAL, EXECUTOR_V002_RETIREMENT] as const;
 
 /** Request and counter schema has its own version history in both deployments. */
 export function migrateExecutor(storage: DurableObjectStorage): void {
