@@ -54,6 +54,7 @@ export const discordGatewayFixture = String.raw`
 import { WorkerEntrypoint } from "cloudflare:workers";
 const calls = [];
 export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
+  async resolveInstallation(installationId) { return { found: true, installationId, state: installationId.startsWith("retired-") ? "retained" : "active", handle: installationId, canonicalOrigin: "https://" + installationId + ".gsv.test" }; }
   async serviceFrame(installation, frame) {
     const bytes = frame.body ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer())) : undefined;
     calls.push({ installation, call: frame.call, args: frame.args, bytes });

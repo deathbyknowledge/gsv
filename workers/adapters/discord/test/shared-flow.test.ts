@@ -1,3 +1,4 @@
+import type { DiscordLifecycleEntrypoint } from "../src/lifecycle";
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SharedDiscordEnv } from "../src/shared-application";
@@ -10,6 +11,8 @@ import type { AdapterPairingPreparation } from "../../shared/src/types";
 
 // SAFETY: the fixture Wrangler file declares these concrete namespaces and service entrypoints.
 const bindings = env as SharedDiscordEnv & { TARGET_ADAPTER: Pick<SharedDiscordChannel, "adapterFrame" | "adapterPairingInspect" | "adapterPairingPrepare" | "adapterPairingActivate" | "adapterPairingFinalize"> };
+// SAFETY: the fixture binds this lifecycle entrypoint with the deletion authority props.
+const lifecycle = (env as SharedDiscordEnv & { LIFECYCLE: Pick<DiscordLifecycleEntrypoint, "inspectInstallationDeletion" | "importInstallationDeletionInventory" | "quiesceInstallation" | "eraseInstallation"> }).LIFECYCLE;
 const adapter = bindings.TARGET_ADAPTER;
 const application = bindings.DISCORD_APPLICATION.getByName("application:1000");
 type ProviderSent = { id: string; channel: string; body: { content?: string; nonce?: string } };
@@ -231,5 +234,39 @@ describe("shared Discord provider → peer → Gateway", () => {
       expect(await state.storage.get("botUser")).toEqual({ id: "1000", username: "GSV fixture" });
     });
   });
+
+  it("discovers and retires a linked space while preserving the shared application and another peer", async () => {
+    await start();
+    const installationId = "retired-discord-journey";
+    const code = await issue("2601", "3601");
+    const route = await link(code, installationId);
+    const other = await link(await issue("2602", "3602"), "preserved-discord-journey");
+    await until(sent, (rows) => rows.some((row) => row.channel === "82601" && row.body.content?.includes("Connected")));
+    const peerName = discordPeerName(discordAccount("1000"), "discord:user:2601");
+    const peer = bindings.DISCORD_PEER.getByName(peerName);
+    const pairingName = `pair:${code.replaceAll("-", "")}`;
+    const index = bindings.DISCORD_INSTALLATIONS.getByName(installationId);
+    const resources = [
+      { kind: "adapter-installation" as const, name: installationId, objectId: index.id.toString(), namespaceId: "1".repeat(32) },
+      { kind: "adapter-peer" as const, name: peerName, objectId: peer.id.toString(), namespaceId: "2".repeat(32) },
+      { kind: "adapter-pairing" as const, name: pairingName, objectId: bindings.DISCORD_PAIRING.idFromName(pairingName).toString(), namespaceId: "3".repeat(32) },
+    ];
+    await lifecycle.inspectInstallationDeletion({ installationId, resources: [] });
+    const inspected = await lifecycle.inspectInstallationDeletion({ installationId, resources: [...resources, { kind: "adapter-application", objectId: application.id.toString(), namespaceId: "4".repeat(32) }] });
+    expect(inspected.observations.slice(0, 3)).toMatchObject(resources.map((resource) => ({ ...resource, outcome: "identified", installationId })));
+    expect(inspected.observations[3]).toMatchObject({ outcome: "unrelated", name: "application:1000", namespaceId: "4".repeat(32) });
+    const imported = await lifecycle.importInstallationDeletionInventory({ installationId, discoverySha256: "a".repeat(64), resources });
+    expect(imported.outcome).toBe("verified");
+    const input = { version: 1 as const, installationId, operationId: "retire-discord-journey" };
+    await lifecycle.quiesceInstallation(input);
+    const erased = await lifecycle.eraseInstallation(input);
+    expect(erased).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
+    expect(await peer.sendMessage(installationId, { deliveryId: "late-retired", actorId: "discord:user:2601", surface: { kind: "dm", id: "82601" }, text: "Late", routeGeneration: route.route.generation })).toMatchObject({ ok: false });
+    expect(await application.getBotToken()).toBeNull();
+    expect((await application.getStatus()).connected).toBe(true);
+    const preservedPeer = bindings.DISCORD_PEER.getByName(discordPeerName(discordAccount("1000"), "discord:user:2602"));
+    expect(await preservedPeer.sendMessage("preserved-discord-journey", { deliveryId: "preserved-delivery", actorId: "discord:user:2602", surface: { kind: "dm", id: "82602" }, text: "Preserved", routeGeneration: other.route.generation })).toMatchObject({ ok: true });
+  });
+
 
 });

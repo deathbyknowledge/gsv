@@ -1,3 +1,4 @@
+import { isAdapterOwnerRetired, sameAdapterDataOwner, type AdapterDataScope } from "./retirement";
 import type { ProcHilRequest } from "../../../../packages/gsv/src/protocol/syscalls/proc.js";
 import { callLinkedAdapterGateway, type AdapterGatewayBinding } from "./gateway-rpc";
 import type { AdapterHilPresentation } from "./peer-render";
@@ -46,6 +47,7 @@ type StoredAdapterHilContext = Pick<
 >;
 
 type AdapterHilRecord = {
+  owner?: AdapterDataScope;
   version: 1;
   provider: string;
   token: string;
@@ -85,6 +87,7 @@ export async function prepareAdapterHilApproval(
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
   presentationInput: AdapterHilPresentation,
+  owner?: AdapterDataScope,
 ): Promise<string | null> {
   if (
     context.surface.kind !== "dm"
@@ -102,9 +105,10 @@ export async function prepareAdapterHilApproval(
   const token = await approvalToken(normalizedProvider, context.deliveryId);
   const now = Date.now();
   storage.transactionSync(() => {
+    if (isAdapterOwnerRetired(storage, owner)) throw new Error("Adapter installation is retired");
     const existing = readAdapterHilRecord(storage.sql, normalizedProvider, token);
     if (existing && existing.expiresAt > now) {
-      if (!sameApproval(existing, binding, context, request, presentation)) {
+      if (!sameApproval(existing, binding, context, request, presentation) || existing.owner !== undefined && !sameAdapterDataOwner(existing.owner, owner)) {
         throw new Error("Adapter approval token is already bound to another request");
       }
       return;
@@ -130,8 +134,9 @@ export async function prepareAdapterHilApproval(
       createdAt: now,
       expiresAt: now + APPROVAL_RETENTION_MS,
     };
+    if (owner !== undefined) record.owner = owner;
     if (binding !== undefined) record.binding = binding;
-    writeAdapterHilRecord(storage.sql, record);
+    writeAdapterHilRecord(storage, record);
   });
   pruneAdapterHilApprovals(storage.sql, now);
   return token;
@@ -149,7 +154,7 @@ export async function attachAdapterHilApprovalMessage(
   storage.transactionSync(() => {
     const record = readAdapterHilRecord(storage.sql, normalizedProvider, normalizedToken);
     if (!record || record.providerMessageId === providerMessageId) return;
-    writeAdapterHilRecord(storage.sql, {
+    writeAdapterHilRecord(storage, {
       ...record,
       providerMessageId,
     } satisfies AdapterHilRecord);
@@ -168,7 +173,7 @@ export async function submitAdapterHilApproval(
   const now = Date.now();
   const claimed = storage.transactionSync(() => {
     const record = readAdapterHilRecord(storage.sql, provider, token);
-    if (!matchesCallback(record, callback, now)) {
+    if (!matchesCallback(record, callback, now) || isAdapterOwnerRetired(storage, record?.owner) || record?.owner && record.owner.installationId !== installation.installationId) {
       return { kind: "invalid" as const };
     }
     if (record.state === "resolved") {
@@ -195,7 +200,7 @@ export async function submitAdapterHilApproval(
       processingInteractionId: callback.interactionId,
       processingAt: now,
     };
-    writeAdapterHilRecord(storage.sql, processing);
+    writeAdapterHilRecord(storage, processing);
     return { kind: "claimed" as const, record: processing };
   });
 
@@ -273,7 +278,7 @@ export async function submitAdapterHilApproval(
       processingInteractionId: __,
       ...resolved
     } = current;
-    writeAdapterHilRecord(storage.sql, {
+    writeAdapterHilRecord(storage, {
       ...resolved,
       state: "resolved",
       providerMessageId: current.providerMessageId ?? callback.providerMessageId,
@@ -330,7 +335,7 @@ function releaseAdapterHilApproval(
       processingInteractionId: __,
       ...pending
     } = current;
-    writeAdapterHilRecord(storage.sql, {
+    writeAdapterHilRecord(storage, {
       ...pending,
       state: "pending",
     } satisfies AdapterHilRecord);
@@ -416,8 +421,9 @@ function readAdapterHilRecord(
   return row ? JSON.parse(row.record_json) as AdapterHilRecord : undefined;
 }
 
-function writeAdapterHilRecord(sql: SqlStorage, record: AdapterHilRecord): void {
-  sql.exec(
+function writeAdapterHilRecord(storage: DurableObjectStorage, record: AdapterHilRecord): void {
+  if (isAdapterOwnerRetired(storage, record.owner)) return;
+  storage.sql.exec(
     `INSERT INTO adapter_hil_approvals
        (provider, token, state, record_json, expires_at)
      VALUES (?, ?, ?, ?, ?)
@@ -438,4 +444,28 @@ function pruneAdapterHilApprovals(
   now: number,
 ): void {
   sql.exec("DELETE FROM adapter_hil_approvals WHERE expires_at <= ?", now);
+}
+
+type AdapterHilOwnership = { installationIds: string[]; unattributed: number; ownedCount: number };
+
+/** Content-free ownership inspection; legacy approvals without captured owners stay unresolved. */
+export function inspectAdapterHilOwnership(storage: DurableObjectStorage, installationId?: string): AdapterHilOwnership {
+  const rows = storage.sql.exec<{ installation_id: string | null; owner_type: string | null }>(
+    "SELECT json_extract(record_json, '$.owner.installationId') AS installation_id, json_type(record_json, '$.owner') AS owner_type FROM adapter_hil_approvals",
+  ).toArray();
+  return {
+    installationIds: [...new Set(rows.flatMap((row) => row.installation_id ? [row.installation_id] : []))],
+    unattributed: rows.filter((row) => row.owner_type === null).length,
+    ownedCount: rows.filter((row) => row.installation_id === installationId).length,
+  };
+}
+
+export function eraseAdapterHilInstallation(storage: DurableObjectStorage, installationId: string, limit = 256): number {
+  storage.sql.exec(
+    `DELETE FROM adapter_hil_approvals WHERE (provider, token) IN (
+       SELECT provider, token FROM adapter_hil_approvals
+       WHERE json_extract(record_json, '$.owner.installationId') = ? LIMIT ?
+     )`, installationId, limit,
+  );
+  return storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM adapter_hil_approvals WHERE json_extract(record_json, '$.owner.installationId') = ?", installationId).one().count;
 }

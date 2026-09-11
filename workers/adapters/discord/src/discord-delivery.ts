@@ -1,3 +1,4 @@
+import type { AdapterDataScope } from "../../shared/src/retirement";
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
@@ -35,7 +36,7 @@ export async function deliverDiscordMessage(
   botToken: string | null,
   message: AdapterOutboundMessage,
   binaryBody?: BinaryBody,
-  options: { providerFetch?: typeof fetch; isCurrent?: () => Promise<boolean> } = {},
+  options: { providerFetch?: typeof fetch; isCurrent?: () => Promise<boolean>; owner?: AdapterDataScope; signal?: AbortSignal } = {},
 ): Promise<AdapterSendResult> {
   if (!botToken) {
     await cancelBinaryBody(binaryBody, "No Discord bot token configured");
@@ -76,6 +77,7 @@ export async function deliverDiscordMessage(
   let mediaBytes: Array<Uint8Array | undefined>;
   try {
     mediaBytes = await readAdapterMediaBody(media, binaryBody, {
+      signal: options.signal,
       maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
       maxPartBytes: MAX_MEDIA_BODY_BYTES,
     });
@@ -104,7 +106,7 @@ export async function deliverDiscordMessage(
 
   let claim;
   try {
-    claim = await deliveries.claim(message.deliveryId, requestFingerprint);
+    claim = await deliveries.claim(message.deliveryId, requestFingerprint, options.owner);
   } catch (error) {
     return {
       ok: false,

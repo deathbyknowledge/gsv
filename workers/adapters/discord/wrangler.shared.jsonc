@@ -26,6 +26,10 @@
       {
         "name": "DISCORD_PAIRING",
         "class_name": "DiscordPairing"
+      },
+      {
+        "name": "DISCORD_INSTALLATIONS",
+        "class_name": "DiscordInstallation"
       }
     ]
   },
@@ -43,6 +47,12 @@
         "DiscordPeer",
         "DiscordPairing"
       ]
+    },
+    {
+      "tag": "v3-installation-retirement",
+      "new_sqlite_classes": [
+        "DiscordInstallation"
+      ]
     }
   ],
   "services": [
@@ -57,6 +67,10 @@
           "adapter.state.update"
         ]
       }
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "gsv-installations"
     }
   ],
   "triggers": {

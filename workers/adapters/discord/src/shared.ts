@@ -1,3 +1,4 @@
+export { DiscordInstallation, DiscordLifecycleEntrypoint } from "./lifecycle";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";

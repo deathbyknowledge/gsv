@@ -1,3 +1,6 @@
+import type { InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
+import { AdapterRetirement } from "../../shared/src/retirement";
+import { AdapterPeerRetirement } from "../../shared/src/peer-retirement";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
@@ -25,11 +28,22 @@ const routeSchema = z.object({ installationId: z.string().trim().min(1).max(200)
 
 /** The only Discord owner that can associate a provider actor with a space. */
 export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
-  private readonly deliveries = new DeliveryLedger(this.ctx.storage);
+  private readonly retirement = new AdapterRetirement(this.ctx.storage);
+  private readonly deliveries = new DeliveryLedger(this.ctx.storage, { retirement: this.retirement });
   private readonly inbound = new InboundDeliveryLedger<Inbound, ResponseContext>(this.ctx.storage, "discord_peer:inbound:", {
-    completedRetentionMs: 7 * 24 * 60 * 60 * 1000, maxRecords: 4096, pendingOrder: "key",
+    retirement: this.retirement, completedRetentionMs: 7 * 24 * 60 * 60 * 1000, maxRecords: 4096, pendingOrder: "key",
+  });
+  private readonly lifecycle = new AdapterPeerRetirement<PeerState>(this.ctx.storage, this.retirement, {
+    stateKey: STATE_KEY, inboundPrefix: "discord_peer:inbound:", inbound: this.inbound, outbound: this.deliveries, hil: false,
+    identity: (state) => ({ name: discordPeerName(state.accountId, state.actorId), understood: state.version === 1
+      && Object.keys(state).every((key) => ["version", "accountId", "actorId", "actorName", "dmSurfaceId", "observedSurfaces", "activeRoute", "pairing", "lastDisconnect"].includes(key)) }),
   });
   private draining?: Promise<void>;
+
+  async inspectInstallationResource(installationId: string) { return await this.lifecycle.inspect(installationId); }
+  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.quiesce(input); }
+  async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
+  async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
   async receive(input: DiscordPeerInbound): Promise<void> {
     const message = discordMessagePayloadSchema.parse(input.message);
@@ -40,7 +54,7 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
     discordId(message.id);
     discordId(message.channel_id);
     const surface: AdapterSurface = { kind: account.guildId ? "group" : "dm", id: message.channel_id };
-    const generation = await this.ctx.storage.transaction(async (txn) => {
+    const owner = await this.ctx.storage.transaction(async (txn) => {
       const current = await txn.get<PeerState>(STATE_KEY);
       const state: PeerState = {
         ...current, version: 1, accountId: input.accountId, actorId: input.actorId, actorName: message.author!.username,
@@ -48,9 +62,10 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
         observedSurfaces: [surface, ...(current?.observedSurfaces ?? []).filter((old) => old.id !== surface.id)].slice(0, 128),
       };
       await txn.put(STATE_KEY, state);
-      return state.activeRoute?.generation;
+      return state.activeRoute;
     });
-    await this.inbound.enqueueAndArm(message.id, { ...input, message, generation }, Date.now() + 25);
+    if (this.retirement.retired(owner)) return;
+    await this.inbound.enqueueAndArm(message.id, { ...input, message, generation: owner?.generation }, Date.now() + 25, owner ?? null);
     this.ctx.waitUntil(this.drain());
   }
 
@@ -75,7 +90,12 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
 
   async preparePairing(claimId: string, expiresAt: number, input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation> {
     const route: AdapterPeerRoute = { ...routeSchema.parse({ ...input, generation: crypto.randomUUID() }), canonicalOrigin: canonicalOrigin(input.canonicalOrigin), linkedAt: Date.now() };
+    const current = await this.state();
+    await this.env.DISCORD_INSTALLATIONS.getByName(input.installationId).registerResource({
+      kind: "adapter-peer", name: discordPeerName(current.accountId, current.actorId), objectId: this.ctx.id.toString(), generation: route.generation,
+    });
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<PeerState>(STATE_KEY);
       if (!state) throw new Error("Discord peer is not initialized");
       const prepared = state.pairing?.operationId === input.operationId ? state.pairing.preparedRoute : undefined;
@@ -99,6 +119,7 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
     return await this.ctx.storage.transaction(async (txn) => {
       const state = await txn.get<PeerState>(STATE_KEY);
       if (!state) throw new Error("Discord peer is not initialized");
+      this.retirement.requireLive(route);
       const next = (phase === "activate" ? activateAdapterPairing : finalizeAdapterPairing)(state, { claimId, expiresAt, operationId: input.operationId, route });
       await txn.put(STATE_KEY, next.state);
       return preparation(next.state, next.pairing);
@@ -211,10 +232,20 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
   }
 
   private async deliver(message: AdapterOutboundMessage, context: ResponseContext, body?: BinaryBody): Promise<AdapterSendResult> {
-    if (!await this.current(context, message)) { await cancelBinaryBody(body, "Discord route changed before delivery"); return { ok: false, error: "Discord route changed before delivery" }; }
-    return await deliverDiscordMessage(this.deliveries, this.env.DISCORD_BOT_TOKEN ?? null, message, body, { providerFetch: this.providerFetch(), isCurrent: () => this.current(context, message) });
+    const owner = context.kind === "route" ? context : null;
+    let release: (() => void) | undefined;
+    try {
+      release = this.retirement.start(owner);
+      if (!await this.current(context, message)) { await cancelBinaryBody(body, "Discord route changed before delivery"); return { ok: false, error: "Discord route changed before delivery" }; }
+      return await deliverDiscordMessage(this.deliveries, this.env.DISCORD_BOT_TOKEN ?? null, message, body, {
+        providerFetch: this.providerFetch(), isCurrent: () => this.current(context, message), owner,
+        signal: owner ? this.retirement.signal(owner) : undefined,
+      });
+    } catch (error) { await cancelBinaryBody(body, error); throw error; }
+    finally { release?.(); }
   }
   private async current(context: ResponseContext, message: Pick<AdapterOutboundMessage, "surface" | "actorId">): Promise<boolean> {
+    if (context.kind === "route" && this.retirement.retired(context)) return false;
     const state = await this.state();
     if (message.actorId !== state.actorId || !state.observedSurfaces.some((surface) => surface.id === message.surface.id && surface.kind === message.surface.kind)) return false;
     return context.kind === "pairing" ? state.pairing?.claimId === context.claimId && state.pairing.status === "pending"

@@ -26,6 +26,10 @@
       {
         "name": "DISCORD_PAIRING",
         "class_name": "DiscordPairing"
+      },
+      {
+        "name": "DISCORD_INSTALLATIONS",
+        "class_name": "DiscordInstallation"
       }
     ]
   },
@@ -42,6 +46,12 @@
         "DiscordApplication",
         "DiscordPeer",
         "DiscordPairing"
+      ]
+    },
+    {
+      "tag": "v3-installation-retirement",
+      "new_sqlite_classes": [
+        "DiscordInstallation"
       ]
     }
   ],
@@ -66,6 +76,19 @@
     {
       "binding": "DISCORD_API",
       "service": "shared-discord-api-test"
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "shared-discord-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint"
+    },
+    {
+      "binding": "LIFECYCLE",
+      "service": "gsv-shared-discord-test",
+      "entrypoint": "DiscordLifecycleEntrypoint",
+      "props": {
+        "authority": "installation-deletion"
+      }
     }
   ],
   "triggers": {
