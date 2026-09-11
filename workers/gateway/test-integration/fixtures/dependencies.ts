@@ -24,6 +24,7 @@ import type {
   InstallationDirectoryResult,
   InstallationOnboardingAuthorization,
   ManagedInstallationState,
+  ManagedInferenceAbortReason,
   ManagedInferenceRequest,
   ManagedInferenceResult,
 } from "@humansandmachines/gsv/protocol";
@@ -129,8 +130,18 @@ export class IntegrationState extends DurableObject<Env> {
     return failure;
   }
 
-  async recordManagedInferenceCancellation(installationId: string): Promise<void> {
-    await this.ctx.storage.put(`managed-inference-cancelled:${installationId}`, true);
+  async recordManagedInferenceCancellation(
+    installationId: string,
+    reason: ManagedInferenceAbortReason,
+  ): Promise<void> {
+    await this.ctx.storage.put({
+      [`managed-inference-cancelled:${installationId}`]: true,
+      [`managed-inference-abort-reason:${installationId}`]: reason,
+    });
+  }
+
+  async managedInferenceAbortReason(installationId: string): Promise<ManagedInferenceAbortReason | undefined> {
+    return await this.ctx.storage.get(`managed-inference-abort-reason:${installationId}`);
   }
 
   async wasManagedInferenceCancelled(installationId: string): Promise<boolean> {
@@ -291,12 +302,13 @@ class ManagedInferenceTarget
     });
   }
 
-  async abort(_logicalRequestId: string): Promise<void> {
+  async abort(_logicalRequestId: string, reason: ManagedInferenceAbortReason = "cancelled"): Promise<void> {
     const id = this.#env.INTEGRATION_STATE.idFromName(
       SINGLETON_INSTALLATION_ID,
     );
     await this.#env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
       this.#installationId,
+      reason,
     );
   }
 }

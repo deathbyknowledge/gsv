@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const completePiAiSimpleMock = vi.hoisted(() => vi.fn());
 const streamPiAiSimpleMock = vi.hoisted(() => vi.fn());
@@ -106,6 +106,8 @@ beforeEach(() => {
   streamWithOpenAiCodexFetchMock.mockReset();
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe("resolveGenerationOptions", () => {
   it("preserves configured reasoning for chat replies", () => {
     const result = resolveGenerationOptions({
@@ -175,6 +177,47 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
+  it("keeps the original deadline through provider creation and emits a timeout error", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = Date.now() + 1_000;
+    const target: ManagedInferenceTarget = {
+      generate: vi.fn(),
+      generateStream: vi.fn(async () => new ReadableStream<Uint8Array>()),
+      abort: vi.fn(async () => {}),
+    };
+    const factory = createGsvInferenceProviderFactory({
+      getInstallation: async () => target,
+    });
+    const service = createProductionGenerationService({
+      providers: [{
+        ...factory,
+        create(attribution, options) {
+          vi.advanceTimersByTime(250);
+          return factory.create(attribution, options);
+        },
+      }],
+    });
+    const stream = service.stream({
+      config: { ...CONFIG, provider: GSV_INFERENCE_PROVIDER, model: GSV_INFERENCE_MODEL },
+      context: CONTEXT,
+      options: { timeoutMs: 1_000 },
+      attribution: {
+        installationId: "inst_test",
+        logicalRequestId: "request_deadline",
+        actor: { localUid: 1000 },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(target.generateStream).toHaveBeenCalledWith(expect.objectContaining({ deadlineAt }));
+    await vi.advanceTimersByTimeAsync(750);
+
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "error",
+      errorMessage: "Model generation timed out after 1000ms",
+    });
+    expect(target.abort).toHaveBeenCalledExactlyOnceWith("request_deadline", "timeout");
+  });
+
   it("routes gsv/default through the managed binding with trusted identity", async () => {
     const managedResult: ManagedInferenceResult = {
       role: "assistant",

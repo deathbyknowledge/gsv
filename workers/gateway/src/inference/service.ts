@@ -19,7 +19,7 @@ import {
   workersAiBindingFetch,
   workersAiProvider,
 } from "./workers-ai";
-import { withTimeout } from "./timeout";
+import { createGenerationAbort, generationTimeoutMessage, withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
 import {
   completePiAiSimple,
@@ -153,8 +153,9 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const piAi = resolvePiAiProviderModel(providerFactory, request, options);
-    const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+    const deadlineAt = Date.now() + generationTimeoutMs;
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt);
+    const abort = createGenerationAbort(request.signal, generationTimeoutMs, deadlineAt);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
       : undefined;
@@ -247,8 +248,9 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const piAi = resolvePiAiProviderModel(providerFactory, request, options);
-    const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+    const deadlineAt = Date.now() + generationTimeoutMs;
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options, deadlineAt);
+    const abort = createGenerationAbort(request.signal, generationTimeoutMs, deadlineAt);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
       : undefined;
@@ -335,6 +337,7 @@ function resolvePiAiProviderModel(
   factory: InferenceProviderFactory | undefined,
   request: GenerateRequest,
   options: ResolvedGenerationOptions,
+  deadlineAt: number,
 ): PiAiProviderModel {
   if (isWorkersAiProvider(options.modelProvider)) {
     const models = modelsWithProviders([workersAiProvider]);
@@ -353,7 +356,7 @@ function resolvePiAiProviderModel(
   if (!request.attribution) {
     throw new Error(`Inference attribution is unavailable for provider: ${factory.id}`);
   }
-  const provider = factory.create(request.attribution);
+  const provider = factory.create(request.attribution, { deadlineAt });
   const models = modelsWithProviders([provider]);
   const model = models.getModel(provider.id, options.modelName);
   if (!model) {
@@ -489,26 +492,4 @@ function normalizePositiveNumber(value: number | null | undefined): number | nul
 
 function generationReasoningFromLevel(level: ReturnType<typeof resolveModelThinkingLevel>): ThinkingLevel | null {
   return level && level !== "off" ? level : null;
-}
-
-function generationTimeoutMessage(timeoutMs: number): string {
-  return `Model generation timed out after ${timeoutMs}ms`;
-}
-
-type GenerationAbort = { signal: AbortSignal; clear: () => void };
-
-function createGenerationAbort(
-  callerSignal: AbortSignal | undefined,
-  timeoutMs: number,
-): GenerationAbort {
-  const timeoutController = new AbortController();
-  const timeout = setTimeout(() => {
-    timeoutController.abort(new Error(generationTimeoutMessage(timeoutMs)));
-  }, timeoutMs);
-  return {
-    signal: callerSignal
-      ? AbortSignal.any([callerSignal, timeoutController.signal])
-      : timeoutController.signal,
-    clear: () => clearTimeout(timeout),
-  };
 }
