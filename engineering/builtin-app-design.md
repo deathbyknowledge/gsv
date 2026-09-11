@@ -102,7 +102,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Zen's empty state. The design catalog remains a separate development surface and loads only when opened.
+Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Zen's empty state. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object
