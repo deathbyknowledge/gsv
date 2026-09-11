@@ -205,7 +205,7 @@ export class AdapterInstallationRetirement implements InstallationDeletionServic
     const phase = state.phase === "active" || state.phase === "importing" ? "pending" : state.phase;
     return { ...input, phase, updatedAt: state.updated_at,
       outcome: override ?? (!state.inventory_complete ? "missing-inventory" : phase === "live-erased" ? "retention-pending" : "progress"),
-      pendingResources: this.count("live") + this.count("quiesced") + this.count("live-erased"),
+      pendingResources: this.count("live") + this.count("quiesced"),
       retainedCopies: [...retained].map(([kind, expiresAt]) => ({ id: `adapter-${kind}`, kind, expiresAt })),
     };
   }

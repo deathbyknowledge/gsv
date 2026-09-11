@@ -103,7 +103,7 @@ describe("adapter installation deletion coordinator", () => {
     expect((await f.coordinator.eraseInstallation(f.input)).phase).toBe("erasing");
     expect(f.erase).toHaveBeenCalledTimes(16);
     const erased = await f.coordinator.eraseInstallation(f.input);
-    expect(erased).toMatchObject({ phase: "live-erased", outcome: "retention-pending", retainedCopies: [{ kind: "backup", expiresAt: 1000 + lifetime }] });
+    expect(erased).toMatchObject({ phase: "live-erased", outcome: "retention-pending", pendingResources: 0, retainedCopies: [{ kind: "backup", expiresAt: 1000 + lifetime }] });
     f.status.mockImplementation(async (input) => receipt(input, "live-erased", 1000 + lifetime));
     f.resolve.mockClear();
     await f.coordinator.installationDeletionStatus(f.input);
