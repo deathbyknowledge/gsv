@@ -1,0 +1,78 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-shared-discord-test",
+  "main": "src/shared.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DISCORD_GATEWAY",
+        "class_name": "DiscordGateway"
+      },
+      {
+        "name": "DISCORD_APPLICATION",
+        "class_name": "DiscordApplication"
+      },
+      {
+        "name": "DISCORD_PEER",
+        "class_name": "DiscordPeer"
+      },
+      {
+        "name": "DISCORD_PAIRING",
+        "class_name": "DiscordPairing"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DiscordGateway"
+      ]
+    },
+    {
+      "tag": "v2-shared",
+      "new_sqlite_classes": [
+        "DiscordApplication",
+        "DiscordPeer",
+        "DiscordPairing"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "TARGET_ADAPTER",
+      "service": "gsv-shared-discord-test",
+      "entrypoint": "SharedDiscordChannel"
+    },
+    {
+      "binding": "GATEWAY",
+      "service": "shared-discord-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "discord",
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
+      }
+    },
+    {
+      "binding": "DISCORD_API",
+      "service": "shared-discord-api-test"
+    }
+  ],
+  "triggers": {
+    "crons": []
+  },
+  "vars": {
+    "DISCORD_APPLICATION_ID": "1000",
+    "DISCORD_BOT_TOKEN": "synthetic-test-token"
+  }
+}

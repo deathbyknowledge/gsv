@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
+    "deploy:shared": "wrangler deploy --config wrangler.shared.jsonc --minify",
+    "test": "vitest run",
+    "test:shared": "vitest run --config vitest.shared.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
