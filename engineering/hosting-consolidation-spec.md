@@ -1,12 +1,14 @@
 # Hosting consolidation: engineering specification
 
-Status: ready for implementation, revision 4, 2026-09-11. Companion to the
+Status: ready for implementation, revision 5, 2026-09-11. Companion to the
 [hosting consolidation brief](./hosting-consolidation-brief.md) and the
 [unified hosting and web release plan](./unified-hosting-and-web-release.md).
 The brief says what and why; this document says how, in what order, and
 what "done" means for each piece. This revision incorporates the agreed
 public/private split, Accounts recovery authority, full deletion, and the
-review corrections into the implementation sections. Earlier discussion is
+review corrections into the implementation sections. Revision 5 also makes the
+public inference executor a required component and adopts “your GSV” / “space”
+as product vocabulary. Earlier discussion is
 preserved in [the review history](./hosting-consolidation-review-history.md).
 
 ## 1. Goal
@@ -36,7 +38,7 @@ enterprises may use their own provider accounts or purchase those services.
 | Term | Meaning |
 |---|---|
 | **Operator** | Whoever owns the Cloudflare account, the domains, the messenger applications, and the deployment. |
-| **Installation** | One isolated GSV: its Kernel, processes, conversations, storage prefix, repositories, adapter routes, local accounts, peers, links. Identified by an immutable installation id. |
+| **Space (installation)** | One isolated GSV: its Kernel, processes, conversations, storage prefix, repositories, adapter routes, local accounts, peers, links. Identified by an immutable installation id. |
 | **Accounts** | The required operator-level authority for installation ownership, provisioning, recovery, and lifecycle. Its public implementation is `workers/installations`; H&M currently implements it in the private accounts service. |
 | **Directory** | Accounts' hostname and immutable-installation lookup interface, consumed by the gateway and other services. |
 | **Local account** | A human or agent account inside an installation, with a uid. Created and owned by the Kernel (`workers/gateway/src/kernel/accounts.ts`). |
@@ -49,6 +51,11 @@ enterprises may use their own provider accounts or purchase those services.
 | **Reference service** | A small public implementation that satisfies the production contract and can be used unchanged by an operator. |
 | **Commercial service** | An optional operator implementation of a public contract, such as H&M-funded inference with credits and charging policy. Its implementation may remain private. |
 
+Product copy says **your GSV** or **space**. `installationId` remains the
+immutable technical identity; this vocabulary change does not rename existing
+Durable Objects, storage prefixes, database rows, or wire fields. The Accounts
+component is named for its ownership and lifecycle responsibility.
+
 The word **managed** is retired from public vocabulary: component names,
 bindings, environment variables, and documentation. Persisted identifiers
 keep their spelling until migrated under W4's naming inventory.
@@ -57,11 +64,12 @@ keep their spelling until migrated under W4's naming inventory.
 
 | Boundary | Owns | Where it lives after this work |
 |---|---|---|
-| Operator | Cloudflare resources, domains, installation administration, messenger application credentials, optional services (inference, mail, telemetry, admin access) | `deployment/` (public composition), the operator's overlay (private), adapter worker secrets |
+| Operator | Cloudflare resources, domains, installation administration, messenger application credentials, required inference execution and optional services (funding, mail, telemetry, admin access) | `deployment/` (public composition), the operator's overlay (private), adapter worker secrets |
 | Accounts | Directory, ownership, onboarding, root recovery authorization, installation reset and deletion coordination | `workers/installations`, required by the common deployment |
 | Installation | Local accounts, agents, conversations, files, memory, credentials, permissions, peers, linked external identities | `workers/gateway` Kernel and its Durable Objects, keyed by installation id |
 | Local account | Identity and access within an installation | Kernel account model (`accounts.ts`, `account-access.ts`) |
-| Optional services | Inference execution and usage, commercial policy, mail, or other capabilities behind public interfaces | Public reference implementations or operator-owned services; the owning service also implements lifecycle cleanup |
+| Inference | Provider execution, catalog metadata, media processing, request deadlines, cancellation and operational usage limits | Required public executor, shared with operator implementations |
+| Optional services | Commercial funding and policy, mail, or other capabilities behind public interfaces | Public reference implementations or operator-owned services; the owning service also implements lifecycle cleanup |
 
 Ordinary human sessions sign in to an installation through the Kernel's
 setup and connect calls. The Kernel authenticates human, machine, and
@@ -233,8 +241,8 @@ commercial implementation private behind those same contracts.
 | Component | Public GSV | H&M private implementation |
 |---|---|---|
 | Accounts | `workers/installations`: directory, principals, ownership, onboarding, administration, recovery authorization, reset and deletion coordination. Required for every deployment. | Commercial account operations may call Accounts; they do not replace its installation identity or create a second Kernel admission path. |
-| Inference runtime | Shared provider execution, request identity, streaming, cancellation, fallback, isolation, and usage reporting. | Reuse that runtime in the funded service so fixes apply to both deployments. |
-| Reference inference | Optional `workers/inference`: operator-supplied credentials, configured routing and basic per-installation limits, durable request state and usage counters. Deployable unchanged with no H&M dependency. | Funding eligibility, credits/allowances, customer charging and reconciliation policy, pricing decisions, and commercial administration. |
+| Inference runtime | Required public execution service: provider adapters and SDK, model metadata, text/image/audio operations, request identity, streaming, cancellation, provider fallback, isolation, and usage reporting. | Reuse the public runtime; supply commercial funding and accounting policy. |
+| Reference inference | Required `workers/inference`: user- or operator-supplied credentials, configured routing and basic per-installation limits, durable request state and usage counters. Deployable unchanged with no H&M dependency. | Funding eligibility, credits/allowances, customer charging and reconciliation policy, pricing decisions, and commercial administration. |
 | Other service contracts | Public interfaces, contract tests, and simple implementations for enabled capabilities. | Operator-specific commercial implementations, credentials, and operational tooling. Future subscriptions/billing may remain private; building them is outside this consolidation. |
 
 The reference inference service keeps request state and basic counters in
@@ -242,6 +250,33 @@ installation-scoped Durable Objects. It needs no H&M pricing seed, customer
 table, commercial account, or private repository. Operators configure their
 provider bindings and limits. Both implementations must pass the same
 streaming, cancellation, attribution, isolation, and lifecycle tests.
+
+**Execution boundary.** Process retains context assembly, prompt epochs, history,
+compaction decisions, tool execution, model-stack selection and fallback, run
+lifecycle, and stale-result fences. Kernel retains credential ownership and
+OAuth refresh, permissions, model preferences, and target authorization. The
+inference Worker executes requests and owns provider transport, normalization,
+execution deadlines, cancellation, provider-attempt fallback, and usage. The
+provider SDK and catalog leave the gateway runtime bundle; the gateway does not
+use the Workers AI binding directly after the cutover.
+
+Kernel authorizes a connection for an immutable installation and actor. Only
+its request-scoped credential and transport capability cross into inference;
+long-lived credentials remain Kernel-owned and are never persisted in request
+state or telemetry. Process can consume the resulting stream directly without
+routing individual tokens through Kernel. Machine transport remains supported
+through an authorized, request-scoped `net.fetch` capability: preserve byte
+streaming, cancellation, disconnect cleanup, and the selected target's authority.
+A provider update can deploy independently of the gateway. It must still bound
+and settle interrupted inference requests; independent deployment is not a
+promise that in-flight requests survive a Worker or DO restart.
+
+Acceptance additionally covers user-supplied provider credentials, custom
+endpoints, operator binding credentials, and machine transport through the same
+execution contract. Test machine streaming/cancellation/disconnects across the
+actual RPC boundary, and prove the gateway bundle contains neither provider
+SDK runtime nor direct Workers AI execution. Model-stack fallback that changes
+context limits continues to rebuild context in Process.
 
 **Accounts extraction.** Move the general code and these directory tables:
 `principals`, `installations`, `hostnames`, `memberships` (ownership),
@@ -324,7 +359,7 @@ operator isolation requirements; it is not part of this extraction.
 
 Acceptance:
 
-- Public-only deployments run Accounts and optional reference inference
+- Public-only deployments run Accounts and required reference inference
   without H&M code or data. Reference inference handles limits, cancellation,
   fallback, and truthful model attribution through the shared runtime.
 - H&M staging uses public Accounts and the shared runtime with its private
@@ -405,8 +440,8 @@ Tasks:
   provisions the public installations worker and its D1 when the operator
   does not supply one.
 - Operator inputs: domain, access method (Cloudflare Access configuration or
-  operator credential), enabled adapters, optional services (inference, mail
-  outbound, telemetry tail consumers), secret references. Optional services
+  operator credential), enabled adapters, inference configuration, optional
+  services (funding, mail outbound, telemetry tail consumers), secret references. Optional services
   may be public references or operator implementations of the same
   contracts. Selecting H&M commercial services is explicit and does not
   alter Kernel, onboarding, or messenger flows.
@@ -422,25 +457,25 @@ Tasks:
   never mints a new first installation.
 - Redeploy is idempotent: it does not create another first installation,
   reissue consumed setup claims, or rotate operator access unless asked.
-- With no operator inference service bound, the model stack's deployment
-  base stays the Workers AI pair (`inference/base-model-stack.ts`), and a
-  person's own provider credential extends it. Document that any Workers AI
-  fallback runs on the operator's resources.
+- The public inference service is always provisioned or supplied through the
+  same contract. Without commercial funding, the deployment base stays the
+  configured operator models, and a person's own provider credential extends
+  it. Document that Workers AI fallback runs on the operator's resources.
 
 Acceptance:
 
 - A fresh Cloudflare account deploys from the public package with no
   private code, creates two installations, and both complete onboarding
   through setup links.
-- The public reference inference service also works when enabled with the
-  operator's credentials and limits; disabling it leaves direct provider
-  credentials usable. Installing commercial services is optional.
+- The required public inference service works with operator and user-supplied
+  credentials and limits. Disabling commercial funding leaves user-supplied
+  credentials usable through that same execution service.
 - Repeating the deployment, and interrupting bootstrap midway, creates no
   second first installation and reissues no consumed claim; setup-claim
   expiry and reissue, and operator credential rotation and recovery, are
   exercised.
-- With no inference service bound, a conversation on either installation is
-  answered by the supplied provider and model, asserted from the run's
+- With no commercial inference service configured, a conversation on either
+  installation is answered by the supplied provider and model, asserted from the run's
   attribution and credential source without exposing the credential, so a
   fallback cannot pass for success.
 
