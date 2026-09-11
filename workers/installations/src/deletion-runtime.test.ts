@@ -150,7 +150,7 @@ describe("Accounts deletion runtime", () => {
     }));
     const discovery: InstallationDeletionDiscoveryService = { importInstallationDeletionInventory: importInventory,
       inspectInstallationDeletion: vi.fn(async (input) => ({ installationId: input.installationId, observations: [] })) };
-    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, discovery);
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, { gateway: discovery });
     await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
     const resources: InstallationDeletionInventoryImport["resources"] = [
       { kind: "kernel", objectId: "a".repeat(64), name: state.old.installationId },
@@ -175,4 +175,62 @@ describe("Accounts deletion runtime", () => {
     await runtime.importInventory(state.old.installationId, input);
     expect(importInventory).toHaveBeenCalledTimes(2);
   });
+  it("imports complete adapter inventories from the verified manifest and waits for each durable acknowledgement", async () => {
+    const state = await fixture();
+    const namespaceId = "a".repeat(32);
+    const gateway: InstallationDeletionDiscoveryService = {
+      inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified", verifiedAt: Date.now() })),
+    };
+    const importAdapter = vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({
+      installationId: input.installationId, discoverySha256: input.discoverySha256, outcome: "missing-inventory", verifiedAt: Date.now(),
+    }));
+    const telegram = { inspectInstallationDeletion: vi.fn<InstallationDeletionDiscoveryService["inspectInstallationDeletion"]>(),
+      importInstallationDeletionInventory: importAdapter };
+    const runtime = new AccountsDeletionRuntime(state.db, { ...state.owners, telegram: new ExternalOwner() }, state.resolver, 20, Date.now,
+      { gateway, owners: { telegram }, namespaces: { [namespaceId]: { ownerId: "telegram", kind: "adapter-peer" } } });
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    state.manifest.owners.push({ id: "telegram", resources: [{ kind: "durable-object", namespace: namespaceId, resourceId: "b".repeat(64), name: "actor:123:generation:1" }],
+      evidence: [{ id: "telegram", reference: "test://telegram", sha256: "a".repeat(64), capturedAt: state.manifest.capturedAt }] });
+    const inventory = await runtime.registerInventory(state.old.installationId, state.manifest);
+    const input = { installationId: state.old.installationId, discoverySha256: inventory.sha256, resources: [] };
+    const begin = () => runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: inventory.sha256 });
+    await expect(begin()).rejects.toThrow("missing-inventory import");
+    expect((await runtime.importInventory(state.old.installationId, input)).outcome).toBe("missing-inventory");
+    await expect(begin()).rejects.toThrow("missing-inventory import");
+    const expected = { ...input, resources: [{ kind: "adapter-peer", namespaceId, objectId: "b".repeat(64), name: "actor:123:generation:1" }] };
+    expect(importAdapter).toHaveBeenLastCalledWith(expected);
+    importAdapter.mockImplementation(async (input) => ({ installationId: input.installationId, discoverySha256: input.discoverySha256,
+      outcome: "verified", verifiedAt: Date.now() }));
+    expect((await runtime.importInventory(state.old.installationId, input)).outcome).toBe("verified");
+    expect(importAdapter).toHaveBeenLastCalledWith(expected);
+    expect(gateway.importInstallationDeletionInventory).toHaveBeenCalledTimes(1);
+    expect((await runtime.importInventory(state.old.installationId, input)).outcome).toBe("verified");
+    expect(importAdapter).toHaveBeenCalledTimes(2);
+    expect((await begin()).phase).toBe("quiescing");
+  });
+
+  it("requires adapter acknowledgement even for an empty configured namespace and rejects a mismatched owner response", async () => {
+    const state = await fixture();
+    const gateway: InstallationDeletionDiscoveryService = { inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified", verifiedAt: Date.now() })) };
+    const importAdapter = vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({
+      installationId: state.second.installationId, discoverySha256: input.discoverySha256, outcome: "verified", verifiedAt: Date.now(),
+    }));
+    const telegram = { inspectInstallationDeletion: vi.fn<InstallationDeletionDiscoveryService["inspectInstallationDeletion"]>(), importInstallationDeletionInventory: importAdapter };
+    const runtime = new AccountsDeletionRuntime(state.db, { ...state.owners, telegram: new ExternalOwner() }, state.resolver, 20, Date.now,
+      { gateway, owners: { telegram }, namespaces: { ["a".repeat(32)]: { ownerId: "telegram", kind: "adapter-pairing" } } });
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    state.manifest.owners.push({ id: "telegram", resources: [],
+      evidence: [{ id: "telegram", reference: "test://telegram", sha256: "a".repeat(64), capturedAt: state.manifest.capturedAt }] });
+    const inventory = await runtime.registerInventory(state.old.installationId, state.manifest);
+    const input = { installationId: state.old.installationId, discoverySha256: inventory.sha256, resources: [] };
+    await expect(runtime.importInventory(state.old.installationId, input)).rejects.toThrow("response does not match");
+    expect(importAdapter).toHaveBeenCalledWith(input);
+    expect(await state.db.prepare("SELECT owner_id FROM installation_deletion_owner_imports WHERE manifest_sha256 = ?").bind(inventory.sha256).first()).toBeNull();
+    await expect(runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: inventory.sha256 })).rejects.toThrow("missing-inventory import");
+  });
+
 });

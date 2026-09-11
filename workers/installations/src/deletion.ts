@@ -158,3 +158,5 @@ function phaseRank(receipt: InstallationDeletionReceipt): number {
   return ["pending", "quiescing", "quiesced", "erasing", "live-erased", "erased"].indexOf(receipt.phase);
 }
 function isQuiesced(receipt: InstallationDeletionReceipt): boolean { return phaseRank(receipt) >= 2; }
+
+export { AccountsDeletionInspections, type DeletionObservationRead, type DeletionInspectionEpoch } from "./deletion-inspections";

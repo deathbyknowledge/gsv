@@ -1,7 +1,7 @@
 import { installationDeletionRequestSchema, type InstallationDeletionRequest, type InstallationDeletionReceipt, type InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 
 type Tombstone = { installation_id: string; operation_id: string; phase: "quiesced" | "erasing" | "live-erased" | "erased"; updated_at: number; backup_expires_at: number | null };
-const TABLES = ["installation_owner_attempts", "installation_onboarding_claims", "memberships", "hostnames", "provisioning_operations", "installation_deletion_inventories"] as const;
+const TABLES = ["installation_owner_attempts", "installation_onboarding_claims", "memberships", "hostnames", "provisioning_operations", "installation_deletion_inventories", "installation_deletion_observations", "installation_deletion_inspections"] as const;
 export const DEFAULT_D1_BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000 + 60_000;
 
 /** Accounts owns directory rows; shared principals and operator credentials survive. */
@@ -61,7 +61,9 @@ export class AccountsDeletionOwner implements InstallationDeletionService {
       this.db.prepare(`INSERT INTO installation_deleted_operations (operation_id, installation_id)
         SELECT operation_id, installation_id FROM provisioning_operations WHERE installation_id = ? ORDER BY rowid LIMIT 100
         ON CONFLICT DO NOTHING`).bind(request.installationId),
-      ...TABLES.map((table) => this.db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE installation_id = ? ORDER BY rowid LIMIT 100)`)
+      ...TABLES.map((table) => this.db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE installation_id = ? ${table === "installation_deletion_inspections"
+          ? "AND NOT EXISTS (SELECT 1 FROM installation_deletion_observations WHERE inspection_id = installation_deletion_inspections.id)" : ""}
+          ORDER BY rowid LIMIT 100)`)
         .bind(request.installationId)),
       this.db.prepare(`DELETE FROM installation_reset_participants WHERE rowid IN (SELECT p.rowid FROM installation_reset_participants p
         JOIN installation_reset_operations r USING(operation_id) WHERE r.previous_installation_id = ? LIMIT 100)`)

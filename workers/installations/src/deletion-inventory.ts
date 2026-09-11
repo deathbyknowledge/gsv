@@ -31,6 +31,7 @@ export type InstallationDeletionInventoryVerification = {
   sha256: string;
   outcome: "verified" | "missing-inventory";
   verifiedAt: number;
+  inspectionEpochId?: string;
 };
 
 /** Deployment-owned verifier checks enumeration evidence and owner identity reports. */
@@ -96,12 +97,17 @@ export class InstallationDeletionInventories {
     const result = await this.resolver.verifyInstallationDeletionInventory({ manifest, sha256, evidence });
     if (result.outcome !== "verified" || result.installationId !== manifest.installationId || result.sha256 !== sha256
       || !Number.isSafeInteger(result.verifiedAt) || result.verifiedAt < manifest.capturedAt || result.verifiedAt > this.clock()) return missing;
+    const epochId = result.inspectionEpochId ?? null;
+    if (epochId && !z.uuid().safeParse(epochId).success) return missing;
+    const epoch = epochId ? await this.db.prepare(`SELECT sealed_manifest_sha256 FROM installation_deletion_inspections
+      WHERE id = ? AND installation_id = ?`).bind(epochId, manifest.installationId).first<{ sealed_manifest_sha256: string | null }>() : null;
+    if (epochId && (!epoch || (epoch.sealed_manifest_sha256 !== null && epoch.sealed_manifest_sha256 !== sha256))) return missing;
     const previous = await this.db.prepare("SELECT manifest_json FROM installation_deletion_inventories WHERE sha256 = ? AND installation_id = ?")
       .bind(sha256, manifest.installationId).first<{ manifest_json: string }>();
     if (previous) {
       const saved = (await this.db.prepare("SELECT reference, sha256 FROM installation_deletion_evidence WHERE manifest_sha256 = ?")
         .bind(sha256).all<{ reference: string; sha256: string }>()).results;
-      if (previous.manifest_json !== json || saved.length !== evidence.length
+      if ((epochId && epoch?.sealed_manifest_sha256 !== sha256) || previous.manifest_json !== json || saved.length !== evidence.length
         || saved.some((record) => !evidence.some((candidate) => candidate.reference === record.reference && candidate.sha256 === record.sha256))) return missing;
       return result;
     }
@@ -110,11 +116,17 @@ export class InstallationDeletionInventories {
       (sha256, installation_id, manifest_json, registration_id, verified_at)
       SELECT ?, id, ?, ?, ? FROM installations WHERE id = ?
         AND NOT EXISTS (SELECT 1 FROM installation_deletions WHERE installation_id = installations.id)
-      ON CONFLICT DO NOTHING`).bind(sha256, json, registrationId, result.verifiedAt, manifest.installationId),
+        AND (? IS NULL OR EXISTS (SELECT 1 FROM installation_deletion_inspections
+          WHERE id = ? AND installation_id = installations.id AND sealed_manifest_sha256 IS NULL))
+      ON CONFLICT DO NOTHING`).bind(sha256, json, registrationId, result.verifiedAt, manifest.installationId, epochId, epochId),
       ...evidence.map((record) => this.db.prepare(`INSERT INTO installation_deletion_evidence (manifest_sha256, reference, sha256, body)
         SELECT sha256, ?, ?, ? FROM installation_deletion_inventories WHERE sha256 = ? AND installation_id = ? AND registration_id = ?
           AND NOT EXISTS (SELECT 1 FROM installation_deletions WHERE installation_id = ?)
         ON CONFLICT DO NOTHING`).bind(record.reference, record.sha256, record.body, sha256, manifest.installationId, registrationId, manifest.installationId)),
+      ...(epochId ? [this.db.prepare(`UPDATE installation_deletion_inspections SET sealed_manifest_sha256 = ?, sealed_at = ?
+        WHERE id = ? AND installation_id = ? AND sealed_manifest_sha256 IS NULL
+          AND EXISTS (SELECT 1 FROM installation_deletion_inventories WHERE sha256 = ? AND registration_id = ?)`)
+        .bind(sha256, result.verifiedAt, epochId, manifest.installationId, sha256, registrationId)] : []),
     ]);
     if (inserted[0].meta.changes !== 1) return missing;
     return result;

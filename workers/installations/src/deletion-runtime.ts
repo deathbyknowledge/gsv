@@ -1,31 +1,43 @@
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
-import { installationDeletionInspectionSchema, installationDeletionInspectionResultSchema, installationDeletionInventoryImportSchema,
-  type InstallationDeletionDiscoveryService, type InstallationDeletionInspection, type InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import { installationDeletionInventoryImportSchema,
+  type InstallationDeletionDiscoveryService, type InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { InstallationDeletionCoordinator, type InstallationDeletionProgress } from "./deletion";
 import { AccountsDeletionOwner, DEFAULT_D1_BACKUP_RETENTION_MS } from "./deletion-owner";
 import { InstallationDeletionInventories, installationDeletionManifestSchema, type InstallationDeletionInventoryResolver, type InstallationDeletionManifest, type InstallationDeletionEvidence } from "./deletion-inventory";
+import { AccountsDeletionInspections, type AccountsDeletionInspection } from "./deletion-inspections";
+import { accountsDeletionNamespacesSchema, type AccountsDeletionDiscovery, type AccountsDeletionNamespaces } from "./deletion-discovery";
 import { parseHandle, parseOpaqueId } from "./domain";
+
+type DiscoverableDeletionOwner = InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 
 export type AccountsDeletionEnvironment = {
   DELETION_INVENTORY?: InstallationDeletionInventoryResolver;
   ACCOUNTS_D1_BACKUP_RETENTION_MS?: number;
   DELETION_OWNER_GATEWAY?: InstallationDeletionService & InstallationDeletionDiscoveryService;
+  DELETION_OWNER_INFERENCE?: InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
+  DELETION_OWNER_MAIL?: InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
+  DELETION_DISCOVERY_NAMESPACES?: AccountsDeletionNamespaces;
 };
 
 export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDeletionEnvironment): AccountsDeletionRuntime {
-  const owners: Record<string, InstallationDeletionService> = {};
+  const owners: Record<string, DiscoverableDeletionOwner> = {};
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith("DELETION_OWNER_") || !value) continue;
     const id = name.slice("DELETION_OWNER_".length).toLowerCase().replaceAll("_", "-");
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(id) || id === "accounts") throw new Error("installation deletion owner binding is invalid");
     // SAFETY: deployment-owned prefixed service bindings implement the lifecycle contract.
-    owners[id] = value as InstallationDeletionService;
+    owners[id] = value as DiscoverableDeletionOwner;
   }
   return new AccountsDeletionRuntime(db, owners, env.DELETION_INVENTORY,
-    env.ACCOUNTS_D1_BACKUP_RETENTION_MS ?? DEFAULT_D1_BACKUP_RETENTION_MS, Date.now, env.DELETION_OWNER_GATEWAY);
+    env.ACCOUNTS_D1_BACKUP_RETENTION_MS ?? DEFAULT_D1_BACKUP_RETENTION_MS, Date.now, {
+      gateway: env.DELETION_OWNER_GATEWAY,
+      owners,
+      namespaces: accountsDeletionNamespacesSchema.parse(env.DELETION_DISCOVERY_NAMESPACES ?? {}),
+    });
 }
 
 export class AccountsDeletionRuntime {
+  readonly inspections: AccountsDeletionInspections;
   readonly inventories: InstallationDeletionInventories;
   readonly coordinator: InstallationDeletionCoordinator;
   private readonly accountOwner: AccountsDeletionOwner;
@@ -36,8 +48,9 @@ export class AccountsDeletionRuntime {
     resolver?: InstallationDeletionInventoryResolver,
     backupRetentionMs = DEFAULT_D1_BACKUP_RETENTION_MS,
     clock: () => number = Date.now,
-    private readonly discovery?: InstallationDeletionDiscoveryService,
+    private readonly discovery: AccountsDeletionDiscovery = {},
   ) {
+    this.inspections = new AccountsDeletionInspections(db, clock);
     this.accountOwner = new AccountsDeletionOwner(db, backupRetentionMs, clock);
     this.inventories = new InstallationDeletionInventories(db, resolver, clock);
     this.coordinator = new InstallationDeletionCoordinator(db, { ...owners, accounts: this.accountOwner }, clock);
@@ -50,19 +63,15 @@ export class AccountsDeletionRuntime {
     return this.inventories.register(manifest, evidence);
   }
 
-  async inspect(installationId: string, input: InstallationDeletionInspection) {
-    const request = installationDeletionInspectionSchema.parse(input);
-    if (request.installationId !== installationId) throw new Error("installation inspection scope does not match");
-    if (!this.discovery) throw new Error("installation deletion discovery is not configured");
-    const result = installationDeletionInspectionResultSchema.parse(await this.discovery.inspectInstallationDeletion(request));
-    if (result.installationId !== installationId) throw new Error("installation inspection response does not match");
-    return result;
+  async inspect(installationId: string, input: AccountsDeletionInspection) {
+    if (input.installationId !== installationId) throw new Error("installation inspection scope does not match");
+    return this.inspections.capture(input, this.discovery);
   }
 
   async importInventory(installationId: string, input: InstallationDeletionInventoryImport) {
     const request = installationDeletionInventoryImportSchema.parse(input);
     if (request.installationId !== installationId) throw new Error("installation inventory scope does not match");
-    if (!this.discovery) throw new Error("installation deletion discovery is not configured");
+    if (!this.discovery.gateway) throw new Error("installation deletion discovery is not configured");
     await this.inventories.require(installationId, request.discoverySha256);
     const record = await this.db.prepare("SELECT manifest_json FROM installation_deletion_inventories WHERE sha256 = ? AND installation_id = ?")
       .bind(request.discoverySha256, installationId).first<{ manifest_json: string }>();
@@ -76,13 +85,47 @@ export class AccountsDeletionRuntime {
     }
     const previous = await this.db.prepare("SELECT verified_at FROM installation_deletion_imports WHERE manifest_sha256 = ?")
       .bind(request.discoverySha256).first<{ verified_at: number }>();
-    if (previous) return { installationId, discoverySha256: request.discoverySha256, outcome: "verified" as const, verifiedAt: previous.verified_at };
-    const result = await this.discovery.importInstallationDeletionInventory(request);
+    const result = previous ? { installationId, discoverySha256: request.discoverySha256, outcome: "verified" as const, verifiedAt: previous.verified_at }
+      : await this.discovery.gateway.importInstallationDeletionInventory(request);
     if (result.installationId !== installationId || result.discoverySha256 !== request.discoverySha256
+      || !["verified", "missing-inventory"].includes(result.outcome)
       || !Number.isSafeInteger(result.verifiedAt) || result.verifiedAt < 0) throw new Error("installation inventory import response does not match");
     if (result.outcome === "verified") await this.db.prepare(`INSERT INTO installation_deletion_imports (manifest_sha256, verified_at)
       VALUES (?, ?) ON CONFLICT DO NOTHING`).bind(request.discoverySha256, result.verifiedAt).run();
-    return result;
+    const adapterResults = await Promise.all(this.adapterInventories(manifest).map(async ({ ownerId, resources }) => {
+      const previous = await this.db.prepare("SELECT verified_at FROM installation_deletion_owner_imports WHERE manifest_sha256 = ? AND owner_id = ?")
+        .bind(request.discoverySha256, ownerId).first<{ verified_at: number }>();
+      if (previous) return "verified";
+      const owner = this.discovery.owners?.[ownerId];
+      if (!owner?.importInstallationDeletionInventory) throw new Error("installation adapter inventory import is not configured");
+      const result = await owner.importInstallationDeletionInventory(installationDeletionInventoryImportSchema.parse({ ...request, resources }));
+      if (result.installationId !== installationId || result.discoverySha256 !== request.discoverySha256
+        || !["verified", "missing-inventory"].includes(result.outcome)
+        || !Number.isSafeInteger(result.verifiedAt) || result.verifiedAt < 0) throw new Error("installation adapter inventory import response does not match");
+      if (result.outcome === "verified") await this.db.prepare(`INSERT INTO installation_deletion_owner_imports (manifest_sha256, owner_id, verified_at)
+        VALUES (?, ?, ?) ON CONFLICT DO NOTHING`).bind(request.discoverySha256, ownerId, result.verifiedAt).run();
+      return result.outcome;
+    }));
+    return { ...result, outcome: result.outcome === "verified" && adapterResults.every((outcome) => outcome === "verified")
+      ? "verified" as const : "missing-inventory" as const };
+  }
+
+  private adapterInventories(manifest: InstallationDeletionManifest): { ownerId: string; resources: InstallationDeletionInventoryImport["resources"] }[] {
+    return manifest.owners.flatMap((owner) => {
+      const namespaces = Object.entries(this.discovery.namespaces ?? {}).filter(([, namespace]) => namespace.ownerId === owner.id && namespace.kind.startsWith("adapter-"));
+      if (!namespaces.length) {
+        if (!["accounts", "gateway", "ripgit", "inference", "mail"].includes(owner.id) && owner.resources.some((resource) => resource.kind === "durable-object")) {
+          throw new Error("installation adapter inventory namespace is not configured");
+        }
+        return [];
+      }
+      const resources = owner.resources.filter((resource) => resource.kind === "durable-object").map((resource) => {
+        const namespace = namespaces.find(([id]) => id === resource.namespace)?.[1];
+        if (!namespace || !resource.name) throw new Error("installation adapter inventory resource is outside its configured namespaces");
+        return { kind: namespace.kind, namespaceId: resource.namespace, objectId: resource.resourceId, name: resource.name };
+      });
+      return [{ ownerId: owner.id, resources }];
+    });
   }
 
   async retire(installationIdValue: string, input: { operationId: string; confirmHandle: string }) {
@@ -116,10 +159,14 @@ export class AccountsDeletionRuntime {
     const inventory = await this.inventories.require(installationId, input.inventorySha256);
     const manifest = await this.db.prepare("SELECT manifest_json FROM installation_deletion_inventories WHERE sha256 = ?")
       .bind(inventory.sha256).first<{ manifest_json: string }>();
-    const requiresImport = manifest && installationDeletionManifestSchema.parse(JSON.parse(manifest.manifest_json)).owners
-      .some((owner) => (owner.id === "gateway" || owner.id === "ripgit") && owner.resources.some((resource) => resource.kind === "durable-object"));
+    const parsedManifest = manifest ? installationDeletionManifestSchema.parse(JSON.parse(manifest.manifest_json)) : null;
+    const requiresImport = parsedManifest?.owners.some((owner) => (owner.id === "gateway" || owner.id === "ripgit") && owner.resources.some((resource) => resource.kind === "durable-object"));
     if (requiresImport && !await this.db.prepare("SELECT manifest_sha256 FROM installation_deletion_imports WHERE manifest_sha256 = ?")
       .bind(inventory.sha256).first()) throw new Error("installation deletion is missing-inventory import");
+    if (parsedManifest) for (const { ownerId } of this.adapterInventories(parsedManifest)) {
+      if (!await this.db.prepare("SELECT verified_at FROM installation_deletion_owner_imports WHERE manifest_sha256 = ? AND owner_id = ?")
+        .bind(inventory.sha256, ownerId).first()) throw new Error("installation deletion is missing-inventory import for an adapter owner");
+    }
     const previous = await this.db.prepare("SELECT operation_id FROM installation_account_deletions WHERE installation_id = ?")
       .bind(installationId).first<{ operation_id: string }>();
     if (previous && previous.operation_id !== operationId) throw new Error("installation deletion operation does not match retirement");

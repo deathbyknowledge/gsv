@@ -1,6 +1,7 @@
 import { installationDeletionManifestSchema, installationDeletionEvidenceSchema } from "./deletion-inventory";
 import { z } from "zod";
-import { installationDeletionInspectionSchema, installationDeletionInventoryImportSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import { installationDeletionInventoryImportSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import { accountsDeletionInspectionSchema } from "./deletion-inspections";
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
 import type { InstallationAdminAccess } from "./admin/access";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
@@ -10,7 +11,7 @@ export class InstallationDeletionHttp {
   constructor(private readonly runtime: AccountsDeletionRuntime, private readonly access: InstallationAdminAccess, private readonly origin: string) {}
 
   async handle(request: Request): Promise<Response | null> {
-    const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|import))?$/.exec(new URL(request.url).pathname);
+    const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import))?$/.exec(new URL(request.url).pathname);
     if (!route) return null;
     const json = (value: JsonValue, status = 200) => Response.json(value, { status, headers: noStoreHeaders() });
     if (!await this.access.allows(request)) return json({ error: "Forbidden" }, 403);
@@ -20,6 +21,7 @@ export class InstallationDeletionHttp {
       const action = route[2];
       if (request.method === "GET" && !action) return json(await this.runtime.status(installationId));
       if (request.method !== "POST") return json({ error: "Not Found" }, 404);
+      if (action === "inspection") return json(await this.runtime.inspections.open(installationId), 201);
       if (action === "retry") return json(await this.runtime.retry(installationId));
       if (action === "inventory") {
         if (request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json") throw new Error("JSON body is required");
@@ -35,8 +37,12 @@ export class InstallationDeletionHttp {
         const input = installationDeletionInventoryImportSchema.parse(JSON.parse(new TextDecoder().decode(await readRequestBody(request, 1_000_000))));
         return json(await this.runtime.importInventory(installationId, input));
       }
+      if (action === "inspect") {
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json") throw new Error("JSON body is required");
+        const input = accountsDeletionInspectionSchema.parse(JSON.parse(new TextDecoder().decode(await readRequestBody(request, 256 * 1024))));
+        return json(await this.runtime.inspect(installationId, input));
+      }
       const body = await readJsonObject(request);
-      if (action === "inspect") return json(await this.runtime.inspect(installationId, installationDeletionInspectionSchema.parse(body)));
       const operationId = requireString(body.operationId, "operationId");
       if (action === "retire") return json(await this.runtime.retire(installationId, { operationId, confirmHandle: requireString(body.confirmHandle, "confirmHandle") }));
       return json(await this.runtime.begin(installationId, { operationId, inventorySha256: requireString(body.inventorySha256, "inventorySha256") }), 201);
