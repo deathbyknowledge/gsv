@@ -1120,7 +1120,8 @@ mod tests {
     }
 
     async fn wait_for_file(path: &Path) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        // Allow login-shell startup on busy runners before testing cancellation.
+        tokio::time::timeout(Duration::from_secs(10), async {
             while !path.exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
