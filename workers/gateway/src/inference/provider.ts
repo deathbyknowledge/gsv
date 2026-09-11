@@ -15,7 +15,7 @@ export type InferenceAttribution = {
 
 export type InferenceProviderFactory = {
   id: string;
-  create(attribution: InferenceAttribution): Provider;
+  create(attribution: InferenceAttribution, options?: { deadlineAt: number }): Provider;
 };
 
 export async function inferenceLogicalRequestId(

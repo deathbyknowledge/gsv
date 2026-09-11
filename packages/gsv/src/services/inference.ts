@@ -43,6 +43,8 @@ export type ManagedInferenceRequest = {
   maxOutputTokens: number;
   reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   timeoutMs: number;
+  /** Gateway deadline in epoch milliseconds; may only shorten the service timeout. */
+  deadlineAt?: number;
 };
 
 export type ManagedInferenceResult = Omit<
@@ -94,10 +96,13 @@ export type ManagedInferenceStreamEvent =
       error: ManagedInferenceResult;
     };
 
+export type ManagedInferenceAbortReason = "cancelled" | "timeout";
+
 export type ManagedInferenceAbortRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
+  reason?: ManagedInferenceAbortReason;
 };
 
 /** Installation-scoped inference capability returned to a Gateway deployment. */
@@ -106,7 +111,8 @@ export interface InferenceTarget {
   generateStream(
     input: ManagedInferenceRequest,
   ): Promise<ReadableStream<Uint8Array>>;
-  abort(logicalRequestId: string): Promise<void>;
+  /** Omitted reasons mean cancellation; the service retains the first terminal cause. */
+  abort(logicalRequestId: string, reason?: ManagedInferenceAbortReason): Promise<void>;
 }
 
 /** Platform inference contract consumed by a Gateway deployment. */

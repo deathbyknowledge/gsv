@@ -131,6 +131,48 @@ describe("telemetry contract", () => {
     }).success, false);
   });
 
+  it("accepts bounded attempt timeout diagnostics and rejects invalid fields", () => {
+    const timeout = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "inference",
+      event: {
+        stream: "operational",
+        name: "inference.provider_attempt.failed",
+        properties: {
+          purpose: "agent",
+          workload: "interactive",
+          provider: "workers-ai",
+          model: "@cf/example/primary",
+          attempt: 1,
+          durationMs: 90_000,
+          failureKind: "timeout",
+          failureStage: "provider",
+          retryable: true,
+          timeoutKind: "first_output",
+          firstActivityMs: 50,
+          lastActivityMs: 80,
+          outputExposed: false,
+        },
+      },
+    });
+    assert.equal(telemetryRecordSchema.safeParse(timeout).success, true);
+    for (const invalid of [
+      { timeoutKind: "provider-specific detail" },
+      { firstActivityMs: -1 },
+      { lastActivityMs: "private data" },
+      { outputExposed: "true" },
+      { responseBody: "private response" },
+    ]) {
+      assert.equal(telemetryRecordSchema.safeParse({
+        ...timeout,
+        event: {
+          ...timeout.event,
+          properties: { ...timeout.event.properties, ...invalid },
+        },
+      }).success, false);
+    }
+  });
+
   it("accepts terminal adapter route diagnostics without delivery content", () => {
     const failure = createTelemetryRecord({
       installationId: "inst_telemetry",

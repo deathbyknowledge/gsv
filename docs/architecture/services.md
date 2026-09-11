@@ -56,6 +56,25 @@ five to fifteen minutes, but must not use it after `expiresAt`. Entitlements do
 not replace strong usage accounting: inference, email, and other metered services
 still own their reservations, counters, idempotency, and settlement.
 
+## Inference deadlines
+
+The Gateway starts one generation budget before acquiring the managed inference
+target and forwards its absolute epoch-millisecond `deadlineAt` with `timeoutMs`.
+The service uses the earlier of that deadline and its own accepted time plus
+`timeoutMs`; omitting the deadline retains the legacy service timeout budget.
+An absolute deadline may only shorten the budget, including time already spent
+acquiring the target or waiting for the stream RPC.
+
+Deadline expiry produces an error and invokes `abort(logicalRequestId, "timeout")`.
+Explicit cancellation uses `abort(logicalRequestId)`; omitted reasons mean
+`"cancelled"`. The service retains the first terminal cause, including when an
+abort arrives before the generation RPC. The Gateway settles promptly, disposes
+acquired targets, and cancels late response bodies without exposing their output.
+
+Failed-attempt telemetry may include `timeoutKind` (`first_output` or
+`generation`), elapsed `firstActivityMs` and `lastActivityMs` for nonempty response
+body chunks, and `outputExposed`. These fields contain timing and outcome data.
+
 ## Adapters
 
 Adapters are an extension system, not a closed list of messenger brands. An
