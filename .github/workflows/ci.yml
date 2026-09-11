@@ -23,6 +23,7 @@ jobs:
       extension: ${{ steps.filter.outputs.extension }}
       gateway: ${{ steps.filter.outputs.gateway }}
       installations: ${{ steps.filter.outputs.installations }}
+      inference: ${{ steps.filter.outputs.inference }}
       deployment: ${{ steps.filter.outputs.deployment }}
       adapters: ${{ steps.filter.outputs.adapters }}
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
@@ -98,6 +99,12 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'workers/gateway/**'
+            inference:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'packages/inference/**'
             installations:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -242,6 +249,7 @@ jobs:
       needs.changes.outputs.web == 'true' ||
       needs.changes.outputs.extension == 'true' ||
       needs.changes.outputs.installations == 'true' ||
+      needs.changes.outputs.inference == 'true' ||
       needs.changes.outputs.deployment == 'true'
     steps:
       - uses: actions/checkout@v4
@@ -267,6 +275,14 @@ jobs:
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'
         run: npm run check --workspace web
+
+      - name: Check shared inference runtime
+        if: needs.changes.outputs.inference == 'true'
+        run: npm run typecheck --workspace @humansandmachines/gsv-inference
+
+      - name: Test shared inference runtime
+        if: needs.changes.outputs.inference == 'true'
+        run: npm test --workspace @humansandmachines/gsv-inference
 
       - name: Check installation services
         if: needs.changes.outputs.installations == 'true'
