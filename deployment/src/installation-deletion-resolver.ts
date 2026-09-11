@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { InstallationDeletionInventoryResolver, InstallationDeletionManifest } from "../../workers/installations/src/deletion-inventory.ts";
+import type { InstallationDeletionEvidence, InstallationDeletionInventoryResolver, InstallationDeletionInventoryVerification, InstallationDeletionManifest } from "../../workers/installations/src/deletion-inventory.ts";
 import {
   installationDeletionEvidenceSchema,
   validateInstallationDeletionEvidence,
@@ -13,6 +13,7 @@ type DeletionArtifactValue = z.infer<typeof artifactValueSchema>;
 export const installationDeletionEvidenceIndexSchema = z.strictObject({
   version: z.literal(1), kind: z.literal("cloudflare-durable-objects"),
   installationId: z.string().min(1), capturedAt: z.number().int().positive(),
+  inspectionEpochId: z.string().uuid(),
   namespaces: z.array(z.strictObject({
     namespaceId: z.string().regex(/^[a-f0-9]{32}$/), ownerId: z.string().min(1),
     before: snapshotIndex, after: snapshotIndex, observations: z.array(z.string().min(1)),
@@ -25,7 +26,9 @@ export type OperatorDeletionInventory = {
   namespaces: readonly DeletionNamespaceOwner[];
   /** Includes previously enabled owners until their historical state is accounted for. */
   resources(installationId: string): Readonly<Record<string, readonly ManifestResource[]>>;
-  probe: DeletionResourceProbe;
+  createProbe(input: { installationId: string; inspectionEpochId: string }): Promise<DeletionResourceProbe>;
+  /** Verifies historical multipart uploads and any declared logs, queues, provider copies or backups. */
+  verifyAdditionalEvidence(input: { manifest: InstallationDeletionManifest; evidence: InstallationDeletionEvidence }): Promise<boolean>;
 };
 
 /**
@@ -62,6 +65,7 @@ export function createInstallationDeletionInventoryResolver(
       for (const owner of input.manifest.owners) {
         if (keys(owner.resources.filter((resource) => resource.kind !== "durable-object")) !== keys(scopes[owner.id])) return missing;
       }
+      if (!await configuration.verifyAdditionalEvidence({ manifest: input.manifest, evidence: records })) return missing;
       const read = (reference: string): DeletionArtifactValue => {
         const artifact = artifacts.get(reference);
         if (!artifact) throw new Error("Deletion discovery evidence is missing an artifact");
@@ -80,8 +84,11 @@ export function createInstallationDeletionInventoryResolver(
           }),
         })),
       });
-      const result = await validateInstallationDeletionEvidence(evidence, configuration.namespaces, input.manifest, configuration.probe);
-      return { ...missing, outcome: result.outcome, verifiedAt: clock() };
+      const probe = await configuration.createProbe({ installationId: index.installationId, inspectionEpochId: index.inspectionEpochId });
+      const result = await validateInstallationDeletionEvidence(evidence, configuration.namespaces, input.manifest, probe);
+      const verification: InstallationDeletionInventoryVerification = { ...missing, outcome: result.outcome, verifiedAt: clock() };
+      if (result.outcome === "verified") verification.inspectionEpochId = index.inspectionEpochId;
+      return verification;
     },
   };
 }

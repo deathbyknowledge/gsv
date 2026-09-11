@@ -92,11 +92,19 @@ describe("installation deletion enumeration evidence", () => {
     evidence.namespaces[0].observations = [];
     const result = await validateInstallationDeletionEvidence(evidence, expected, manifest, {
       async inspect(input) {
-        expect(input).toEqual({ namespaceId, ownerId: "gateway", className: "Process", objectIds: [firstId, secondId] });
+        expect(input).toEqual({ namespaceId, ownerId: "gateway", className: "Process", objectIds: [firstId, secondId], beforeCapturedAt: 1, afterCapturedAt: 2 });
         return [{ objectId: firstId, outcome: "identified", installationId: "retired", name: "process:retired:proc%3Aone" }, { objectId: secondId, outcome: "empty" }];
       },
     });
     expect(result.outcome).toBe("verified");
+  });
+
+  it("accepts inspected shared state without target data and rejects contradictory ownership", async () => {
+    const { evidence, manifest } = fixture();
+    evidence.namespaces[0].observations[1] = { objectId: secondId, outcome: "unrelated", name: "operator-workspace" };
+    expect((await validateInstallationDeletionEvidence(evidence, expected, manifest)).outcome).toBe("verified");
+    evidence.namespaces[0].observations[1].installationId = evidence.installationId;
+    await expect(validateInstallationDeletionEvidence(evidence, expected, manifest)).rejects.toThrow("claims target");
   });
 
   it("uses the operator namespace inventory rather than request-selected namespaces", async () => {

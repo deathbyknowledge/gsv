@@ -18,13 +18,14 @@ import { OwnerIdentityProvider } from "./owner-identity";
 import { OPERATOR_REGISTRY_PRINCIPAL_ID, type InstallationOwnerEnvironment } from "./owner-service";
 import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstrap";
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
-import { createAccountsDeletionRuntime, type AccountsDeletionEnvironment } from "./deletion-runtime";
+import { createAccountsDeletionRuntime } from "./deletion-runtime";
+import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & AccountsDeletionEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
-    await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, this.env).resumePending();
+    await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -62,7 +63,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       })),
       this.env.GSV_ADMIN_ORIGIN,
       {},
-      createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, this.env),
+      createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
     );
     const response = await api.handle(request);
     if (response) return response;

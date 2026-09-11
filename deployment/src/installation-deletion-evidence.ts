@@ -16,7 +16,7 @@ const enumerationSchema = z.strictObject({
 });
 export const deletionResourceObservationSchema = z.strictObject({
   objectId,
-  outcome: z.enum(["identified", "empty", "unidentified"]),
+  outcome: z.enum(["identified", "empty", "unrelated", "unidentified"]),
   installationId: z.string().min(1).max(200).optional(), name: z.string().min(1).max(1024).optional(),
 });
 export const installationDeletionEvidenceSchema = z.strictObject({
@@ -43,7 +43,7 @@ export type InstallationDeletionEvidenceValidation = {
   resources: DiscoveredDeletionResource[];
 };
 export interface DeletionResourceProbe {
-  inspect(input: { namespaceId: string; ownerId: string; className: string; objectIds: string[] }): Promise<DeletionResourceObservation[]>;
+  inspect(input: { namespaceId: string; ownerId: string; className: string; objectIds: string[]; beforeCapturedAt: number; afterCapturedAt: number }): Promise<DeletionResourceObservation[]>;
 }
 
 /**
@@ -75,7 +75,7 @@ export async function validateInstallationDeletionEvidence(
     const observations: DeletionResourceObservation[] = [];
     if (probe) {
       for (let offset = 0; offset < stored.length; offset += 32) {
-        const result = await probe.inspect({ namespaceId: item.namespaceId, ownerId: item.ownerId, className: configured.get(item.namespaceId)!.className, objectIds: stored.slice(offset, offset + 32) });
+        const result = await probe.inspect({ namespaceId: item.namespaceId, ownerId: item.ownerId, className: configured.get(item.namespaceId)!.className, objectIds: stored.slice(offset, offset + 32), beforeCapturedAt: item.before.capturedAt, afterCapturedAt: item.after.capturedAt });
         observations.push(...result.map((observation) => deletionResourceObservationSchema.parse(observation)));
       }
     } else observations.push(...item.observations);
@@ -84,6 +84,10 @@ export async function validateInstallationDeletionEvidence(
     for (const observation of observations) {
       if (observation.outcome === "unidentified") { unidentifiedObjects += 1; continue; }
       if (observation.outcome === "empty") continue;
+      if (observation.outcome === "unrelated") {
+        if (observation.installationId === evidence.installationId) throw new Error("Unrelated resource claims target installation data");
+        continue;
+      }
       if (!observation.installationId || !observation.name) throw new Error("Identified resource has no owned installation and name");
       if (observation.installationId === evidence.installationId) {
         resources.push({ ownerId: item.ownerId, kind: "durable-object", namespace: item.namespaceId, resourceId: observation.objectId, name: observation.name });

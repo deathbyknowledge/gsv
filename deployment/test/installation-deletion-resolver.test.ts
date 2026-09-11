@@ -24,6 +24,7 @@ async function fixture() {
   await add("observations", [{ objectId, outcome: "empty" }]);
   await add("index", {
     version: 1, kind: "cloudflare-durable-objects", installationId, capturedAt: 300,
+    inspectionEpochId: "e93cc108-2c44-4713-8080-161433a4d814",
     namespaces: [{ namespaceId, ownerId: "gateway", before: { capturedAt: 100, pages: ["before-page", "before-end"] },
       after: { capturedAt: 200, pages: ["after-page", "after-end"] }, observations: ["observations"] }],
   });
@@ -36,12 +37,20 @@ async function fixture() {
   };
   manifest.owners.find((owner) => owner.id === "gateway")!.resources.push({ kind: "durable-object", namespace: namespaceId, resourceId: objectId, name });
   const inspect = vi.fn<DeletionResourceProbe["inspect"]>(async () => [{ objectId, outcome: "identified", installationId, name }]);
+  const verifyAdditionalEvidence = vi.fn(async () => true);
   const resolver = createInstallationDeletionInventoryResolver({ namespaces: [{ namespaceId, ownerId: "gateway", className: "Process" }],
-    resources: () => scopes, probe: { inspect } }, () => 500);
-  return { resolver, inspect, input: { manifest, evidence, sha256: "c".repeat(64) } };
+    resources: () => scopes, createProbe: async () => ({ inspect }), verifyAdditionalEvidence }, () => 500);
+  return { resolver, inspect, verifyAdditionalEvidence, input: { manifest, evidence, sha256: "c".repeat(64) } };
 }
 
 describe("operator deletion inventory resolver", () => {
+  it("requires separate evidence for historical non-DO state", async () => {
+    const { resolver, inspect, verifyAdditionalEvidence, input } = await fixture();
+    verifyAdditionalEvidence.mockResolvedValue(false);
+    expect(await resolver.verifyInstallationDeletionInventory(input)).toMatchObject({ outcome: "missing-inventory" });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
   it("assembles chunked evidence and verifies live ownership instead of uploaded observations", async () => {
     const { resolver, inspect, input } = await fixture();
     expect(await resolver.verifyInstallationDeletionInventory(input)).toMatchObject({ outcome: "verified", verifiedAt: 500 });
