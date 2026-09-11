@@ -45,8 +45,8 @@ const workerDeployment = {
       properties: {
         entrypoint: { type: "string", minLength: 1 },
         namespaces: { type: "array", items: {
-          type: "object", additionalProperties: false, required: ["binding", "kind"],
-          properties: { binding: bindingName, kind: { type: "string", minLength: 1 } },
+          type: "object", additionalProperties: false, required: ["className", "kind"],
+          properties: { className: { type: "string", minLength: 1 }, kind: { type: "string", minLength: 1 } },
         } },
       },
     },
@@ -139,8 +139,8 @@ function validateAdapter(adapter, directoryName) {
   for (const deployment of [adapter.standalone, adapter.managed].filter(Boolean)) {
     if (deployment.lifecycle) {
       if (!SAFE_NAME.test(deployment.lifecycle.entrypoint)) throw new Error(`Invalid adapter lifecycle entrypoint: ${adapter.id}`);
-      const declared = deployment.lifecycle.namespaces.map((namespace) => namespace.binding).sort();
-      const deployed = deployment.durableObjects.map((namespace) => namespace.binding).sort();
+      const declared = deployment.lifecycle.namespaces.map((namespace) => namespace.className).sort();
+      const deployed = deployment.durableObjects.map((namespace) => namespace.className).sort();
       if (new Set(declared).size !== declared.length || JSON.stringify(declared) !== JSON.stringify(deployed)) {
         throw new Error(`Adapter lifecycle must inventory every deployed namespace: ${adapter.id}`);
       }

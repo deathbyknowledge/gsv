@@ -58,24 +58,24 @@
       "entrypoint": "DiscordLifecycleEntrypoint",
       "namespaces": [
         {
-          "binding": "DISCORD_GATEWAY",
-          "kind": "adapter-account"
+          "kind": "adapter-account",
+          "className": "DiscordGateway"
         },
         {
-          "binding": "DISCORD_APPLICATION",
-          "kind": "adapter-application"
+          "kind": "adapter-application",
+          "className": "DiscordApplication"
         },
         {
-          "binding": "DISCORD_PEER",
-          "kind": "adapter-peer"
+          "kind": "adapter-peer",
+          "className": "DiscordPeer"
         },
         {
-          "binding": "DISCORD_PAIRING",
-          "kind": "adapter-pairing"
+          "kind": "adapter-pairing",
+          "className": "DiscordPairing"
         },
         {
-          "binding": "DISCORD_INSTALLATIONS",
-          "kind": "adapter-installation"
+          "kind": "adapter-installation",
+          "className": "DiscordInstallation"
         }
       ]
     },

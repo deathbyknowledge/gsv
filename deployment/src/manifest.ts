@@ -21,7 +21,7 @@ export const adapterWorkerDeploymentSchema = z.strictObject({
   lifecycle: z.optional(z.strictObject({
     entrypoint: z.string().check(z.minLength(1), z.maxLength(128)),
     namespaces: z.array(z.strictObject({
-      binding: z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
+      className: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]*$/)),
       kind: z.enum(installationResourceKindSchema.options),
     })),
   })),

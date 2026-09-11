@@ -110,11 +110,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
         entrypoint: "InferenceLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
     });
     yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
-      { ownerId: "gateway", worker: runtime.gateway, binding: "KERNEL", kind: "kernel" },
-      { ownerId: "gateway", worker: runtime.gateway, binding: "PROCESS", kind: "process" },
-      { ownerId: "gateway", worker: runtime.gateway, binding: "CONVERSATION", kind: "conversation" },
-      { ownerId: "gateway", worker: runtime.ripgit, binding: "REPOSITORY", kind: "ripgit" },
-      { ownerId: "inference", worker: inferenceWorker, binding: "INFERENCE_EXECUTORS", kind: "inference-executor" },
+      { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
+      { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
+      { ownerId: "gateway", worker: runtime.gateway, className: "Conversation", kind: "conversation" },
+      { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
+      { ownerId: "inference", worker: inferenceWorker, className: "InferenceExecutor", kind: "inference-executor" },
       ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
     ]);
   }

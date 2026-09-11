@@ -36,9 +36,9 @@ describe("deployment manifest", () => {
     const source = adapterSourceManifestSchema.parse(JSON.parse(readFileSync(new URL(`../../workers/adapters/${id}/adapter.json`, import.meta.url), "utf8")));
     const deployment = source.managed!;
     expect(deployment.lifecycle?.entrypoint).toBe(`${id[0].toUpperCase()}${id.slice(1)}LifecycleEntrypoint`);
-    expect(deployment.lifecycle?.namespaces.map((item) => item.binding).sort())
-      .toEqual(deployment.durableObjects.map((item) => item.binding).sort());
-    expect(deployment.lifecycle?.namespaces).toContainEqual({ binding: `${id.toUpperCase()}_INSTALLATIONS`, kind: "adapter-installation" });
+    expect(deployment.lifecycle?.namespaces.map((item) => item.className).sort())
+      .toEqual(deployment.durableObjects.map((item) => item.className).sort());
+    expect(deployment.lifecycle?.namespaces).toContainEqual({ className: `${id[0].toUpperCase()}${id.slice(1)}Installation`, kind: "adapter-installation" });
   });
   it("accepts the checked-in deployment topology", () => {
     expect(gsvDeploymentManifestSchema.parse(manifest)).toEqual(manifest);

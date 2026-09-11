@@ -49,16 +49,16 @@
       "entrypoint": "TelegramLifecycleEntrypoint",
       "namespaces": [
         {
-          "binding": "MANAGED_TELEGRAM_PEER",
-          "kind": "adapter-peer"
+          "kind": "adapter-peer",
+          "className": "ManagedTelegramPeer"
         },
         {
-          "binding": "MANAGED_TELEGRAM_PAIRING",
-          "kind": "adapter-pairing"
+          "kind": "adapter-pairing",
+          "className": "ManagedTelegramPairing"
         },
         {
-          "binding": "TELEGRAM_INSTALLATIONS",
-          "kind": "adapter-installation"
+          "kind": "adapter-installation",
+          "className": "TelegramInstallation"
         }
       ]
     },

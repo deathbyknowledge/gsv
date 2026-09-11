@@ -1,12 +1,13 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import * as Output from "alchemy/Output";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
 import { StandaloneGsvDeployment } from "../src/standalone.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
-type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string } }[] };
+type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string }; json?: unknown }[] };
 type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[] };
 const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [] };
 const recordedCloudflare = {
@@ -14,6 +15,8 @@ const recordedCloudflare = {
   Worker(id: string, props: RecordedWorker["props"]) {
     recorded.workers.push({ id, props });
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
+      durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
+        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -67,6 +70,14 @@ describe("public operator composition", () => {
     const inference = recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env;
     expect(inference?.INFERENCE_EXECUTORS).toEqual({ binding: "INFERENCE_EXECUTORS", className: "InferenceExecutor" });
     expect(inference?.INFERENCE_DEFAULT_MODEL).toBe("operator-model");
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toEqual({
+      ["1".repeat(32)]: { ownerId: "gateway", kind: "kernel" },
+      ["2".repeat(32)]: { ownerId: "gateway", kind: "process" },
+      ["3".repeat(32)]: { ownerId: "gateway", kind: "conversation" },
+      ["4".repeat(32)]: { ownerId: "gateway", kind: "ripgit" },
+      ["5".repeat(32)]: { ownerId: "inference", kind: "inference-executor" },
+    });
   });
 
   it("uses supplied operator services without creating a D1 or replacing either service", async () => {
@@ -84,7 +95,7 @@ describe("public operator composition", () => {
     await run(GsvDeployment({ ...input, services: { adapters: [{ id: "telegram", worker: adapter,
       gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel",
       lifecycle: { entrypoint: "TelegramLifecycleEntrypoint", namespaces: [
-        { binding: "TELEGRAM_INSTALLATIONS", kind: "adapter-installation" },
+        { className: "TelegramInstallation", kind: "adapter-installation" },
       ] },
     }] } }, dependencies));
     expect(recorded.bindings).toContainEqual({ id: "FixturetelegramDeletionBinding", bindings: [{ type: "service",
@@ -95,6 +106,10 @@ describe("public operator composition", () => {
       { type: "service", name: "GATEWAY", service: "gateway", entrypoint: "AdapterGatewayEntrypoint",
         props: { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] } },
     ] });
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toHaveProperty("6".repeat(32), {
+      ownerId: "telegram", kind: "adapter-installation",
+    });
   });
 
   it("refuses an adapter without a cleanup owner before allocating runtime storage", async () => {

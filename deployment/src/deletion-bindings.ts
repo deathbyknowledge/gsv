@@ -6,7 +6,7 @@ import type { GsvAdapterBinding } from "./runtime.ts";
 export type GsvDeletionNamespace = {
   ownerId: string;
   worker: Cloudflare.Workers.Worker;
-  binding: string;
+  className: string;
   kind: InstallationDeletionInspection["resources"][number]["kind"];
 };
 type NamespaceCatalog = Record<string, Pick<GsvDeletionNamespace, "ownerId" | "kind">>;
@@ -26,9 +26,9 @@ export function GsvDeletionDiscoveryBindings(
 ) {
   const catalog = namespaces.reduce<Output.Output<NamespaceCatalog>>((previous, entry) =>
     Output.all(previous, entry.worker.durableObjectNamespaces).pipe(Output.map(([result, physical]) => {
-      const id = physical[entry.binding];
-      if (!id || !/^[a-f0-9]{32}$/.test(id)) throw new Error(`Deletion namespace is unavailable: ${entry.binding}`);
-      if (result[id]) throw new Error(`Deletion namespace is declared twice: ${entry.binding}`);
+      const id = physical[entry.className];
+      if (!id || !/^[a-f0-9]{32}$/.test(id)) throw new Error(`Deletion namespace is unavailable: ${entry.className}`);
+      if (result[id]) throw new Error(`Deletion namespace is declared twice: ${entry.className}`);
       return { ...result, [id]: { ownerId: entry.ownerId, kind: entry.kind } };
     })), Output.literal<NamespaceCatalog>({}));
   return directory.bind(logicalId, {

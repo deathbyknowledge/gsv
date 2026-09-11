@@ -54,20 +54,20 @@
       "entrypoint": "SlackLifecycleEntrypoint",
       "namespaces": [
         {
-          "binding": "MANAGED_SLACK_WORKSPACE",
-          "kind": "adapter-account"
+          "kind": "adapter-account",
+          "className": "ManagedSlackWorkspace"
         },
         {
-          "binding": "MANAGED_SLACK_PEER",
-          "kind": "adapter-peer"
+          "kind": "adapter-peer",
+          "className": "ManagedSlackPeer"
         },
         {
-          "binding": "MANAGED_SLACK_PAIRING",
-          "kind": "adapter-pairing"
+          "kind": "adapter-pairing",
+          "className": "ManagedSlackPairing"
         },
         {
-          "binding": "SLACK_INSTALLATIONS",
-          "kind": "adapter-installation"
+          "kind": "adapter-installation",
+          "className": "SlackInstallation"
         }
       ]
     },
