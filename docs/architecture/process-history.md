@@ -34,6 +34,14 @@ provider content and metadata, including missing media and shared hydration
 budgets. A person-only event contributes no provider message and cannot change
 origin annotations or consume model context.
 Model-facing events start with `[GSV EVENT]` before any origin annotations.
+
+Incoming messages may carry `selectedTarget`, independently of origin and reply
+destination. The model renderer prefixes that message with `[Selected target: ID]`,
+including when media is hydrated. Origin annotations still appear initially and
+on source changes; selected-target annotations belong to each selected message.
+Messages that omit the field receive no inferred target. Typed queue records,
+history, archives, and compaction input retain the selection without changing the
+human's original text or the Process's defaults and permissions.
 Scheduled events name an explicit reply target once in their body. Without one,
 they retain ordinary run destination annotations and do not redirect an active run.
 Target connection text names only the target ID and the connection change;

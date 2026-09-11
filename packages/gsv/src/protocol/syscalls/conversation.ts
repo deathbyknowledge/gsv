@@ -67,6 +67,8 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
+  /** Target selected for this message, independently of its source and reply endpoint. */
+  selectedTarget?: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -98,6 +100,8 @@ export type ConversationHistoryResult = {
 export type ConversationSendArgs = {
   conversationId: string;
   text: string;
+  /** Optional target context for this message; does not change process defaults or permissions. */
+  selectedTarget?: string;
   media?: ResourceBlock[];
   idempotencyKey?: string;
 };

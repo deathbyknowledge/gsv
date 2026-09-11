@@ -144,6 +144,7 @@ export async function sendChatMessage(
     return await client.conversation.send({
       conversationId,
       text: draft.message,
+      selectedTarget: draft.selectedTarget,
       ...(media.length > 0 ? { media } : undefined),
       idempotencyKey,
     });

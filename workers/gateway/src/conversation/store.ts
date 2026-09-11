@@ -20,6 +20,7 @@ type MessageRow = {
   idempotency_key: string;
   author_json: string;
   text: string;
+  selected_target: string | null;
   media_json: string | null;
   origin_json: string;
   process_id: string | null;
@@ -32,6 +33,7 @@ export type ConversationAppendInput = {
   idempotencyKey: string;
   author: ConversationMessageAuthor;
   text: string;
+  selectedTarget?: string;
   media?: ResourceBlock[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -108,13 +110,14 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
-       (message_id, idempotency_key, author_json, text, media_json, origin_json,
+       (message_id, idempotency_key, author_json, text, selected_target, media_json, origin_json,
         process_id, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.messageId,
       input.idempotencyKey,
       JSON.stringify(input.author),
       input.text,
+      input.selectedTarget ?? null,
       input.media?.length ? JSON.stringify(input.media) : null,
       JSON.stringify(input.origin),
       input.processId ?? null,
@@ -307,6 +310,7 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
     message.media = JSON.parse(row.media_json) as MessageAttachment[];
   }
   if (row.process_id) message.processId = row.process_id;
+  if (row.selected_target !== null) message.selectedTarget = row.selected_target;
   if (row.run_id) message.runId = row.run_id;
   return message;
 }

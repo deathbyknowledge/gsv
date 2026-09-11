@@ -86,6 +86,8 @@ export type ProcKillResult =
 export type ProcSendArgs = {
   pid?: string;
   message: string;
+  /** Optional target context for this message; does not change process defaults or permissions. */
+  selectedTarget?: string;
   media?: ResourceBlock[];
   origin?: InteractionOrigin;
   interaction?: {

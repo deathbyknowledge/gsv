@@ -183,6 +183,7 @@ async function admitQueuedSend(
         const enqueueOptions: EnqueueMessageOptions = {
           media: media ?? undefined,
           origin: origin ?? undefined,
+          selectedTarget: args.selectedTarget,
         };
         if (args.interaction) {
           enqueueOptions.kind = "conversation.message";
@@ -200,6 +201,7 @@ async function admitQueuedSend(
           origin: origin ?? undefined,
           queueKind: args.interaction ? "conversation.message" : "message",
           provenance: args.interaction,
+          selectedTarget: args.selectedTarget,
         });
         const nextRun: RunState = { runId };
         if (args.interaction) {
@@ -282,6 +284,7 @@ async function admitInterruptingSend(
         origin: origin ?? undefined,
         queueKind: args.interaction ? "conversation.message" : "message",
         provenance: args.interaction,
+        selectedTarget: args.selectedTarget,
       });
       const nextRun: RunState = { runId };
       if (args.interaction) {

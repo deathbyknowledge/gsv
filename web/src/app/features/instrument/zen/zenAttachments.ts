@@ -7,6 +7,7 @@ export type ZenSendIntent = {
   idempotencyKey: string;
   pid: string;
   text: string;
+  selectedTarget?: string;
   media: readonly ZenAttachment[];
 };
 
@@ -15,8 +16,8 @@ export function zenAttachment(file: File): ZenAttachment {
   return { id: randomId(), type: chatMediaKind({ mimeType }), mimeType, filename: file.name || "attachment", body: file };
 }
 
-export function zenSendIntent(previous: ZenSendIntent | null, pid: string, text: string, media: readonly ZenAttachment[]): ZenSendIntent {
-  if (previous?.pid === pid && previous.text === text && previous.media.length === media.length
+export function zenSendIntent(previous: ZenSendIntent | null, pid: string, text: string, media: readonly ZenAttachment[], selectedTarget?: string): ZenSendIntent {
+  if (previous?.pid === pid && previous.text === text && previous.selectedTarget === selectedTarget && previous.media.length === media.length
     && previous.media.every((file, index) => file.id === media[index]?.id)) return previous;
-  return { idempotencyKey: randomId(), pid, text, media };
+  return { idempotencyKey: randomId(), pid, text, media, selectedTarget };
 }

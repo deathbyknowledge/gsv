@@ -66,9 +66,12 @@ export async function renderContextHistory(
     if (!group.compatibility.hasMedia) continue;
     // Existing histories hydrate every media-bearing group, including assistant groups.
     // Their reads consume the shared budget even when their content is not projected.
-    const content = await hydrate(group.compatibility.text, group.compatibility.mediaJson!, budget);
-    const message = messages[index]!;
     const primary = group.records[0];
+    const text = primary.kind === "message"
+      ? selectedMessageText(group.compatibility.text, primary.payload.selectedTarget)
+      : group.compatibility.text;
+    const content = await hydrate(text, group.compatibility.mediaJson!, budget);
+    const message = messages[index]!;
     if (primary.kind === "message") {
       messages[index] = { role: "user", content, timestamp: group.createdAt };
     } else if (message.role === "toolResult") {
@@ -137,11 +140,12 @@ export function renderModelHistoryGroup(
   switch (primary.kind) {
     case "message": {
       const media = group.compatibility.media;
+      const text = selectedMessageText(primary.payload.text, primary.payload.selectedTarget);
       return {
         role: "user",
         content: media.length === 0
-          ? primary.payload.text
-          : buildFallbackUserContent(primary.payload.text, media),
+          ? text
+          : buildFallbackUserContent(text, media),
         timestamp: group.createdAt,
       };
     }
@@ -332,6 +336,10 @@ export function orderMessagesForProvider(messages: Message[]): Message[] {
   }
 
   return ordered;
+}
+
+function selectedMessageText(text: string, selectedTarget: string | undefined): string {
+  return selectedTarget === undefined ? text : `[Selected target: ${selectedTarget}]\n${text}`;
 }
 
 function formatContextOriginLines(

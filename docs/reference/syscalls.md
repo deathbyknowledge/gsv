@@ -589,6 +589,7 @@ type ConversationMessage = {
     | { kind: "process"; pid: string; uid: number }
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
+  selectedTarget?: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -613,7 +614,7 @@ type ConversationSyscalls = {
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
   "conversation.send": {
-    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
@@ -622,6 +623,13 @@ type ConversationSyscalls = {
   };
 };
 ```
+
+`conversation.send` and `proc.send` accept optional `selectedTarget` message context.
+The Kernel checks the caller's target visibility, including offline targets. The
+selection is stored with that message and rendered as `[Selected target: ID]` for
+the model. It does not change the message origin, reply endpoint, process defaults,
+or syscall permissions. Omission does not inherit an earlier message's selection.
+Changing the selection changes the conversation message's idempotency payload.
 
 ## Contacts And Cross-GSV Requests: `contact.*`
 
@@ -972,7 +980,7 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; message: string; media?: ResourceBlock[] };
+    args: { pid?: string; message: string; selectedTarget?: string; media?: ResourceBlock[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 

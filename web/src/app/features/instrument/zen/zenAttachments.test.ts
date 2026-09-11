@@ -18,4 +18,14 @@ describe("Zen attachment drafts", () => {
     const replacement = zenAttachment(new File(["two"], "notes.txt"));
     expect(zenSendIntent(original, "proc:one", "Read this", [replacement]).idempotencyKey).not.toBe(original.idempotencyKey);
   });
+
+  it("keeps the selected target with a retry and creates a new intent when it changes", () => {
+    const first = zenSendIntent(null, "ship", "Clean up my downloads.", [], "macbook");
+    expect(zenSendIntent(first, "ship", first.text, [], "macbook")).toBe(first);
+    const changed = zenSendIntent(first, "ship", first.text, [], "gsv");
+    expect(changed.selectedTarget).toBe("gsv");
+    expect(changed.idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(first.selectedTarget).toBe("macbook");
+    expect(zenSendIntent(first, "ship", first.text, []).selectedTarget).toBeUndefined();
+  });
 });

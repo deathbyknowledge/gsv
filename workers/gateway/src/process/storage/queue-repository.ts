@@ -1,5 +1,6 @@
 import type { ProcessStore } from "../store";
-import { procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
+import { inferHistoryRecords } from "./history-records";
 import { queuedMessageRole, type EnqueueMessageOptions, type QueuedRun } from "./store-codecs";
 
 /** Owns FIFO admissions waiting behind the active Process run. */
@@ -14,6 +15,13 @@ export class ProcessQueueRepository {
     options: EnqueueMessageOptions = {},
   ): void {
     const generation = this.store.state.getHistoryGeneration();
+    const record = options.record ?? (options.selectedTarget === undefined ? undefined : inferHistoryRecords({
+      id: 0, runId, role: options.role ?? "user", content: message,
+      toolCalls: null, toolCallId: null, media: options.media ?? null, origin: options.origin ?? null,
+    }, {
+      queueKind: options.kind ?? "message", selectedTarget: options.selectedTarget,
+      provenance: options.provenance ? jsonObjectSchema.parse(JSON.parse(options.provenance)) : undefined,
+    })[0]);
     this.store.sql.exec(
       `INSERT INTO message_queue (
         run_id, generation, role, kind, message, media_json, origin_json,
@@ -27,7 +35,7 @@ export class ProcessQueueRepository {
       options.media ?? null,
       options.origin ?? null,
       options.provenance ?? null,
-      options.record ? JSON.stringify(procHistoryRecordDataSchema.parse(options.record)) : null,
+      record ? JSON.stringify(procHistoryRecordDataSchema.parse(record)) : null,
       Date.now(),
     );
   }

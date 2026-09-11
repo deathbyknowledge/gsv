@@ -31,12 +31,14 @@ describe("typed controller history producers", () => {
       const directInteraction = { conversationId: "conversation-1", messageId: "message-1" };
       await process.controller.handleProcSend({
         message: "Direct input",
+        selectedTarget: "macbook",
         origin: { kind: "client", connectionId: "client-1" },
         interaction: directInteraction,
       }, "direct-run");
       const queuedInteraction = { conversationId: "conversation-2", messageId: "message-2" };
       await process.controller.handleProcSend({
         message: "Queued input",
+        selectedTarget: "gsv",
         origin: { kind: "process", sourcePid: "parent-1" },
         interaction: queuedInteraction,
       }, "queued-run");
@@ -50,6 +52,7 @@ describe("typed controller history producers", () => {
           payload: {
             direction: "in",
             text: "Direct input",
+            selectedTarget: "macbook",
             conversationId: "conversation-1",
             conversationMessageId: "message-1",
             origin: {
@@ -64,6 +67,7 @@ describe("typed controller history producers", () => {
           payload: {
             direction: "in",
             text: "Queued input",
+            selectedTarget: "gsv",
             conversationId: "conversation-2",
             conversationMessageId: "message-2",
             origin: {

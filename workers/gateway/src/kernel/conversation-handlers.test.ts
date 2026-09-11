@@ -86,6 +86,7 @@ function canonicalMessage(input: any): ConversationMessage {
     sequence: 1,
     author: input.author,
     text: input.text,
+    ...(input.selectedTarget ? { selectedTarget: input.selectedTarget } : undefined),
     ...(input.media ? { media: input.media } : undefined),
     origin: input.origin,
     processId: input.processId,
@@ -131,10 +132,13 @@ describe("conversation handlers", () => {
     await expect(handleConversationSend({
       conversationId: SHIP.id,
       text: "remember this",
+      selectedTarget: "gsv",
       idempotencyKey: "desktop:one",
     }, ctx)).rejects.toThrow("Process unavailable");
 
     expect(append).toHaveBeenCalledOnce();
+    expect(append.mock.calls[0][0]).toMatchObject({ text: "remember this", selectedTarget: "gsv" });
+    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ call: "proc.send", args: { message: "remember this", selectedTarget: "gsv" } });
     expect(append.mock.invocationCallOrder[0]).toBeLessThan(
       sendFrameToProcessMock.mock.invocationCallOrder[0],
     );

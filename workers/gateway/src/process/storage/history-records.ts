@@ -19,6 +19,7 @@ import { toolResultMetaSchema } from "./validation";
 type MessageHistoryOptions = {
   queueKind?: string;
   provenance?: JsonObject;
+  selectedTarget?: string;
 };
 
 const LEGACY_COMPACTION_PREFIX = "Process history compacted.\n";
@@ -101,6 +102,7 @@ export function inferHistoryRecords(
       const payload: Extract<ProcHistoryRecordData, { kind: "message" }>["payload"] = {
         direction: "in", text: message.content, media, origin,
       };
+      if (options.selectedTarget !== undefined) payload.selectedTarget = options.selectedTarget;
       const interaction = jsonObjectSchema.safeParse(options.provenance);
       if (interaction.success) {
         const messageId = interaction.data.messageId;

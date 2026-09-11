@@ -455,10 +455,11 @@ describe("proc handlers", () => {
       type: "req",
       id: "send-root",
       call: "proc.send",
-      args: { pid: "proc-1", message: "hello" },
+      args: { pid: "proc-1", message: "hello", selectedTarget: "gsv" },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, ctx);
 
+    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ args: { message: "hello", selectedTarget: "gsv" } });
     expect(setConnectionRoute).toHaveBeenCalledWith({
       runId: "run-1",
       processId: "proc-1",

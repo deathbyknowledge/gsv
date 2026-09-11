@@ -73,6 +73,7 @@ export type ChatSendDraft = {
   pid?: string;
   conversationId?: string;
   message: string;
+  selectedTarget?: string;
   media?: ChatMediaUpload[];
   /** Reuse for retries of the same draft, including its staged attachment paths. */
   idempotencyKey?: string;

@@ -50,6 +50,7 @@ export class ProcessMessageRepository {
       records?: ProcHistoryRecordData[];
       queueKind?: string;
       provenance?: JsonObject;
+      selectedTarget?: string;
       legacy?: boolean;
     },
   ): number {

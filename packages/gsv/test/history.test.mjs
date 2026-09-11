@@ -96,6 +96,9 @@ test("typed history retains message origins and both durable and legacy media", 
     },
   };
   assert.deepEqual(procHistoryRecordDataSchema.parse(message), message);
+  const selected = { ...message, payload: { ...message.payload, selectedTarget: "macbook" } };
+  assert.deepEqual(procHistoryRecordDataSchema.parse(selected), selected);
+  assert.equal(procHistoryRecordDataSchema.safeParse({ ...message, payload: { ...message.payload, selectedTarget: 42 } }).success, false);
   assert.equal(procHistoryRecordDataSchema.safeParse({
     ...message,
     payload: {

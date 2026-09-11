@@ -116,6 +116,7 @@ export type EnqueueMessageOptions = {
   origin?: string;
   provenance?: string;
   record?: ProcHistoryRecordData;
+  selectedTarget?: string;
 };
 
 export type PendingHilRecord = {

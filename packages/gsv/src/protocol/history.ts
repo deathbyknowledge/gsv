@@ -84,6 +84,7 @@ export type ProcHistoryMessageOrigin = {
 export const procHistoryMessagePayloadSchema: z.ZodMiniType<ProcHistoryMessagePayload> = z.strictObject({
   direction: z.enum(["in", "out"]),
   text: z.string(),
+  selectedTarget: z.optional(z.string()),
   media: z.array(procHistoryMediaSchema),
   origin: procHistoryMessageOriginSchema,
   conversationId: z.optional(z.string()),
@@ -93,6 +94,7 @@ export const procHistoryMessagePayloadSchema: z.ZodMiniType<ProcHistoryMessagePa
 export type ProcHistoryMessagePayload = {
   direction: "in" | "out";
   text: string;
+  selectedTarget?: string;
   media: ProcHistoryMedia[];
   origin: ProcHistoryMessageOrigin;
   conversationId?: string;

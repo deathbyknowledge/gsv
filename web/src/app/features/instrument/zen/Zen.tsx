@@ -579,7 +579,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         setNote("Your ship is still starting.");
         return false;
       }
-      const intent = zenSendIntent(retryIntent.current, pid, text, attachments);
+      const intent = zenSendIntent(retryIntent.current, pid, text, attachments, where ?? defaultPlace(places));
       scrolling.follow();
       retryIntent.current = intent;
       const pending = { intent, controller: new AbortController() };
@@ -589,6 +589,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         const result = await sendChatMessage(client, {
           pid, conversationId: conversation.conversation?.id, message: text,
           media: [...intent.media], idempotencyKey: intent.idempotencyKey,
+          selectedTarget: intent.selectedTarget,
         }, {
           signal: pending.controller.signal,
           onUploaded: () => { if (mounted.current) setSending("sending"); },
@@ -608,7 +609,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (mounted.current) setSending(null);
       }
     },
-    [attachments, client, conversation, pid, scrolling.follow],
+    [attachments, client, conversation, pid, places, scrolling.follow, where],
   );
 
   const runDirectly = useCallback(
