@@ -29,3 +29,39 @@ export interface InstallationResetService {
    */
   prepareInstallationReset(input: InstallationResetPreparation): Promise<InstallationResetPrepared>;
 }
+
+export const installationDeletionRequestSchema = z.strictObject({
+  version: z.literal(1),
+  operationId: identity,
+  installationId: identity,
+});
+export type InstallationDeletionRequest = z.infer<typeof installationDeletionRequestSchema>;
+
+export const installationDeletionReceiptSchema = installationDeletionRequestSchema.extend({
+  phase: z.enum(["pending", "quiescing", "quiesced", "erasing", "live-erased", "erased"]),
+  updatedAt: z.number().int().nonnegative(),
+  pendingResources: z.number().int().nonnegative(),
+  outcome: z.enum(["progress", "complete", "retry", "missing-inventory", "missing-owner", "retention-pending"]),
+  retryAfterMs: z.number().int().nonnegative().optional(),
+  retainedCopies: z.array(z.strictObject({
+    id: identity,
+    kind: z.enum(["logs", "backup", "cache", "provider"]),
+    expiresAt: z.number().int().nonnegative().nullable(),
+  })),
+}).refine((receipt) => receipt.phase !== "erased"
+  || (receipt.pendingResources === 0 && receipt.retainedCopies.length === 0 && receipt.outcome === "complete"), {
+  message: "Erasure requires every resource and retained copy to be cleared",
+});
+export type InstallationDeletionReceipt = z.infer<typeof installationDeletionReceiptSchema>;
+
+/**
+ * Bound only to Accounts after it has closed admission for the immutable identity.
+ * Every owner persists its operation, inventory and cursor. Calls resume the same
+ * operation; a missing response is never an erasure acknowledgment. A minimal
+ * tombstone survives erasure to reject late writes and reuse of the identity.
+ */
+export interface InstallationDeletionService {
+  quiesceInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt>;
+  eraseInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt>;
+  installationDeletionStatus(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt>;
+}

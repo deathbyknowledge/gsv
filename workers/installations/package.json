@@ -17,6 +17,7 @@
     "./tokens": "./src/tokens.ts",
     "./onboarding": "./src/onboarding.ts",
     "./reset-preparation": "./src/reset-preparation.ts",
+    "./deletion": "./src/deletion.ts",
     "./owner-store": "./src/owner-store.ts",
     "./owner-identity": "./src/owner-identity.ts",
     "./owner-http": "./src/owner-http.ts",
