@@ -3,3 +3,4 @@ export { getInferenceExecutor, resolveInferenceModel, type InferenceServiceEnvir
 export { type ExecutorEnvironment } from "./config";
 
 export { InferenceRetirement, INFERENCE_RETIREMENT_SCHEMA, authorizeInferenceDeletion } from "./retirement";
+export { inspectInferenceDeletion } from "./discovery";

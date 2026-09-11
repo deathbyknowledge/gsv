@@ -1,9 +1,14 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { authorizeInferenceDeletion, type InferenceServiceEnvironment } from "@humansandmachines/gsv-inference/executor";
+import { authorizeInferenceDeletion, inspectInferenceDeletion, type InferenceServiceEnvironment } from "@humansandmachines/gsv-inference/executor";
 import type { InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+import type { InstallationDeletionInspection } from "@humansandmachines/gsv/services/lifecycle-discovery";
 
 /** This entrypoint is bound only to Accounts, with explicit deletion authority. */
 export class InferenceLifecycleEntrypoint extends WorkerEntrypoint<InferenceServiceEnvironment, { authority?: string }> implements InstallationDeletionService {
+  async inspectInstallationDeletion(input: InstallationDeletionInspection) {
+    return inspectInferenceDeletion(this.env.INSTALLATION_DIRECTORY, this.ctx.props,
+      [{ kind: "inference-executor", namespace: this.env.INFERENCE_EXECUTORS }], input);
+  }
   async quiesceInstallation(input: InstallationDeletionRequest) { return (await this.owner(input)).quiesceInstallation(input); }
   async eraseInstallation(input: InstallationDeletionRequest) { return (await this.owner(input)).eraseInstallation(input); }
   async installationDeletionStatus(input: InstallationDeletionRequest) { return (await this.owner(input)).installationDeletionStatus(input); }

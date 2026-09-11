@@ -3,6 +3,10 @@ import type { InstallationDirectoryService } from "@humansandmachines/gsv/servic
 
 type RetirementRow = { installation_id: string; operation_id: string; phase: "quiescing" | "quiesced" | "erasing" | "erased"; updated_at: number };
 
+// Cloudflare SQLite Durable Object backups retain the preceding 30 days.
+// The extra minute keeps the receipt outside the boundary's clock precision.
+const BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000 + 60_000;
+
 /** Created by each owner's versioned migration; survives deletion of user state. */
 export const INFERENCE_RETIREMENT_SCHEMA = `CREATE TABLE inference_retirement (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1), installation_id TEXT NOT NULL,
@@ -33,8 +37,11 @@ export class InferenceRetirement {
   receipt(input: InstallationDeletionRequest, pendingResources: number): InstallationDeletionReceipt {
     this.validate(input);
     const row = this.get();
-    return { ...input, phase: row?.phase ?? "pending", updatedAt: row?.updated_at ?? Date.now(), pendingResources,
-      outcome: row?.phase === "erased" ? "complete" : "progress", retainedCopies: [] };
+    const expiresAt = row?.phase === "erased" ? row.updated_at + BACKUP_RETENTION_MS : null;
+    const retained = expiresAt !== null && Date.now() < expiresAt;
+    return { ...input, phase: retained ? "live-erased" : row?.phase ?? "pending", updatedAt: row?.updated_at ?? Date.now(), pendingResources,
+      outcome: retained ? "retention-pending" : row?.phase === "erased" ? "complete" : "progress",
+      retainedCopies: retained ? [{ id: "inference-durable-object-backup", kind: "backup", expiresAt }] : [] };
   }
 }
 

@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+import type { InstallationDeletionDiscoveryService } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import type { InferenceExecutionService, InferenceExecutionRequest } from "@humansandmachines/gsv/services/inference-execution";
 import { InferenceExecutor, type ExecutorEnvironment } from "@humansandmachines/gsv-inference/executor";
 
@@ -11,7 +12,7 @@ const directoryBinding: unknown = env.INSTALLATION_DIRECTORY;
 // SAFETY: The configured default entrypoint implements execution RPC.
 const service = serviceBinding as InferenceExecutionService;
 // SAFETY: The named entrypoint implements deletion RPC with the supplied binding authority.
-const lifecycle = lifecycleBinding as InstallationDeletionService;
+const lifecycle = lifecycleBinding as InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 // SAFETY: The test directory adds setState to its ordinary directory interface.
 const directory = directoryBinding as ExecutorEnvironment["INSTALLATION_DIRECTORY"] & { setState(id: string, state: string): Promise<void> };
 function operation(installationId = `space_${crypto.randomUUID()}`): InstallationDeletionRequest { return { version: 1, installationId, operationId: crypto.randomUUID() }; }
@@ -21,6 +22,27 @@ function request(input: InstallationDeletionRequest): InferenceExecutionRequest 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("inference application deletion", () => {
+  it("identifies historical addresses only through known directory identities without opening objects", async () => {
+    const input = operation();
+    const other = operation();
+    const missing = "space_missing";
+    const before = await listDurableObjectIds(env.INFERENCE_EXECUTORS);
+    const resource = (name: string) => ({ kind: "inference-executor" as const, objectId: env.INFERENCE_EXECUTORS.idFromName(name).toString() });
+    const result = await lifecycle.inspectInstallationDeletion({ installationId: input.installationId,
+      candidateInstallationIds: [other.installationId, missing], resources: [resource(input.installationId), resource(other.installationId), resource(missing), { ...resource(other.installationId), name: input.installationId }] });
+    expect(result.observations).toEqual([
+      { ...resource(input.installationId), outcome: "identified", installationId: input.installationId, name: input.installationId },
+      { ...resource(other.installationId), outcome: "identified", installationId: other.installationId, name: other.installationId },
+      { ...resource(missing), outcome: "unidentified" },
+      { ...resource(other.installationId), name: input.installationId, outcome: "unidentified" },
+    ]);
+    expect(await listDurableObjectIds(env.INFERENCE_EXECUTORS)).toHaveLength(before.length);
+    const unauthorized = exports.InferenceLifecycleEntrypoint({ props: {} });
+    await expect(Promise.resolve(unauthorized.inspectInstallationDeletion({ installationId: input.installationId, resources: [] }))).rejects.toThrow("authority");
+    await expect(Promise.resolve(lifecycle.inspectInstallationDeletion({ installationId: missing, resources: [] }))).rejects.toThrow("known installation");
+    await expect(Promise.resolve(lifecycle.inspectInstallationDeletion({ installationId: input.installationId, resources: [{ ...resource(input.installationId), kind: "kernel" }] }))).rejects.toThrow("not owned");
+  });
+
   it("requires deletion authority and retired directory state before allocation", async () => {
     const input = operation();
     const count = (await listDurableObjectIds(env.INFERENCE_EXECUTORS)).length;
@@ -59,7 +81,7 @@ describe("inference application deletion", () => {
     expect(await lifecycle.quiesceInstallation(input)).toMatchObject({ phase: "quiesced" });
     await vi.waitFor(() => expect(bodyCancelled).toBe(true));
     await reader.cancel();
-    expect(await lifecycle.eraseInstallation(input)).toMatchObject({ phase: "erased", outcome: "complete", pendingResources: 0 });
+    expect(await lifecycle.eraseInstallation(input)).toMatchObject({ phase: "live-erased", outcome: "retention-pending", pendingResources: 0 });
     await executor.abort("late-abort");
     await expect(Promise.resolve(executor.generate(request(input)))).rejects.toThrow("retired");
     await expect(Promise.resolve(lifecycle.eraseInstallation({ ...input, operationId: "different" }))).rejects.toThrow("immutable");
@@ -88,8 +110,12 @@ describe("inference application deletion", () => {
     expect(await lifecycle.eraseInstallation(input)).toMatchObject({ phase: "erasing", pendingResources: 205 });
     await lifecycle.eraseInstallation(input);
     const complete = await lifecycle.eraseInstallation(input);
-    expect(complete).toMatchObject({ phase: "erased", pendingResources: 0 });
+    expect(complete).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending", retainedCopies: [{ kind: "backup", expiresAt: complete.updatedAt + 30 * 24 * 60 * 60 * 1000 + 60_000 }] });
     expect(await lifecycle.eraseInstallation(input)).toEqual(complete);
+    await runInDurableObject(env.INFERENCE_EXECUTORS.getByName(input.installationId), (_instance, state) => {
+      state.storage.sql.exec("UPDATE inference_retirement SET updated_at = ?", Date.now() - 31 * 24 * 60 * 60 * 1000);
+    });
+    expect(await lifecycle.installationDeletionStatus(input)).toMatchObject({ phase: "erased", outcome: "complete", retainedCopies: [], pendingResources: 0 });
     await runInDurableObject(env.INFERENCE_EXECUTORS.getByName(other.installationId), (_instance, state) => {
       expect(state.storage.sql.exec("SELECT request_id FROM executor_requests").toArray()).toEqual([{ request_id: "other-request" }]);
     });
