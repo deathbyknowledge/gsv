@@ -7,7 +7,7 @@ export const installationResourceKindSchema = z.enum([
 const objectId = z.string().regex(/^[a-f0-9]{64}$/);
 const installationId = z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/);
 export const installationResourceProbeSchema = z.strictObject({
-  kind: installationResourceKindSchema, objectId, name: z.string().min(1).max(1024).optional(),
+  kind: installationResourceKindSchema, objectId, namespaceId: z.string().regex(/^[a-f0-9]{32}$/).optional(), name: z.string().min(1).max(1024).optional(),
 });
 export const installationDeletionInspectionSchema = z.strictObject({
   installationId, resources: z.array(installationResourceProbeSchema).max(32),
