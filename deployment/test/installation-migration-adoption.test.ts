@@ -38,7 +38,8 @@ function fixture(sources = sourceFiles(path.join(root, "workers/installations/mi
     database.prepare("INSERT INTO d1_migrations VALUES (?, ?, ?)").run(String(index + 1).padStart(5, "0"), source.name, `2026-09-01 00:00:${String(index).padStart(2, "0")}`);
   }
   const handoffs: MigrationOwnerHandoff[] = [];
-  const input = { database, context, sources, handoffs, resetProofs: [] as HistoricalResetProof[] };
+  const resetProofs: HistoricalResetProof[] = [];
+  const input = { database, context, sources, handoffs, resetProofs };
   return { database, input };
 }
 

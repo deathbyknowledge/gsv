@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import * as z from "zod/mini";
 import {
   installationMigrationInventory,
   type InstallationMigrationOwner,
@@ -78,6 +79,17 @@ const quote = (identifier: string): string => `"${identifier.replaceAll('"', '""
 const query = (db: Reader, sql: string, ...bindings: string[]): Row[] => db.prepare(sql).all(...bindings);
 const exists = (db: Reader, table: string): boolean => query(db,
   "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?", table).length === 1;
+const migrationRecordSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  name: z.string(),
+  applied_at: z.string(),
+});
+const schemaObjectSchema = z.object({
+  type: z.enum(["table", "index", "trigger", "view"]),
+  name: z.string(),
+  tbl_name: z.string(),
+  sql: z.nullable(z.string()),
+});
 
 function ledger(db: Reader, name: string): MigrationEntry[] {
   if (!exists(db, name)) return [];
@@ -89,10 +101,14 @@ function ledger(db: Reader, name: string): MigrationEntry[] {
     throw new Error("Unrecognized migration ledger schema");
   }
   const seen = new Set<string>();
-  return query(db, `SELECT id, name, applied_at FROM ${quote(name)} ORDER BY name`).map((row) => {
+  return query(db, `SELECT id, name, applied_at FROM ${quote(name)} ORDER BY name`).map((value) => {
+    const decoded = migrationRecordSchema.safeParse(value);
+    if (!decoded.success) throw new Error("Unrecognized applied migration record shape");
+    const row = decoded.data;
     const source = installationMigrationInventory.find((item) => item.name === row.name);
-    if (!source || seen.has(source.name) || typeof row.applied_at !== "string" || !Number.isFinite(Date.parse(row.applied_at))
-      || !["string", "number"].includes(typeof row.id)) throw new Error("Unrecognized or duplicate applied migration record");
+    if (!source || seen.has(source.name) || !Number.isFinite(Date.parse(row.applied_at))) {
+      throw new Error("Unrecognized or duplicate applied migration record");
+    }
     seen.add(source.name);
     return { id: String(row.id), name: source.name, appliedAt: row.applied_at, sha256: source.sha256 };
   });
@@ -100,24 +116,27 @@ function ledger(db: Reader, name: string): MigrationEntry[] {
 
 function schema(db: Reader, excluded: readonly string[]): unknown[] {
   const objects = query(db, "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")
-    .filter((row) => !String(row.name).startsWith("sqlite_") && row.name !== "_cf_KV"
-      && !excluded.includes(String(row.tbl_name)));
-  return objects.map((object) => ({
-    ...object,
-    // Tokenize quoted strings separately; whitespace inside a CHECK/default
-    // literal is meaningful and must not disappear during schema comparison.
-    sql: typeof object.sql === "string"
-      ? object.sql.match(/'(?:''|[^'])*'|"(?:""|[^"])*"|[^\s]+/g)?.join(" ")
-      : object.sql,
-    ...(object.type === "table" ? {
-      columns: query(db, `PRAGMA table_xinfo(${quote(String(object.name))})`),
-      foreignKeys: query(db, `PRAGMA foreign_key_list(${quote(String(object.name))})`),
-      indexes: query(db, `PRAGMA index_list(${quote(String(object.name))})`).map((index) => ({
+    .map((row) => schemaObjectSchema.parse(row))
+    .filter((row) => !row.name.startsWith("sqlite_") && row.name !== "_cf_KV"
+      && !excluded.includes(row.tbl_name));
+  return objects.map((object) => {
+    const normalized = {
+      ...object,
+      // Tokenize quoted strings separately; whitespace inside a CHECK/default
+      // literal is meaningful and must not disappear during schema comparison.
+      sql: object.sql === null ? null : object.sql.match(/'(?:''|[^'])*'|"(?:""|[^"])*"|[^\s]+/g)?.join(" "),
+    };
+    if (object.type !== "table") return normalized;
+    return {
+      ...normalized,
+      columns: query(db, `PRAGMA table_xinfo(${quote(object.name)})`),
+      foreignKeys: query(db, `PRAGMA foreign_key_list(${quote(object.name)})`),
+      indexes: query(db, `PRAGMA index_list(${quote(object.name)})`).map((index) => ({
         ...index,
         columns: query(db, `PRAGMA index_xinfo(${quote(String(index.name))})`),
       })),
-    } : {}),
-  }));
+    };
+  });
 }
 
 function validateContext(context: MigrationAdoptionContext): void {
