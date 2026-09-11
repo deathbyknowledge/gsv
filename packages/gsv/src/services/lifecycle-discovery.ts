@@ -11,6 +11,7 @@ export const installationResourceProbeSchema = z.strictObject({
 });
 export const installationDeletionInspectionSchema = z.strictObject({
   installationId, resources: z.array(installationResourceProbeSchema).max(32),
+  candidateInstallationIds: z.array(installationId).max(500).optional(),
 });
 export const installationResourceObservationSchema = installationResourceProbeSchema.extend({
   outcome: z.enum(["identified", "empty", "unidentified"]),
