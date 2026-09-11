@@ -3,6 +3,8 @@ import {
   parseInstallationId,
 } from "./identity";
 
+import type { InstallationRetirement } from "./retirement";
+
 type R2PutValue =
   | ReadableStream
   | ArrayBuffer
@@ -22,15 +24,17 @@ export function installationStoragePrefix(installationId: string): string {
 export function createInstallationStorage(
   bucket: R2Bucket,
   installationId: string,
+  retirement?: InstallationRetirement,
 ): R2Bucket {
   const prefix = installationStoragePrefix(installationId);
-  return prefix ? new InstallationR2Bucket(bucket, prefix) : bucket;
+  return prefix || retirement ? new InstallationR2Bucket(bucket, prefix, retirement) : bucket;
 }
 
 class InstallationR2Bucket implements R2Bucket {
   constructor(
     private readonly bucket: R2Bucket,
     private readonly prefix: string,
+    private readonly retirement?: InstallationRetirement,
   ) {}
 
   async head(key: string): Promise<R2Object | null> {
@@ -65,9 +69,9 @@ class InstallationR2Bucket implements R2Bucket {
     options?: R2PutOptions,
   ): Promise<R2Object | null> {
     const physicalKey = this.physicalKey(key);
-    const object = options?.onlyIf
-      ? await this.bucket.put(physicalKey, value, { ...options, onlyIf: options.onlyIf })
-      : await this.bucket.put(physicalKey, value, options);
+    const object = await this.write(() => options?.onlyIf
+      ? this.bucket.put(physicalKey, value, { ...options, onlyIf: options.onlyIf })
+      : this.bucket.put(physicalKey, value, options));
     return mapObject(object, this.prefix);
   }
 
@@ -75,13 +79,19 @@ class InstallationR2Bucket implements R2Bucket {
     key: string,
     options?: R2MultipartOptions,
   ): Promise<R2MultipartUpload> {
-    const upload = await this.bucket.createMultipartUpload(this.physicalKey(key), options);
-    return mapMultipartUpload(upload, this.prefix);
+    const upload = await this.write(async () => {
+      const created = await this.bucket.createMultipartUpload(this.physicalKey(key), options);
+      this.retirement?.recordMultipart(created);
+      return created;
+    });
+    return mapMultipartUpload(upload, this.prefix, this.retirement);
   }
 
   resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload {
+    this.retirement?.assertActive();
     const upload = this.bucket.resumeMultipartUpload(this.physicalKey(key), uploadId);
-    return mapMultipartUpload(upload, this.prefix);
+    this.retirement?.recordMultipart(upload);
+    return mapMultipartUpload(upload, this.prefix, this.retirement);
   }
 
   async delete(keys: string | string[]): Promise<void> {
@@ -108,6 +118,10 @@ class InstallationR2Bucket implements R2Bucket {
         stripPhysicalPrefix(prefix, this.prefix)
       )),
     };
+  }
+
+  private write<T>(operation: () => Promise<T>): Promise<T> {
+    return this.retirement ? this.retirement.write(operation) : operation();
   }
 
   private physicalKey(logicalKey: string): string {
@@ -138,18 +152,27 @@ function mapObject<T extends R2Object>(object: T | null, prefix: string): T | nu
 function mapMultipartUpload(
   upload: R2MultipartUpload,
   prefix: string,
+  retirement?: InstallationRetirement,
 ): R2MultipartUpload {
   return {
     key: stripPhysicalPrefix(upload.key, prefix),
     uploadId: upload.uploadId,
     uploadPart(partNumber, value, options) {
-      return upload.uploadPart(partNumber, value, options);
+      return retirement
+        ? retirement.write(() => upload.uploadPart(partNumber, value, options))
+        : upload.uploadPart(partNumber, value, options);
     },
-    abort() {
-      return upload.abort();
+    async abort() {
+      await upload.abort();
+      retirement?.forgetMultipart(upload.uploadId);
     },
     async complete(uploadedParts) {
-      return mapObject(await upload.complete(uploadedParts), prefix);
+      const complete = async () => {
+        const object = await upload.complete(uploadedParts);
+        retirement?.forgetMultipart(upload.uploadId);
+        return mapObject(object, prefix);
+      };
+      return retirement ? retirement.write(complete) : complete();
     },
   };
 }

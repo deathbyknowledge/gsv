@@ -23,6 +23,7 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.retirement = { assertActive: vi.fn(), state: undefined };
   Object.assign(kernel, kernelRuntimes(kernel));
   return kernel;
 };

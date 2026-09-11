@@ -1,5 +1,7 @@
 /** Internal Process lifecycle primitives. */
 
+import { INSTALLATION_RETIREMENT_KEY, RESOURCE_IDENTITY_KEY, MULTIPART_UPLOAD_PREFIX } from "../../installation/retirement";
+
 import {
   type InteractionOrigin, type JsonValue, type ProcHistoryRecordData, type ProcKillResult, type ProcToolResultOutcome, type ResourceBlock,
   resourceBlockSchema,
@@ -39,6 +41,7 @@ export function tombstoneKilledProcessStorage(
       storage.sql.exec(`DROP TABLE IF EXISTS ${quotedName}`);
     }
     for (const key of kvKeys) {
+      if (key === INSTALLATION_RETIREMENT_KEY || key === RESOURCE_IDENTITY_KEY || key.startsWith(MULTIPART_UPLOAD_PREFIX)) continue;
       storage.kv.delete(key);
     }
     storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, tombstone);

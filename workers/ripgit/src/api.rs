@@ -1,5 +1,6 @@
 //! Read API: HTTP endpoints for browsing repository content.
 
+use crate::retirement::RetirementSql as SqlStorage;
 use serde::Serialize;
 use worker::*;
 
