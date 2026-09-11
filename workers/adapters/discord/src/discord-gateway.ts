@@ -8,6 +8,10 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import type { InstallationDeletionReceipt, InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
+import type { AdapterResourceInspection } from "../../shared/src/peer-retirement";
+import { cancelBinaryBody } from "../../shared/src/media-body";
+import { DiscordAccountRetirement } from "./discord-account-retirement";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import {
   adapterInboundResultDisposition,
@@ -81,12 +85,15 @@ interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
   DISCORD_BOT_TOKEN?: string;
   DISCORD_API?: Fetcher;
+  DISCORD_GATEWAY?: Pick<DurableObjectNamespace, "idFromName">;
 }
 
 export class DiscordGateway extends DurableObject<Env> {
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000; // 10 seconds
   
   private ws: WebSocket | null = null;
+  private readonly retirement: DiscordAccountRetirement;
+  private readonly storage: DurableObjectStorage;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private heartbeatInterval: number = 0;
@@ -107,9 +114,11 @@ export class DiscordGateway extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.retirement = new DiscordAccountRetirement(ctx.storage, ctx.id.toString(), env.DISCORD_GATEWAY);
+    this.storage = this.retirement.guardStorage();
+    this.deliveries = new DeliveryLedger(this.storage);
     this.inboundDeliveries = new InboundDeliveryLedger(
-      this.ctx.storage,
+      this.storage,
       INBOUND_DELIVERY_PREFIX,
     );
     this.ctx.blockConcurrencyWhile(async () => this.loadState());
@@ -117,7 +126,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
   protected async loadState() {
     if (this.loaded) return;
-    const stored = await this.ctx.storage.get<GatewayState>("state");
+    const stored = await this.storage.get<GatewayState>("state");
     if (stored) {
       this.state = { ...this.state, ...stored };
     }
@@ -125,7 +134,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   protected async saveState() {
-    await this.ctx.storage.put("state", this.state);
+    await this.storage.put("state", this.state);
   }
 
   // ─────────────────────────────────────────────────────────
@@ -133,15 +142,17 @@ export class DiscordGateway extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────
 
   async start(botToken: string, accountId?: string): Promise<void> {
+    using _operation = this.retirement.operation();
     await this.loadState();
+    const storedIdentity = this.retirement.identity();
     const normalizedAccountId = accountId
       ? assertAdapterAccountDurableObjectIdentity(
           this.ctx.id.name,
           accountId,
           {
-            installationId: this.ctx.id.name
+            installationId: storedIdentity?.installationId ?? (this.ctx.id.name
               ? undefined
-              : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+              : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID),
             accountId: this.state.accountId,
           },
         ).accountId
@@ -149,11 +160,26 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.startConnection(normalizedAccountId, botToken);
   }
 
-  protected providerFetch(): typeof fetch { return this.env.DISCORD_API ? this.env.DISCORD_API.fetch.bind(this.env.DISCORD_API) : fetch; }
+  protected providerFetch(): typeof fetch {
+    const provider = this.env.DISCORD_API ? this.env.DISCORD_API.fetch.bind(this.env.DISCORD_API) : fetch;
+    return async (input, init) => {
+      this.retirement.requireLive();
+      const inputSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const signal = inputSignal ? AbortSignal.any([inputSignal, this.retirement.signal]) : this.retirement.signal;
+      const response = await provider(input, { ...init, signal });
+      if (this.retirement.retired) {
+        if (response.webSocket) { response.webSocket.accept(); response.webSocket.close(1000, "Installation retired"); }
+        else await response.body?.cancel("Installation retired").catch(() => {});
+        this.retirement.requireLive();
+      }
+      return response;
+    };
+  }
 
   protected connectionBotToken(): string | null { return this.state.botToken ?? this.env.DISCORD_BOT_TOKEN ?? null; }
 
   protected async startConnection(accountId?: string, botToken?: string): Promise<void> {
+    using _operation = this.retirement.operation();
     if (this.ws || this.opening) {
       console.log("[DiscordGateway] Already connected");
       return;
@@ -172,6 +198,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   async stop(): Promise<void> {
+    using _operation = this.retirement.operation();
     await this.loadState();
     this.connectionEpoch++;
     if (this.ws) {
@@ -180,7 +207,7 @@ export class DiscordGateway extends DurableObject<Env> {
     }
     this.state.connected = false;
     await this.saveState();
-    await this.ctx.storage.deleteAlarm();
+    await this.storage.deleteAlarm();
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
@@ -201,20 +228,59 @@ export class DiscordGateway extends DurableObject<Env> {
 
   async getBotToken(): Promise<string | null> {
     await this.loadState();
-    return this.state.botToken;
+    return this.retirement.retired ? null : this.state.botToken;
   }
 
   async sendMessage(
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
-    await this.loadState();
-    return await deliverDiscordMessage(
-      this.deliveries,
-      this.state.botToken || this.env.DISCORD_BOT_TOKEN || null,
-      message,
-      body,
-    );
+    if (this.retirement.retired) {
+      await cancelBinaryBody(body, "Discord account installation is retired");
+      return { ok: false, error: "Discord account installation is retired" };
+    }
+    using _operation = this.retirement.operation();
+    try {
+      await this.loadState();
+      return await deliverDiscordMessage(
+        this.deliveries,
+        this.state.botToken || this.env.DISCORD_BOT_TOKEN || null,
+        message,
+        body,
+        { providerFetch: this.providerFetch(), signal: this.retirement.signal, isCurrent: async () => !this.retirement.retired },
+      );
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
+  }
+
+  async inspectInstallationResource(targetInstallationId: string, candidateInstallationIds?: string[]): Promise<AdapterResourceInspection> {
+    return this.retirement.inspect(targetInstallationId, candidateInstallationIds);
+  }
+
+  async quiesceInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    return await this.retirement.quiesce(input, () => {
+      this.connectionEpoch++;
+      const socket = this.ws;
+      this.ws = null;
+      socket?.close(1000, "Installation retired");
+      this.state.connected = false;
+      this.state.botToken = null;
+    });
+  }
+
+  async eraseInstallation(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    await this.quiesceInstallation(input);
+    const receipt = this.retirement.erase(input);
+    if (receipt.phase === "live-erased" || receipt.phase === "erased") {
+      this.state = { accountId: null, botToken: null, sessionId: null, resumeGatewayUrl: null, seq: null, connected: false, lastHeartbeatAck: null, lastError: null };
+    }
+    return receipt;
+  }
+
+  async installationDeletionStatus(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    return this.retirement.status(input);
   }
 
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
@@ -223,6 +289,9 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private getInstallationContext(): AdapterInstallationContext {
+    this.retirement.requireLive();
+    const storedIdentity = this.retirement.identity();
+    if (storedIdentity) return { installationId: storedIdentity.installationId };
     const identity = resolveAdapterAccountDurableObjectIdentity(
       this.ctx.id.name,
       {
@@ -240,6 +309,8 @@ export class DiscordGateway extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────
 
   async alarm() {
+    if (this.retirement.retired) return;
+    using _operation = this.retirement.operation();
     // Reload state in case we hibernated
     await this.loadState();
 
@@ -265,6 +336,7 @@ export class DiscordGateway extends DurableObject<Env> {
       try {
         await this.openGatewayConnection();
       } catch (e) {
+        if (this.retirement.retired) return;
         console.error("[DiscordGateway] Reconnect failed:", e);
         this.state.lastError = e instanceof Error ? e.message : String(e);
         await this.saveState();
@@ -286,6 +358,7 @@ export class DiscordGateway extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────
 
   private async openGatewayConnection(): Promise<void> {
+    using _operation = this.retirement.operation();
     if (this.opening) return await this.opening;
     const epoch = this.connectionEpoch;
     const opening = this.connectGateway(epoch);
@@ -346,6 +419,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async handleMessage(rawData: string, socket: WebSocket) {
+    using _operation = this.retirement.operation();
     const payload = parseDiscordGatewayFrame(rawData);
     const { op, t, d, s } = payload;
 
@@ -403,6 +477,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   protected async handleDispatch(eventType: string, d: DiscordDispatchPayload) {
+    using _operation = this.retirement.operation();
 
     switch (eventType) {
       case "READY":
@@ -416,7 +491,7 @@ export class DiscordGateway extends DurableObject<Env> {
         // Store bot user info for mention detection
         const botUser = ready.user;
         if (botUser) {
-          await this.ctx.storage.put("botUser", { id: botUser.id, username: botUser.username });
+          await this.storage.put("botUser", { id: botUser.id, username: botUser.username });
         }
         
         console.log(`[DiscordGateway] Connected as ${botUser?.username} (${botUser?.id})`);
@@ -456,6 +531,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   protected async handleMessageCreate(data: DiscordMessagePayload): Promise<void> {
+    using _operation = this.retirement.operation();
     const author = data.author;
 
     // Ignore bot messages
@@ -476,6 +552,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async deliverPendingInbound(messageId: string): Promise<void> {
+    using _operation = this.retirement.operation();
     const attempt = await this.inboundDeliveries.attempt(
       messageId,
       async (serialized) => this.forwardMessageCreate(
@@ -512,7 +589,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
     // Check if bot was mentioned
     const mentions = data.mentions ?? [];
-    const botUser = await this.ctx.storage.get<{ id: string }>("botUser");
+    const botUser = await this.storage.get<{ id: string }>("botUser");
     const referencedMessage = data.referenced_message;
     const botUserId = botUser?.id;
     const wasMentioned = Boolean(
@@ -546,6 +623,10 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
+    if (this.retirement.retired) {
+      await cancelBinaryBody(media.body, "Discord account installation is retired");
+      this.retirement.requireLive();
+    }
     const result = await callAdapterGateway(
       this.env.GATEWAY,
       this.getInstallationContext(),
@@ -578,6 +659,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   protected async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
+    this.retirement.requireLive();
     const accountId = this.getAccountId();
     try {
       await callAdapterGateway(
@@ -600,6 +682,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async identify() {
+    this.retirement.requireLive();
     const token = this.connectionBotToken();
     if (!token) {
       throw new Error("No bot token set");
@@ -620,6 +703,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async resume() {
+    this.retirement.requireLive();
     const token = this.connectionBotToken();
     if (!token || !this.state.sessionId) {
       return this.identify();
@@ -636,6 +720,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private async sendHeartbeat() {
+    this.retirement.requireLive();
     if (!this.ws) return;
 
     this.ws.send(JSON.stringify({
