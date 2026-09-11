@@ -66,7 +66,8 @@ export class GatewayLifecycleEntrypoint extends WorkerEntrypoint<GatewayEnv, { a
     const directory = this.env.INSTALLATION_DIRECTORY;
     if (!directory) throw new Error("Installation directory is required");
     const installation = await directory.resolveInstallation(request.installationId);
-    if (!installation.found || installation.installationId !== request.installationId || installation.state !== "retained") throw new Error("Installation must be retained before deletion");
+    if (!installation.found || installation.installationId !== request.installationId
+      || !["retained", "deleting", "deleted"].includes(installation.state)) throw new Error("Installation must be retired before deletion");
     return this.env.KERNEL.getByName(request.installationId);
   }
 }

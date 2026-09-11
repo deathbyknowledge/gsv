@@ -5,6 +5,8 @@
 the exact installation as `retained` before inspection, inventory import, or
 cleanup. It is not a public HTTP route. Accounts owns authorization, the complete
 deletion manifest, and coordination with the other storage owners.
+Lifecycle receipts also admit `deleting` and `deleted` directory tombstones so
+backup expiry can finish after Accounts has removed the live directory record.
 
 ## Durable ownership and erasure
 
@@ -33,7 +35,8 @@ and prefix.
 The Gateway receipt distinguishes live erasure from retained platform backups.
 Cloudflare Durable Object PITR can retain deleted data for up to 30 days; the
 receipt conservatively starts that retention period after the final Kernel
-erasure. Other owners and provider retention remain separate receipts.
+erasure and adds a one-minute expiry buffer. Other owners and provider retention
+remain separate receipts.
 
 ## Historical inventory is a prerequisite
 

@@ -9,7 +9,7 @@ import { RESOURCE_IDENTITY_KEY, VERIFIED_INVENTORY_KEY, type ResourceRetirement 
 import { installationStoragePrefix } from "./storage";
 
 const batchSize = 16;
-const backupLifetimeMs = 30 * 24 * 60 * 60_000;
+const backupLifetimeMs = 30 * 24 * 60 * 60_000 + 60_000;
 const ripgitProgressSchema = z.strictObject({
   version: z.literal(1), installationId: z.string(), operationId: z.string(),
   phase: z.enum(["quiescing", "quiesced", "live-erased"]), pendingResources: z.number().int().nonnegative(),
