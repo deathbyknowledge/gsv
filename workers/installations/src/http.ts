@@ -3,8 +3,20 @@ const MAX_JSON_BODY_BYTES = 32 * 1024;
 export async function readJsonObject(request: Request): Promise<JsonObject> {
   const type = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
   if (type !== "application/json") throw new Error("JSON body is required");
+  const bytes = await readRequestBody(request, MAX_JSON_BODY_BYTES);
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new Error("request JSON is invalid"); }
+  if (!value || value.constructor !== Object || Array.isArray(value)) {
+    throw new Error("JSON object is required");
+  }
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+  return value as JsonObject;
+}
+
+export async function readRequestBody(request: Request, maxBytes: number): Promise<Uint8Array> {
   const declaredLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await request.body?.cancel();
     throw new Error("request body is too large");
   }
@@ -17,7 +29,7 @@ export async function readJsonObject(request: Request): Promise<JsonObject> {
         const { value, done } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > MAX_JSON_BODY_BYTES) {
+        if (size > maxBytes) {
           await reader.cancel();
           throw new Error("request body is too large");
         }
@@ -30,14 +42,7 @@ export async function readJsonObject(request: Request): Promise<JsonObject> {
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  let value: unknown;
-  try { value = JSON.parse(new TextDecoder().decode(bytes)); }
-  catch { throw new Error("request JSON is invalid"); }
-  if (!value || value.constructor !== Object || Array.isArray(value)) {
-    throw new Error("JSON object is required");
-  }
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-  return value as JsonObject;
+  return bytes;
 }
 
 export interface JsonObject { [key: string]: JsonValue; }

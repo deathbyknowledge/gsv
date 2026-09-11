@@ -9,7 +9,7 @@ import type {
 } from "@humansandmachines/gsv/services/onboarding";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
-import { InstallationAdminApi } from "./admin/api";
+import { InstallationAdminHttp } from "./admin/http";
 import { CloudflareInstallationAdminAccess } from "./admin/access";
 import { InstallationAdminService } from "./admin/service";
 
@@ -20,7 +20,7 @@ export default class InstallationService extends WorkerEntrypoint<Env>
       return Response.json({ status: "healthy" });
     }
     const accounts = this.accounts();
-    const api = new InstallationAdminApi(
+    const api = new InstallationAdminHttp(
       new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
         id: "principal_operator_registry", email: "operator@gsv.invalid", displayName: "Operator registry",
       }, {}),

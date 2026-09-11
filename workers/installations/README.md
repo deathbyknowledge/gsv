@@ -4,22 +4,29 @@ This is the public Accounts implementation being extracted during hosting
 consolidation. It owns directory identity, principals, ownership, setup claims,
 and durable reset preparation. It does not read or write funding-policy tables.
 
-The Worker exposes the existing directory/onboarding RPC contracts and the
-installation administration JSON API. Accounts owns listing, details, creation,
-onboarding reissue, active/restricted transitions and reset orchestration; none
-of these operations requires commercial tables. H&M uses the same API, Access
-verifier and administration service, then adds its private funding summaries.
-Its existing Worker still hosts the HTML administration pages and commercial
-routes. Owner sign-in/recovery, operator-token login, common bootstrap and
-production adoption are subsequent batches; this is not yet the complete
-replacement deployment.
+The Worker exposes the existing directory/onboarding RPC contracts, installation
+administration HTML screens, and the JSON API. Accounts owns listing, details,
+creation, onboarding reissue, active/restricted transitions and reset
+orchestration; none of these operations requires commercial tables. H&M uses the
+same controller, pages, API, Access verifier and administration service. Its
+private presentation adds navigation, a list summary column and installation
+detail slots; those trusted renderers own escaping their data. Funding forms
+and inference routes remain private. Owner sign-in/recovery, operator-token
+login, common bootstrap and production adoption are subsequent batches; this
+is not yet the complete replacement deployment.
+
+The HTML registry is available at `/admin` and `/admin/installations`, with a
+creation form at `/admin/installations/new` and details and lifecycle controls
+at `/admin/installations/:id`. The shared stylesheet and layout preserve the
+existing operator UI. HTML responses are never cached, and onboarding links
+suppress referrer disclosure when opened.
 
 The API uses `/admin/api/installations` for listing and creation, and
 `/admin/api/installations/:id` for details. POST actions are `onboarding`,
 `lifecycle` and `reset`. Mutations require the exact configured Origin; creation
 and reset retain their operation ids, and reset requires the current handle as
-confirmation. JSON bodies are bounded while reading. Claim responses are never
-cached and suppress referrer disclosure.
+confirmation. JSON and HTML form bodies are bounded while reading. JSON claim
+responses are never cached and suppress referrer disclosure.
 
 Production access requires an RS256 Cloudflare Access JWT matching
 `GSV_ADMIN_ACCESS_TEAM_DOMAIN` and `GSV_ADMIN_ACCESS_AUD`; the default empty
@@ -37,7 +44,8 @@ hosting composition; the reference Worker currently has no optional services.
 
 Run `npm run typecheck --workspace @humansandmachines/gsv-installations` and
 `npm test --workspace @humansandmachines/gsv-installations` from the repository
-root. Tests create a fresh directory-only D1 and exercise actual Worker RPCs.
+root. Tests create a fresh directory-only D1 and exercise actual Worker RPCs,
+the JSON API, and the HTML create, reissue, lifecycle and reset flow.
 The compatibility date remains the extracted service's existing date so that
 moving ownership does not also change runtime semantics.
 
