@@ -3,6 +3,7 @@
 Step-by-step guides for common tasks. Each page focuses on one concrete goal — pick the one that matches what you're trying to do.
 
 - [Deploy / Update / Remove](/how-to/deploy) — get GSV running on your Cloudflare account, keep it updated, or take it down
+- [Run GSV for Your Organisation](/how-to/organisations) — operate spaces for your people and talk to us about your deployment
 - [Install Host Applications](/how-to/install-host-apps) — install or upgrade the CLI, machine daemon, and native Desktop
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across
 - [Connect a Messenger](/how-to/messengers) — talk to GSV from WhatsApp, Telegram, Discord, or Slack

@@ -1371,7 +1371,7 @@ lowercase hex characters. The receiving client persists a separate random
 `gsv_machine_` credential with a 64-character hex suffix before redemption.
 Its durable machine token has no automatic expiry; explicit device removal or
 token revocation disconnects it. Creation and redemption secrets are excluded
-from ledger arguments. See [device invitations](../../engineering/device-pairing.md).
+from ledger arguments. See [device invitations](https://github.com/deathbyknowledge/gsv/blob/main/engineering/device-pairing.md).
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client

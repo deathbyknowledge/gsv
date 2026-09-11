@@ -7,7 +7,7 @@ ordinary syscall authorization. Resolving an installation establishes which
 Kernel may receive a request; it does not sign a person into that Kernel.
 
 This document describes the implemented directory and onboarding interfaces.
-The [hosting consolidation plan](../../engineering/hosting-consolidation-spec.md)
+The [hosting consolidation plan](https://github.com/deathbyknowledge/gsv/blob/main/engineering/hosting-consolidation-spec.md)
 adds public Accounts, owner recovery, and complete data deletion in later
 slices. Those operations must not be inferred from a directory lookup.
 

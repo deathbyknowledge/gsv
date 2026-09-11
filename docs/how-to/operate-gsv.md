@@ -44,7 +44,7 @@ upgrading; existing multi-installation operators must preserve their physical
 resource identities and complete the directory migration ownership handoff.
 
 After the first successful apply, use the deployment's directory database ID and
-administration origin with the [bootstrap command](../../deployment/operator-bootstrap.md).
+administration origin with the [bootstrap command](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md).
 It prints a one-time link only to your local controlling terminal. The link
 creates the first installation and its setup invitation. Further installations
 are created explicitly in administration. Ordinary redeployments do not create
