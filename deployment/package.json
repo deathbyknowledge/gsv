@@ -7,7 +7,11 @@
     ".": "./src/index.ts",
     "./manifest": "./src/manifest.ts",
     "./installation-migrations": "./src/installation-migration-adoption.ts",
-    "./installation-migration-adoption-local": "./src/installation-migration-adoption-executor.ts"
+    "./installation-migration-adoption-local": "./src/installation-migration-adoption-executor.ts",
+    "./installation-migration-adoption-remote": "./src/installation-migration-adoption-remote.ts",
+    "./installation-migration-d1": "./src/installation-migration-d1.ts",
+    "./installation-migration-command": "./src/installation-migration-command.ts",
+    "./installation-migration-runner": "./src/installation-migration-runner.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",
@@ -21,6 +25,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260823.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.9"
+    "vitest": "4.1.9",
+    "miniflare": "4.20260722.0",
+    "@cloudflare/vitest-pool-workers": "0.18.8"
   }
 }
