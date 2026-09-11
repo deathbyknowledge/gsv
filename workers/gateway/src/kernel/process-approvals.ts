@@ -2,6 +2,7 @@ import { z } from "zod";
 import { procHilRequestSchema } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
+import { processEventDeliverResultSchema } from "../protocol/process-frames";
 import type { Kernel } from "./do";
 
 export const processApprovalNoticeSchema = z.object({
@@ -11,7 +12,7 @@ export type ProcessApprovalNotice = z.infer<typeof processApprovalNoticeSchema>;
 type ApprovalNoticeHost = {
   installationId: Kernel["installationId"];
   procs: Pick<Kernel["procs"], "get">;
-  ipcCalls: Pick<Kernel["ipcCalls"], "findPendingByTargetRun">;
+  ipcCalls: Pick<Kernel["ipcCalls"], "findPendingByTargetRun" | "get">;
   onboarding: Pick<Kernel["onboarding"], "managedWorkGate">;
   schedule: Kernel["schedule"];
 };
@@ -48,10 +49,11 @@ export async function deliverProcessApprovalNotice(host: ApprovalNoticeHost, not
     if (!source || source.ownerUid !== child.ownerUid || call.ownerUid !== child.ownerUid
       || currentChild?.activeRunId !== notice.runId || currentChild.state !== "waiting_hil") return;
     visited.add(source.processId);
+    const eventId = `approval:${notice.requestId}:${call.callId}`;
     const delivered = await sendFrameToProcess(host.installationId, source.processId, {
       type: "req", id: crypto.randomUUID(), call: "proc.event.deliver",
       args: {
-        eventId: `approval:${notice.requestId}:${call.callId}`,
+        eventId,
         event: {
           kind: "process.approval", severity: "warn", audience: "model",
           payload: {
@@ -65,6 +67,11 @@ export async function deliverProcessApprovalNotice(host: ApprovalNoticeHost, not
       if (delivered?.type === "res" && !delivered.ok && delivered.error.code === 410) return;
       throw new Error("Could not deliver the process approval notice");
     }
+    const result = processEventDeliverResultSchema.safeParse(delivered.data);
+    if (!result.success || result.data.eventId !== eventId) {
+      throw new Error("Process approval acknowledgment did not match the delivery");
+    }
+    if (result.data.ignored || host.ipcCalls.get(call.callId)?.status !== "pending") return;
     targetPid = source.processId;
     targetRunId = call.sourceRunId;
   }

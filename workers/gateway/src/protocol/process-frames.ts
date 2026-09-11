@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   AdapterInteractionOrigin,
   ConversationMessage,
@@ -52,6 +53,14 @@ export type ProcessEventDeliverResult = {
   messageId?: number;
   ignored?: boolean;
 };
+
+export const processEventDeliverResultSchema: z.ZodType<ProcessEventDeliverResult> = z.strictObject({
+  eventId: z.string(),
+  runId: z.string().nullable(),
+  queued: z.boolean(),
+  messageId: z.number().int().positive().optional(),
+  ignored: z.boolean().optional(),
+});
 
 type ProcessScheduleDataValue =
   | string
