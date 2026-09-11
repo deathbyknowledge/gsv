@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { deferred, ROOT_IDENTITY } from "../process/do-test-harness";
@@ -6,6 +8,7 @@ import * as utils from "../shared/utils";
 import { ProcessRegistry } from "./processes";
 import { IpcCallStore } from "./ipc-calls";
 import { deliverProcessApprovalNotice } from "./process-approvals";
+import type { Kernel } from "./do";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -17,6 +20,14 @@ const approval: ProcHilRequest = {
 
 async function fixture(test: (context: Awaited<ReturnType<typeof build>>) => Promise<void>) {
   await runWithRealKernelSql(async (sql) => test(await build(sql)));
+}
+
+async function scheduledFixture(test: (context: Awaited<ReturnType<typeof build>>, kernel: Kernel, sql: SqlStorage) => Promise<void>) {
+  const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+  await runInDurableObject(stub, async (kernel: Kernel, state) => {
+    vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
+    await test(await build(state.storage.sql), kernel, state.storage.sql);
+  });
 }
 
 async function build(sql: SqlStorage) {
@@ -164,6 +175,62 @@ describe("delegated approval notices", () => {
       expect(send.mock.calls.filter(([, pid]) => pid === "parent").map(([, , frame]) => frame))
         .toEqual([expect.objectContaining({ args: expect.objectContaining({ eventId: "approval:request:parent-call" }) }),
           expect.objectContaining({ args: expect.objectContaining({ eventId: "approval:request:parent-call" }) })]);
+    });
+  });
+
+  it.each(["child", "ship"])("retains a durable notice across repeated %s failures and removes it after acceptance", async (unavailablePid) => {
+    await scheduledFixture(async ({ send }, kernel, sql) => {
+      const implementation = send.getMockImplementation()!;
+      send.mockImplementation(async (...args) => {
+        if (args[1] === unavailablePid) throw new Error("Temporarily unavailable");
+        return implementation(...args);
+      });
+      let task = await kernel.schedule(0, "onProcessApprovalNotice", notice, { idempotent: true });
+      for (let attempt = 0; attempt < 4; attempt++) {
+        sql.exec("UPDATE cf_agents_schedules SET time = ? WHERE id = ?", Math.floor(Date.now() / 1000), task.id);
+        await kernel.alarm();
+        const successors = sql.exec<{ id: string; time: number; payload: string }>(
+          "SELECT id, time, payload FROM cf_agents_schedules WHERE callback = 'onProcessApprovalNotice'",
+        ).toArray();
+        expect(successors).toHaveLength(1);
+        expect(successors[0].id).not.toBe(task.id);
+        expect(successors[0].time).toBeGreaterThan(Math.floor(Date.now() / 1000));
+        expect(JSON.parse(successors[0].payload)).toEqual(notice);
+        task = { ...task, id: successors[0].id };
+      }
+      send.mockImplementation(implementation);
+      sql.exec("UPDATE cf_agents_schedules SET time = ? WHERE id = ?", Math.floor(Date.now() / 1000), task.id);
+      await kernel.alarm();
+      expect(sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onProcessApprovalNotice'").toArray()).toEqual([]);
+      const eventIds = send.mock.calls.flatMap(([, pid, frame]) => pid === "parent" && frame.type === "req"
+        && frame.call === "proc.event.deliver" ? [frame.args.eventId] : []);
+      expect(new Set(eventIds)).toEqual(new Set(["approval:request:parent-call"]));
+      expect(send.mock.calls.at(-1)?.[1]).toBe("ship");
+    });
+  });
+
+  it.each(["completed", "cancelled", "ignored"])("retires a delayed notice when the request or delegation is %s", async (terminal) => {
+    await scheduledFixture(async ({ send, procs, ipcCalls }, kernel, sql) => {
+      const implementation = send.getMockImplementation()!;
+      send.mockRejectedValue(new Error("Temporarily unavailable"));
+      await kernel.schedule(0, "onProcessApprovalNotice", notice, { idempotent: true });
+      await kernel.alarm();
+      expect(sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onProcessApprovalNotice'").toArray()).toHaveLength(1);
+      send.mockClear();
+      send.mockImplementation(async (...args) => {
+        const frame = args[2];
+        if (terminal === "ignored" && args[1] === "parent" && frame.type === "req" && frame.call === "proc.event.deliver") {
+          return { type: "res", id: frame.id, ok: true,
+            data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: true } };
+        }
+        return implementation(...args);
+      });
+      if (terminal === "completed") procs.updateRuntimeState("child", { state: "idle", activeRunId: null });
+      if (terminal === "cancelled") ipcCalls.cancelBySourcePid({ uid: 1000, sourcePid: "parent" });
+      sql.exec("UPDATE cf_agents_schedules SET time = ? WHERE callback = 'onProcessApprovalNotice'", Math.floor(Date.now() / 1000));
+      await kernel.alarm();
+      expect(sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onProcessApprovalNotice'").toArray()).toEqual([]);
+      expect(send.mock.calls.map(([, pid]) => pid)).toEqual(terminal === "completed" ? [] : terminal === "cancelled" ? ["child"] : ["child", "parent"]);
     });
   });
 });
