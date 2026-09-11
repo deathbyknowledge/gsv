@@ -103,12 +103,14 @@ export async function captureInstallationDeletionObjects(input: {
     }
     throw new Error("Capture enumeration lacks a final empty page");
   };
-  const before = new Map<string, Enumeration>();
-  for (const namespace of configuration.namespaces) before.set(namespace.namespaceId, await enumerate("before", namespace.namespaceId));
   const savedEpoch = await input.artifacts.read("inspection-epoch.json");
   const epoch = epochSchema.parse(savedEpoch ? JSON.parse(savedEpoch) : await input.accounts.openInspection(configuration.installationId));
-  if (epoch.installationId !== configuration.installationId || [...before.values()].some((item) => item.snapshot.capturedAt > epoch.createdAt)) throw new Error("Capture inspection epoch does not match its scope or snapshot interval");
+  if (epoch.installationId !== configuration.installationId) throw new Error("Capture inspection epoch does not match its scope");
   await save("inspection-epoch.json", JSON.stringify(epoch));
+  // Epoch creation initializes historical adapter indexes before their namespaces are captured.
+  const before = new Map<string, Enumeration>();
+  for (const namespace of configuration.namespaces) before.set(namespace.namespaceId, await enumerate("before", namespace.namespaceId));
+  if ([...before.values()].some((item) => item.snapshot.capturedAt < epoch.createdAt)) throw new Error("Capture snapshot predates its inspection epoch");
   const namespaces: CapturedNamespace[] = [];
   const fullNamespaces: z.infer<typeof installationDeletionEvidenceSchema>["namespaces"] = [];
   let storedObjects = 0;

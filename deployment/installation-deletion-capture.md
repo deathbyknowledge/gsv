@@ -56,7 +56,9 @@ Accounts also returns persisted observations if a successful probe's HTTP reply
 was lost. A changed configuration or changed before/after namespace enumeration
 requires a new output directory and a fresh epoch.
 
-Each namespace is enumerated until the actual empty terminal page, including
+Opening the inspection epoch first initializes historical adapter indexes, so
+their stored objects are included in both namespace snapshots. Each namespace
+is enumerated until the actual empty terminal page, including
 the continuation cursor chain. Stored objects are inspected through Accounts in
 batches of at most 32. After inspection, a second complete enumeration must match
 the first, including each object's stored-data flag. Unidentified objects remain

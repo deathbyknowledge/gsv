@@ -39,6 +39,7 @@ describe("operator DO evidence capture", () => {
     expect(result).toMatchObject({ scope: "durable-objects", outcome: "captured", storedObjects: 65, unidentifiedObjects: 0 });
     expect(f.listObjects.mock.calls.map(([input]) => input.cursor)).toEqual([null, "33", "65", null, "33", "65"]);
     expect(f.inspect.mock.calls.map(([input]) => input.resources.length)).toEqual([32, 32, 1]);
+    expect(f.openInspection.mock.invocationCallOrder[0]).toBeLessThan(f.listObjects.mock.invocationCallOrder[0]);
     const index = installationDeletionEvidenceIndexSchema.parse(JSON.parse(f.files.get(result.indexReference)!));
     expect(index.inspectionEpochId).toBe(result.inspectionEpochId);
     expect(index.namespaces[0].before.pages).toHaveLength(3);
@@ -91,16 +92,29 @@ describe("operator DO evidence capture", () => {
     expect(f.inspect.mock.calls[0][0].resources).toHaveLength(1);
   });
 
-  it("rejects a repeated cursor and changed resume configuration before opening an epoch", async () => {
+  it("rejects a repeated cursor and rejects changed resume configuration before opening another epoch", async () => {
     const repeated = fixture(65);
     repeated.listObjects.mockImplementation(async () => ({ success: true, result: [{ id: crypto.randomUUID().replaceAll("-", "").repeat(2), hasStoredData: false }], result_info: { count: 1, cursor: "same" } }));
     await expect(repeated.run()).rejects.toThrow("continuation cursor");
-    expect(repeated.openInspection).not.toHaveBeenCalled();
+    expect(repeated.openInspection).toHaveBeenCalledTimes(1);
     const resumed = fixture(0);
     await resumed.run();
     resumed.configuration.candidateInstallationIds.push("inst_new");
     await expect(resumed.run()).rejects.toThrow("conflict");
     expect(resumed.openInspection).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes coordinator objects created by epoch preflight and resumes before enumeration without repeating it", async () => {
+    const f = fixture(0);
+    const open = f.openInspection.getMockImplementation()!;
+    f.openInspection.mockImplementation(async (installationId) => {
+      f.objects.push({ id: id(1), hasStoredData: true });
+      return open(installationId);
+    });
+    f.listObjects.mockRejectedValueOnce(new Error("interrupted before snapshot"));
+    await expect(f.run()).rejects.toThrow("interrupted before snapshot");
+    expect(await f.run()).toMatchObject({ storedObjects: 1 });
+    expect(f.openInspection).toHaveBeenCalledTimes(1);
   });
 
   it("keeps authentication in headers, refuses redirects, and omits failed response contents", async () => {
