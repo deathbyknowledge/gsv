@@ -51,16 +51,24 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
-  it("accepts a named start but keeps browser execution tied to its request", async () => {
-    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
+  it("rejects session starts and polls before executing browser side effects", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
+      name: "side-effect",
+      summary: "Record a browser side effect.",
+      run,
+    }]);
     const sessionId = crypto.randomUUID();
-    await expect(shell.exec({ input: "help", sessionId, start: true })).resolves.toMatchObject({ status: "completed" });
-    const controller = new AbortController();
-    const execution = shell.exec({ input: "sleep 300", sessionId, start: true }, { abortSignal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    controller.abort(new Error("Caller disconnected"));
-    await expect(within(execution)).resolves.toMatchObject({ status: "failed" });
-    await expect(shell.exec({ input: "", sessionId })).resolves.toMatchObject({ status: "failed", error: "Browser shell sessions are not supported yet" });
+    for (const args of [{ sessionId, start: true }, { start: true }, { sessionId }]) {
+      await expect(shell.exec({ input: "side-effect", ...args })).resolves.toMatchObject({
+        status: "failed",
+        error: "Browser shell sessions are not supported yet",
+      });
+    }
+    expect(run).not.toHaveBeenCalled();
+
+    await expect(shell.exec({ input: "side-effect" })).resolves.toMatchObject({ status: "completed" });
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it("drops a cancelled queued command without bypassing the active command", async () => {

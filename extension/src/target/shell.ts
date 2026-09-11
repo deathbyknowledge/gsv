@@ -76,7 +76,7 @@ export class BrowserTargetShell {
     const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
     const timeoutMs = resolveShellTimeout(record.timeout);
 
-    if (sessionId && record.start !== true) {
+    if (sessionId || record.start === true) {
       return { status: "failed", output: "", error: "Browser shell sessions are not supported yet" };
     }
     if (!input.trim()) {
