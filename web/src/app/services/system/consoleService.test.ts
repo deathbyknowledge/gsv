@@ -4,7 +4,6 @@ import {
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
   consumeIdentityLinkCode,
-  createMachineNodeToken,
   createConsoleAgent,
   loadConsoleIdentityLinks,
   loadConsoleAdapterAccounts,
@@ -110,50 +109,6 @@ describe("console agent service", () => {
     }
     expect(caught?.message).toBe("Adapter returned an invalid connection response");
     expect(caught?.message).not.toContain("do-not-expose");
-  });
-
-  it("creates machine tokens bound to a peer id for machine provisioning", async () => {
-    const create = vi.fn(async () => ({
-      token: {
-        tokenId: "tok-1",
-        token: "secret-node-token",
-        tokenPrefix: "gsv_node",
-        uid: 42,
-        kind: "machine",
-        label: "Studio Mac",
-        peerId: "studio-mac",
-        createdAt: 1_700_000_000,
-        expiresAt: 1_700_086_400,
-      },
-    }));
-
-    // SAFETY: Test fixture uses the asserted API shape for this focused case.
-    await expect(createMachineNodeToken({
-      sys: {
-        token: { create },
-      },
-    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
-    } as any, {
-      deviceId: "studio-mac",
-      label: "Studio Mac",
-      expiresAt: 1_700_086_400,
-    })).resolves.toEqual({
-      tokenId: "tok-1",
-      token: "secret-node-token",
-      tokenPrefix: "gsv_node",
-      uid: 42,
-      kind: "machine",
-      label: "Studio Mac",
-      peerId: "studio-mac",
-      createdAt: 1_700_000_000,
-      expiresAt: 1_700_086_400,
-    });
-    expect(create).toHaveBeenCalledWith({
-      kind: "machine",
-      peerId: "studio-mac",
-      label: "Studio Mac",
-      expiresAt: 1_700_086_400,
-    });
   });
 
   it("loads adapter accounts from adapter discovery", async () => {

@@ -342,7 +342,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           <section class="fleet-block">
             <h2>
               <i /> Places
-              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.token.create")} onClick={() => connect("place")}>connect</button>
+              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.pair.create")} onClick={() => connect("place")}>connect</button>
               <span class="count">{places.length}</span>
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}

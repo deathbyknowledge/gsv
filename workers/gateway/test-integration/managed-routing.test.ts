@@ -343,6 +343,10 @@ describe("managed installation routing integration", () => {
 
     await setInstallationState(harness, "first", "restricted");
 
+    await expect(managedRpc(socket, "restricted-pairing-redemption", "sys.pair.redeem", {
+      id: "a5918755-0625-4b1a-8772-41243c2f3ea8", secret: "a".repeat(64), credential: `gsv_machine_${"b".repeat(64)}`,
+    })).resolves.toMatchObject({ ok: false, error: { code: 423, message: "Managed installation is suspended" } });
+
     const hostname = await harness.getWorker("gsv-managed").fetch(
       "https://first.gsv.space/.well-known/oauth-client/gsv.json",
     );

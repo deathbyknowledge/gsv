@@ -392,6 +392,20 @@ preference, and process-switch fencing.
 
 ## Daemon Commands
 
+Open **Fleet → Places → connect**, name the computer and create an invitation.
+After installing GSV, paste the provided command:
+
+```bash
+gsv pair CODE [--workspace PATH] [--no-install]
+gsv pair  # resume an interrupted exchange
+```
+
+The invitation supplies the gateway, account and target identity. It expires in
+ten minutes and can enroll one device. The CLI saves its credential before the
+exchange and installs the per-user daemon by default. `--no-install` saves the
+pairing without changing operating-system services. Closing the web panel or
+cancelling an already-used invitation does not revoke the resulting connection.
+
 ```bash
 gsv daemon install [--id ID] [--workspace PATH]
 gsv daemon start

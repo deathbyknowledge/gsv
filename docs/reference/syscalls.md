@@ -1355,12 +1355,23 @@ Runtime behavior:
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
+| `sys.pair.create` | `handleSysPairCreate` | A signed-in human creates an idempotent, ten-minute device invitation for a free target ID. The Kernel retains its secret hashed and creates no device credential yet. |
+| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
+| `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
+| `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
-`sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
+`sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
+
+Pairing creation uses a client-persisted UUID and 32 random bytes encoded as 64
+lowercase hex characters. The receiving client persists a separate random
+`gsv_machine_` credential with a 64-character hex suffix before redemption.
+Its durable machine token has no automatic expiry; explicit device removal or
+token revocation disconnects it. Creation and redemption secrets are excluded
+from ledger arguments. See [device invitations](../../engineering/device-pairing.md).
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client
@@ -1374,6 +1385,23 @@ metadata document advertises the same URL as its `client_id`.
 
 ```ts
 type SystemSyscalls = {
+  "sys.pair.create": {
+    args: { id: string; secret: string; targetId: string; label: string; replace?: boolean };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.list": {
+    args: {};
+    result: { pairings: DevicePairing[] };
+  };
+  "sys.pair.cancel": {
+    args: { id: string };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.redeem": {
+    args: { id: string; secret: string; credential: string };
+    result: { pairing: DevicePairing; tokenId: string };
+  };
+
   "sys.connect": {
     args: {
       protocol: 4;

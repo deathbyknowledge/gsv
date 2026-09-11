@@ -1,4 +1,6 @@
 export type * from "./syscalls/system";
+export type * from "./syscalls/pairing";
+export * from "./pairing";
 export type * from "./syscalls/fs";
 export type * from "./syscalls/shell";
 export { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "./syscalls/shell";

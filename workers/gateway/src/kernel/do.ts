@@ -41,6 +41,7 @@ import {
   adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
+import { DevicePairingStore } from "./device-pairings";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -371,6 +372,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly installationStorage: R2Bucket;
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
+  readonly pairings: DevicePairingStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
@@ -443,6 +445,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.config = new ConfigStore(sql);
 
     this.targets = new TargetRegistry(sql);
+    this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
 
     this.routes = new RoutingTable(sql);
     this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
@@ -1265,6 +1268,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationId: this.installationId,
       installationIdentity,
       auth: this.auth,
+      pairings: this.pairings,
       caps: this.caps,
       config: this.config,
       targets: this.targets,
@@ -1487,7 +1491,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (!principal) return;
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
-      const args = frame.args as JsonLike;
+      // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
+      const args = (frame.call === "sys.pair.create"
+        ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
+        : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
+        : frame.args) as JsonLike;
       const seq = this.ledger.append({
         requestId: frame.id,
         timestamp: Date.now(),

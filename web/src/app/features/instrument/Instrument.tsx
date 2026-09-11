@@ -4,6 +4,7 @@ import { GlyphStars } from "../session/backgrounds/GlyphStars";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
+import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
@@ -58,7 +59,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
-  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><InstrumentReady initialPath={initialPath} /></TerminalProvider>;
+  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><InstrumentReady initialPath={initialPath} /></DevicePairingProvider></TerminalProvider>;
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {

@@ -129,6 +129,7 @@ function makeContext(
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     targets: devices as KernelContext["targets"],
     adapters: { identityLinks: { list: () => [] } },
+    pairings: { cancelForTarget: vi.fn() },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }

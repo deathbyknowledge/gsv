@@ -22,6 +22,7 @@ import {
 } from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
+import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
 const client = new GSVClient();
@@ -34,6 +35,7 @@ const endpoint = client.endpoint({
   },
 });
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
+const browserPairing = new BrowserPairing();
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -121,15 +123,18 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         await connectNow();
         return await stateResponse();
       case "disconnect":
+        browserPairing.stop();
         await setManualReconnectSuppressed(true);
         return await stateResponse();
       case "stop-all":
+        browserPairing.stop();
         return await stopAll();
       case "grant-media-capture":
         return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
         return await clearDiagnosticsState();
       case "save-config": {
+        if (browserPairing.isPairing) throw new Error("Finish or stop pairing before changing connection settings");
         const config = await saveConfig(message.config);
         addActivity({
           kind: "connection",
@@ -137,6 +142,15 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
+        await setManualReconnectSuppressed(false);
+        await connectionSupervisor.reconcile(config);
+        return await stateResponse();
+      }
+      case "pair": {
+        const epoch = browserPairing.epoch;
+        const config = await browserPairing.pair(message.code);
+        await runtimeStateReady;
+        if (browserPairing.epoch !== epoch) return await stateResponse();
         await setManualReconnectSuppressed(false);
         await connectionSupervisor.reconcile(config);
         return await stateResponse();

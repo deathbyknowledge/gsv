@@ -65,12 +65,6 @@ type ConsoleConfigClient = {
 type ConsoleAccountCreateClient = ConsoleConfigClient & {
   account: Pick<GSVClient["account"], "create">;
 };
-type ConsoleTokenCreateClient = {
-  sys: {
-    token: Pick<GSVClient["sys"]["token"], "create">;
-  };
-};
-
 export type ConsoleAgentContextFileDraft = {
   label: string;
   name?: string;
@@ -179,12 +173,6 @@ export type RunConsoleProcessActionResult = {
   pid: string;
 };
 
-export type CreateMachineNodeTokenInput = {
-  deviceId: string;
-  label?: string;
-  expiresAt?: number | null;
-};
-
 export type DeleteConsoleMachineInput = {
   deviceId: string;
 };
@@ -236,18 +224,6 @@ export type AddConsoleMcpServerInput = {
   url: string;
   transport: ConsoleMcpTransport;
   headers?: Record<string, string>;
-};
-
-export type IssuedMachineNodeToken = {
-  tokenId: string;
-  token: string;
-  tokenPrefix: string;
-  uid: number;
-  kind: "machine";
-  label: string | null;
-  peerId: string | null;
-  createdAt: number;
-  expiresAt: number | null;
 };
 
 export type LoadConsoleOverviewOptions = {
@@ -586,37 +562,6 @@ export async function saveConsoleAgentBehavior(
   await saveAgentBehaviorConfig(client, uid, input, { includeEmpty: true });
 
   return { ok: true };
-}
-
-export async function createMachineNodeToken(
-  client: ConsoleTokenCreateClient,
-  input: CreateMachineNodeTokenInput,
-): Promise<IssuedMachineNodeToken> {
-  const deviceId = input.deviceId.trim();
-  if (!deviceId) {
-    throw new Error("device id is required");
-  }
-
-  const label = input.label?.trim();
-  const expiresAt = z.number().finite().safeParse(input.expiresAt);
-  const result = await client.sys.token.create({
-    kind: "machine",
-    peerId: deviceId,
-    ...(label ? { label } : undefined),
-    ...(expiresAt.success ? { expiresAt: expiresAt.data } : undefined),
-  });
-
-  return {
-    tokenId: result.token.tokenId,
-    token: result.token.token,
-    tokenPrefix: result.token.tokenPrefix,
-    uid: result.token.uid,
-    kind: "machine",
-    label: result.token.label,
-    peerId: result.token.peerId,
-    createdAt: result.token.createdAt,
-    expiresAt: result.token.expiresAt,
-  };
 }
 
 export async function deleteConsoleMachine(

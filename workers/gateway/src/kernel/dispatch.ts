@@ -51,6 +51,8 @@ import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
+import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
+import { DevicePairingCreateError } from "./device-pairings";
 import {
   handleRepoApply,
   handleRepoCompare,
@@ -575,6 +577,22 @@ async function dispatchKernel(
       case "sys.token.create":
         data = await handleSysTokenCreate(frame.args, ctx);
         break;
+      case "sys.pair.create":
+        try {
+          data = await handleSysPairCreate(frame.args, ctx);
+        } catch (error) {
+          if (error instanceof DevicePairingCreateError) return { type: "res", id: frame.id, ok: false, error: { code: 400, message: error.message, details: { pairingCreate: "rejected" } } };
+          throw error;
+        }
+        break;
+      case "sys.pair.list":
+        data = handleSysPairList(ctx);
+        break;
+      case "sys.pair.cancel":
+        data = handleSysPairCancel(frame.args, ctx);
+        break;
+      case "sys.pair.redeem":
+        return errFrame(frame.id, 400, "sys.pair.redeem requires the connection enrollment path");
       case "sys.token.list":
         data = handleSysTokenList(frame.args, ctx);
         break;

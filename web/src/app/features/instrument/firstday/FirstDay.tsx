@@ -1,9 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
-import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { useSession } from "../../../services/session/SessionProvider";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
 import type { ConnectFlowShellProps } from "../../../components/connect-flow/ConnectFlowShell";
 import { mutateContactsWorkspace } from "../../../services/contacts/contactsService";
@@ -11,13 +9,8 @@ import {
   useConfirmConsoleAdapterPairing,
   useConsoleAdapterPairingInfo,
   useConsoleIdentityLinks,
-  useCreateMachineNodeToken,
   useInspectConsoleAdapterPairing,
 } from "../../../services/system/useConsoleData";
-import {
-  buildMachineBootstrapCommand,
-  buildMachineInstallCommand,
-} from "../../../services/machines/machineProvision";
 import {
   ManagedTelegramOnboardingFlow,
   type ManagedTelegramDependencies,
@@ -28,18 +21,12 @@ import {
   joinNames,
   nextToConnect,
   reachablePlaces,
-  type ComputerOs,
   type PlaceId,
   type PlaceRow,
 } from "./firstdayModel";
-import { useComputerPairing } from "./useComputerPairing";
+import { DevicePairingPanel } from "../shared/DevicePairingPanel";
+import type { ConsoleTarget } from "../../../domain/system/consoleModels";
 import "./firstday.css";
-
-const OS_CHOICES: readonly { id: ComputerOs; label: string }[] = [
-  { id: "mac", label: "Mac" },
-  { id: "windows", label: "Windows" },
-  { id: "linux", label: "Linux" },
-];
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -96,72 +83,18 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-function ComputerPanel({ release, taken, username, origin }: {
-  release: string;
-  taken: readonly string[];
-  username: string;
-  origin: string;
-}) {
-  const createToken = useCreateMachineNodeToken();
-  const { client, connected } = useGateway();
-  const { os, issued, pending, error, choose } = useComputerPairing({ create: createToken.mutateAsync, revoke: client.sys.token.revoke }, taken);
-
-  const installCommand = os ? buildMachineInstallCommand(os, release) : "";
-  const connectCommand = !pending && issued && issued.os === os
-    ? buildMachineBootstrapCommand({ origin, platform: issued.os, username, deviceId: issued.deviceId, token: issued.token.token })
-    : "";
-
-  return (
-    <>
-      <p>Pick the computer you're on. Two lines in a terminal: one installs GSV, one tells it who you are. This row lights up on its own when the computer says hello, and it keeps itself up to date from then on.</p>
-      <div class="choices">
-        {OS_CHOICES.map((choice) => (
-          <button
-            key={choice.id}
-            type="button"
-            class={`ibtn${os === choice.id ? " is-primary" : ""}`}
-            disabled={!connected || pending}
-            onClick={() => void choose(choice.id)}
-          >
-            {choice.label}
-          </button>
-        ))}
-      </div>
-      {os ? (
-        <div class="fd-commands">
-          <div class="fd-command">
-            <div class="fd-command-head"><span>1 · install</span><CopyButton text={installCommand} label="copy" /></div>
-            <pre>{installCommand}</pre>
-          </div>
-          <div class="fd-command">
-            <div class="fd-command-head">
-              <span>2 · connect as {username}</span>
-              {connectCommand ? <CopyButton text={connectCommand} label="copy" /> : null}
-            </div>
-            {connectCommand ? (
-              <pre>{connectCommand}</pre>
-            ) : error ? null : (
-              <pre class="is-dim">preparing a key for this computer…</pre>
-            )}
-            {error ? <pre class="is-error" role="alert">{error}</pre> : null}
-          </div>
-          {issued ? <p class="fd-note">The key is only shown here, once, and expires in 30 days if the computer never connects.</p> : null}
-        </div>
-      ) : null}
-    </>
-  );
+function ComputerPanel({ targets }: { targets: readonly ConsoleTarget[] }) {
+  return <>
+    <p>Pick the computer you're on. Two lines in a terminal: one installs GSV, one tells it who you are. This row lights up on its own when the computer says hello, and it keeps itself up to date from then on.</p>
+    <DevicePairingPanel targets={targets} />
+  </>;
 }
 
-function BrowserPanel({ release }: { release: string }) {
-  return (
-    <>
-      <p>Add the GSV extension to Chrome. It appears here as a place I can reach, and you choose per site whether I'm allowed in.</p>
-      <div class="choices">
-        <a class="ibtn is-primary" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">Download the extension</a>
-      </div>
-      <p class="fd-note">Unzip it, open chrome://extensions, turn on developer mode, and load the folder. It pairs from its options page with the same key flow as a computer.</p>
-    </>
-  );
+function BrowserPanel({ targets }: { targets: readonly ConsoleTarget[] }) {
+  return <>
+    <p>Add the GSV extension to Chrome. It appears here as a place I can reach, and you choose per site whether I'm allowed in.</p>
+    <DevicePairingPanel targets={targets} initialPlatform="browser" />
+  </>;
 }
 
 function PersonPanel() {
@@ -214,7 +147,6 @@ function TelegramPanel({ onConnected, onCollapse }: { onConnected: () => void; o
 
 export function FirstDay() {
   const { client, connected } = useGateway();
-  const { snapshot } = useSession();
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected });
   const identityLinks = useConsoleIdentityLinks();
   const contacts = useQuery({
@@ -240,12 +172,6 @@ export function FirstDay() {
     if (open === undefined && !targets.isPending && !identityLinks.isPending && !contacts.isPending) setOpen(nextToConnect(rows));
   }, [open, rows, targets.isPending, identityLinks.isPending, contacts.isPending]);
 
-  const release = snapshot.server?.release ?? "dev";
-  const username = snapshot.username || "root";
-  const gateway = new URL(snapshot.url);
-  gateway.protocol = gateway.protocol === "wss:" ? "https:" : gateway.protocol === "ws:" ? "http:" : gateway.protocol;
-  const origin = gateway.origin;
-  const taken = (targets.data ?? []).map((target) => target.deviceId);
   return (
     <section class="zen-empty zen-first-day" aria-label="First day">
       <div class="fd-body">
@@ -281,11 +207,11 @@ export function FirstDay() {
                   </div>
                   <div class="fd-panel">
                     {isOpen && row.id === "computer" ? (
-                      <ComputerPanel release={release} taken={taken} username={username} origin={origin} />
+                      <ComputerPanel targets={targets.data ?? []} />
                     ) : isOpen && row.id === "telegram" ? (
                       <TelegramPanel onConnected={() => setTelegramPaired(true)} onCollapse={() => setOpen(null)} />
                     ) : isOpen && row.id === "browser" ? (
-                      <BrowserPanel release={release} />
+                      <BrowserPanel targets={targets.data ?? []} />
                     ) : isOpen && row.id === "person" ? (
                       <PersonPanel />
                     ) : null}

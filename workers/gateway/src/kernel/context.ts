@@ -17,6 +17,7 @@ import type {
   SchedulerRunResult,
 } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
+import type { DevicePairingStore } from "./device-pairings";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { TargetRegistry } from "./target-registry";
@@ -47,6 +48,7 @@ export type KernelContext = {
   installationId: string;
   installationIdentity: InstallationIdentity | null;
   auth: AuthStore;
+  pairings: DevicePairingStore;
   caps: CapabilityStore;
   config: ConfigStore;
   targets: TargetRegistry;

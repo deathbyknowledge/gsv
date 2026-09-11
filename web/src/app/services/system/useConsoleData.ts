@@ -8,7 +8,6 @@ import {
   connectConsoleAdapter,
   confirmConsoleAdapterPairing,
   consumeIdentityLinkCode,
-  createMachineNodeToken,
   createConsoleAgent,
   deleteConsoleMachine,
   disconnectConsoleAdapter,
@@ -45,7 +44,6 @@ import {
   type ConsoleAdapterPairingInfo,
   type ConsoleAdapterPairingResult,
   type ConsumeIdentityLinkCodeInput,
-  type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type DeleteConsoleMachineInput,
@@ -53,7 +51,6 @@ import {
   type ConsoleAgentContextFile,
   type IdentityLinkMutationResult,
   type InspectConsoleAdapterPairingInput,
-  type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
   type PollConsoleOpenAiCodexOAuthInput,
   type PollConsoleOpenAiCodexOAuthResult,
@@ -587,21 +584,6 @@ export function useRunConsoleProcessAction() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: consoleProcessesQueryKey }),
-        queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
-      ]);
-    },
-  });
-}
-
-export function useCreateMachineNodeToken() {
-  const { client } = useGateway();
-  const queryClient = useQueryClient();
-
-  return useMutation<IssuedMachineNodeToken, Error, CreateMachineNodeTokenInput>({
-    mutationFn: (input) => createMachineNodeToken(client, input),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },

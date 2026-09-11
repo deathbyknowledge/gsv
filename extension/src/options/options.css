@@ -21,7 +21,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -130,9 +131,9 @@ button[data-busy="true"] {
   padding: 1rem;
 }
 
-.connection-panel {
-  grid-row: span 3;
-}
+.manual-panel .connection-panel { padding: 0; border: 0; }
+.pairing-panel p, .pairing-panel small { color: var(--muted); margin: 0; }
+.pairing-panel textarea { width: 100%; min-width: 0; resize: vertical; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); padding: .6rem; }
 
 .section-header {
   display: flex;

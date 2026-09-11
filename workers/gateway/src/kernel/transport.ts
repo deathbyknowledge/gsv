@@ -64,6 +64,8 @@ import {
   sameRouteOrigin,
 } from "./do-shared";
 import type { Kernel } from "./do";
+import { handleSysPairRedeem } from "./sys/pair";
+import { DevicePairingError } from "./device-pairings";
 import {
   RequestCancelledError,
   cancelUnlockedBody,
@@ -260,6 +262,17 @@ async handleReq(
 
       if (frame.call === "sys.setup") {
         await this.host.onboarding.handleSysSetup(connection, frame);
+        return;
+      }
+
+      if (frame.call === "sys.pair.redeem") {
+        try {
+          const data = await handleSysPairRedeem(frame.args, this.host.buildContext(connection));
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch (error) {
+          this.sendError(connection, frame.id, 400, error instanceof Error ? error.message : "Pairing failed",
+            error instanceof DevicePairingError ? { pairing: error.reason } : undefined);
+        }
         return;
       }
 

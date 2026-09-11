@@ -30,6 +30,16 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    /// Pair this computer with one invitation from GSV (omit it to resume)
+    Pair {
+        code: Option<String>,
+        /// Filesystem workspace to expose (defaults to the home directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Save pairing without installing or starting the background service
+        #[arg(long)]
+        no_install: bool,
+    },
     /// Send a message to the agent (interactive or one-shot)
     Chat {
         /// Message to send (if omitted, enters interactive mode)

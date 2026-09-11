@@ -36,6 +36,11 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .unwrap_or_else(|| cfg.gateway_url());
     match cli.command {
+        Commands::Pair {
+            code,
+            workspace,
+            no_install,
+        } => crate::pairing::run_pair(code, workspace, no_install).await,
         Commands::Chat { message, pid } => {
             run_with_auto_setup_and_login_retry(
                 &url,
