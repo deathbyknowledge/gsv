@@ -13,7 +13,9 @@
     "./installation-migration-command": "./src/installation-migration-command.ts",
     "./installation-migration-runner": "./src/installation-migration-runner.ts",
     "./operator-bootstrap": "./src/operator-bootstrap.ts",
-    "./operator-bootstrap-command": "./src/operator-bootstrap-command.ts"
+    "./operator-bootstrap-command": "./src/operator-bootstrap-command.ts",
+    "./installation-deletion-evidence": "./src/installation-deletion-evidence.ts",
+    "./installation-deletion-resolver": "./src/installation-deletion-resolver.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",
