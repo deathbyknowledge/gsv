@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
 import { StandaloneGsvDeployment } from "../src/standalone.ts";
+import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string }; json?: unknown }[] };
@@ -21,6 +22,7 @@ const recordedCloudflare = {
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
   R2: { Bucket(_id: string, props: { name: string }) { return Effect.succeed({ bucketName: props.name }); } },
+  Queues: { Queue(_id: string, props: { name: string }) { return Effect.succeed({ queueName: props.name, queueId: "fixture-queue" }); } },
   DurableObject(binding: string, props: { className: string }) { return { binding, ...props }; },
   WorkerLoader() { return { kind: "loader" }; },
   WorkerEntrypoint(worker: { workerName: string }, options: string | { entrypoint: string; props: { authority: string } }) { return { worker: worker.workerName, options }; },
@@ -45,6 +47,14 @@ const input: GsvDeploymentProps = {
   inference: { workerName: "inference", workerBundle: "inference.js", defaultProvider: "operator-provider", defaultModel: "operator-model",
     monthlyRequests: 100, monthlyOutputTokens: 1000, maxOutputTokens: 100, maxDurationMs: 10_000 },
 };
+const catalog: OperatorResourceCatalog = [
+  { id: "multipart", kind: "r2", namespace: "storage", source: "cloudflare-r2-multipart", scope: "installation", disposition: "live" },
+  { id: "gateway-logs", kind: "logs", namespace: "gateway", source: "cloudflare-workers-logs", scope: "installation", disposition: "retained" },
+  { id: "ripgit-logs", kind: "logs", namespace: "ripgit", source: "cloudflare-workers-logs", scope: "installation", disposition: "retained" },
+  { id: "workers-ai", kind: "provider", namespace: "workers-ai", source: "provider", scope: "installation", disposition: "retained" },
+  { id: "ai-gateway", kind: "provider", namespace: "default", source: "ai-gateway", scope: "installation", disposition: "retained" },
+  { id: "default-provider", kind: "provider", namespace: "operator-provider", source: "provider", scope: "installation", disposition: "retained" },
+];
 
 describe("public operator composition", () => {
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
@@ -67,6 +77,7 @@ describe("public operator composition", () => {
       name: "DELETION_OWNER_INFERENCE", service: "inference", entrypoint: "InferenceLifecycleEntrypoint",
       props: { authority: "installation-deletion" } }] });
     expect(recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.crons).toEqual(["* * * * *"]);
+    expect(recorded.bindings.some((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding")).toBe(false);
     const inference = recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env;
     expect(inference?.INFERENCE_EXECUTORS).toEqual({ binding: "INFERENCE_EXECUTORS", className: "InferenceExecutor" });
     expect(inference?.INFERENCE_DEFAULT_MODEL).toBe("operator-model");
@@ -131,5 +142,85 @@ describe("public operator composition", () => {
     await expect(run(StandaloneGsvDeployment({ manifest: { version: 2, runtime: { ...input.paths,
       installationsBundle: "installations.js", installationsMigrations: "migrations", inferenceBundle: "inference.js" }, adapters: [] }, adapterIds: [] })))
       .rejects.toThrow(/migrate existing state/);
+  });
+
+  it("derives application scopes while keeping external cleanup explicitly unknown", async () => {
+    await run(GsvDeployment({ ...input, deletion: { operatorResources: catalog } }, dependencies));
+    const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    const scopes = binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES");
+    expect(await run(Output.evaluate(scopes?.json, {}))).toEqual({
+      accounts: [{ kind: "d1", namespace: "fixture-database" }], gateway: [{ kind: "r2", namespace: "storage" }],
+      inference: [], "operator-resources": catalog.map(({ kind, namespace }) => ({ kind, namespace })),
+    });
+    expect(binding?.bindings.find((entry) => entry.name === "OPERATOR_DELETION_CATALOG")?.json).toEqual(catalog);
+  });
+
+  it("refuses an external inventory that omits the application's multipart uploads", async () => {
+    await run(GsvDeployment({ ...input, deletion: { operatorResources: catalog.filter((resource) => resource.id !== "multipart") } }, dependencies));
+    const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    const scopes = binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES");
+    await expect(run(Output.evaluate(scopes?.json, {}))).rejects.toThrow(/multipart uploads/);
+  });
+
+  it.each(["gateway-logs", "ripgit-logs", "workers-ai", "ai-gateway", "default-provider"])("rejects a catalog missing the known %s sink", async (id) => {
+    await expect(run(GsvDeployment({ ...input, deletion: { operatorResources: catalog.filter((resource) => resource.id !== id) } }, dependencies)))
+      .rejects.toThrow(/catalog does not cover/);
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it("requires explicit owner composition for adopted directory, inference or Mail services", async () => {
+    const worker = await run(dependencies.Cloudflare.Worker("Provided", { name: "provided", main: "provided.js" }));
+    const queue = await run(dependencies.Cloudflare.Queues.Queue("Mail", { name: "mail" }));
+    recorded.workers.length = 0;
+    for (const services of [{ installationDirectory: worker }, { inferenceExecution: worker }, { mailOutbound: queue }]) {
+      await expect(run(GsvDeployment({ ...input, services, deletion: { operatorResources: catalog } }, dependencies)))
+        .rejects.toThrow(/adopted operator composition/);
+    }
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it("does not invent persisted log scopes when the fresh runtime explicitly disables persistence", async () => {
+    const external = catalog.filter((resource) => resource.source !== "cloudflare-workers-logs");
+    const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
+    await run(GsvDeployment({ ...input, observability, deletion: { operatorResources: external } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.observability).toEqual(observability);
+    expect(recorded.workers.find((worker) => worker.id === "FixtureRipgit")?.props.observability).toEqual(observability);
+    const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    expect(await run(Output.evaluate(binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {})))
+      .toHaveProperty("operator-resources", external.map(({ kind, namespace }) => ({ kind, namespace })));
+  });
+
+  it("matches a custom default provider by its configured endpoint", async () => {
+    const inference = { ...input.inference, baseUrl: "https://provider.example.invalid/v1" };
+    await expect(run(GsvDeployment({ ...input, inference, deletion: { operatorResources: catalog } }, dependencies)))
+      .rejects.toThrow(/configured provider scope/);
+    const external = catalog.map((resource) => resource.id === "default-provider" ? { ...resource, namespace: inference.baseUrl } : resource);
+    await run(GsvDeployment({ ...input, inference, deletion: { operatorResources: external } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env?.INFERENCE_BASE_URL).toBe(inference.baseUrl);
+  });
+
+  it("normalizes the actual Workers AI alias without inventing another provider", async () => {
+    await run(GsvDeployment({ ...input, inference: { ...input.inference, defaultProvider: "workersai" },
+      deletion: { operatorResources: catalog.filter((resource) => resource.id !== "default-provider") } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env?.INFERENCE_DEFAULT_PROVIDER).toBe("workersai");
+  });
+
+  it("requires the actual adapter Worker log scope with its application owner", async () => {
+    const worker = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram-worker", main: "telegram.js" }));
+    const services = { adapters: [{ id: "telegram", worker, gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel",
+      lifecycle: { entrypoint: "TelegramLifecycleEntrypoint", namespaces: [{ className: "TelegramInstallation", kind: "adapter-installation" as const }] },
+    }] };
+    await run(GsvDeployment({ ...input, services, deletion: { operatorResources: catalog } }, dependencies));
+    const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    await expect(run(Output.evaluate(binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {})))
+      .rejects.toThrow(/configured cloudflare-workers-logs scope/);
+    recorded.bindings.length = 0;
+    await run(GsvDeployment({ ...input, services, deletion: { operatorResources: [...catalog,
+      { id: "telegram-logs", kind: "logs", namespace: "telegram-worker", source: "cloudflare-workers-logs", scope: "installation", disposition: "retained" },
+    ] } }, dependencies));
+    const complete = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    expect(await run(Output.evaluate(complete?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {}))).toHaveProperty("telegram", []);
   });
 });

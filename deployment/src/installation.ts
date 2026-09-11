@@ -1,6 +1,8 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
+import * as Output from "alchemy/Output";
+import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
-import { GsvDeletionDiscoveryBindings, gsvAdapterDeletionNamespaces } from "./deletion-bindings.ts";
+import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string;
@@ -11,6 +13,8 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
   adminOrigin: string;
   access: GsvOperatorAccess;
   services?: GsvRuntimeServices;
+  /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
+  deletion?: { operatorResources: OperatorResourceCatalog };
   installations: {
     workerName: string;
     databaseName: string;
@@ -38,6 +42,9 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
 export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRuntimeDependencies) => {
   const { Cloudflare, Effect, retain } = dependencies;
   return Effect.gen(function* () {
+  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound)) {
+    throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
+  }
   const domain = new URL(`https://${props.domain}`);
   const admin = new URL(props.adminOrigin);
   if (domain.hostname !== props.domain || domain.pathname !== "/" || admin.origin !== props.adminOrigin
@@ -51,6 +58,31 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   if (!props.services?.inferenceExecution && [props.inference.monthlyRequests, props.inference.monthlyOutputTokens,
     props.inference.maxOutputTokens, props.inference.maxDurationMs].some((value) => !Number.isSafeInteger(value) || value <= 0)) {
     throw new Error("Public inference limits must be positive safe integers");
+  }
+  const catalog = props.deletion ? operatorResourceCatalogSchema.parse(props.deletion.operatorResources) : undefined;
+  const requireResource = (source: OperatorResourceCatalog[number]["source"], namespace: string) => {
+    if (catalog && !catalog.some((resource) => resource.source === source && resource.namespace === namespace)) {
+      throw new Error(`Deletion catalog does not cover a configured ${source} scope`);
+    }
+  };
+  if (catalog) {
+    const observability = props.observability;
+    const persistRuntimeLogs = observability
+      ? ((observability.logs?.enabled ?? observability.enabled) && observability.logs?.persist !== false)
+        || (observability.traces?.enabled === true && observability.traces.persist !== false)
+      : true;
+    if (persistRuntimeLogs) {
+      // GsvRuntime disables gateway persistence for its default tail-consumer setup; ripgit keeps its own default.
+      if (observability || !props.telemetry) requireResource("cloudflare-workers-logs", props.names.gateway);
+      requireResource("cloudflare-workers-logs", props.names.ripgit);
+    }
+    // The public executor always exposes native Workers AI, whose text transport uses the account's `default` AI Gateway.
+    requireResource("provider", "workers-ai");
+    requireResource("ai-gateway", "default");
+    const provider = props.inference.defaultProvider.trim().toLowerCase();
+    if (provider !== "workers-ai" && provider !== "workersai") {
+      requireResource("provider", props.inference.baseUrl ?? props.inference.defaultProvider);
+    }
   }
   const compatibility = props.compatibility ?? { date: "2026-09-01", flags: ["nodejs_compat" as const] };
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
@@ -117,6 +149,19 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       { ownerId: "inference", worker: inferenceWorker, className: "InferenceExecutor", kind: "inference-executor" },
       ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
     ]);
+  }
+  if (catalog && database) {
+    const adapters = props.services?.adapters ?? [];
+    const scopes = Output.all(database.databaseId, ...adapters.map((adapter) => adapter.worker.workerName))
+      .pipe(Output.map(([databaseId, ...adapterNames]): GsvDeletionResourceScopes => {
+        // Supplied adapter Workers own their observability; their persisted-log scope must be explicitly declared.
+        for (const name of adapterNames) requireResource("cloudflare-workers-logs", name);
+        return { accounts: [{ kind: "d1", namespace: databaseId }],
+          gateway: [{ kind: "r2", namespace: props.names.storageBucket }], inference: [],
+          ...Object.fromEntries(adapters.map((adapter) => [adapter.id, []])),
+        };
+      }));
+    yield* GsvDeletionResourceBindings(`${props.logicalPrefix}DirectoryDeletionResourcesBinding`, directory, scopes, catalog);
   }
   if (props.routing) {
     yield* Cloudflare.DNS.Record(`${props.logicalPrefix}WildcardDns`, {

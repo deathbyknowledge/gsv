@@ -31,6 +31,17 @@ scope coverage; it does not assert that any external scope has been erased.
 The configured catalog is frozen when the owner joins a deletion operation.
 Changing it during that operation stops further progress for explicit review.
 
+The fresh public composition checks known sinks against this explicit catalog:
+Worker logs use their actual Worker names; native inference uses provider
+`workers-ai` and AI Gateway `default`; another default inference provider uses
+its configured provider ID, or its exact custom base URL. Supplied adapters
+also require their Worker log scopes. These checks do not discover historical
+resources or dynamically selected BYOK providers. The operator must include
+those resources in the declaration; current bindings alone do not establish a
+complete inventory. Leave the catalog unset, and deletion fails closed, until
+that declaration is available. Adopted directory, inference and Mail services
+require explicit owner composition through `GsvDeletionResourceBindings`.
+
 ## Recording evidence
 
 Use the existing operator authentication and mutation Origin header:
