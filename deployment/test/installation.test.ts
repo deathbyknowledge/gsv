@@ -57,6 +57,13 @@ describe("public operator composition", () => {
     expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryRecoveryBinding", bindings: [{ type: "service",
       name: "ACCOUNTS_GATEWAY_RECOVERY", service: "gateway", entrypoint: "GatewayRecoveryEntrypoint",
       props: { authority: "installation-owner-recovery" } }] });
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryGatewayDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_GATEWAY", service: "gateway", entrypoint: "GatewayLifecycleEntrypoint",
+      props: { authority: "installation-deletion" } }] });
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInferenceDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_INFERENCE", service: "inference", entrypoint: "InferenceLifecycleEntrypoint",
+      props: { authority: "installation-deletion" } }] });
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.crons).toEqual(["* * * * *"]);
     const inference = recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env;
     expect(inference?.INFERENCE_EXECUTORS).toEqual({ binding: "INFERENCE_EXECUTORS", className: "InferenceExecutor" });
     expect(inference?.INFERENCE_DEFAULT_MODEL).toBe("operator-model");

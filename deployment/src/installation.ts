@@ -1,5 +1,6 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
+import { GsvDeletionDiscoveryBindings } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string;
@@ -75,6 +76,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     if (props.telemetry) bindings.GSV_TELEMETRY_ENABLED = "1";
     directory = yield* Cloudflare.Worker(`${props.logicalPrefix}Installations`, {
       name: props.installations.workerName, main: props.installations.workerBundle, bundle: false,
+      crons: ["* * * * *"],
       compatibility, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
     }).pipe(retain());
@@ -102,6 +104,19 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const runtime = yield* GsvRuntime({ ...props, mode: "managed", compatibility,
     services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
+  if (inferenceWorker) {
+    yield* directory.bind(`${props.logicalPrefix}DirectoryInferenceDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_INFERENCE", service: props.inference.workerName,
+        entrypoint: "InferenceLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
+    });
+    yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
+      { ownerId: "gateway", worker: runtime.gateway, binding: "KERNEL", kind: "kernel" },
+      { ownerId: "gateway", worker: runtime.gateway, binding: "PROCESS", kind: "process" },
+      { ownerId: "gateway", worker: runtime.gateway, binding: "CONVERSATION", kind: "conversation" },
+      { ownerId: "gateway", worker: runtime.ripgit, binding: "REPOSITORY", kind: "ripgit" },
+      { ownerId: "inference", worker: inferenceWorker, binding: "INFERENCE_EXECUTORS", kind: "inference-executor" },
+    ]);
+  }
   if (props.routing) {
     yield* Cloudflare.DNS.Record(`${props.logicalPrefix}WildcardDns`, {
       zoneId: props.routing.zoneId, name: `*.${props.domain}`, type: "AAAA", content: "100::", proxied: true,

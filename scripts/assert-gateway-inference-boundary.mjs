@@ -9,7 +9,7 @@ export function assertGatewayInferenceBoundary(metadata) {
     ...Object.values(metadata.outputs).flatMap((output) => output.imports.map((entry) => entry.path)),
   ].map((path) => path.replaceAll("\\", "/"));
   const forbidden = paths.filter((path) => path.includes("packages/inference/")
-    || providerPackages.some((name) => path === name || path.startsWith(`${name}/`) || path.includes(`/node_modules/${name}/`)));
+    || providerPackages.some((name) => path === name || path.startsWith(`${name}/`) || `/${path}`.includes(`/node_modules/${name}/`)));
   if (forbidden.length) throw new Error(`Provider execution entered the gateway bundle:\n${[...new Set(forbidden)].join("\n")}`);
 }
 

@@ -200,6 +200,10 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       bindings: [{ type: "service", name: "ACCOUNTS_GATEWAY_RECOVERY", service: props.names.gateway,
         entrypoint: "GatewayRecoveryEntrypoint", props: { authority: "installation-owner-recovery" } }],
     });
+    yield* directory.bind(`${props.logicalPrefix}DirectoryGatewayDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_GATEWAY", service: props.names.gateway,
+        entrypoint: "GatewayLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
+    });
     return { mode: props.mode, storage, ripgit, gateway };
   });
 };

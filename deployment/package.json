@@ -15,7 +15,9 @@
     "./operator-bootstrap": "./src/operator-bootstrap.ts",
     "./operator-bootstrap-command": "./src/operator-bootstrap-command.ts",
     "./installation-deletion-evidence": "./src/installation-deletion-evidence.ts",
-    "./installation-deletion-resolver": "./src/installation-deletion-resolver.ts"
+    "./installation-deletion-resolver": "./src/installation-deletion-resolver.ts",
+    "./installation-deletion-capture": "./src/installation-deletion-capture.ts",
+    "./installation-deletion-capture-command": "./src/installation-deletion-capture-command.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",
