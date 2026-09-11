@@ -99,13 +99,20 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
+              - 'packages/inference/**'
               - 'workers/gateway/**'
+              - 'workers/inference/**'
+              - 'workers/adapters/shared/**'
+              - 'workers/adapters/telegram/**'
+              - 'workers/adapters/slack/**'
+              - 'workers/adapters/discord/**'
             inference:
               - '.github/workflows/ci.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'packages/inference/**'
+              - 'workers/inference/**'
             installations:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -117,6 +124,7 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'deployment/**'
+              - 'scripts/capture-ai-gateway-logs.ts'
               - 'workers/installations/migrations/**'
             deletion_stack:
               - '.github/workflows/ci.yml'
@@ -298,6 +306,14 @@ jobs:
       - name: Test shared inference runtime
         if: needs.changes.outputs.inference == 'true'
         run: npm test --workspace @humansandmachines/gsv-inference
+
+      - name: Check public inference Worker
+        if: needs.changes.outputs.inference == 'true'
+        run: npm run typecheck --workspace @humansandmachines/gsv-inference-worker
+
+      - name: Test public inference Worker
+        if: needs.changes.outputs.inference == 'true'
+        run: npm test --workspace @humansandmachines/gsv-inference-worker
 
       - name: Check installation services
         if: needs.changes.outputs.installations == 'true'
