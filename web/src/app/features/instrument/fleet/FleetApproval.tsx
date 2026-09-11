@@ -6,21 +6,22 @@ import { decideChatHil, getChatHistory } from "../../../services/chat/backend/ch
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
 
-export function FleetApproval({ pid, requestId }: { pid: string; requestId?: string }) {
+export function FleetApproval({ pid, requestId, runId }: { pid: string; requestId?: string; runId?: string }) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
-  const queryKey = ["fleet", "pending-hil", pid, requestId ?? null];
+  const queryKey = ["fleet", "pending-hil", pid, requestId ?? null, runId ?? null];
   const region = useRef<HTMLElement>(null);
   const approve = useRef<HTMLButtonElement>(null);
   const focused = useRef(false);
   const pending = useQuery({
     queryKey,
-    queryFn: async () => (await getChatHistory(client, { pid, limit: 1, tail: true })).pendingHil,
+    queryFn: async () => (await getChatHistory(client, { pid, includeMessages: false })).pendingHil,
     enabled: connected,
     refetchOnMount: "always",
     refetchInterval: (query) => referencedApproval(query.state.data, pid, requestId) ? 2000 : false,
   });
-  const request = referencedApproval(pending.data, pid, requestId);
+  const pendingRequest = referencedApproval(pending.data, pid, requestId);
+  const request = pendingRequest && (!runId || pendingRequest.runId === runId) ? pendingRequest : null;
   const decide = useMutation({
     mutationFn: (input: { requestId: string; decision: "approve" | "deny" }) => decideChatHil(client, { pid, ...input }),
     onSettled: () => {

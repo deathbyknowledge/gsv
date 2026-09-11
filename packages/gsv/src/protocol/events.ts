@@ -172,6 +172,12 @@ export const procHistoryEventPayloadSchemas = {
   "ipc.reply": ipcResponsePayloadSchema,
   "ipc.overdue": ipcResponsePayloadSchema,
   "ipc.timeout": ipcResponsePayloadSchema,
+  // Read compatibility for staged history; child approvals no longer emit Process events.
+  "process.approval": z.strictObject({
+    pid: z.string(), runId: z.string(), requestId: z.string(),
+    syscall: z.string(), target: z.string(),
+    sourceRunId: z.string(), sourceCreatedAt: z.number(), observedAt: z.number(),
+  }),
   "adapter.work.returned": z.strictObject({ eventId: z.string(), workPid: z.string() }),
   "history.compacted": z.strictObject({
     summary: z.string(),
@@ -271,6 +277,10 @@ export type ProcHistoryEventPayloadMap = {
   "ipc.reply": ProcHistoryIpcResponsePayload;
   "ipc.overdue": ProcHistoryIpcResponsePayload;
   "ipc.timeout": ProcHistoryIpcResponsePayload;
+  "process.approval": {
+    pid: string; runId: string; requestId: string;
+    syscall: string; target: string; sourceRunId: string; sourceCreatedAt: number; observedAt: number;
+  };
   "adapter.work.returned": { eventId: string; workPid: string };
   "history.compacted": { summary: string; segmentId: string; archivedMessages: number; archivePath: string };
   "runtime.wake": { source: "process"; reason?: string; pendingEvents?: number };
@@ -334,6 +344,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("ipc.reply"),
   eventSchema("ipc.overdue"),
   eventSchema("ipc.timeout"),
+  eventSchema("process.approval"),
   eventSchema("adapter.work.returned"),
   eventSchema("history.compacted"),
   eventSchema("runtime.wake"),

@@ -21,7 +21,7 @@ export function renderCompactionTranscriptWindow(messages: MessageRecord[], maxC
       runId: message.runId ?? null,
       createdAt: message.createdAt,
       ...record,
-    })).filter((record) => record.kind !== "event" || record.payload.audience !== "person"),
+    })).filter((record) => record.kind !== "event" || (record.payload.audience !== "person" && record.payload.kind !== "process.approval")),
   );
   const complete: string[] = [];
   let completeChars = 0;

@@ -201,6 +201,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
@@ -249,6 +250,8 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
+  // Decode notices persisted by the staged approval implementation so alarms can retire them.
+  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: z.object({ pid: z.string(), runId: z.string(), requestId: z.string() }) }),
   z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
@@ -669,6 +672,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
+      case "onProcessApprovalNotice":
+        // Child approvals reach the human through registry signals and adapter routes.
+        return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
         return;

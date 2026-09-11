@@ -246,6 +246,7 @@ const eventFixtures = {
   "ipc.reply": { callId: "ipc:1", targetPid: "proc:child", response: { text: "Complete" } },
   "ipc.overdue": { callId: "ipc:1", nextCheckAt: 200, checkInCount: 1 },
   "ipc.timeout": { callId: "ipc:1", error: "Timed out" },
+  "process.approval": { pid: "child", runId: "run", requestId: "request", syscall: "net.fetch", target: "gsv", sourceRunId: "parent-run", sourceCreatedAt: 1, observedAt: 2 },
   "adapter.work.returned": { eventId: "event:1", workPid: "proc:child" },
   "history.compacted": { summary: "The earlier work is complete.", segmentId: "segment:1", archivedMessages: 10, archivePath: "/home/ship/archive.jsonl" },
   "runtime.wake": { source: "process", reason: "pending-events", pendingEvents: 1 },

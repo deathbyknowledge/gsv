@@ -1919,6 +1919,7 @@ describe("Kernel process signal routing", () => {
   });
 
   it("materializes a background child's inherited approval route", async () => {
+    const processRequests = sendFrameToProcessMock.mock.calls.length;
     const inherited = {
       kind: "adapter",
       runId: "run-child",
@@ -1947,6 +1948,8 @@ describe("Kernel process signal routing", () => {
       runId: inherited.runId,
       uid: 1000,
     });
+    expect(kernel.schedule).toHaveBeenCalledTimes(1);
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(processRequests);
     expect(kernel.schedule).toHaveBeenCalledWith(
       expect.any(Date),
       "onAdapterRouteDelivery",

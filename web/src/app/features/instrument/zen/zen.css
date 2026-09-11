@@ -280,6 +280,13 @@
 .zen-bottom {
   padding: 0 56px 22px;
 }
+.zen-delegated-approvals {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+.zen-delegated-approvals .zen-approval { margin: 8px 0; }
+.zen-delegated-approvals .fleet-approval { margin-top: 10px; }
 .zen-feedback {
   display: flex;
   flex-wrap: wrap;

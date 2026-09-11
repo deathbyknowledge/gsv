@@ -40,6 +40,8 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "media.failed": return event.payload.error;
     case "schedule.fired": return formatScheduleEventMessage(event.payload);
     case "signal.watched": return formatWatchedSignalMessage(event.payload.signal, event.payload);
+    // Retired staged records are inspectable but excluded from model projections.
+    case "process.approval": return "";
     case "ipc.reply":
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);

@@ -8,9 +8,7 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
   decideChatHil,
-  listChatProcesses,
   sendChatMessage,
-  spawnChatProcess,
 } from "../../../services/chat/backend/chatService";
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
@@ -28,7 +26,9 @@ import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/P
 import { FirstDay } from "../firstday/FirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { RunFeedback } from "./RunFeedback";
+import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
+import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
@@ -277,7 +277,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
 
-  const [pid, setPid] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
@@ -378,35 +379,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
-  const [note, setNote] = useState<string | null>(null);
   const promptRef = useRef<PromptLineHandle>(null);
-
-  /* the personal process, spawned if the account has none yet */
-  useEffect(() => {
-    if (!connected) return undefined;
-    if (pidProp) {
-      setPid(pidProp);
-      return undefined;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const processes = await listChatProcesses(client, {});
-        const personal = processes.find((process) => process.personal) ?? processes.find((process) => process.interactive);
-        if (personal) {
-          if (!cancelled) setPid(personal.pid);
-          return;
-        }
-        const spawned = await spawnChatProcess(client, { interactive: true, label: "ship" });
-        if (!cancelled) setPid(spawned.pid);
-      } catch (error) {
-        if (!cancelled) setNote(error instanceof Error ? error.message : "Could not reach your ship.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, connected, pidProp]);
 
   /* places, from the instrument's targets cache; WireSync keeps it current from the wire */
   const targetsQuery = useQuery({
@@ -925,6 +898,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
+        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
         {showFeedback && <div class="zen-feedback">
           {activeRun && <RunFeedback key={activeRun} startedAt={runStartedAt} model={attemptedModel}
             place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
