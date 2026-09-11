@@ -28,11 +28,15 @@ export class InstallationAdminService extends InstallationAdminStore {
     this.resets = new InstallationResetCoordinator(database, accounts, participants);
   }
 
-  async create(input: { operationId: string; handle: string }): Promise<IssuedAdminInstallation> {
+  async reserve(input: { operationId: string; handle: string }) {
     await this.ensureRegistryPrincipal();
-    const reservation = await this.accounts.reserveInstallation({
+    return this.accounts.reserveInstallation({
       principalId: this.registryPrincipal.id, operationId: input.operationId, handle: input.handle,
     });
+  }
+
+  async create(input: { operationId: string; handle: string }): Promise<IssuedAdminInstallation> {
+    const reservation = await this.reserve(input);
     const onboarding = await this.onboarding.begin(reservation.installationId);
     return { installation: await this.requireInstallation(reservation.installationId), onboarding };
   }

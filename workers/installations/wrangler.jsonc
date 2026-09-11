@@ -10,6 +10,8 @@
     "GSV_BASE_DOMAIN": "example.com",
     "ENVIRONMENT": "production",
     "GSV_ADMIN_ORIGIN": "https://accounts.example.com",
+    "GSV_OPERATOR_ACCESS_MODE": "access",
+    "GSV_INSTALLATION_ORIGIN_TEMPLATE": "",
     "GSV_ADMIN_ACCESS_TEAM_DOMAIN": "",
     "GSV_ADMIN_ACCESS_AUD": "",
     "GSV_OWNER_OIDC_ISSUER": "",

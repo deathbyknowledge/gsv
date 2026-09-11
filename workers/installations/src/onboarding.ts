@@ -120,6 +120,29 @@ export class InstallationOnboardingStore {
     };
   }
 
+  /** Bootstrap retries retain one pre-generated claim; they never reissue it. */
+  async prepare(installationIdValue: string, input: {
+    claimId: string; tokenPrefix: string; tokenHash: string; expiresAt: number;
+  }, now = Date.now()): Promise<boolean> {
+    const installationId = parseOpaqueId(installationIdValue, "installationId");
+    await this.db.prepare(
+      `INSERT INTO installation_onboarding_claims (
+         id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at
+       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?
+       FROM installations i JOIN provisioning_operations p ON p.installation_id = i.id AND p.kind = 'create'
+       WHERE i.id = ? AND i.state = 'provisioning' AND p.state = 'provisioning'
+       ON CONFLICT (installation_id) DO NOTHING`,
+    ).bind(input.claimId, input.tokenPrefix, input.tokenHash, input.expiresAt, now, installationId).run();
+    const claim = await this.db.prepare(
+      `SELECT token_hash, completed_at, revoked_at, expires_at
+       FROM installation_onboarding_claims WHERE installation_id = ? AND id = ?`,
+    ).bind(installationId, input.claimId).first<{
+      token_hash: string; completed_at: number | null; revoked_at: number | null; expires_at: number;
+    }>();
+    return Boolean(claim && constantTimeEqual(claim.token_hash, input.tokenHash)
+      && claim.completed_at === null && claim.revoked_at === null && claim.expires_at > now);
+  }
+
   async authorize(
     input: AuthorizeInstallationOnboardingInput,
     now = Date.now(),

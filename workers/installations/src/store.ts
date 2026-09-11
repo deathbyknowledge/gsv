@@ -56,8 +56,17 @@ export class AccountStore {
     private readonly db: D1Database,
     private readonly baseDomain: string,
     private readonly installationOriginTemplate?: string,
+    private readonly reservedHostnames: readonly string[] = [],
   ) {
     parseBaseDomain(baseDomain);
+  }
+
+  validateHandle(value: string): string {
+    const handle = parseHandle(value);
+    if (this.reservedHostnames.includes(hostnameForHandle(handle, this.baseDomain))) {
+      throw new Error("handle is reserved for an operator service");
+    }
+    return handle;
   }
 
   async createPrincipal(input: {
@@ -107,7 +116,7 @@ export class AccountStore {
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
-    const handle = parseHandle(input.handle);
+    const handle = this.validateHandle(input.handle);
     const existing = await this.getReservationByOperation(operationId);
     if (existing) {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {

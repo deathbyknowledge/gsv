@@ -11,7 +11,9 @@
     "./installation-migration-adoption-remote": "./src/installation-migration-adoption-remote.ts",
     "./installation-migration-d1": "./src/installation-migration-d1.ts",
     "./installation-migration-command": "./src/installation-migration-command.ts",
-    "./installation-migration-runner": "./src/installation-migration-runner.ts"
+    "./installation-migration-runner": "./src/installation-migration-runner.ts",
+    "./operator-bootstrap": "./src/operator-bootstrap.ts",
+    "./operator-bootstrap-command": "./src/operator-bootstrap-command.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",

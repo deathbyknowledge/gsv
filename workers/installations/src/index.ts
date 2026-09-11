@@ -16,9 +16,11 @@ import { InstallationOwnerHttp } from "./owner-http";
 import { InstallationOwnerStore } from "./owner-store";
 import { OwnerIdentityProvider } from "./owner-identity";
 import { OPERATOR_REGISTRY_PRINCIPAL_ID, type InstallationOwnerEnvironment } from "./owner-service";
+import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstrap";
+import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<InstallationOwnerEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async fetch(request: Request): Promise<Response> {
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
@@ -36,17 +38,23 @@ export default class InstallationService extends WorkerEntrypoint<InstallationOw
       ).handle(request);
       if (response) return response;
     }
+    if (new URL(request.url).origin !== this.env.GSV_ADMIN_ORIGIN) return new Response("Forbidden", { status: 403 });
     const accounts = this.accounts();
-    const api = new InstallationAdminHttp(
-      new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
+    const administration = new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
         id: OPERATOR_REGISTRY_PRINCIPAL_ID, email: "operator@gsv.invalid", displayName: "Operator registry",
-      }, {}),
-      new CloudflareInstallationAdminAccess({
+      }, {});
+    const mode = parseOperatorAccessMode(this.env.GSV_OPERATOR_ACCESS_MODE);
+    const bootstrap = new InstallationBootstrapService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), administration, mode);
+    const operatorResponse = await new InstallationOperatorHttp(bootstrap, this.env.GSV_ADMIN_ORIGIN, mode).handle(request);
+    if (operatorResponse) return operatorResponse;
+    const api = new InstallationAdminHttp(
+      administration,
+      new OperatorInstallationAdminAccess(bootstrap, mode, new CloudflareInstallationAdminAccess({
         environment: this.env.ENVIRONMENT,
         origin: this.env.GSV_ADMIN_ORIGIN,
         teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN,
         audience: this.env.GSV_ADMIN_ACCESS_AUD,
-      }),
+      })),
       this.env.GSV_ADMIN_ORIGIN,
     );
     const response = await api.handle(request);
@@ -71,7 +79,8 @@ export default class InstallationService extends WorkerEntrypoint<InstallationOw
   }
 
   private accounts(): AccountStore {
-    return new AccountStore(this.env.INSTALLATIONS_DB, this.env.GSV_BASE_DOMAIN);
+    return new AccountStore(this.env.INSTALLATIONS_DB, this.env.GSV_BASE_DOMAIN,
+      this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE || undefined, [new URL(this.env.GSV_ADMIN_ORIGIN).hostname]);
   }
 
   private onboarding(): InstallationOnboardingStore {
