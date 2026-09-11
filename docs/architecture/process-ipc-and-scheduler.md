@@ -187,13 +187,11 @@ capabilities. The new process receives its own lifecycle and can diverge safely
 after import.
 
 Pending human approvals remain in the executing Process, including syscalls
-invoked inside CodeMode. The Kernel queues a notice containing only the child
-pid, run, and request identity, then rechecks the pending request before notifying
-same-owner callers through durable IPC ancestry. Each caller receives a typed
-`process.approval` event without the child's arguments. Reset and aborted source
-runs fence these events, and repeated delivery deduplicates against the original
-request and delegation. Existing adapter approval routes retain their destination
-and authorization checks.
+invoked inside CodeMode. The Kernel publishes the child's `waiting_hil` registry
+state to the owning human. A pending approval does not append an event to the
+parent's model context or start a parent run. Originating messengers receive
+actionable approval controls through the child's inherited adapter route, with
+the original destination, request identity, and authorization checks.
 
 Ship presents pending approvals for its owning human, including surviving work
 from an earlier Ship process. Helper conversations present their descendants.

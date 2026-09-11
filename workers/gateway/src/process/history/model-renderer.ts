@@ -160,7 +160,7 @@ export function renderModelHistoryGroup(
 
 function hasModelHistoryMessage(group: ModelHistoryGroup): boolean {
   const primary = group.records[0];
-  if (primary.kind === "event") return primary.payload.audience !== "person";
+  if (primary.kind === "event") return primary.payload.audience !== "person" && primary.payload.kind !== "process.approval";
   if (primary.kind === "message") return primary.payload.direction === "in";
   return true;
 }

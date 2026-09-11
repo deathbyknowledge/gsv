@@ -11,7 +11,6 @@ import type {
 } from "./do-shared";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import { deliverProcessApprovalNotice, processApprovalNoticeSchema, type ProcessApprovalNotice } from "./process-approvals";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -202,7 +201,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
-  | { callback: "onProcessApprovalNotice"; payload: ProcessApprovalNotice }
+  | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
@@ -251,7 +250,8 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
-  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: processApprovalNoticeSchema }),
+  // Decode notices persisted by the staged approval implementation so alarms can retire them.
+  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: z.object({ pid: z.string(), runId: z.string(), requestId: z.string() }) }),
   z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
@@ -673,11 +673,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<void> {
     switch (task.callback) {
       case "onProcessApprovalNotice":
-        try {
-          await deliverProcessApprovalNotice(this, task.payload);
-        } catch {
-          await this.schedule(5, "onProcessApprovalNotice", task.payload, { idempotent: false });
-        }
+        // Child approvals reach the human through registry signals and adapter routes.
         return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);

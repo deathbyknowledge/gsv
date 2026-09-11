@@ -43,7 +43,7 @@ export type ProcessRuntimeEventDeliverResult = {
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "process.approval" }>;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" }>;
 };
 
 export type ProcessEventDeliverResult = {

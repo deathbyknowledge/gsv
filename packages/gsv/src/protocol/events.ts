@@ -172,6 +172,7 @@ export const procHistoryEventPayloadSchemas = {
   "ipc.reply": ipcResponsePayloadSchema,
   "ipc.overdue": ipcResponsePayloadSchema,
   "ipc.timeout": ipcResponsePayloadSchema,
+  // Read compatibility for staged history; child approvals no longer emit Process events.
   "process.approval": z.strictObject({
     pid: z.string(), runId: z.string(), requestId: z.string(),
     syscall: z.string(), target: z.string(),

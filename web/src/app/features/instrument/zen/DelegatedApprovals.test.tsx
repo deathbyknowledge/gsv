@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
+import { GSVClient } from "@humansandmachines/gsv/client";
+import type { ComponentChildren } from "preact";
+import { act } from "preact/test-utils";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
-import { delegatedApprovalProcesses } from "./DelegatedApprovals";
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { SessionProvider } from "../../../services/session/SessionProvider";
+import { createSessionService } from "../../../services/session/sessionService";
+import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import { FleetApproval } from "../fleet/FleetApproval";
+import { WireSync } from "../wire/WireSync";
+import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
+import { DelegatedApprovals, delegatedApprovalProcesses } from "./DelegatedApprovals";
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function process(pid: string, parentPid: string | null, overrides: Partial<ConsoleProcess> = {}): ConsoleProcess {
   return { pid, parentPid, uid: 1000, label: pid, username: "algo", profile: "", cwd: "/home/algo",
@@ -9,6 +23,50 @@ function process(pid: string, parentPid: string | null, overrides: Partial<Conso
 }
 
 describe("Ship pending approvals", () => {
+  it("shows and clears a child's approval in mounted Ship from owner registry signals alone", async () => {
+    vi.stubGlobal("document", {});
+    vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" },
+      sessionStorage: { getItem: () => null, setItem: () => {} } });
+    vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+    const listeners = new Set<Parameters<GSVClient["onSignal"]>[0]>();
+    vi.spyOn(GSVClient.prototype, "onSignal").mockImplementation((listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    });
+    const request = vi.spyOn(GSVClient.prototype, "request");
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cache.setQueryData(INSTRUMENT_PROCESSES_KEY, [
+      process("ship", null, { personal: true, state: "idle", activeRunId: null }),
+      process("child", "ship", { state: "running" }),
+    ]);
+    const root = createTestRoot("Ship approvals");
+    let tree: ComponentChildren;
+    function Harness() { tree = DelegatedApprovals({ pid: "ship", onFleet: () => {} }); return null; }
+    try {
+      await root.render(<GatewayProvider><SessionProvider createService={(client) => ({
+        ...createSessionService(client), start: async () => {},
+      })}><TerminalProvider><QueryClientProvider client={cache}><WireSync /><Harness /></QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
+      expect(collectText(tree)).toBe("");
+      await act(async () => {
+        for (const listener of listeners) listener("proc.changed", { pid: "child", changes: ["state"], runtime: {
+          state: "waiting_hil", activeRunId: "child-run", queuedCount: 0, lastActiveAt: 10,
+        } });
+      });
+      await vi.waitFor(() => expect(collectText(tree)).toMatch(/child\s+is waiting for your approval/));
+      expect(collectNodes(tree).find((node) => node.type === FleetApproval)?.props)
+        .toMatchObject({ pid: "child", runId: "child-run" });
+      expect(cache.getQueryData<ConsoleProcess[]>(INSTRUMENT_PROCESSES_KEY)?.[0]).toMatchObject({ state: "idle", activeRunId: null });
+      await act(async () => {
+        for (const listener of listeners) listener("proc.changed", { pid: "child", changes: ["state"], runtime: {
+          state: "idle", activeRunId: null, queuedCount: 0, lastActiveAt: 11,
+        } });
+      });
+      await vi.waitFor(() => expect(collectText(tree)).toBe(""));
+      expect(request).not.toHaveBeenCalled();
+    } finally { await root.unmount(); cache.clear(); }
+  });
+
   const processes = [
     process("ship", null, { personal: true, state: "idle", activeRunId: null }),
     process("parent", "ship", { state: "idle", activeRunId: null }),
