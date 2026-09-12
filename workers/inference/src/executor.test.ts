@@ -61,6 +61,19 @@ function transportedRequest(id: string): InferenceExecutionRequest {
 }
 
 describe("public inference executor RPC", () => {
+  it.each(["default", "InferenceService"] as const)("serves execution through the %s entrypoint", async (entrypoint) => {
+    const binding: unknown = exports[entrypoint];
+    // SAFETY: Both real Worker entrypoints implement the public execution contract.
+    const configured = binding as InferenceExecutionService;
+    expect(await configured.resolveModel("gsv", "default")).toMatchObject({ provider: "gsv", model: "default" });
+    const executor = await configured.getExecutor(`space_entrypoint_${entrypoint}`);
+    await expect(Promise.resolve(executor.media({
+      version: 1, installationId: "another_space", logicalRequestId: crypto.randomUUID(),
+      actor: { localUid: 1000 }, timeoutMs: 10_000, deadlineAt: Date.now() + 10_000,
+      kind: "transcription", input: { provider: "workers-ai", model: "@cf/openai/whisper-large-v3-turbo", maxInputBytes: 4 },
+    }))).rejects.toThrow("scope mismatch");
+  });
+
   it("resolves operator defaults and newly available binding models", async () => {
     expect(await service.resolveModel("gsv", "default")).toMatchObject({ provider: "gsv", model: "default", contextWindowTokens: 1_310_720 });
     expect(await service.resolveModel("workers-ai", "@cf/test/new-model")).toMatchObject({ contextWindowTokens: 12345 });
