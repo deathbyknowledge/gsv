@@ -1,6 +1,6 @@
 import * as oauth from "oauth4webapi";
 import type { InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
-import { hasExpectedOrigin, noStoreHeaders, readRequestBody } from "./http";
+import { hasExpectedOrigin, noStoreFormHeaders, noStoreHeaders, readRequestBody } from "./http";
 import { escapeHtml } from "./admin/page";
 import { InstallationOwnerStore, type OwnerAttempt } from "./owner-store";
 import { OwnerIdentityProvider } from "./owner-identity";
@@ -19,12 +19,12 @@ export class InstallationOwnerHttp {
     try {
       if (request.method === "GET" && path === "/owner/recover") {
         return page(`<h1>Recover your GSV</h1><p>Sign in as the verified owner to reset the root password for your space.</p>
-          <form method="post" action="${this.prefix}/recover"><label>Space handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`);
+          <form method="post" action="${this.prefix}/recover"><label>Space handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
       }
       if (request.method === "GET" && path === "/owner/link") {
         return page(`<h1>Link the owner of your GSV</h1><p>Continue to verify the identity that can recover root for this space.</p>
           <form method="post" action="${this.prefix}/link"><input type="hidden" name="id"><input type="hidden" name="secret"><button>Verify owner</button></form>
-          <script>const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`);
+          <script>const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`, 200, noStoreFormHeaders());
       }
       if (request.method === "POST" && (path === "/owner/link" || path === "/owner/recover")) {
         if (!hasExpectedOrigin(request, this.origin)) return page("Request origin is not allowed", 403);
@@ -83,7 +83,8 @@ function cookieName(id: string): string { return `__Host-gsv-owner-${id}`; }
 function readCookie(request: Request, name: string): string | undefined {
   return request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
-function page(content: string, status = 200): Response {
+function page(content: string, status = 200, headers = noStoreHeaders()): Response {
+  headers.set("content-type", "text/html; charset=utf-8");
   return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml("Your GSV · owner access")}</title><main>${content}</main></html>`,
-    { status, headers: noStoreHeaders({ "content-type": "text/html; charset=utf-8" }) });
+    { status, headers });
 }

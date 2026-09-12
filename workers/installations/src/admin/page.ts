@@ -1,4 +1,4 @@
-import { noStoreHeaders } from "../http";
+import { noStoreFormHeaders } from "../http";
 import type { IssuedAdminInstallation } from "./service";
 
 export type AdminNavigationItem = { section: string; href: string; label: string };
@@ -114,8 +114,7 @@ function navLink(href: string, label: string, active: boolean): string {
 }
 
 function adminHeaders(contentType: string): Headers {
-  const headers = noStoreHeaders({ "content-type": contentType });
-  headers.set("referrer-policy", "same-origin");
+  const headers = noStoreFormHeaders({ "content-type": contentType });
   headers.set("content-security-policy", [
     "default-src 'none'",
     "base-uri 'none'",

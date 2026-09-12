@@ -71,3 +71,10 @@ export function noStoreHeaders(extra: HeadersInit = {}): Headers {
   headers.set("x-content-type-options", "nosniff");
   return headers;
 }
+
+/** Native form posts need their browser Origin; referrers must stay on this origin. */
+export function noStoreFormHeaders(extra: HeadersInit = {}): Headers {
+  const headers = noStoreHeaders(extra);
+  headers.set("referrer-policy", "same-origin");
+  return headers;
+}

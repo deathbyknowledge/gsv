@@ -35,10 +35,16 @@ async function fixture() {
 describe("owner identity front door", () => {
   it("binds both proofs, links only the attested space, then authorizes owner recovery without choosing a local uid", async () => {
     const f = await fixture();
+    for (const path of ["/owner/link", "/owner/recover"]) {
+      const page = await f.http.handle(new Request(`${ORIGIN}${path}`));
+      expect(page?.status).toBe(200);
+      expect(page?.headers.get("referrer-policy")).toBe("same-origin");
+    }
     const start = (await f.post("/owner/link", { id: f.id, secret: f.secret }))!;
     expect(start.status).toBe(303);
     expect(start.headers.get("set-cookie")).toContain("Secure; HttpOnly; SameSite=Lax");
     expect(start.headers.get("cache-control")).toBe("no-store");
+    expect(start.headers.get("referrer-policy")).toBe("no-referrer");
     const cookie = start.headers.get("set-cookie")!.split(";")[0];
     expect((await f.callback(f.id, ""))?.status).toBe(400);
     expect(f.complete).not.toHaveBeenCalled();
@@ -65,7 +71,12 @@ describe("owner identity front door", () => {
     const f = await fixture();
     expect(() => new InstallationOwnerLinkService(f.store, ORIGIN, undefined, true)).toThrow("authority");
     expect(() => new InstallationOwnerLinkService(f.store, ORIGIN, { authority: "kernel-owner-link" }, false)).toThrow("authority");
-    expect((await f.post("/owner/link", { id: f.id, secret: f.secret }, "https://attacker.example.com"))?.status).toBe(403);
+    for (const path of ["/owner/link", "/owner/recover"]) {
+      for (const origin of ["https://attacker.example.com", "null", ""]) {
+        expect((await f.post(path, { id: f.id, secret: f.secret }, origin))?.status).toBe(403);
+      }
+      expect((await f.http.handle(new Request(`${ORIGIN}${path}`, { method: "POST" })))?.status).toBe(403);
+    }
     expect(f.begin).not.toHaveBeenCalled();
     const started = (await f.post("/owner/link", { id: f.id, secret: f.secret }))!;
     f.gateway.confirmOwnerLinkAuthorization.mockRejectedValueOnce(new Error("root revoked"));
@@ -79,6 +90,7 @@ describe("owner identity front door", () => {
     f.complete.mockRejectedValueOnce(new Error("private-token-provider-response"));
     const response = (await f.callback(f.id, started.headers.get("set-cookie")!.split(";")[0]))!;
     expect(response.status).toBe(400);
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(await response.text()).not.toContain("private-token-provider-response");
     expect(f.gateway.confirmOwnerLinkAuthorization).not.toHaveBeenCalled();
   });

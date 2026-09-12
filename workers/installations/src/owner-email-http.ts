@@ -1,6 +1,6 @@
 import type { InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
 import { escapeHtml as html } from "./admin/page";
-import { hasExpectedOrigin, noStoreHeaders, readRequestBody } from "./http";
+import { hasExpectedOrigin, noStoreFormHeaders, noStoreHeaders, readRequestBody } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
 import { sha256Hex } from "./tokens";
@@ -188,7 +188,7 @@ function redirect(location: string, cookies: string[] = []): Response {
   return new Response(null, { status: 303, headers });
 }
 function page(content: string, status = 200, cookies: string[] = [], nonce = randomSecret()): Response {
-  const headers = noStoreHeaders({ "content-type": "text/html; charset=utf-8", "content-security-policy":
+  const headers = noStoreFormHeaders({ "content-type": "text/html; charset=utf-8", "content-security-policy":
     `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
   for (const value of cookies) headers.append("set-cookie", value);
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>GSV · My spaces</title>

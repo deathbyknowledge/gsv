@@ -50,8 +50,9 @@ async function fixture() {
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
   const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail, "accounts@example.com", gateway, ORIGIN);
   let http = makeHttp();
-  const request = async (path: string, cookies: Cookies, form?: Form, origin = ORIGIN, acceptCookies = true): Promise<Response> => {
-    const headers = new Headers({ cookie: cookieHeader(cookies), origin, "cf-connecting-ip": `fixture-${suffix}` });
+  const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
+    const headers = new Headers({ cookie: cookieHeader(cookies), "cf-connecting-ip": `fixture-${suffix}` });
+    if (origin !== null) headers.set("origin", origin);
     const init: RequestInit = { method: form ? "POST" : "GET", headers };
     if (form) {
       headers.set("content-type", "application/x-www-form-urlencoded");
@@ -67,7 +68,7 @@ async function fixture() {
     const response = await request(`/owner/${purpose}`, cookies);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("referrer-policy")).toBe("same-origin");
     for (const cookie of response.headers.getSetCookie()) expect(cookie).toContain("Path=/; Secure; HttpOnly; SameSite=Lax");
     return { ...await formFields(response), email, ...extra };
   };
@@ -105,13 +106,16 @@ describe("native owner email HTTP", () => {
     const cookies: Cookies = new Map();
     expect((await f.request("/owner/spaces", cookies)).headers.get("location")).toBe("/owner/login");
     const form = await f.start(cookies, "login", f.email);
-    expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
+    const codePage = await f.request("/owner/login", cookies, form);
+    expect(codePage.status).toBe(200);
+    expect(codePage.headers.get("referrer-policy")).toBe("same-origin");
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(1);
     expect(cookies.has(SESSION)).toBe(false);
     const verify = { ...form, code: f.code() };
     const lost = await f.request("/owner/verify", cookies, verify, ORIGIN, false);
     expect(lost.status).toBe(303);
+    expect(lost.headers.get("referrer-policy")).toBe("no-referrer");
     const initialSession = lost.headers.getSetCookie().find((value) => value.startsWith(`${SESSION}=`));
     f.restart();
     const retry = await f.request("/owner/verify", cookies, verify);
@@ -121,6 +125,7 @@ describe("native owner email HTTP", () => {
     expect(session?.email).toBe(f.email);
     const page = await f.request("/owner/spaces", cookies);
     expect(page.status).toBe(200);
+    expect(page.headers.get("referrer-policy")).toBe("same-origin");
     expect(await page.text()).toContain("No spaces linked yet");
     const copiedSession = new Map(cookies);
     expect((await f.request("/owner/logout", cookies, {})).status).toBe(303);
@@ -218,8 +223,11 @@ describe("native owner email HTTP", () => {
     const f = await fixture();
     const cookies: Cookies = new Map();
     const form = await f.start(cookies, "login", f.email);
-    expect((await f.request("/owner/login", cookies, form, "https://other.example.com")).status).toBe(403);
-    expect((await f.request("/owner/login", cookies, form, "")).status).toBe(403);
+    for (const origin of ["https://other.example.com", "null", "", null]) {
+      for (const path of ["/owner/login", "/owner/link", "/owner/recover", "/owner/verify", "/owner/logout"]) {
+        expect((await f.request(path, cookies, form, origin)).status).toBe(403);
+      }
+    }
     expect((await f.request("/owner/login", new Map(), form)).status).toBe(400);
     expect(f.send).not.toHaveBeenCalled();
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
