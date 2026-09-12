@@ -61,8 +61,12 @@ export class AccountsDeletionOwner implements InstallationDeletionService {
       this.db.prepare(`INSERT INTO installation_deleted_operations (operation_id, installation_id)
         SELECT operation_id, installation_id FROM provisioning_operations WHERE installation_id = ? ORDER BY rowid LIMIT 100
         ON CONFLICT DO NOTHING`).bind(request.installationId),
+      this.db.prepare(`DELETE FROM owner_auth_challenges WHERE id IN (SELECT c.id FROM owner_auth_challenges c
+        JOIN installation_owner_attempts a ON a.id = c.owner_attempt_id WHERE a.installation_id = ? ORDER BY c.rowid LIMIT 100)`)
+        .bind(request.installationId),
       ...TABLES.map((table) => this.db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE installation_id = ? ${table === "installation_deletion_inspections"
-          ? "AND NOT EXISTS (SELECT 1 FROM installation_deletion_observations WHERE inspection_id = installation_deletion_inspections.id)" : ""}
+          ? "AND NOT EXISTS (SELECT 1 FROM installation_deletion_observations WHERE inspection_id = installation_deletion_inspections.id)"
+          : table === "installation_owner_attempts" ? "AND NOT EXISTS (SELECT 1 FROM owner_auth_challenges WHERE owner_attempt_id = installation_owner_attempts.id)" : ""}
           ORDER BY rowid LIMIT 100)`)
         .bind(request.installationId)),
       this.db.prepare(`DELETE FROM installation_reset_participants WHERE rowid IN (SELECT p.rowid FROM installation_reset_participants p

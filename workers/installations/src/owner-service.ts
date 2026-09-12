@@ -10,7 +10,18 @@ export type InstallationOwnerEnvironment = {
   GSV_OWNER_OIDC_CLIENT_ID?: string;
   ACCOUNTS_GATEWAY_RECOVERY?: InstallationRecoveryGatewayService;
   GSV_OWNER_OIDC_CLIENT_SECRET?: string;
+  OWNER_EMAIL?: SendEmail;
+  GSV_OWNER_EMAIL_FROM?: string;
+  GSV_OWNER_AUTH_SECRET?: string;
 };
+
+export function ownerEmailEnabled(env: InstallationOwnerEnvironment): boolean {
+  return Boolean(env.OWNER_EMAIL && env.GSV_OWNER_EMAIL_FROM && env.GSV_OWNER_AUTH_SECRET);
+}
+
+export function ownerIdentityEnabled(env: InstallationOwnerEnvironment): boolean {
+  return Boolean(env.ACCOUNTS_GATEWAY_RECOVERY && (ownerEmailEnabled(env) || (env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID)));
+}
 
 export class InstallationOwnerLinkService implements InstallationOwnershipService {
   constructor(private readonly store: InstallationOwnerStore, private readonly origin: string,
@@ -30,7 +41,7 @@ export class InstallationOwnershipEntrypoint extends WorkerEntrypoint<Installati
   implements InstallationOwnershipService {
   async beginInstallationOwnerLink(input: BeginInstallationOwnerLinkInput): Promise<{ url: string; expiresAt: number }> {
     return new InstallationOwnerLinkService(new InstallationOwnerStore(this.env.INSTALLATIONS_DB, OPERATOR_REGISTRY_PRINCIPAL_ID),
-      this.env.GSV_ADMIN_ORIGIN, this.ctx.props, Boolean(this.env.ACCOUNTS_GATEWAY_RECOVERY && this.env.GSV_OWNER_OIDC_ISSUER && this.env.GSV_OWNER_OIDC_CLIENT_ID))
+      this.env.GSV_ADMIN_ORIGIN, this.ctx.props, ownerIdentityEnabled(this.env))
       .beginInstallationOwnerLink(input);
   }
 }

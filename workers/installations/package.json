@@ -24,7 +24,8 @@
     "./owner-store": "./src/owner-store.ts",
     "./owner-identity": "./src/owner-identity.ts",
     "./owner-http": "./src/owner-http.ts",
-    "./owner-service": "./src/owner-service.ts"
+    "./owner-service": "./src/owner-service.ts",
+    "./owner-front-door": "./src/owner-front-door.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

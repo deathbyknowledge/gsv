@@ -12,9 +12,7 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
 import { CloudflareInstallationAdminAccess } from "./admin/access";
 import { InstallationAdminService } from "./admin/service";
-import { InstallationOwnerHttp } from "./owner-http";
-import { InstallationOwnerStore } from "./owner-store";
-import { OwnerIdentityProvider } from "./owner-identity";
+import { cleanExpiredOwnerAuthentication, handleInstallationOwnerRequest } from "./owner-front-door";
 import { OPERATOR_REGISTRY_PRINCIPAL_ID, type InstallationOwnerEnvironment } from "./owner-service";
 import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstrap";
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
@@ -25,6 +23,7 @@ export { InstallationOwnershipEntrypoint } from "./owner-service";
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
+    await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
   }
 
@@ -32,18 +31,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
-    if (new URL(request.url).pathname.startsWith("/owner/")) {
-      if (!this.env.ACCOUNTS_GATEWAY_RECOVERY || !this.env.GSV_OWNER_OIDC_ISSUER || !this.env.GSV_OWNER_OIDC_CLIENT_ID) {
-        return new Response("Owner identity is not configured", { status: 503, headers: { "cache-control": "no-store" } });
-      }
-      const response = await new InstallationOwnerHttp(
-        new InstallationOwnerStore(this.env.INSTALLATIONS_DB, OPERATOR_REGISTRY_PRINCIPAL_ID),
-        new OwnerIdentityProvider({ issuer: this.env.GSV_OWNER_OIDC_ISSUER, clientId: this.env.GSV_OWNER_OIDC_CLIENT_ID,
-          clientSecret: this.env.GSV_OWNER_OIDC_CLIENT_SECRET, origin: this.env.GSV_ADMIN_ORIGIN }),
-        this.env.ACCOUNTS_GATEWAY_RECOVERY, this.env.GSV_ADMIN_ORIGIN,
-      ).handle(request);
-      if (response) return response;
-    }
+    const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID);
+    if (ownerResponse) return ownerResponse;
     if (new URL(request.url).origin !== this.env.GSV_ADMIN_ORIGIN) return new Response("Forbidden", { status: 403 });
     const accounts = this.accounts();
     const administration = new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {

@@ -53,6 +53,50 @@ async function fixture() {
 }
 
 describe("Accounts deletion runtime", () => {
+  it("drains owner verification records in bounded batches while retaining global owner access", async () => {
+    const f = await fixture();
+    const attempt = await f.db.prepare("SELECT id FROM installation_owner_attempts WHERE installation_id = ? LIMIT 1")
+      .bind(f.old.installationId).first<{ id: string }>();
+    if (!attempt) throw new Error("Missing fixture attempt");
+    const secondAttempt = crypto.randomUUID();
+    await f.db.batch([
+      f.db.prepare(`INSERT INTO installation_owner_attempts (id, installation_id, purpose, expected_owner_id, state, created_at, expires_at)
+        VALUES (?, ?, 'recover', ?, 'pending', 1, 9999999999999)`).bind(secondAttempt, f.second.installationId, f.principal.id),
+      f.db.prepare(`INSERT INTO principal_email_credentials (email_normalized, principal_id, created_at) VALUES (?, ?, 1)`)
+        .bind(f.principal.email, f.principal.id),
+      f.db.prepare(`INSERT INTO owner_auth_sessions (token_hash, principal_id, authenticated_at, expires_at) VALUES (?, ?, 1, 9999999999999)`)
+        .bind(`session-${f.principal.id}`, f.principal.id),
+      f.db.prepare(`INSERT INTO owner_auth_challenges (id, email, purpose, owner_attempt_id, browser_secret_hash, code_generation, code_verifier,
+        created_at, expires_at, delivery_id, delivery_status, delivery_lease_until)
+        SELECT ? || value, 'fixture@example.com', 'link', ?, 'browser', 'generation', 'verifier', 1, 9999999999999, 'delivery', 'sent', 1 FROM json_each(?)`)
+        .bind(`challenge-${attempt.id}-`, attempt.id, JSON.stringify(Array.from({ length: 205 }, (_, index) => index))),
+      f.db.prepare(`INSERT INTO owner_auth_challenges (id, email, purpose, owner_attempt_id, browser_secret_hash, code_generation, code_verifier,
+        created_at, expires_at, delivery_id, delivery_status, delivery_lease_until)
+        VALUES (?, 'fixture@example.com', 'recover', ?, 'browser', 'generation', 'verifier', 1, 9999999999999, 'delivery', 'sent', 1)`)
+        .bind(`challenge-${secondAttempt}`, secondAttempt),
+    ]);
+    const runtime = f.makeRuntime();
+    await runtime.retire(f.old.installationId, { operationId: f.operationId, confirmHandle: f.old.handle });
+    const inventory = await runtime.registerInventory(f.old.installationId, f.manifest);
+    await runtime.begin(f.old.installationId, { operationId: f.operationId, inventorySha256: inventory.sha256 });
+    const count = async () => (await f.db.prepare("SELECT COUNT(*) AS count FROM owner_auth_challenges WHERE owner_attempt_id = ?")
+      .bind(attempt.id).first<{ count: number }>())!.count;
+    let previous = await count();
+    let status = await runtime.status(f.old.installationId);
+    for (let index = 0; index < 15 && status.phase !== "live-erased"; index++) {
+      status = await runtime.retry(f.old.installationId);
+      const remaining = await count();
+      expect(previous - remaining).toBeLessThanOrEqual(100);
+      previous = remaining;
+    }
+    expect(status.phase).toBe("live-erased");
+    expect(previous).toBe(0);
+    expect(await f.db.prepare("SELECT id FROM owner_auth_challenges WHERE owner_attempt_id = ?").bind(secondAttempt).first()).not.toBeNull();
+    expect(await f.db.prepare("SELECT principal_id FROM principal_email_credentials WHERE principal_id = ?").bind(f.principal.id).first()).not.toBeNull();
+    expect(await f.db.prepare("SELECT principal_id FROM owner_auth_sessions WHERE principal_id = ?").bind(f.principal.id).first()).not.toBeNull();
+    expect(await f.accounts.resolveInstallation(f.second.installationId)).toMatchObject({ state: "active" });
+  });
+
   it("resumes explicit deletion, erases bounded rows, preserves another space and reports D1 retention", async () => {
     const state = await fixture();
     let runtime = state.makeRuntime();

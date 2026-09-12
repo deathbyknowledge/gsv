@@ -233,6 +233,45 @@ Acceptance: two installations provisioned under the registry principal are
 claimed by their respective owners; neither can claim the other's; a
 principal may own several installations and reach each from its hostname.
 
+**Owner sign-in and My spaces.** Accounts supplies native email-code sign-in
+as the first public owner credential. An external OIDC service is optional.
+A verified mailbox creates or authenticates an immutable Accounts principal;
+its browser session opens My spaces, which lists only that principal's owned
+spaces. Signing in does not provision a space, enter a local Kernel account,
+or grant operator administration. Existing explicit operator provisioning
+and first-space bootstrap remain the creation path.
+
+Email verification is an explicit credential, separate from existing OIDC
+subjects. Never attach a new credential to an existing principal merely
+because their email addresses match. Existing OIDC linking and recovery
+remain available. Future Google or GitHub credentials can use the same
+principal model after explicit credential linking; those additions are not
+part of this batch.
+
+Use six-digit codes with a ten-minute lifetime, five failed verification
+attempts, a resend cooldown, and atomic mailbox/IP send limits. Codes,
+browser proofs, sessions, and throttle identifiers are stored as hashes or
+keyed verifiers; plaintext codes appear only in the transactional email.
+Consumption and session issuance are atomic. Lost-response retries require
+the same browser, code, purpose and prepared session credential, and recover
+the same result. A resend retains the original expiry and consumes send quota.
+Expired attempts and sessions have bounded cleanup. Per-space deletion
+removes its linking and recovery attempts while preserving the owner's
+global identity and access to their other spaces.
+
+Root recovery always requires a fresh email verification bound to that exact
+space's current owner and recovery attempt. An ordinary My spaces session
+cannot authorize a root reset. Linking still requires the Kernel's current
+root authorization in addition to fresh owner verification. Browser and
+purpose binding remain enforced through retries and ownership changes.
+
+Accounts sends codes through an operator-configured mail binding independent
+of every Kernel and linked messenger. The Cloudflare reference uses Email
+Sending with a verified sender and a stable, deployment-owned verifier
+secret. Mail acceptance failures remain visible; the page must not claim a
+code was sent after a failed delivery call. This lets an owner recover a
+space even when that space's own mail or credentials are broken.
+
 ### W2a. Public services and private commercial implementations
 
 Publish the contracts and a complete reference deployment. Keep H&M's

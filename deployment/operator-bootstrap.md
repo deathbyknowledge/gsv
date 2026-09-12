@@ -59,6 +59,49 @@ access mode, CSRF, cookie flags and credential recovery. These local fixtures do
 not substitute for fresh-account Cloudflare deployment and two-installation
 acceptance on staging.
 
+## Owner email sign-in
+
+Enable [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/get-started/send-emails/)
+for a domain in the deployment account, then set `GSV_OWNER_EMAIL_FROM` to a
+sender on that verified domain, for example `accounts@example.com`. The public
+Alchemy composition creates a restricted `OWNER_EMAIL` binding and a stable
+secret for verifying codes. Redeploy with the same Alchemy state so that the
+secret remains unchanged. The runtime does not need a Cloudflare API token to
+send codes.
+
+`GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` optionally restricts recipients to a
+comma-separated list of real test mailboxes. Use this on staging; omit it when
+opening email sign-in to your users. No email credential becomes usable until
+its recipient completes verification. Cloudflare Email Sending may incur
+usage charges under the operator's account.
+
+Visit the Accounts origin, or `/owner/login`, to receive a six-digit sign-in
+code. `/owner/spaces` lists only the signed-in owner's active or restricted
+spaces. A new owner initially sees an empty list. This page does not create a
+space: the operator still issues setup invitations, and root links ownership
+from the space's Settings. My spaces does not sign the owner into local Kernel
+accounts or grant access to `/admin`.
+
+`/owner/recover` asks for the space handle and its owner's email. It requires a
+new code bound to this recovery attempt, even if the owner is already signed
+in. After verification, Accounts issues the existing single-use root reset
+claim; the Kernel replaces root's password and revokes root's old credentials.
+Mail delivery runs in Accounts, independently of the space being recovered.
+
+Codes expire after ten minutes and lock after five failed guesses. Resending
+keeps the same expiry, has a one-minute cooldown, and consumes mailbox/IP send
+quota. The browser must retain its host-only HttpOnly cookies through the
+flow. Ordinary sessions expire after thirty days; sign-out revokes the current
+session. The scheduled Accounts task removes expired challenges and sessions
+in bounded batches. Authentication mail and credentials are never logged.
+
+Existing OIDC settings remain supported. When both methods are configured,
+linking and recovery offer the existing provider at `/owner/identity/link` and
+`/owner/identity/recover`; in-flight callbacks retain `/owner/callback`.
+Matching email addresses never automatically merge native email credentials
+and existing provider subjects. A provider-backed owner must keep using that
+provider until explicit credential linking is implemented.
+
 ## Deletion inventory
 
 Set `GSV_DELETION_CATALOG_FILE` to an operator-reviewed JSON catalog before

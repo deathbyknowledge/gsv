@@ -41,10 +41,12 @@ export class InstallationOwnerStore {
     await this.db.prepare(`INSERT INTO installation_owner_attempts
       (id, installation_id, purpose, expected_owner_id, state, created_at, expires_at)
       SELECT ?, id, 'recover', owner_principal_id, 'pending', ?, ? FROM installations
-      WHERE handle = ? AND state = 'active' AND owner_principal_id != ?`).bind(
+      WHERE handle = ? AND state = 'active' AND owner_principal_id != ? ON CONFLICT(id) DO NOTHING`).bind(
       id, now, now + OWNER_ATTEMPT_TTL_MS, handle, this.registryPrincipalId).run();
     const attempt = await this.get(id);
-    if (!attempt) throw new Error("Owner recovery is unavailable");
+    const valid = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND handle = ? AND state = 'active'
+      AND owner_principal_id = ?`).bind(attempt?.installation_id ?? "", handle, attempt?.expected_owner_id ?? "").first();
+    if (!attempt || attempt.purpose !== "recover" || attempt.expires_at <= now || !valid) throw new Error("Owner recovery is unavailable");
     return attempt;
   }
 
@@ -89,6 +91,44 @@ export class InstallationOwnerStore {
     const verified = await this.get(id);
     if (verified?.state !== "verified" || verified.principal_id !== principalId) throw new Error("This identity does not own the space");
     return verified;
+  }
+
+  async startEmailAuthentication(id: string, input: { linkSecretHash?: string; browserSecretHash: string }, now = Date.now()): Promise<OwnerAttempt> {
+    await this.db.prepare(`UPDATE installation_owner_attempts SET browser_secret_hash = ?, state = 'authenticating'
+      WHERE id = ? AND state = 'pending' AND expires_at > ? AND (purpose = 'recover' OR link_secret_hash = ?)
+      AND EXISTS (SELECT 1 FROM installations i WHERE i.id = installation_id AND i.state = 'active' AND i.owner_principal_id = expected_owner_id)`)
+      .bind(input.browserSecretHash, id, now, input.linkSecretHash ?? null).run();
+    const attempt = await this.get(id);
+    if (!attempt || attempt.browser_secret_hash !== input.browserSecretHash || attempt.expires_at <= now
+      || attempt.state !== "authenticating" || attempt.code_verifier !== null || attempt.nonce !== null
+      || (attempt.purpose === "link" && attempt.link_secret_hash !== input.linkSecretHash)) {
+      throw new Error("Owner authentication attempt is unavailable");
+    }
+    return attempt;
+  }
+
+  /** Called only after Accounts verifies a fresh, purpose-bound native email receipt. */
+  async verifyPrincipal(id: string, browserSecretHash: string, principalId: string, now = Date.now()): Promise<OwnerAttempt> {
+    await this.db.prepare(`UPDATE installation_owner_attempts SET principal_id = ?, state = 'verified'
+      WHERE id = ? AND state = 'authenticating' AND browser_secret_hash = ? AND expires_at > ?
+      AND code_verifier IS NULL AND nonce IS NULL
+      AND EXISTS (SELECT 1 FROM installations i WHERE i.id = installation_id AND i.state = 'active' AND i.owner_principal_id = expected_owner_id)
+      AND EXISTS (SELECT 1 FROM principals p WHERE p.id = ? AND p.state = 'active' AND p.email_verified_at IS NOT NULL)
+      AND (purpose = 'link' OR expected_owner_id = ?)`)
+      .bind(principalId, id, browserSecretHash, now, principalId, principalId).run();
+    const attempt = await this.get(id);
+    if (!attempt || !["verified", "complete"].includes(attempt.state) || attempt.principal_id !== principalId
+      || attempt.browser_secret_hash !== browserSecretHash || attempt.expires_at <= now) throw new Error("Owner verification is unavailable");
+    return attempt;
+  }
+
+  async spaces(principalId: string): Promise<{ handle: string; canonicalOrigin: string; state: string }[]> {
+    const rows = await this.db.prepare(`SELECT i.handle, i.canonical_origin AS canonicalOrigin, i.state
+      FROM installations i JOIN principals p ON p.id = i.owner_principal_id
+      WHERE i.owner_principal_id = ? AND p.state = 'active' AND p.email_verified_at IS NOT NULL
+      AND i.state IN ('active', 'restricted') ORDER BY i.handle`).bind(principalId)
+      .all<{ handle: string; canonicalOrigin: string; state: string }>();
+    return rows.results;
   }
 
   async completeLink(id: string, browserSecretHash: string, now = Date.now()): Promise<void> {
