@@ -117,6 +117,37 @@ Cloudflare Access and existing messenger-link continuity remain separate
 coverage. These fixture resources are retained for inspection. H&M staging
 and production were not changed by this acceptance run.
 
+### Completing the inherited pending reset
+
+A subsequent run completed that genuine pending reset's live cleanup at
+23:11 UTC, through Accounts and the existing owners. It retained the original
+reset and private inference preparation until the coordinator erased them.
+No new reset, credential issuance, explicit generation or manual SQL deletion
+was used.
+
+Fresh capture accounted for all 31 stored objects across six namespaces. Its
+first attempt stopped with eight unidentified legacy objects. Saved Process
+identity and repository names were then checked by their actual namespaces
+against the listed physical IDs; a new complete capture identified every object.
+Nine captured resources belonged to retired A. A tenth, separately derived
+native Executor address was included in direct verification without claiming it
+was previously populated.
+
+Registration, start, completion and verification ran as four separate processes.
+All four owners reached `live-erased` with zero pending resources. Two fresh
+physical reads found no application data at the ten pinned addresses, and the
+old R2 prefix and multipart listing were empty. Owning cleanup removed the old
+directory, reset, participant, private preparation, policy and usage rows.
+Migration ledgers and foreign-key checks remained valid.
+
+B and the replacement retained their full saved histories, identities, marker
+files and policies. Ten saved human/root and web/CLI/machine credentials authenticated;
+all five retired-A credentials received actual 401 rejections at the replacement
+address. Reconnect-generated history was recorded separately, after the strict
+history comparison. This closes the isolated inherited-reset live-data case.
+Platform backups remain retention-pending; native provider and AI Gateway
+retention still have no verified expiry.
+
 ## Delayed native response after live cleanup
 
 A separate disposable `gsv-delay-fa219c8e` stack used public runtime `4dcf1c01`
@@ -170,6 +201,32 @@ or final erasure of retained backups, provider data and caches. Tombstones remai
 explicitly excluded from live-data counts. The original strict result and the
 separate before/after receipts remain in private operator evidence under
 `delayed-native-20260912`; no message body or credential is published here.
+
+## Populated Mail acceptance
+
+The disposable delayed-response stack was extended with the real public Mail
+owner and two additional synthetic spaces. The original spaces, resource
+identities, Worker modules and four-owner cleanup receipt were preserved. Only
+the two new immutable identities were admitted by the private test intake.
+
+Each space stored exactly one synthetic RFC822 message through the real inbound
+Mail handler. The raw MIME and rendered text matched the saved content hashes.
+Both agents remained idle, with unchanged Process and Conversation histories
+and responsibility ledgers. Summarization was deferred with zero attempts;
+there were no outbound attempts. The fixture has no SMTP route, outbound queue
+or inference binding, so this establishes Mail storage behavior rather than
+external delivery.
+
+The first test stopped because its driver tried to read the binary MIME file
+through the text-only read operation. The binary transfer syscall returned the
+expected bytes. After correcting that driver, verification recovered the
+already stored A message before sending B's message; A's intake was not replayed.
+The final deployment comparison passed all 179 checks. A was reset to a fresh
+identity, old passwords were rejected, and B retained its stored Mail and quiet
+history. Cleanup is awaiting a complete inventory: scans omitted the known
+initialized replacement Kernel and Process even when their before/after object
+lists matched. Those scans are retained as incomplete evidence and have not
+authorized deletion.
 
 ## Remaining release coverage
 
