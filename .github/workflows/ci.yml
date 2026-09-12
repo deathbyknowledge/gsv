@@ -125,6 +125,8 @@ jobs:
               - 'package-lock.json'
               - 'deployment/**'
               - 'scripts/capture-ai-gateway-logs.ts'
+              - 'scripts/build-cloudflare-bundles.sh'
+              - 'scripts/normalize-worker-text-modules.mjs'
               - 'workers/installations/migrations/**'
             deletion_stack:
               - '.github/workflows/ci.yml'

@@ -51,6 +51,7 @@ done
 )
 node "${ROOT_DIR}/scripts/assert-gateway-inference-boundary.mjs" "${DIST_DIR}/gateway-bundle-meta.json"
 rm "${DIST_DIR}/gateway-bundle-meta.json"
+node "${ROOT_DIR}/scripts/normalize-worker-text-modules.mjs" "${DIST_DIR}/gateway/worker"
 (
   cd "${ROOT_DIR}/workers/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
