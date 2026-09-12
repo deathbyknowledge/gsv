@@ -45,8 +45,22 @@ async function fixture() {
       selector: operatorResourceSelector(resource, input.installationId), capturedAt: ++now, reference: `captures/${resourceId}-${now}.json`, facts };
     return { capture, sha256: await operatorResourceDigest(capture) };
   }
+  async function recordHistory(resourceId: string, count: number) {
+    // Seed older captures in one batch; the latest still exercises ordinary evidence admission.
+    const history = await Promise.all(Array.from({ length: count - 1 }, () => attest(resourceId)));
+    await db.batch([
+      db.prepare(`INSERT INTO installation_operator_resource_evidence
+        (installation_id, resource_id, sha256, captured_at, recorded_at, capture_json)
+        SELECT ?, ?, json_extract(value, '$.sha256'), json_extract(value, '$.capture.capturedAt'),
+          json_extract(value, '$.capture.capturedAt'), json_extract(value, '$.capture') FROM json_each(?)`)
+        .bind(input.installationId, resourceId, JSON.stringify(history)),
+      db.prepare("UPDATE installation_operator_resources SET evidence_revision = evidence_revision + ? WHERE installation_id = ?")
+        .bind(history.length, input.installationId),
+    ]);
+    await resources.record(input.installationId, await attest(resourceId));
+  }
   async function cleanApplications() { await runtime.retry(input.installationId); await runtime.retry(input.installationId); }
-  return { db, directory, runtime, resources, input, manifest, cleanApplications, attest,
+  return { db, directory, runtime, resources, input, manifest, cleanApplications, attest, recordHistory,
     tick(ms = 1) { now += ms; }, clock: () => now };
 }
 
@@ -219,7 +233,7 @@ describe("operator resource evidence", () => {
   it("does not regress finalizing when a concurrent advance finishes retention", async () => {
     const state = await fixture();
     await state.cleanApplications();
-    for (let index = 0; index < 103; index++) await state.resources.record(state.input.installationId, await state.attest("multipart"));
+    await state.recordHistory("multipart", 103);
     await state.resources.record(state.input.installationId, await state.attest("queue"));
     await state.resources.record(state.input.installationId, await state.attest("provider", {
       kind: "retention-policy", enforced: true, retentionMs: 1000, policySha256: "f".repeat(64),
@@ -243,7 +257,7 @@ describe("operator resource evidence", () => {
     const other = await fixture();
     await state.cleanApplications(); await other.cleanApplications();
     await other.resources.record(other.input.installationId, await other.attest("queue"));
-    for (let index = 0; index < 103; index++) await state.resources.record(state.input.installationId, await state.attest("multipart"));
+    await state.recordHistory("multipart", 103);
     await state.resources.record(state.input.installationId, await state.attest("queue"));
     await state.resources.record(state.input.installationId, await state.attest("provider"));
     expect(await state.resources.eraseInstallation(state.input)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
