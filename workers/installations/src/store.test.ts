@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AccountStore } from "./store";
 
 function store(): AccountStore {
@@ -54,6 +54,59 @@ describe("account directory", () => {
     });
 
     expect(second).toEqual(first);
+  });
+
+  it.each([0, 1])("rejects provisioning %i ms after reservation expiry without changing any state", async (offset) => {
+    const principalId = await createVerifiedPrincipal(`expired_${offset}`);
+    const accounts = store();
+    const reservation = await accounts.reserveInstallation({
+      principalId,
+      operationId: `op_expired_${offset}`,
+      handle: `expired-${offset}`,
+    });
+    if (reservation.reservationExpiresAt === null) throw new Error("Expected reservation expiry");
+    const state = env.INSTALLATIONS_DB.prepare(
+      `SELECT i.state, i.reservation_expires_at, h.state AS hostname_state,
+              p.state AS operation_state, p.attempt, p.last_error, p.updated_at
+       FROM installations i JOIN hostnames h ON h.installation_id = i.id
+       JOIN provisioning_operations p ON p.installation_id = i.id
+       WHERE i.id = ?`,
+    ).bind(reservation.installationId);
+    const before = await state.first();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(reservation.reservationExpiresAt + offset);
+    try {
+      await expect(accounts.beginProvisioning(reservation.operationId, principalId))
+        .rejects.toThrow("installation could not enter provisioning");
+      expect(await state.first()).toEqual(before);
+      expect(await accounts.getReservationByOperation(reservation.operationId)).toEqual(reservation);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("admits provisioning just before reservation expiry and preserves retries after expiry", async () => {
+    const principalId = await createVerifiedPrincipal("provision_expiry");
+    const accounts = store();
+    const reservation = await accounts.reserveInstallation({
+      principalId,
+      operationId: "op_provision_expiry",
+      handle: "provision-expiry",
+    });
+    if (reservation.reservationExpiresAt === null) throw new Error("Expected reservation expiry");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(reservation.reservationExpiresAt - 1);
+    try {
+      const provisioned = await accounts.beginProvisioning(reservation.operationId, principalId);
+      expect(provisioned).toMatchObject({ state: "provisioning", operationState: "provisioning" });
+      await expect(accounts.resolveHostname("provision-expiry.gsv.space"))
+        .resolves.toMatchObject({ found: true, state: "provisioning" });
+      clock.mockReturnValue(reservation.reservationExpiresAt + 1);
+      expect(await accounts.beginProvisioning(reservation.operationId, principalId)).toEqual(provisioned);
+      expect(await env.INSTALLATIONS_DB.prepare(
+        "SELECT attempt, updated_at FROM provisioning_operations WHERE operation_id = ?",
+      ).bind(reservation.operationId).first()).toEqual({ attempt: 1, updated_at: reservation.reservationExpiresAt - 1 });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("rejects an operation replayed with different input", async () => {

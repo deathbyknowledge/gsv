@@ -546,19 +546,28 @@ export class AccountStore {
       this.db.prepare(
         `UPDATE installations
          SET state = 'provisioning'
-         WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'`,
-      ).bind(reservation.installationId, principalId),
+         WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'
+           AND reservation_expires_at > ?`,
+      ).bind(reservation.installationId, principalId, now),
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'provisioning'
-         WHERE installation_id = ? AND kind = 'canonical' AND state = 'reserved'`,
-      ).bind(reservation.installationId),
+         WHERE installation_id = ? AND kind = 'canonical' AND state = 'reserved'
+           AND EXISTS (
+             SELECT 1 FROM installations i WHERE i.id = hostnames.installation_id
+               AND i.state = 'provisioning' AND i.reservation_expires_at > ?
+           )`,
+      ).bind(reservation.installationId, now),
       this.db.prepare(
         `UPDATE provisioning_operations
          SET state = 'provisioning', attempt = attempt + 1,
              last_error = NULL, updated_at = ?
-         WHERE operation_id = ? AND principal_id = ? AND state = 'reserved'`,
-      ).bind(now, operationId, principalId),
+         WHERE operation_id = ? AND principal_id = ? AND state = 'reserved'
+           AND EXISTS (
+             SELECT 1 FROM installations i WHERE i.id = provisioning_operations.installation_id
+               AND i.state = 'provisioning' AND i.reservation_expires_at > ?
+           )`,
+      ).bind(now, operationId, principalId, now),
     ]);
     if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
