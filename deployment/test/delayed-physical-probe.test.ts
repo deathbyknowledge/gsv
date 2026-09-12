@@ -20,10 +20,11 @@ function fixture() {
       fetch: async () => Response.json({ name, empty: !live }),
       installationDeletionStatus: async () => ({ ...request, phase: nativePhase, pendingResources: live ? 3 : 0 }),
     }; } });
-  const env = { DELAY_INSTALLATION_ID: installationId, DELAY_PROCESS_ID: "proc:test", PHYSICAL_SCOPE: { ...request, resources },
+  const scope = { ...request, resources };
+  const env = { DELAY_INSTALLATION_ID: installationId, DELAY_PROCESS_ID: "proc:test", get PHYSICAL_SCOPE() { return JSON.stringify(scope); },
     PHYSICAL_KERNEL: namespace("kernel"), PHYSICAL_PROCESS: namespace("process"), PHYSICAL_CONVERSATION: namespace("conversation"),
     PHYSICAL_REPOSITORY: namespace("ripgit"), PHYSICAL_INFERENCE_EXECUTORS: namespace("inference-executor") };
-  return { env, open, setLive: () => { live = true; }, setPending: () => { nativePhase = "pending"; } };
+  return { env, scope, open, setLive: () => { live = true; }, setPending: () => { nativePhase = "pending"; } };
 }
 
 describe("original physical resource inspection", () => {
@@ -32,7 +33,7 @@ describe("original physical resource inspection", () => {
     const first = await inspectPhysicalResources(f.env, request);
     expect(first).toMatchObject({ ...request, liveResources: 0, tombstonesExcluded: true });
     expect(first.resources).toHaveLength(5);
-    expect(first.resources.map((r) => r.physicalId)).toEqual(f.env.PHYSICAL_SCOPE.resources.map((r) => r.objectId));
+    expect(first.resources.map((r) => r.physicalId)).toEqual(f.scope.resources.map((r) => r.objectId));
     expect(JSON.stringify(first)).not.toContain("proc%3Atest");
     f.setLive();
     const second = await inspectPhysicalResources(f.env, request);
@@ -45,11 +46,17 @@ describe("original physical resource inspection", () => {
     const input = failure === "installation" ? { ...request, installationId: "inst_other" }
       : failure === "operation" ? { ...request, operationId: "33333333-3333-4333-8333-333333333333" }
       : failure === "extra-address" ? { ...request, resources: [] } : request;
-    if (failure === "physical-id") f.env.PHYSICAL_SCOPE.resources[4].objectId = "f".repeat(64);
-    if (failure === "foreign-name") f.env.PHYSICAL_SCOPE.resources[4].name = "inst_other";
+    if (failure === "physical-id") f.scope.resources[4].objectId = "f".repeat(64);
+    if (failure === "foreign-name") f.scope.resources[4].name = "inst_other";
     if (failure === "selected-process") f.env.DELAY_PROCESS_ID = "proc:other";
-    if (failure === "missing-original") f.env.PHYSICAL_SCOPE.resources.splice(2, 1);
+    if (failure === "missing-original") f.scope.resources.splice(2, 1);
     await expect(inspectPhysicalResources(f.env, input)).rejects.toThrow();
+    expect(f.open).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed serialized scope before opening any object", async () => {
+    const f = fixture();
+    await expect(inspectPhysicalResources({ ...f.env, PHYSICAL_SCOPE: "{" }, request)).rejects.toThrow();
     expect(f.open).not.toHaveBeenCalled();
   });
 

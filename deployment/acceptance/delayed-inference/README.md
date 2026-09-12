@@ -69,6 +69,9 @@ general-purpose replacement for the inference service.
 For cloud acceptance, the authenticated controller also exposes `/physical`.
 Deployment fixes the original installation, deletion operation, resource names,
 physical addresses and five owner namespace bindings before inference starts.
+Store `PHYSICAL_SCOPE` as serialized JSON text; the probe parses it once before
+strict validation. This keeps deployment-library field-name conversion from
+rewriting names inside the opaque scope.
 The request can only repeat the installation and operation; it cannot choose an
 address. The controller reads existing owner inspection methods directly, so a
 cached directory discovery receipt cannot stand in for a fresh storage check.

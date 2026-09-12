@@ -24,7 +24,7 @@ type PhysicalNamespace = {
 export type PhysicalEnvironment = {
   DELAY_INSTALLATION_ID?: string;
   DELAY_PROCESS_ID?: string;
-  PHYSICAL_SCOPE?: unknown;
+  PHYSICAL_SCOPE?: string;
   PHYSICAL_KERNEL?: PhysicalNamespace;
   PHYSICAL_PROCESS?: PhysicalNamespace;
   PHYSICAL_CONVERSATION?: PhysicalNamespace;
@@ -34,7 +34,7 @@ export type PhysicalEnvironment = {
 
 /** Acceptance-only reads of existing owner methods; callers cannot supply an address. */
 export async function inspectPhysicalResources(env: PhysicalEnvironment, input: PhysicalRequest) {
-  const scope = physicalScopeSchema.parse(env.PHYSICAL_SCOPE);
+  const scope = physicalScopeSchema.parse(JSON.parse(z.string().parse(env.PHYSICAL_SCOPE)));
   const processId = env.DELAY_PROCESS_ID;
   if (scope.installationId !== env.DELAY_INSTALLATION_ID || !processId
     || !scope.resources.some((resource) => resource.kind === "process"
