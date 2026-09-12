@@ -29,10 +29,12 @@
     "aws4fetch": "1.0.20",
     "effect": "4.0.0-beta.107",
     "fast-xml-parser": "5.11.1",
+    "ws": "8.21.0",
     "zod": "4.1.13",
     "wrangler": "4.127.1"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "@cloudflare/workers-types": "5.20260823.1",
     "typescript": "7.0.2",
     "vitest": "4.1.9",
