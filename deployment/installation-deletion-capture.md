@@ -77,3 +77,89 @@ The result is always labeled `scope: "durable-objects", outcome: "captured"`.
 R2 objects and unfinished multipart uploads, D1 records, queues, provider logs,
 telemetry, caches, and backup retention need their own declared evidence and
 owners. This capture alone cannot pass the complete inventory resolver.
+
+## Capture and abort unfinished R2 uploads
+
+`scripts/capture-r2-multipart.ts` and the exported
+`captureR2MultipartUploads` helper cover one declared R2 multipart resource.
+They derive the prefix from the exact immutable installation ID and use the
+operator's S3 credentials. Create a configuration using the exact entry from
+the deployment's current and historical operator catalog:
+
+```json
+{
+  "version": 1,
+  "accountId": "11111111111111111111111111111111",
+  "installationId": "inst_retired",
+  "resourceId": "multipart",
+  "catalog": [{
+    "id": "multipart",
+    "kind": "r2",
+    "namespace": "your-storage-bucket",
+    "source": "cloudflare-r2-multipart",
+    "scope": "installation",
+    "disposition": "live"
+  }]
+}
+```
+
+Supply `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and, for temporary credentials,
+`R2_SESSION_TOKEN` through the environment. Credentials never belong in command
+arguments or artifacts. The helper uses the account's default R2 S3 endpoint
+and signs requests for service `s3`, region `auto`; redirects are refused.
+
+```bash
+node scripts/capture-r2-multipart.ts \
+  --config /private/multipart-scope.json \
+  --output /private/multipart-observation-001
+```
+
+The default only lists uploads. To abort them after separately authorizing
+cleanup, obtain the retired installation ID, deletion operation ID and
+application live-erasure timestamp from authenticated Accounts state. Verify
+that upload producers are fenced and outstanding provider writes have settled.
+Save `{ "installationId": "inst_retired", "operationId": "operation-from-accounts",
+"applicationErasedAt": 1789200000000 }` as the authorization file, then run:
+
+```bash
+node scripts/capture-r2-multipart.ts \
+  --config /private/multipart-scope.json \
+  --output /private/multipart-abort-001 \
+  --abort --authorization /private/multipart-authorization.json
+```
+
+The helper checks matching identity and a completed application-erasure time;
+the operator integration owns authenticating that receipt with Accounts.
+Both modes follow the exact `key-marker` and `upload-id-marker` pair until
+`IsTruncated` is false. Repeated uploads or markers, mismatched scope, grouped
+prefixes, malformed responses, or more than 64 pages of 1,000 uploads stop the
+capture. Abort mode validates the complete inventory and every exact object
+address before its first mutation, then aborts only those enumerated uploads.
+It never fetches bodies, lists parts or modifies completed objects.
+
+A new complete enumeration must be empty after aborting. Successful abort
+responses and `404 NoSuchUpload` are insufficient on their own. The latter
+permits recovery when a previous attempt aborted that exact upload; other
+errors remain failures. A lost response or interrupted run may leave some
+aborts completed. Retry with a **new** private output directory: every attempt
+starts from current provider state. Saved empty pages are never reused as
+fresh evidence. Other spaces' uploads stay outside the selected prefix.
+
+Artifacts use the same 0700 directory and 0600 immutable-file helper as the DO
+capture. Pages and abort receipts retain hashes of keys and upload IDs; raw
+keys remain in memory because they may contain private filenames. Hashes of
+marker pairs preserve the cursor chain. The report's `facts` describe the final
+enumeration; `before` retains the original counts and page references. Response
+hashes cover the sanitized page bytes, not raw S3 responses.
+
+The report always declares exact-prefix coverage and `submission: null`. It
+does not submit an attestation or claim complete installation erasure.
+Historical unscoped uploads need their own ownership evidence. An application
+timestamp does not prove that ambiguous provider uploads settled: S3 documents
+that in-flight parts can survive an abort. Keep that case unresolved. Use fresh
+empty facts as operator evidence only after confirming the final-write boundary
+and the catalog's historical coverage.
+
+See Cloudflare's [S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/),
+[ListMultipartUploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html)
+and [AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html).

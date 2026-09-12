@@ -17,7 +17,8 @@
     "./installation-deletion-evidence": "./src/installation-deletion-evidence.ts",
     "./installation-deletion-resolver": "./src/installation-deletion-resolver.ts",
     "./installation-deletion-capture": "./src/installation-deletion-capture.ts",
-    "./installation-deletion-capture-command": "./src/installation-deletion-capture-command.ts"
+    "./installation-deletion-capture-command": "./src/installation-deletion-capture-command.ts",
+    "./r2-multipart-capture": "./src/r2-multipart-capture.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",
@@ -25,7 +26,9 @@
   },
   "dependencies": {
     "alchemy": "2.0.0-beta.72",
+    "aws4fetch": "1.0.20",
     "effect": "4.0.0-beta.107",
+    "fast-xml-parser": "5.11.1",
     "zod": "4.1.13",
     "wrangler": "4.127.1"
   },
