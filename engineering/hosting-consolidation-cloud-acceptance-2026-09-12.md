@@ -83,8 +83,8 @@ behavior, not an asserted guarantee about the encoding of opaque identifiers.
 A separate `gsv-upgrade-5de18320` deployment on the personal account completed
 the old-to-new upgrade at 18:11 UTC. It used genuine pre-extraction public
 `6915d5e6` and private `3777be4b` sources, then adopted the same resources with
-public `3c65ead6` and private `8a2b01fb`. Later public changes add acceptance
-tooling and reports; they do not change those runtime artifacts.
+public `3c65ead6` and private `8a2b01fb`. These are the exact historical-upgrade
+pins; the separate delayed-response fixture below used a later runtime.
 
 The old implementation created two spaces, issued their credentials and
 performed a real reset with durable inference preparation and pending deletion.
@@ -117,12 +117,68 @@ Cloudflare Access and existing messenger-link continuity remain separate
 coverage. These fixture resources are retained for inspection. H&M staging
 and production were not changed by this acceptance run.
 
+## Delayed native response after live cleanup
+
+A separate disposable `gsv-delay-fa219c8e` stack used public runtime `4dcf1c01`
+and the [stream acceptance helpers](../deployment/acceptance/delayed-inference/README.md).
+One real Process request completed through native Workers AI with
+`@cf/zai-org/glm-5.3-flash`: terminal `toolUse`, 237 output tokens. The relay
+held that original response while A was reset and its retired identity cleaned
+up. It observed the Gateway's actual cancellation before the original deadline.
+All four configured owners reported `live-erased`, with zero pending resources,
+for the saved deletion operation before release.
+
+The same original writer attempted the held response at 21:54:34.569 UTC,
+65.728 seconds before its unchanged deadline. Its write and close **succeeded**;
+the original driver's stronger writer-rejection requirement therefore remains
+**inconclusive**, with its failed receipt preserved. A successful transport write
+does not establish Process acceptance. No inference request was replayed, and
+the original Gateway, Inference, relay, controller, writer and lease were not
+redeployed or replaced during the attempt.
+
+Independent fresh reads found no application data at all ten original physical
+addresses: Kernel, Process, Conversation, the original InferenceExecutor and
+six repositories. The original R2 prefix was also empty. These checks ran before
+release, at 21:55:28.802 and 21:55:34.380 UTC after release, and at
+21:56:16.445 UTC after the original 21:55:40.297 deadline. The last read used a
+separate inspection deadline; it did not extend the inference request. B's full
+conversation history and distinct marker, and the replacement's credentials
+and data, remained intact. Old credentials were rejected at the replacement.
+
+The read instrument required one correction: its first lifecycle inspection
+omitted the contract's `version: 1` and failed closed with HTTP 409. An explicitly
+approved temporary authenticated Worker corrected only that read request, using
+the same ten addresses and five namespace bindings. It was removed after the
+checks. This diagnostic continuation did not replace the original relay or
+convert either failed driver receipt into a pass.
+
+The final account inventory passed 15 preservation checks: all 22 selected
+fixture resources and their configurations remained, the temporary diagnostic
+Worker and route were gone, and no unrelated resource changed. Accounts accepted
+one scoped operator attestation clearing the relay's captured buffer; a fresh
+authenticated read confirmed it. Native provider retention and AI Gateway
+logs/cache remained explicitly `unknown`.
+
+These observations support no application-state resurrection from this one
+original delayed native response and exercise the native inference owner with a
+real request. The captured stored-object inventory identified nine Gateway-owned
+objects for retired A; the known original executor address was checked separately
+in the fixed ten-address probe scope. This does not establish a populated, persisted executor
+history before cleanup. These checks do not prove transport
+rejection, messenger delivery behavior, commercial inference-history cleanup,
+or final erasure of retained backups, provider data and caches. Tombstones remain
+explicitly excluded from live-data counts. The original strict result and the
+separate before/after receipts remain in private operator evidence under
+`delayed-native-20260912`; no message body or credential is published here.
+
 ## Remaining release coverage
 
 The live reset/cleanup result does not replace the other cases in
 [W6](hosting-consolidation-spec.md): real Telegram linking and delivery for two
-controlled actors, BYO model credentials, populated inference/adapters and delayed
-work after deletion. H&M staging resource adoption and migration ownership
+controlled actors, BYO model credentials, and the remaining populated service
+owners and delayed adapter work. The native response case above provides
+qualified live-state evidence without completing those other cases. H&M staging
+resource adoption and migration ownership
 handoff were completed earlier; remaining adoption evidence concerns older
 client credentials, messenger links and authenticated operator admission.
 Its controlled human/root passwords were verified across later rollouts, but
