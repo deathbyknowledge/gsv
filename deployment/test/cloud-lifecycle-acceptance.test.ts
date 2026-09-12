@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { cloudLifecycleReport, prepareCloudLifecycle, runCloudLifecycle, type LifecycleConfiguration, type LifecycleDependencies, type LifecycleGateway, type LifecycleState } from "../src/cloud-lifecycle-acceptance.ts";
 
-function fixture() {
+function fixture(ids = ["a", "b", "c", "d", "real-user"]) {
   const config: LifecycleConfiguration = { version: 1, runId: "controlled-test", accountId: "test-account", databaseId: "test-database", accountsWorker: "test-accounts", accountsOrigin: "https://accounts.example.test",
     fixtures: { a: { installationId: "a", handle: "first", canonicalOrigin: "https://first.example.test" }, b: { installationId: "b", handle: "second", canonicalOrigin: "https://second.example.test" } },
-    expectedSpaces: ["a", "b", "c", "d", "real-user"].map((id) => ({ id, handle: id === "a" ? "first" : id === "b" ? "second" : id, state: "active" })) };
+    expectedSpaces: ids.map((id) => ({ id, handle: id === "a" ? "first" : id === "b" ? "second" : id, state: "active" })) };
   const credentials = { a: { username: "owner", password: "original-a-password", rootPassword: "original-a-root-password" }, b: { username: "owner", password: "original-b-password", rootPassword: "original-b-root-password" } };
   let rows = structuredClone(config.expectedSpaces);
   let persisted: LifecycleState;
@@ -72,6 +72,23 @@ async function step(t: ReturnType<typeof fixture>, action: Parameters<typeof run
 async function setup(t: ReturnType<typeof fixture>) { await prepare(t); await step(t, "seed"); await step(t, "reset"); await step(t, "setup"); await step(t, "verify"); }
 
 describe("guarded cloud lifecycle acceptance", () => {
+  it("resets and erases a fresh two-space deployment while preserving its control", async () => {
+    const t = fixture(["a", "b"]);
+    await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.finishDeletion();
+    await step(t, "deletion-status"); await step(t, "verify");
+    expect(cloudLifecycleReport(t.saved())).toMatchObject({ phase: "verified", protectedSpaces: 1, replacementId: "replacement", deletionComplete: true });
+    expect(t.files.get(`b:${t.saved().path}`)).toBe(t.saved().markers.b);
+    expect(t.files.get(`replacement:${t.saved().path}`)).toBe(t.saved().markers.replacement);
+  });
+  it("rejects omitted bystanders and duplicate reviewed identities before any write", async () => {
+    const omitted = fixture(); omitted.config.expectedSpaces.pop();
+    await expect(prepare(omitted)).rejects.toThrow("registry differs");
+    const duplicate = fixture(); duplicate.config.expectedSpaces.push({ ...duplicate.config.expectedSpaces[0] });
+    await expect(prepare(duplicate)).rejects.toThrow("distinct spaces");
+    const incomplete = fixture(["a"]);
+    await expect(prepare(incomplete)).rejects.toThrow();
+    expect([...omitted.writes, ...duplicate.writes, ...incomplete.writes]).toEqual([]);
+  });
   it("prepares read-only and binds approval to exact fixtures", async () => {
     const t = fixture(), state = await prepare(t); expect(t.writes).toEqual([]);
     expect(state.credentials.replacement.rootPassword).not.toBe(t.credentials.a.rootPassword);

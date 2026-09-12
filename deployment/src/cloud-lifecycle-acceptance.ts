@@ -10,7 +10,7 @@ export const lifecycleConfigurationSchema = z.strictObject({
   version: z.literal(1), runId: z.string().regex(/^[a-z0-9-]{8,64}$/),
   accountId: id, databaseId: id, accountsWorker: id, accountsOrigin: origin,
   fixtures: z.strictObject({ a: fixtureSchema, b: fixtureSchema }),
-  expectedSpaces: z.array(lifecycleRowSchema).length(5),
+  expectedSpaces: z.array(lifecycleRowSchema).min(2),
 });
 export const lifecycleCredentialsSchema = z.strictObject({ username: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), password: z.string().min(12), rootPassword: z.string().min(12) });
 export const lifecycleInstallationSchema = z.object({ installationId: id, handle: id, canonicalOrigin: origin, state: id,
@@ -71,16 +71,16 @@ async function checkpoint(state: LifecycleState, deps: LifecycleDependencies, ac
   await deps.save(state);
 }
 
-/** Prepare reads only. Its digest binds the complete five-space baseline and both immutable fixture identities. */
+/** Prepare reads only. Its digest binds the complete reviewed baseline and both immutable fixture identities. */
 export async function prepareCloudLifecycle(configuration: LifecycleConfiguration, credentials: { a: LifecycleCredentials; b: LifecycleCredentials }, deps: LifecycleDependencies): Promise<LifecycleState> {
   const config = lifecycleConfigurationSchema.parse(configuration);
   const original = { a: lifecycleCredentialsSchema.parse(credentials.a), b: lifecycleCredentialsSchema.parse(credentials.b) };
   requireCondition(config.fixtures.a.installationId !== config.fixtures.b.installationId && config.fixtures.a.handle !== config.fixtures.b.handle
     && config.fixtures.a.canonicalOrigin !== config.fixtures.b.canonicalOrigin, "Fixtures must have distinct identities and origins");
-  requireCondition(new Set(config.expectedSpaces.map((row) => row.id)).size === 5, "Expected registry must contain five distinct spaces");
+  requireCondition(new Set(config.expectedSpaces.map((row) => row.id)).size === config.expectedSpaces.length, "Expected registry must contain distinct spaces");
   requireCondition(original.a.username === original.b.username, "Fixtures must use the same local username");
   const baseline = sorted(await deps.snapshot());
-  requireCondition(JSON.stringify(baseline) === JSON.stringify(sorted(config.expectedSpaces)), "Cloud account registry differs from the reviewed five-space scope");
+  requireCondition(JSON.stringify(baseline) === JSON.stringify(sorted(config.expectedSpaces)), "Cloud account registry differs from the reviewed scope");
   for (const key of ["a", "b"] as const) {
     const fixture = config.fixtures[key];
     const current = await deps.installation(fixture.installationId);
