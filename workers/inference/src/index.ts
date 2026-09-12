@@ -12,3 +12,4 @@ export default class InferenceService extends WorkerEntrypoint<InferenceServiceE
 }
 
 export { InferenceLifecycleEntrypoint } from "./lifecycle";
+export { StandaloneInferenceDirectoryEntrypoint } from "./standalone-directory";

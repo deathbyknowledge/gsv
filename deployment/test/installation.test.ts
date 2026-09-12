@@ -9,7 +9,7 @@ import { StandaloneGsvDeployment } from "../src/standalone.ts";
 import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
-type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string }; json?: unknown }[] };
+type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
 type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[] };
 const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [] };
 const recordedCloudflare = {
@@ -202,9 +202,65 @@ describe("public operator composition", () => {
     await expect(run(GsvRuntime({ ...input, mode: "managed", services: {} }, dependencies))).rejects.toThrow(/requires an installation directory/);
     expect(recorded.workers).toEqual([]);
     expect(recorded.databases).toEqual([]);
+  });
+
+  it("preserves standalone resources and routing while extracting inference into its own Worker", async () => {
+    const result = await run(StandaloneGsvDeployment({ manifest: { version: 2, runtime: { ...input.paths,
+      installationsBundle: "installations.js", installationsMigrations: "migrations", inferenceBundle: "inference.js" },
+      adapters: [{ id: "telegram", displayName: "Telegram", gatewayBinding: "CHANNEL_TELEGRAM", standalone: {
+        main: "telegram.js", bundle: false, gatewayEntrypoint: "TelegramChannel", adapterEntrypoint: "TelegramChannel",
+        durableObjects: [{ binding: "TELEGRAM_ACCOUNT", className: "TelegramAccount" }], requiredSecrets: [],
+      } }] }, adapterIds: ["telegram"] }, dependencies));
+    expect(result.mode).toBe("standalone");
+    expect(result.storage.bucketName).toBe("gsv-storage");
+    expect(recorded.databases).toEqual([]);
+    expect(recorded.workers.map(({ id, props }) => [id, props.name])).toEqual([
+      ["GsvAdapter-telegram", "gsv-channel-telegram"], ["GsvInference", "gsv-inference"],
+      ["GsvRipgit", "ripgit"], ["GsvGateway", "gsv"],
+    ]);
+    const gateway = recorded.workers.find((worker) => worker.id === "GsvGateway")!.props;
+    expect(gateway.workersDev).toEqual({ enabled: true, previewsEnabled: false });
+    expect(gateway.env).toMatchObject({ KERNEL: { binding: "KERNEL", className: "Kernel" },
+      PROCESS: { binding: "PROCESS", className: "Process" }, CONVERSATION: { binding: "CONVERSATION", className: "Conversation" },
+      INFERENCE_EXECUTION: { workerName: "gsv-inference" } });
+    expect(gateway.env).not.toHaveProperty("INSTALLATION_DIRECTORY");
+    expect(gateway.env).not.toHaveProperty("INSTALLATION_OWNERSHIP");
+    expect(gateway.env).not.toHaveProperty("AI");
+    const inference = recorded.workers.find((worker) => worker.id === "GsvInference")!.props;
+    expect(inference).toMatchObject({ main: "inference.js", bundle: false, workersDev: false,
+      env: { AI: { kind: "ai" }, INFERENCE_EXECUTORS: { binding: "INFERENCE_EXECUTORS", className: "InferenceExecutor" },
+        INFERENCE_MONTHLY_REQUESTS: 0, INFERENCE_MONTHLY_OUTPUT_TOKENS: 0,
+        INFERENCE_MAX_OUTPUT_TOKENS: Number.MAX_SAFE_INTEGER, INFERENCE_MAX_DURATION_MS: 2_147_483_647 } });
+    expect(inference.compatibility?.flags).toContain("enable_nodejs_os_module");
+    const singletonBinding = recorded.bindings.find((binding) => binding.id === "GsvStandaloneInferenceDirectoryBinding")!;
+    const origin = await run(Output.evaluate(singletonBinding.bindings[0].props?.canonicalOrigin, {}));
+    expect(recorded.bindings.map((binding) => binding.id === singletonBinding.id
+      ? { ...binding, bindings: binding.bindings.map((entry) => ({ ...entry, props: { ...entry.props, canonicalOrigin: origin } })) }
+      : binding)).toEqual([
+      { id: "GsvAdapter-telegram-GatewayBinding", bindings: [{ type: "service", name: "GATEWAY", service: "gsv",
+        entrypoint: "AdapterGatewayEntrypoint", props: { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] } }] },
+      { id: "GsvStandaloneInferenceDirectoryBinding", bindings: [{ type: "service", name: "INSTALLATION_DIRECTORY",
+        service: "gsv-inference", entrypoint: "StandaloneInferenceDirectoryEntrypoint",
+        props: { authority: "standalone-inference", canonicalOrigin: "https://gsvgateway.invalid" } }] },
+    ]);
+  });
+
+  it("refuses incomplete standalone artifacts or mixed routing before creating resources", async () => {
+    await expect(run(GsvRuntime({ ...input, mode: "standalone" }, dependencies))).rejects.toThrow(/requires the inference bundle/);
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvRuntime({ ...input, mode: "standalone", services: { installationDirectory: directory } }, dependencies)))
+      .rejects.toThrow(/singleton routing/);
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it("rejects unknown standalone adapters before provisioning any Worker", async () => {
     await expect(run(StandaloneGsvDeployment({ manifest: { version: 2, runtime: { ...input.paths,
-      installationsBundle: "installations.js", installationsMigrations: "migrations", inferenceBundle: "inference.js" }, adapters: [] }, adapterIds: [] })))
-      .rejects.toThrow(/migrate existing state/);
+      installationsBundle: "installations.js", installationsMigrations: "migrations", inferenceBundle: "inference.js" },
+      adapters: [] }, adapterIds: ["missing"] }, dependencies))).rejects.toThrow(/Unknown GSV adapters/);
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
   });
 
   it("derives application scopes while keeping external cleanup explicitly unknown", async () => {
