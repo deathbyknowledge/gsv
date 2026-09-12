@@ -129,6 +129,58 @@ describe("Zen first-day ownership", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("opens the conversation for a human message committed by another client and remembers it beyond the loaded page", async () => {
+    let zen = await mountedZen();
+    try {
+      expect(zen.firstDay()).toBe(true);
+      const remote = message("user", "Hello from my other browser");
+      await act(() => { for (const listener of signals) listener("message.committed", { message: { ...remote, author: { kind: "user", uid: ownerUid } }, directed: false }); });
+      await vi.waitFor(() => expect(zen.firstDay()).toBe(false));
+      expect(zen.props(ZenText).text).toBe(remote.text);
+      expect(send).not.toHaveBeenCalled();
+      expect([...storage.values()]).toEqual(["conversation"]);
+      await zen.unmount();
+      messages = Array.from({ length: 50 }, (_, index) => message("process", "Later background activity", index + 2));
+      hasMore = true;
+      zen = await mountedZen();
+      expect(zen.firstDay()).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("finishes persisted initial setup when human history arrives while this browser is closed", async () => {
+    let zen = await mountedZen();
+    try {
+      expect(zen.firstDay()).toBe(true);
+      await zen.unmount();
+      messages = [message("user", "Hello from my phone")];
+      zen = await mountedZen();
+      expect(zen.firstDay()).toBe(false);
+      expect(zen.props(ZenText).text).toBe("Hello from my phone");
+      expect([...storage.values()]).toEqual(["conversation"]);
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps an explicit return to setup through synchronized human messages and reload", async () => {
+    messages = [message("user", "My first question")];
+    let zen = await mountedZen();
+    try {
+      expect(zen.firstDay()).toBe(false);
+      await act(() => { zen.setup(); });
+      expect(zen.firstDay()).toBe(true);
+      const remote = message("user", "A follow-up from my other browser", 2);
+      await act(() => { for (const listener of signals) listener("message.committed", { message: { ...remote, author: { kind: "user", uid: ownerUid } }, directed: false }); });
+      expect(zen.firstDay()).toBe(true);
+      await zen.unmount();
+      messages = [...messages, remote];
+      zen = await mountedZen();
+      expect(zen.firstDay()).toBe(true);
+      await act(() => { zen.props(FirstDay).onConversation?.(); });
+      expect(zen.firstDay()).toBe(false);
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
   it("remembers intentional leave/resume across reload and Process replacement, scoped to owner and gateway", async () => {
     messages = [message("process")];
     let zen = await mountedZen();

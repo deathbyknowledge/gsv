@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
-type FirstDayView = "setup" | "conversation";
+type FirstDayView = "setup" | "setup-return" | "conversation";
 type Choice = { key: string; view: FirstDayView };
 
 function storedView(key: string | null): FirstDayView | null {
   if (!key) return null;
   try {
     const value = window.localStorage.getItem(key);
-    return value === "setup" || value === "conversation" ? value : null;
+    return value === "setup" || value === "setup-return" || value === "conversation" ? value : null;
   } catch {
     return null;
   }
@@ -36,20 +36,22 @@ export function useFirstDay({ enabled, ready, gateway, conversationId, ownerUid,
   const stored = useMemo(() => storedView(key), [key]);
   const initialView = stored ?? (hasHumanMessages || hasEarlierMessages ? "conversation" : "setup");
   const [choice, setChoice] = useState<Choice | null>(null);
-  const view = choice?.key === key ? choice.view : initialView;
+  const selected = choice?.key === key ? choice.view : initialView;
+  // Human messages from another client finish initial setup, but not an explicit return to it.
+  const view = selected === "setup" && hasHumanMessages ? "conversation" : selected;
 
   useEffect(() => {
     if (!key || !ready) return;
-    setChoice((current) => current?.key === key ? current : { key, view: initialView });
-    if (initialView === "setup" && storedView(key) === null) rememberView(key, "setup");
-  }, [initialView, key, ready]);
+    setChoice((current) => current?.key === key && current.view === view ? current : { key, view });
+    if (storedView(key) !== view) rememberView(key, view);
+  }, [key, ready, view]);
 
   const choose = useCallback((next: FirstDayView) => {
     if (!key) return;
     setChoice({ key, view: next });
     rememberView(key, next);
   }, [key]);
-  const showSetup = useCallback(() => choose("setup"), [choose]);
+  const showSetup = useCallback(() => choose("setup-return"), [choose]);
   const showConversation = useCallback(() => choose("conversation"), [choose]);
-  return { visible: enabled && ready && key !== null && view === "setup", showSetup, showConversation };
+  return { visible: enabled && ready && key !== null && view !== "conversation", showSetup, showConversation };
 }
