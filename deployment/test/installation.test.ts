@@ -58,6 +58,38 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it.each([
+    { monthlyRequests: 0, monthlyOutputTokens: 1000 },
+    { monthlyRequests: 100, monthlyOutputTokens: 0 },
+    { monthlyRequests: 0, monthlyOutputTokens: 0 },
+  ])("passes unlimited monthly quotas through to the executor: $monthlyRequests requests, $monthlyOutputTokens tokens", async (monthly) => {
+    await run(GsvDeployment({ ...input, inference: { ...input.inference, ...monthly } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInference")?.props.env).toMatchObject({
+      INFERENCE_MONTHLY_REQUESTS: monthly.monthlyRequests,
+      INFERENCE_MONTHLY_OUTPUT_TOKENS: monthly.monthlyOutputTokens,
+      INFERENCE_MAX_OUTPUT_TOKENS: input.inference.maxOutputTokens,
+      INFERENCE_MAX_DURATION_MS: input.inference.maxDurationMs,
+    });
+  });
+
+  it.each(["monthlyRequests", "monthlyOutputTokens", "maxOutputTokens", "maxDurationMs"] as const)(
+    "rejects invalid %s before creating resources", async (field) => {
+      for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        await expect(run(GsvDeployment({ ...input, inference: { ...input.inference, [field]: value } }, dependencies)))
+          .rejects.toThrow(/safe integers/);
+        expect(recorded.workers).toEqual([]);
+        expect(recorded.databases).toEqual([]);
+      }
+    });
+
+  it.each(["maxOutputTokens", "maxDurationMs"] as const)("rejects zero %s even with unlimited monthly quotas", async (field) => {
+    await expect(run(GsvDeployment({ ...input, inference: { ...input.inference,
+      monthlyRequests: 0, monthlyOutputTokens: 0, [field]: 0,
+    } }, dependencies))).rejects.toThrow(/per-request limits must be positive safe integers/);
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
   it("binds restricted owner email and the stable redacted secret only to Accounts", async () => {
     const authSecret = Redacted.make("synthetic-stable-owner-secret");
     await run(GsvDeployment({ ...input, installations: { ...input.installations,

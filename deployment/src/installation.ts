@@ -57,9 +57,15 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(props.access.teamDomain))) {
     throw new Error("Cloudflare Access requires an explicit team origin and audience");
   }
-  if (!props.services?.inferenceExecution && [props.inference.monthlyRequests, props.inference.monthlyOutputTokens,
-    props.inference.maxOutputTokens, props.inference.maxDurationMs].some((value) => !Number.isSafeInteger(value) || value <= 0)) {
-    throw new Error("Public inference limits must be positive safe integers");
+  if (!props.services?.inferenceExecution) {
+    if ([props.inference.monthlyRequests, props.inference.monthlyOutputTokens]
+      .some((value) => !Number.isSafeInteger(value) || value < 0)) {
+      throw new Error("Public inference monthly quotas must be non-negative safe integers");
+    }
+    if ([props.inference.maxOutputTokens, props.inference.maxDurationMs]
+      .some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+      throw new Error("Public inference per-request limits must be positive safe integers");
+    }
   }
   const catalog = props.deletion ? operatorResourceCatalogSchema.parse(props.deletion.operatorResources) : undefined;
   const requireResource = (source: OperatorResourceCatalog[number]["source"], namespace: string) => {
