@@ -256,7 +256,6 @@ export class AccountStore {
       this.baseDomain,
     );
     const now = Date.now();
-    const reservationExpiresAt = now + RESERVATION_TTL_MS;
 
     const results = await this.db.batch([
       this.db.prepare(
@@ -314,13 +313,12 @@ export class AccountStore {
          )
          SELECT r.replacement_installation_id, i.owner_principal_id,
                 r.handle, r.canonical_origin, 'reserved',
-                i.provision_version, ?, ?
+                i.provision_version, NULL, ?
          FROM installation_reset_operations r
          JOIN installations i ON i.id = r.previous_installation_id
          WHERE r.operation_id = ? AND r.previous_installation_id = ?
            AND r.replacement_installation_id = ?`,
       ).bind(
-        reservationExpiresAt,
         now,
         operationId,
         previousInstallationId,
@@ -542,22 +540,27 @@ export class AccountStore {
     }
 
     const now = Date.now();
+    // A committed reset already retired the old identity and moved its handle.
+    // Its exact replacement remains recoverable, including legacy expiring rows.
     const results = await this.db.batch([
       this.db.prepare(
         `UPDATE installations
          SET state = 'provisioning'
          WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'
-           AND reservation_expires_at > ?`,
-      ).bind(reservation.installationId, principalId, now),
+           AND (reservation_expires_at > ? OR EXISTS (
+             SELECT 1 FROM installation_reset_operations r
+             WHERE r.operation_id = ? AND r.replacement_installation_id = installations.id
+           ))`,
+      ).bind(reservation.installationId, principalId, now, operationId),
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'provisioning'
          WHERE installation_id = ? AND kind = 'canonical' AND state = 'reserved'
            AND EXISTS (
              SELECT 1 FROM installations i WHERE i.id = hostnames.installation_id
-               AND i.state = 'provisioning' AND i.reservation_expires_at > ?
+               AND i.state = 'provisioning'
            )`,
-      ).bind(reservation.installationId, now),
+      ).bind(reservation.installationId),
       this.db.prepare(
         `UPDATE provisioning_operations
          SET state = 'provisioning', attempt = attempt + 1,
@@ -565,9 +568,9 @@ export class AccountStore {
          WHERE operation_id = ? AND principal_id = ? AND state = 'reserved'
            AND EXISTS (
              SELECT 1 FROM installations i WHERE i.id = provisioning_operations.installation_id
-               AND i.state = 'provisioning' AND i.reservation_expires_at > ?
+               AND i.state = 'provisioning'
            )`,
-      ).bind(now, operationId, principalId, now),
+      ).bind(now, operationId, principalId),
     ]);
     if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
