@@ -378,10 +378,23 @@ describe("managed mail installation transport", () => {
   it("delivers mail immediately but explicitly defers excess summaries", async () => {
     const installationId = "installation_mail_summary_quota";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
-    await intake(stub, installationId, "first summary");
-    await intake(stub, installationId, "second summary");
+    // Defer native delivery until both intakes are committed so the explicit alarm run owns delivery.
+    let restoreAlarmScheduling = () => {};
+    await runInDurableObject(stub, (_instance, state) => {
+      const setAlarm = state.storage.setAlarm.bind(state.storage);
+      const alarm = vi.spyOn(state.storage, "setAlarm").mockImplementation(
+        async () => await setAlarm(Date.now() + 60_000),
+      );
+      restoreAlarmScheduling = () => alarm.mockRestore();
+    });
+    try {
+      await intake(stub, installationId, "first summary");
+      await intake(stub, installationId, "second summary");
+    } finally {
+      restoreAlarmScheduling();
+    }
 
-    await runDurableObjectAlarm(stub);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
 
     const page = await stub.listIntakes(context(installationId), { limit: 10 });
     expect(page.items).toHaveLength(2);
