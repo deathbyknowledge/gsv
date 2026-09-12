@@ -41,7 +41,7 @@ generate_types() {
 }
 
 if rg -q \
-  'INSTALLATION_DIRECTORY|MANAGED_INFERENCE|gsv-accounts|gsv-inference|gsv-managed' \
+  'INSTALLATION_DIRECTORY|MANAGED_INFERENCE|gsv-accounts|gsv-managed' \
   "$ROOT_DIR/workers/gateway/wrangler.jsonc"; then
   echo "Standalone Gateway configuration includes managed infrastructure." >&2
   exit 1

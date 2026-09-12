@@ -28,3 +28,20 @@ state.
 
 The stack state is independent from a managed GSV operator. Do not point this
 stack and another deployment owner at the same Worker names or retained state.
+
+## Existing standalone Wrangler deployments
+
+The Gateway package's `dev` and `start` commands run both the Gateway and its
+standalone inference companion. The `deploy` command deploys the companion first,
+then the Gateway. Both retain the existing `singleton` identity and storage names;
+the companion owns the native Workers AI binding.
+
+```bash
+GSV_GATEWAY_ORIGIN=https://your-existing-gsv.example.com npm run deploy --workspace gateway
+```
+
+Set the exact existing Gateway HTTPS origin, without a trailing slash. The
+companion's directory uses that origin and admits only `singleton`; it has no
+public endpoint. Use these package commands instead of deploying the Gateway
+alone with raw Wrangler. Custom Worker names or environments belong in an
+explicit deployment composition, which must wire both Workers together.

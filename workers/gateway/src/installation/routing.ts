@@ -158,7 +158,8 @@ function assertDurableObjectNameLength(name: string): void {
 function getGatewayInstallationRoutingSource(
   request: Request,
 ) {
-  const bindings: GatewayEnv = env;
+  // SAFETY: the operator composition adds these routing bindings to the standalone-generated environment.
+  const bindings = env as Pick<GatewayEnv, "INSTALLATION_DIRECTORY" | "GSV_CANONICAL_ORIGIN">;
   if (bindings.INSTALLATION_DIRECTORY) {
     return {
       kind: "multi" as const,

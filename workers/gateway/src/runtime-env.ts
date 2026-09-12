@@ -20,4 +20,4 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   GSV_CANONICAL_ORIGIN?: string;
 };
 
-export type GatewayEnv = Omit<Env, "AI"> & GatewayDeploymentBindings;
+export type GatewayEnv = Omit<Env, "INFERENCE_EXECUTION"> & GatewayDeploymentBindings;

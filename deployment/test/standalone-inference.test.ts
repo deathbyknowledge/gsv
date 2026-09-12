@@ -1,17 +1,15 @@
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestHarness, unstable_readConfig, type Unstable_RawConfig } from "wrangler";
+import { createTestHarness, type Unstable_RawConfig } from "wrangler";
+import { standaloneInferenceWranglerConfig } from "../src/standalone-wrangler.ts";
 
 const root = resolve(import.meta.dirname, "../..");
-const configured = unstable_readConfig({ config: resolve(root, "workers/inference/wrangler.jsonc") }, { hideWarnings: true });
+const configured = standaloneInferenceWranglerConfig("https://legacy.example.com");
 function inference(name: string, authority: string): Unstable_RawConfig {
-  return { name, main: resolve(root, "workers/inference/src/test-support/standalone.ts"), compatibility_date: configured.compatibility_date,
+  return { ...configured, name, main: resolve(root, "workers/inference/src/test-support/standalone.ts"), ai: undefined,
     compatibility_flags: [...configured.compatibility_flags ?? [], "enable_abortsignal_rpc"],
-    durable_objects: configured.durable_objects, migrations: configured.migrations,
-    vars: { INFERENCE_MONTHLY_REQUESTS: 0, INFERENCE_MONTHLY_OUTPUT_TOKENS: 0,
-      INFERENCE_MAX_OUTPUT_TOKENS: Number.MAX_SAFE_INTEGER, INFERENCE_MAX_DURATION_MS: 2_147_483_647 },
-    services: [{ binding: "INSTALLATION_DIRECTORY", service: name, entrypoint: "StandaloneInferenceDirectoryEntrypoint",
-      props: { authority, canonicalOrigin: "https://legacy.example.com" } }],
+    services: configured.services?.map((binding) => ({ ...binding, service: name,
+      props: { ...binding.props, authority } })),
   };
 }
 
