@@ -20,6 +20,6 @@ LOCK_PATH="${TMPDIR:-/tmp}/gsv-worker-build.lock"
 (
   flock 9
   cd "$CRATE_DIR"
-  cargo install -q "worker-build@^0.7"
+  cargo install -q --locked "worker-build@0.7.5"
   worker-build "$@" .
 ) 9>"$LOCK_PATH"
