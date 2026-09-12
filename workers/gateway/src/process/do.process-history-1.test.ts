@@ -1,6 +1,6 @@
 import type { ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { buildProcContextState, estimateContextInputTokens } from "./context-pressure";
-import type { Context } from "@earendil-works/pi-ai";
+import type { Context } from "@humansandmachines/gsv/services/inference-context";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";

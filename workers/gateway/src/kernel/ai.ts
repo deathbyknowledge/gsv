@@ -16,7 +16,7 @@ import { ownerTimezone } from "./timezone";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
-import type { Context, Message, Tool } from "@earendil-works/pi-ai";
+import type { Context, Message, Tool } from "@humansandmachines/gsv/services/inference-context";
 import {
   bodyFromBytes,
   bodyToBytes,
@@ -67,15 +67,10 @@ import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import { isCodeModeAvailable } from "../codemode/availability";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "../inference/default-models";
-import { isWorkersAiProvider, resolveWorkersAiModelContextWindow } from "../inference/workers-ai";
-import { resolveModelContextWindowFromRegistry } from "../inference/model-registry";
-import {
-  createGenerationService,
-  extractGeneratedText,
-} from "../inference/service";
-import {
-  gsvInferenceProviderFactoryFromEnv,
-} from "../inference/gsv-provider";
+import { createGenerationService } from "../inference/execution-client";
+import { TimeoutError } from "../inference/timeout";
+import { raceWithAbort } from "../shared/abort";
+import { extractGeneratedText } from "../inference/generated-text";
 import {
   inferenceLogicalRequestId,
   type InferenceAttribution,
@@ -84,25 +79,19 @@ import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
-} from "../inference/transcription";
-import { encodeBase64Bytes } from "../shared/base64";
+} from "../inference/media-defaults";
 import {
   DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_TIMEOUT_MS,
   DEFAULT_MAX_IMAGE_READING_BYTES,
-  readImage,
-} from "../inference/image-reading";
+} from "../inference/media-defaults";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
   DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_SPEECH_CHARS,
-} from "../inference/speech";
-import {
-  generateImage,
-  synthesizeSpeech,
-  transcribeAudio,
-} from "../inference/capabilities";
+} from "../inference/media-defaults";
+import { createMediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
@@ -348,20 +337,17 @@ export async function handleAiTextGenerate(
   const generationFetch = transportTarget === "gsv"
     ? undefined
     : createRoutedFetch(ctx, transport, transportTarget);
-  const gsvInference = gsvInferenceProviderFactoryFromEnv(ctx.env);
   const attribution = await inferenceAttribution(ctx);
-  const serviceOptions: Parameters<typeof createGenerationService>[0] = {};
-  if (generationFetch) serviceOptions.fetch = generationFetch;
-  if (gsvInference) serviceOptions.providers = [gsvInference];
   const generationRequest: Parameters<ReturnType<typeof createGenerationService>["generate"]>[0] = {
     config,
     context,
+    fetch: generationFetch,
     sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
     signal: ctx.requestSignal,
     attribution,
   };
   if (options) generationRequest.options = options;
-  const response = await createGenerationService(serviceOptions).generate(generationRequest);
+  const response = await createGenerationService(ctx.env).generate(generationRequest);
   const text = extractGeneratedText(response);
   // SAFETY: The generation service and public AI protocol share the assistant-message contract.
   const message = response as AiAssistantMessage;
@@ -429,30 +415,25 @@ export async function handleAiTranscriptionCreate(
   }
 
   const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio", ctx.requestSignal);
-  const base64 = encodeBase64Bytes(bytes);
 
   const mode = input.mode === "translate" ? "translate" : "transcribe";
-  const result = await transcribeAudio({
-    workersAi: ctx.env.AI,
-  }, {
-    data: base64,
+  const response = await createMediaExecutor(ctx.env, () => inferenceAttribution(ctx))({
+    kind: "transcription",
+    input: {
     provider: media.transcriptionProvider,
     apiKey: media.transcriptionApiKey,
     model: media.transcriptionModel,
     mimeType: audio.mimeType,
     filename: audio.filename,
-    timeoutMs: DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
-    signal: ctx.requestSignal,
+    maxInputBytes: media.transcriptionMaxBytes,
     mode,
     language: normalizeOptionalString(input.language),
     prompt: normalizeOptionalString(input.prompt),
     vadFilter: true,
     conditionOnPreviousText: false,
-  });
-  if (result) {
-    return result;
-  }
-  throw new Error("Transcription unavailable");
+  } }, bodyFromBytes(bytes).stream, DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS, ctx.requestSignal);
+  if (response.kind !== "transcription") throw new Error("Invalid transcription response");
+  return response.result;
 }
 
 export async function handleAiImageRead(
@@ -471,11 +452,11 @@ export async function handleAiImageRead(
   }
 
   const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image", ctx.requestSignal);
-  const base64 = encodeBase64Bytes(bytes);
   const mode = input.mode ?? "caption";
 
-  const response = await readImage(ctx.env.AI, {
-    data: base64,
+  const response = await createMediaExecutor(ctx.env, () => inferenceAttribution(ctx))({
+    kind: "image-read",
+    input: {
     mimeType: image.mimeType,
     mode,
     prompt: "prompt" in input ? normalizeOptionalString(input.prompt) : undefined,
@@ -495,15 +476,12 @@ export async function handleAiImageRead(
       : undefined,
     temperature: "temperature" in input ? input.temperature : undefined,
     topP: "topP" in input ? input.topP : undefined,
-    timeoutMs: media.imageReadingTimeoutMs,
-    signal: ctx.requestSignal,
-  });
-  if (!response) {
-    throw new Error("Image reading unavailable");
-  }
+    maxInputBytes: media.imageReadingMaxBytes,
+  } }, bodyFromBytes(bytes).stream, media.imageReadingTimeoutMs, ctx.requestSignal);
+  if (response.kind !== "image-read") throw new Error("Invalid image reading response");
 
   const result: AiFrameResult<AiImageReadResult> = { data: response.result };
-  if (response.stream) result.body = { stream: response.stream };
+  if (response.body) result.body = { stream: response.body };
   return result;
 }
 
@@ -518,9 +496,9 @@ export async function handleAiImageGenerate(
     throw new Error("prompt is required");
   }
 
-  const result = await generateImage({
-    workersAi: ctx.env.AI,
-  }, {
+  const response = await createMediaExecutor(ctx.env, () => inferenceAttribution(ctx))({
+    kind: "image-generate",
+    input: {
     provider: media.imageGenerationProvider,
     apiKey: media.imageGenerationApiKey,
     model: normalizeOptionalString(input.model) ?? media.imageGenerationModel,
@@ -528,25 +506,23 @@ export async function handleAiImageGenerate(
     size: normalizeOptionalString(input.size),
     quality: normalizeOptionalString(input.quality),
     format: normalizeOptionalString(input.format),
-    timeoutMs: normalizePositiveNumber(input.timeoutMs),
-  });
-  if (!result) {
-    throw new Error("Image generation unavailable");
-  }
+  } }, undefined, normalizePositiveNumber(input.timeoutMs) ?? 60_000, ctx.requestSignal);
+  if (response.kind !== "image-generate") throw new Error("Invalid image generation response");
+  const result = response.result;
 
   const data: AiImageGenerateResult = {
       image: {
         mimeType: result.mimeType,
-        size: result.bytes?.byteLength ?? 0,
+        size: result.size,
       },
       provider: result.provider,
       model: result.model,
   };
   if (result.revisedPrompt) data.revisedPrompt = result.revisedPrompt;
   if (result.url) data.url = result.url;
-  const response: AiFrameResult<AiImageGenerateResult> = { data };
-  if (result.bytes) response.body = bodyFromBytes(result.bytes);
-  return response;
+  const frame: AiFrameResult<AiImageGenerateResult> = { data };
+  if (response.body) frame.body = { stream: response.body };
+  return frame;
 }
 
 export async function handleAiSpeechCreate(
@@ -587,29 +563,27 @@ export async function handleAiSpeechCreate(
     ?? media.speechEncoding;
   const timeoutMs = media.speechTimeoutMs;
 
-  const result = await synthesizeSpeech({
-    workersAi: ctx.env.AI,
-  }, {
+  const response = await createMediaExecutor(ctx.env, () => inferenceAttribution(ctx))({
+    kind: "speech",
+    input: {
     provider: media.speechProvider,
     apiKey: media.speechApiKey,
     text,
     model,
     voice,
     encoding,
-    timeoutMs,
     language: normalizeOptionalString(input.language),
     container: normalizeOptionalString(input.container),
     sampleRate: normalizePositiveNumber(input.sampleRate),
     bitRate: normalizePositiveNumber(input.bitRate),
-  });
-  if (!result) {
-    throw new Error("Speech synthesis unavailable");
-  }
+  } }, undefined, timeoutMs, ctx.requestSignal);
+  if (response.kind !== "speech") throw new Error("Invalid speech synthesis response");
+  const result = response.result;
 
   const data: AiSpeechCreateResult = {
       audio: {
         mimeType: result.mimeType,
-        size: result.bytes.byteLength,
+        size: result.size,
       },
       provider: result.provider,
       model: result.model,
@@ -617,7 +591,7 @@ export async function handleAiSpeechCreate(
   if (result.voice) data.voice = result.voice;
   if (result.encoding) data.encoding = result.encoding;
   if (result.container) data.container = result.container;
-  return { data, body: bodyFromBytes(result.bytes) };
+  return { data, body: { stream: response.body } };
 }
 
 async function resolveAiTextGenerationConfig(
@@ -1069,7 +1043,9 @@ async function resolveCompleteAiModelConfig(options: {
     provider,
     options.apiKey,
   );
-  const modelContextWindow = await resolveModelContextWindow(provider, model);
+  const modelContextWindow = options.model.contextWindowTokens === undefined
+    ? await resolveModelContextWindow(options.ctx, provider, model, options.generationTimeoutMs)
+    : null;
   const contextWindowTokens = options.model.contextWindowTokens
     ?? modelContextWindow
     ?? null;
@@ -1330,18 +1306,23 @@ function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
-async function resolveModelContextWindow(provider: string, model: string): Promise<number | null> {
-  const registryContextWindow = resolveModelContextWindowFromRegistry(provider, model);
-  if (registryContextWindow !== null) {
-    return registryContextWindow;
+async function resolveModelContextWindow(ctx: KernelContext, provider: string, model: string, generationTimeoutMs: number): Promise<number | null> {
+  const service = ctx.env.INFERENCE_EXECUTION;
+  if (!service) return null;
+  const timeoutMs = Math.min(generationTimeoutMs, 5000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(
+    new TimeoutError(`Model metadata resolution timed out after ${timeoutMs}ms`),
+  ), timeoutMs);
+  try {
+    const pending = service.resolveModel(provider, model);
+    const metadata = await raceWithAbort(pending, controller.signal, { onAbort: () => {
+      // SAFETY: Cloudflare RPC promises provide optional explicit disposal.
+      const rpc = pending as typeof pending & { [Symbol.dispose]?: () => void };
+      try { rpc[Symbol.dispose]?.(); } catch { /* Timeout remains terminal if disposal fails. */ }
+    } });
+    return metadata.contextWindowTokens;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  if (isWorkersAiProvider(provider)) {
-    const workersAiContextWindow = await resolveWorkersAiModelContextWindow(model);
-    if (workersAiContextWindow !== null) {
-      return workersAiContextWindow;
-    }
-  }
-
-  return null;
 }

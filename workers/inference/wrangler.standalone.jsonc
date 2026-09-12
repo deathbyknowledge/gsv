@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-inference",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "enable_nodejs_os_module"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "INFERENCE_MONTHLY_REQUESTS": 0,
+    "INFERENCE_MONTHLY_OUTPUT_TOKENS": 0,
+    "INFERENCE_MAX_OUTPUT_TOKENS": 9007199254740991,
+    "INFERENCE_MAX_DURATION_MS": 2147483647
+  },
+  "ai": { "binding": "AI" },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InferenceExecutor"] }],
+  "durable_objects": { "bindings": [{ "name": "INFERENCE_EXECUTORS", "class_name": "InferenceExecutor" }] },
+  "services": [{
+    "binding": "INSTALLATION_DIRECTORY",
+    "service": "gsv-inference",
+    "entrypoint": "StandaloneInferenceDirectoryEntrypoint",
+    "props": { "authority": "standalone-inference", "canonicalOrigin": "http://localhost:8787" }
+  }],
+  "observability": { "enabled": true }
+}

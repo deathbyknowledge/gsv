@@ -4,7 +4,7 @@ import {
   type AiConfigResult, type AiTextMessage, type AiTextTool, type JsonObject, type ProcHistoryOverflowPolicy,
   type ProcToolResultOutcome, type ProcUsageCostSource, type ProcUsageState, jsonObjectSchema, jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
-import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, Tool } from "@humansandmachines/gsv/services/inference-context";
 import { type MessageMetadata, normalizeMessageMetadata } from "../store";
 import type { ResponseFrame } from "../../protocol/frames";
 import type { ResultOf } from "../../syscalls";
@@ -14,7 +14,7 @@ import {
 import {
   assistantMessageDiagnosticsSchema, nonEmptyStringSchema, protocolStopReasonSchema, storedStringArraySchema,
 } from "./schemas";
-import { hasWorkersAiModelPricing, isWorkersAiProvider } from "../../inference/workers-ai";
+import { isWorkersAiProvider } from "../../inference/features";
 
 export function normalizeOptionalString(
   value: Parameters<typeof nonEmptyStringSchema.safeParse>[0],
@@ -38,6 +38,7 @@ export function adaptGeneratedAssistantMessage(
   };
   if (message.responseModel) adapted.responseModel = message.responseModel;
   if (message.responseId) adapted.responseId = message.responseId;
+  if (message.usageCostSource !== undefined) adapted.usageCostSource = message.usageCostSource;
   if (message.errorMessage) adapted.errorMessage = message.errorMessage;
   const diagnostics = assistantMessageDiagnosticsSchema.safeParse(message.diagnostics);
   if (diagnostics.success) {
@@ -86,6 +87,7 @@ export function adaptContextMessage(message: Message): AiTextMessage {
   };
   if (message.responseModel) adapted.responseModel = message.responseModel;
   if (message.responseId) adapted.responseId = message.responseId;
+  if (message.usageCostSource !== undefined) adapted.usageCostSource = message.usageCostSource;
   if (message.diagnostics) adapted.diagnostics = message.diagnostics;
   if (message.errorMessage) adapted.errorMessage = message.errorMessage;
   return adapted;
@@ -230,10 +232,6 @@ function nonNegativeNumberOrZero(value: number | undefined): number {
   return normalizeNonNegativeNumber(value) ?? 0;
 }
 
-function isNonEmptyDefinedString(value: string | undefined): value is string {
-  return value !== undefined && value.length > 0;
-}
-
 function isPositiveFiniteNumber(value: number | undefined): value is number {
   return value !== undefined && Number.isFinite(value) && value > 0;
 }
@@ -242,11 +240,9 @@ function resolveUsageCostSource(
   response: AssistantMessage,
   config: AiConfigResult,
 ): ProcUsageCostSource | null {
+  if (response.usageCostSource !== undefined) return response.usageCostSource;
   if (isWorkersAiProvider(config.provider) || isWorkersAiProvider(response.provider)) {
-    const pricedModel = [response.model, response.responseModel, config.model]
-      .filter(isNonEmptyDefinedString)
-      .some((model) => hasWorkersAiModelPricing(model));
-    return pricedModel || usageCostHasValue(response.usage) ? "model-pricing" : null;
+    return usageCostHasValue(response.usage) ? "model-pricing" : null;
   }
   return usageCostHasValue(response.usage) || !usageHasPositiveTokens(response.usage)
     ? "provider"

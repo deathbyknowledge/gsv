@@ -1,7 +1,7 @@
 import type {
   AssistantMessage,
   TextContent,
-} from "@earendil-works/pi-ai";
+} from "@humansandmachines/gsv/services/inference-context";
 import * as z from "zod/mini";
 
 export function describeAssistantResponseFailure(response: AssistantMessage): string | null {

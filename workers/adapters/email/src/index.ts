@@ -14,6 +14,7 @@ import { mailLimits, type MailEnv } from "./env";
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
+export { MailLifecycleEntrypoint } from "./lifecycle";
 export { MailInstallation } from "./mail-installation";
 
 export default class MailService

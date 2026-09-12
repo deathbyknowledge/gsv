@@ -3,7 +3,7 @@
 import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
-import type { Tool } from "@earendil-works/pi-ai";
+import type { Tool } from "@humansandmachines/gsv/services/inference-context";
 import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";

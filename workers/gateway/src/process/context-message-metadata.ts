@@ -1,4 +1,4 @@
-import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context } from "@humansandmachines/gsv/services/inference-context";
 import { stableOpaqueId } from "../shared/stable-id";
 
 const CONTEXT_EPOCH_ID = Symbol("gsv.contextEpochId");

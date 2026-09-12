@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy --minify",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
+    "deploy": "node ../../deployment/src/standalone-wrangler.ts deploy",
+    "dev": "node ../../deployment/src/standalone-wrangler.ts dev",
+    "start": "node ../../deployment/src/standalone-wrangler.ts dev",
     "cf-typegen": "wrangler types",
     "test": "vitest --config vitest.config.ts",
     "test:unit": "npm --prefix ../.. run protocol:check && vitest run --config vitest.config.ts",
@@ -25,7 +25,6 @@
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@cloudflare/codemode": "^0.3.4",
-    "@earendil-works/pi-ai": "0.85.1",
     "@humansandmachines/gsv": "file:../../packages/gsv",
     "@modelcontextprotocol/sdk": "1.29.0",
     "just-bash": "^3.4.2",

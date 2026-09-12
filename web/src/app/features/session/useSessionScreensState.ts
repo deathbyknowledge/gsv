@@ -60,7 +60,7 @@ export function useSessionScreensState({
   const busy = snapshot.phase === "authenticating";
   const { draft } = onboardingSnapshot;
   const setupError = snapshot.phase === "setup" && snapshot.message ? snapshot.message : setupValidationError;
-  const loginError = snapshot.phase === "locked" && snapshot.message ? snapshot.message : loginValidationError;
+  const loginError = loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null);
   const completeError = snapshot.phase === "setup-complete" && snapshot.message ? snapshot.message : null;
   const setupResult = setupResultViewModel(snapshot, lastAdminMode);
 
@@ -114,9 +114,10 @@ export function useSessionScreensState({
 
   const submitLogin = (event: Event): void => {
     event.preventDefault();
+    if (busy) return;
 
     const username = loginUsername.trim();
-    const password = loginPassword.trim();
+    const password = loginPassword;
 
     if (!username) {
       setLoginValidationError("Username is required.");

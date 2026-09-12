@@ -386,6 +386,9 @@ export default class TestDependencies
   async resolveInstallation(
     installationId: string,
   ): Promise<InstallationDirectoryResult> {
+    if (installationId === SINGLETON_INSTALLATION_ID) {
+      return { found: true, installationId, handle: "singleton", canonicalOrigin: "https://singleton.invalid", state: "active" };
+    }
     const handle = installationHandle(installationId);
     return handle
       ? await this.resolveHostname(`${handle}.gsv.space`)

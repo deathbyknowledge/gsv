@@ -1,4 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
+import { installationDeletionRequestSchema, type InstallationDeletionReceipt, type InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
+import { ADAPTER_RETIREMENT_PREFIX, AdapterRetirement, sameAdapterDataOwner, type AdapterDataOwner } from "../../shared/src/retirement";
+import type { AdapterResourceInspection } from "../../shared/src/peer-retirement";
+import type { AdapterInstallationRegistration } from "../../shared/src/installation-retirement";
 import type {
   AdapterTargetRequestFrame,
   AdapterTargetResponseFrame,
@@ -52,13 +57,17 @@ type ManagedSlackUserCredentialState = {
   scope: string;
   generation: string;
   authorizedAt: number;
+  owner?: AdapterDataOwner | null;
 };
+
+type ManagedSlackDmCache = { generation: string; channelId: string; owner?: AdapterDataOwner | null };
 
 type ActiveSlackTargetCall = {
   actorId: string;
   workspaceGeneration: string;
   credentialGeneration: string;
   controller: AbortController;
+  owner: AdapterDataOwner;
 };
 
 type ManagedSlackPeerRouteRecord = {
@@ -120,11 +129,19 @@ export type ManagedSlackTargetAuthorization =
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
   SLACK_API?: Fetcher;
+  MANAGED_SLACK_WORKSPACE: Pick<DurableObjectNamespace, "idFromName">;
+  SLACK_INSTALLATIONS: { getByName(installationId: string): { registerResource(resource: AdapterInstallationRegistration): Promise<void> } };
 }
 
 const STATE_KEY = "managed_slack_workspace:v1:state";
 const USER_CREDENTIAL_PREFIX = "managed_slack_workspace:v1:user:";
 const PEER_ROUTE_PREFIX = "managed_slack_workspace:v1:route:";
+const DM_CACHE_PREFIX = "managed_slack_workspace:v1:dm:";
+const BACKUP_LIFETIME_MS = 30 * 24 * 60 * 60_000 + 60_000;
+const storedOwnerSchema = z.strictObject({ installationId: z.string().min(1), generation: z.string().min(1) }).nullable().optional();
+const storedRouteSchema = z.strictObject({ version: z.literal(1), actorId: z.string().min(1), installationId: z.string().min(1), routeGeneration: z.string().min(1) });
+const storedCredentialSchema = z.strictObject({ version: z.literal(1), actorId: z.string().min(1), token: z.string(), scope: z.string(), generation: z.string().min(1), authorizedAt: z.number(), owner: storedOwnerSchema });
+const storedDmCacheSchema = z.strictObject({ generation: z.string().min(1), channelId: z.string().min(1), owner: storedOwnerSchema });
 const MAX_TARGET_RUNTIME_MS = 120_000;
 const REQUIRED_SCOPES = new Set([
   "app_mentions:read",
@@ -153,6 +170,56 @@ const TARGET_USER_SCOPES = new Set([
 
 export class ManagedSlackWorkspace extends DurableObject<Env> {
   private readonly targetCalls = new Map<string, ActiveSlackTargetCall>();
+  private readonly retirement = new AdapterRetirement(this.ctx.storage);
+
+  async inspectInstallationResource(installationId: string): Promise<AdapterResourceInspection> {
+    const ownership = this.ownership(installationId);
+    const state = this.ctx.storage.kv.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    if (ownership.unattributed) return { outcome: "unidentified" };
+    if (!state) return { outcome: ownership.keys.length ? "unidentified" : "empty" };
+    const name = managedSlackWorkspaceObjectName(state.accountId);
+    if (this.env.MANAGED_SLACK_WORKSPACE.idFromName(name).toString() !== this.ctx.id.toString()) return { outcome: "unidentified" };
+    return ownership.keys.length ? { name, outcome: "identified", installationId } : { name, outcome: "unrelated" };
+  }
+
+  async quiesceInstallation(value: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    const input = installationDeletionRequestSchema.parse(value);
+    this.retirement.quiesce(input);
+    for (const active of this.targetCalls.values()) if (active.owner.installationId === input.installationId) active.controller.abort(new Error("Slack installation is retired"));
+    return this.installationDeletionStatus(input);
+  }
+
+  async eraseInstallation(value: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    const input = installationDeletionRequestSchema.parse(value);
+    const quiesced = await this.quiesceInstallation(input);
+    if (quiesced.phase === "quiescing" || quiesced.outcome === "missing-inventory") return quiesced;
+    const ownership = this.ownership(input.installationId);
+    this.ctx.storage.transactionSync(() => {
+      // Attribute legacy user records before removing the route that proves their owner.
+      for (const key of ownership.keys.slice(0, 32)) if (key.startsWith(PEER_ROUTE_PREFIX)) {
+        const route = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(key)!;
+        this.attributeActorRecords(route);
+      }
+      for (const key of ownership.keys.slice(0, 32)) this.ctx.storage.kv.delete(key);
+    });
+    if (this.ownership(input.installationId).keys.length) return { ...await this.installationDeletionStatus(input), phase: "erasing" };
+    this.retirement.complete(input);
+    return this.installationDeletionStatus(input);
+  }
+
+  async installationDeletionStatus(value: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
+    const input = installationDeletionRequestSchema.parse(value);
+    const state = this.retirement.status(input);
+    const ownership = this.ownership(input.installationId);
+    const inspected = await this.inspectInstallationResource(input.installationId);
+    const base: InstallationDeletionReceipt = { ...input, phase: !state.startedAt ? "pending" : state.active ? "quiescing" : "quiesced",
+      updatedAt: state.startedAt ?? Date.now(), pendingResources: state.active + ownership.keys.length,
+      outcome: inspected.outcome === "unidentified" ? "missing-inventory" : "progress", retainedCopies: [] };
+    if (!state.erasedAt || base.pendingResources || base.outcome === "missing-inventory") return base;
+    const expiresAt = state.erasedAt + BACKUP_LIFETIME_MS;
+    return Date.now() < expiresAt ? { ...base, phase: "live-erased", outcome: "retention-pending", retainedCopies: [{ id: "cloudflare-durable-object-pitr", kind: "backup", expiresAt }] }
+      : { ...base, phase: "erased", outcome: "complete" };
+  }
 
   async install(
     accountId: string,
@@ -213,13 +280,22 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         scope: [...userScopes].sort().join(","),
         generation: crypto.randomUUID(),
         authorizedAt: Date.now(),
+        owner: null,
       };
     }
-    const writes = [this.ctx.storage.put(STATE_KEY, state)];
-    if (credential) {
-      writes.push(this.ctx.storage.put(userCredentialKey(credential.actorId), credential));
-    }
-    await Promise.all(writes);
+    const route = credential ? this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(credential.actorId)) : undefined;
+    if (route) await this.registerOwnership(routeOwner(route), state.accountId);
+    this.ctx.storage.transactionSync(() => {
+      if (JSON.stringify(this.ctx.storage.kv.get(STATE_KEY)) !== JSON.stringify(previous)) throw new Error("Slack workspace changed during authorization");
+      this.ctx.storage.kv.put(STATE_KEY, state);
+      if (credential) {
+        const current = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(credential.actorId));
+        if (!sameAdapterDataOwner(current ? routeOwner(current) : null, route ? routeOwner(route) : null)) throw new Error("Slack route changed during authorization");
+        credential.owner = current ? routeOwner(current) : null;
+        this.retirement.requireLive(credential.owner);
+        this.ctx.storage.kv.put(userCredentialKey(credential.actorId), credential);
+      }
+    });
     this.abortSupersededTargetCalls(state.generation, credential);
     await this.publishStatus(state);
     return admission(state);
@@ -279,8 +355,17 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       installationId: requireRoutePart(installationIdInput, "installationId"),
       routeGeneration: requireRoutePart(routeGenerationInput, "routeGeneration"),
     };
-    await this.ctx.storage.put(peerRouteKey(actorId), route);
-    const state = await this.ctx.storage.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    const state = this.ctx.storage.kv.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    if (!state) throw new Error("Slack workspace is not installed");
+    const previousRoute = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+    await this.registerOwnership(routeOwner(route), state.accountId);
+    this.ctx.storage.transactionSync(() => {
+      this.retirement.requireLive(routeOwner(route));
+      const currentRoute = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+      if (JSON.stringify(currentRoute) !== JSON.stringify(previousRoute) && JSON.stringify(currentRoute) !== JSON.stringify(route)) throw new Error("Slack route changed during registration");
+      this.ctx.storage.kv.put(peerRouteKey(actorId), route);
+      this.attributeActorRecords(route, true);
+    });
     if (state) await this.publishStatusToRoute(state, route);
   }
 
@@ -293,14 +378,17 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     const installationId = requireRoutePart(installationIdInput, "installationId");
     const routeGeneration = requireRoutePart(routeGenerationInput, "routeGeneration");
     const key = peerRouteKey(actorId);
-    const route = await this.ctx.storage.get<ManagedSlackPeerRouteRecord>(key);
+    const route = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(key);
     if (
       route?.version === 1
       && route.actorId === actorId
       && route.installationId === installationId
       && route.routeGeneration === routeGeneration
     ) {
-      await this.ctx.storage.delete(key);
+      this.ctx.storage.transactionSync(() => {
+        this.attributeActorRecords(route);
+        this.ctx.storage.kv.delete(key);
+      });
     }
   }
 
@@ -312,6 +400,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     let authorization: {
       workspace: ManagedSlackWorkspaceState;
       credential: ManagedSlackUserCredentialState;
+      owner: AdapterDataOwner;
     };
     try {
       authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
@@ -347,13 +436,16 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     let authorization: {
       workspace: ManagedSlackWorkspaceState;
       credential: ManagedSlackUserCredentialState;
+      owner: AdapterDataOwner;
     };
     try {
       authorization = await this.requireTargetAuthorization(actorId, expectedGeneration);
     } catch {
+      await cancelBinaryBody(frame.body, "Slack target authorization is unavailable");
       return targetError(frame.id, 403, "Slack target authorization is unavailable");
     }
-    const { workspace, credential } = authorization;
+    const { workspace, credential, owner } = authorization;
+    using operation = this.operation(owner);
     const callKey = targetCallKey(actorId, frame.id);
     if (this.targetCalls.has(callKey)) {
       return targetError(frame.id, 409, "Slack target request is already running");
@@ -364,6 +456,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       workspaceGeneration: expectedGeneration,
       credentialGeneration: credential.generation,
       controller,
+      owner,
     };
     this.targetCalls.set(callKey, active);
     const timeout = setTimeout(() => {
@@ -379,17 +472,18 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         teamId: workspace.teamId,
         teamName: workspace.teamName,
         signal: controller.signal,
-        slackFetch: this.slackFetch(),
+        slackFetch: operation.fetch,
         guard: async () => {
           await this.requireTargetAuthorization(
             actorId,
             expectedGeneration,
             credential.generation,
+            owner,
           );
         },
       });
       try {
-        await this.requireTargetAuthorization(actorId, expectedGeneration, credential.generation);
+        await this.requireTargetAuthorization(actorId, expectedGeneration, credential.generation, owner);
         if (frame.call !== "shell.exec") controller.signal.throwIfAborted();
         return response;
       } catch (error) {
@@ -446,23 +540,35 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   async openDm(
     actorIdInput: string,
     expectedGeneration: string,
+    owner?: AdapterDataOwner | null,
   ): Promise<{ channelId: string }> {
-    const state = await this.requireActive(expectedGeneration);
     const actorId = requireSlackId(actorIdInput, "Slack actor");
-    const cacheKey = `managed_slack_workspace:v1:dm:${actorId}`;
-    const cached = await this.ctx.storage.get<{ generation: string; channelId: string }>(cacheKey);
+    const route = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+    if (owner === undefined) owner = route ? routeOwner(route) : undefined;
+    using operation = this.operation(owner);
+    const state = await this.requireActive(expectedGeneration);
+    const cacheKey = `${DM_CACHE_PREFIX}${actorId}`;
+    const cached = this.ctx.storage.kv.get<ManagedSlackDmCache>(cacheKey);
+    this.retirement.requireLive(owner);
+    const admittedRoute = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+    if (owner !== null && !sameAdapterDataOwner(owner ?? null, admittedRoute ? routeOwner(admittedRoute) : null)) throw new Error("Slack direct message route changed");
     if (cached?.generation === state.generation) {
       return { channelId: requireSlackId(cached.channelId, "Slack direct message") };
     }
-    const channelId = await openSlackDm(state.botToken, actorId, this.slackFetch());
-    await this.ctx.storage.put(cacheKey, { generation: state.generation, channelId });
+    const channelId = await openSlackDm(state.botToken, actorId, operation.fetch);
+    this.retirement.requireLive(owner);
+    const currentRoute = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+    if (owner !== null && !sameAdapterDataOwner(owner ?? null, currentRoute ? routeOwner(currentRoute) : null)) throw new Error("Slack route changed while opening a direct message");
+    this.ctx.storage.kv.put(cacheKey, { generation: state.generation, channelId, owner: owner ?? null } satisfies ManagedSlackDmCache);
     return { channelId };
   }
 
   async postMessage(
     expectedGeneration: string,
     input: SlackPostMessageInput,
+    owner?: AdapterDataOwner | null,
   ): Promise<ManagedSlackWorkspacePostResult> {
+    using operation = this.operation(owner);
     let state: ManagedSlackWorkspaceState;
     try {
       state = await this.requireActive(expectedGeneration);
@@ -470,9 +576,11 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
     }
     try {
+      const result = await postSlackMessage(state.botToken, input, operation.fetch);
+      this.retirement.requireLive(owner);
       return {
         ok: true,
-        ...await postSlackMessage(state.botToken, input, this.slackFetch()),
+        ...result,
       };
     } catch (error) {
       return {
@@ -486,7 +594,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   async updateMessage(
     expectedGeneration: string,
     input: SlackUpdateMessageInput,
+    owner?: AdapterDataOwner | null,
   ): Promise<ManagedSlackWorkspacePostResult> {
+    using operation = this.operation(owner);
     let state: ManagedSlackWorkspaceState;
     try {
       state = await this.requireActive(expectedGeneration);
@@ -494,9 +604,11 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       return { ok: false, kind: "permanent", error: "Slack workspace route changed" };
     }
     try {
+      const result = await updateSlackMessage(state.botToken, input, operation.fetch);
+      this.retirement.requireLive(owner);
       return {
         ok: true,
-        ...await updateSlackMessage(state.botToken, input, this.slackFetch()),
+        ...result,
       };
     } catch (error) {
       return {
@@ -511,7 +623,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     expectedGeneration: string,
     fileId: string,
     maxBytes: number,
+    owner?: AdapterDataOwner | null,
   ): Promise<ManagedSlackWorkspaceDownloadResult> {
+    using operation = this.operation(owner);
     let state: ManagedSlackWorkspaceState;
     try {
       state = await this.requireActive(expectedGeneration);
@@ -523,9 +637,10 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
         state.botToken,
         fileId,
         maxBytes,
-        this.slackFetch(),
+        operation.fetch,
         async () => {
           await this.requireActive(expectedGeneration);
+          this.retirement.requireLive(owner);
         },
       );
       return { ok: true, file };
@@ -541,7 +656,9 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   async uploadFiles(
     expectedGeneration: string,
     input: SlackUploadFilesInput,
+    owner?: AdapterDataOwner | null,
   ): Promise<ManagedSlackWorkspaceUploadResult> {
+    using operation = this.operation(owner);
     let state: ManagedSlackWorkspaceState;
     try {
       state = await this.requireActive(expectedGeneration);
@@ -553,9 +670,10 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       const result = await uploadSlackFiles(
         state.botToken,
         input,
-        this.slackFetch(),
+        operation.fetch,
         async () => {
           await this.requireActive(expectedGeneration);
+          this.retirement.requireLive(owner);
         },
       );
       return { ok: true, fileIds: result.fileIds };
@@ -590,16 +708,23 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     actorId: string,
     expectedWorkspaceGeneration: string,
     expectedCredentialGeneration?: string,
+    expectedOwner?: AdapterDataOwner,
   ): Promise<{
     workspace: ManagedSlackWorkspaceState;
     credential: ManagedSlackUserCredentialState;
+    owner: AdapterDataOwner;
   }> {
     const workspace = await this.requireActive(expectedWorkspaceGeneration);
-    const credential = await this.ctx.storage.get<ManagedSlackUserCredentialState>(
+    const credential = this.ctx.storage.kv.get<ManagedSlackUserCredentialState>(
       userCredentialKey(actorId),
     );
+    const route = this.ctx.storage.kv.get<ManagedSlackPeerRouteRecord>(peerRouteKey(actorId));
+    const owner = route ? routeOwner(route) : undefined;
     if (
       !credential
+      || !owner
+      || expectedOwner && !sameAdapterDataOwner(owner, expectedOwner)
+      || credential.owner && !sameAdapterDataOwner(owner, credential.owner)
       || credential.version !== 1
       || credential.actorId !== actorId
       || !credential.generation
@@ -613,7 +738,8 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
       throw new SlackTargetAuthorizationUnavailableError("Slack target authorization is unavailable");
     }
     requireSlackToken(credential.token, "Slack user token", "xoxp-");
-    return { workspace, credential };
+    if (this.retirement.retired(owner)) throw new SlackTargetAuthorizationUnavailableError("Slack installation is retired");
+    return { workspace, credential, owner };
   }
 
   private abortSupersededTargetCalls(
@@ -649,6 +775,7 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
     route: ManagedSlackPeerRouteRecord,
   ): Promise<void> {
     try {
+      this.retirement.requireLive(routeOwner(route));
       const status = workspaceStatus(state);
       const extra: ManagedSlackWorkspaceStatusExtra = {
         teamId: state.teamId,
@@ -678,17 +805,72 @@ export class ManagedSlackWorkspace extends DurableObject<Env> {
   }
 
   private assertObjectName(accountId: string): void {
-    if (this.ctx.id.name !== managedSlackWorkspaceObjectName(accountId)) {
+    if (this.env.MANAGED_SLACK_WORKSPACE.idFromName(managedSlackWorkspaceObjectName(accountId)).toString() !== this.ctx.id.toString()) {
       throw new Error("Slack workspace Durable Object identity mismatch");
     }
   }
 
-  private slackFetch(): SlackFetch {
-    return this.env.SLACK_API
-      ? (input, init) => this.env.SLACK_API!.fetch(input, init)
-      : fetch;
+  private slackFetch(owner?: AdapterDataOwner | null): SlackFetch {
+    const transport: SlackFetch = this.env.SLACK_API ? (input, init) => this.env.SLACK_API!.fetch(input, init) : fetch;
+    if (!owner) return transport;
+    const retirementSignal = this.retirement.signal(owner);
+    return (input, init) => {
+      this.retirement.requireLive(owner);
+      const signal = init?.signal ? AbortSignal.any([init.signal, retirementSignal]) : retirementSignal;
+      return transport(input, { ...init, signal });
+    };
+  }
+
+  private operation(owner?: AdapterDataOwner | null) {
+    const complete = this.retirement.start(owner);
+    return { [Symbol.dispose]: complete, fetch: this.slackFetch(owner) };
+  }
+
+  private async registerOwnership(owner: AdapterDataOwner, accountId: string): Promise<void> {
+    this.retirement.requireLive(owner);
+    const name = managedSlackWorkspaceObjectName(accountId);
+    this.assertObjectName(accountId);
+    await this.env.SLACK_INSTALLATIONS.getByName(owner.installationId).registerResource({ kind: "adapter-account", name, objectId: this.ctx.id.toString(), generation: owner.generation });
+    this.retirement.requireLive(owner);
+  }
+
+  private attributeActorRecords(route: ManagedSlackPeerRouteRecord, replaceOwner = false): void {
+    const owner = routeOwner(route);
+    const credential = this.ctx.storage.kv.get<ManagedSlackUserCredentialState>(userCredentialKey(route.actorId));
+    if (credential && (replaceOwner || credential.owner === undefined || credential.owner === null)) this.ctx.storage.kv.put(userCredentialKey(route.actorId), { ...credential, owner });
+    const cacheKey = `${DM_CACHE_PREFIX}${route.actorId}`;
+    const cache = this.ctx.storage.kv.get<ManagedSlackDmCache>(cacheKey);
+    if (cache && (replaceOwner || cache.owner === undefined || cache.owner === null)) this.ctx.storage.kv.put(cacheKey, { ...cache, owner });
+  }
+
+  private ownership(installationId: string) {
+    const keys: string[] = [];
+    let unattributed = 0;
+    const state = this.ctx.storage.kv.get<ManagedSlackWorkspaceState>(STATE_KEY);
+    if (state && state.version !== 1) unattributed++;
+    for (const [key] of this.ctx.storage.kv.list()) {
+      if (key === STATE_KEY || key.startsWith(ADAPTER_RETIREMENT_PREFIX)) continue;
+      if (key.startsWith(PEER_ROUTE_PREFIX)) {
+        const parsed = storedRouteSchema.safeParse(this.ctx.storage.kv.get(key));
+        if (!parsed.success || key !== `${PEER_ROUTE_PREFIX}${parsed.data.actorId}`) unattributed++;
+        else if (parsed.data.installationId === installationId) keys.push(key);
+      } else if (key.startsWith(USER_CREDENTIAL_PREFIX) || key.startsWith(DM_CACHE_PREFIX)) {
+        const actor = key.slice(key.startsWith(USER_CREDENTIAL_PREFIX) ? USER_CREDENTIAL_PREFIX.length : DM_CACHE_PREFIX.length);
+        const parsed = (key.startsWith(USER_CREDENTIAL_PREFIX) ? storedCredentialSchema : storedDmCacheSchema).safeParse(this.ctx.storage.kv.get(key));
+        if (!parsed.success || "actorId" in parsed.data && parsed.data.actorId !== actor) { unattributed++; continue; }
+        const route = storedRouteSchema.safeParse(this.ctx.storage.kv.get(`${PEER_ROUTE_PREFIX}${actor}`));
+        const owner = parsed.data.owner === undefined && route.success && route.data.actorId === actor ? routeOwner(route.data) : parsed.data.owner;
+        if (!state || owner === undefined) unattributed++;
+        else if (owner?.installationId === installationId) keys.push(key);
+      } else unattributed++;
+    }
+    const tables = this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_cf_METADATA', '_cf_KV', '__miniflare_do_name')").toArray();
+    unattributed += tables.length;
+    return { keys, unattributed };
   }
 }
+
+function routeOwner(route: ManagedSlackPeerRouteRecord): AdapterDataOwner { return { installationId: route.installationId, generation: route.routeGeneration }; }
 
 class SlackTargetAuthorizationUnavailableError extends Error {}
 

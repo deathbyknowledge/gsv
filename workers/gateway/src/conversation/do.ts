@@ -1,3 +1,5 @@
+import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+import { InstallationRetirement, durableResourceName, stateWithRetirementStorage, RESOURCE_IDENTITY_KEY, inspectResourceStorage, attachDurableResourceIdentity } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
 import type {
   ConversationKind,
@@ -55,31 +57,84 @@ export type ConversationMediaRead = {
   stream: ReadableStream<Uint8Array>;
 };
 
+type ConversationInstallationRuntime = {
+  retirement: InstallationRetirement;
+  installationId: string;
+  conversationId: string;
+  store: ConversationStore;
+  storage: R2Bucket;
+};
+
 export class Conversation extends DurableObject<GatewayEnv> {
-  readonly installationId: string;
-  readonly conversationId: string;
-  private readonly store: ConversationStore;
-  private readonly storage: R2Bucket;
+  private readonly installationRuntime: ConversationInstallationRuntime | null;
+  get retirement(): InstallationRetirement { return this.namedRuntime().retirement; }
+  readonly ctx: DurableObjectState<{}>;
+  get installationId(): string { return this.namedRuntime().installationId; }
+  get conversationId(): string { return this.namedRuntime().conversationId; }
+  private get store(): ConversationStore { return this.namedRuntime().store; }
+  private get storage(): R2Bucket { return this.namedRuntime().storage; }
   private archiveTransition: Promise<void> = Promise.resolve();
   private appendTransition: Promise<void> = Promise.resolve();
 
-  constructor(ctx: DurableObjectState, env: GatewayEnv) {
-    super(ctx, env);
-    const identity = parseConversationDurableObjectName(ctx.id.name);
-    this.installationId = identity.installationId;
-    this.conversationId = identity.conversationId;
-    this.storage = createInstallationStorage(env.STORAGE, this.installationId);
-    runConversationSqlMigrations(ctx.storage);
-    this.store = new ConversationStore(ctx.storage.sql);
+  constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
+    super(state, env);
+    this.ctx = state;
+    if (!state.id.name && !state.storage.kv.get(RESOURCE_IDENTITY_KEY)) {
+      this.installationRuntime = null;
+      return;
+    }
+    const identity = parseConversationDurableObjectName(durableResourceName(state, env.CONVERSATION));
+    const retirement = new InstallationRetirement(state.storage, identity.installationId);
+    const ctx = stateWithRetirementStorage(state, retirement);
+    this.ctx = ctx;
+    if (!retirement.state) runConversationSqlMigrations(ctx.storage);
+    this.installationRuntime = {
+      ...identity, retirement,
+      storage: createInstallationStorage(env.STORAGE, identity.installationId, retirement),
+      store: new ConversationStore(ctx.storage.sql),
+    };
+  }
+
+  async attachInstallationResourceIdentity(name: string): Promise<void> {
+    parseConversationDurableObjectName(name);
+    await attachDurableResourceIdentity(this.ctx, this.env.CONVERSATION, name);
+  }
+
+  inspectInstallationResource() {
+    const storage = this.installationRuntime?.retirement.raw ?? this.ctx.storage;
+    const hasMeta = storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_meta'").toArray().length > 0;
+    const id = hasMeta ? storage.sql.exec<{ conversation_id: string }>("SELECT conversation_id FROM conversation_meta LIMIT 1").toArray()[0]?.conversation_id : undefined;
+    return inspectResourceStorage(storage, id);
+  }
+
+  private namedRuntime(): ConversationInstallationRuntime {
+    if (!this.installationRuntime) throw new Error("Historical resource identity requires operator discovery");
+    return this.installationRuntime;
+  }
+
+  async quiesceInstallationResource(input: InstallationDeletionRequest) {
+    const record = this.retirement.begin(input);
+    if (record.phase !== "quiescing") return record;
+    await Promise.allSettled([this.appendTransition, this.archiveTransition]);
+    await this.retirement.drain();
+    if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
+    return this.retirement.quiesced();
+  }
+
+  async eraseInstallationResource(input: InstallationDeletionRequest) {
+    this.retirement.begin(input);
+    return this.retirement.erase();
   }
 
   initialize(input: ConversationInitializeInput): void {
+    this.retirement.assertActive();
     requireOwnerUid(input.ownerUid);
     requireConversationKind(input.kind);
     this.store.initialize(this.conversationId, input.ownerUid, input.kind);
   }
 
   async append(input: ConversationAppendRequest): Promise<ConversationAppendResult> {
+    this.retirement.assertActive();
     requireAppendInput(input);
     return this.withAppendLock(async () => {
       const media = await this.validateMessageMedia(input);
@@ -94,6 +149,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
       };
       const payloadHash = await hashAppendInput(canonical);
       const normalized: ConversationAppendInput = { ...canonical, payloadHash };
+      this.retirement.assertActive();
       const stored = this.ctx.storage.transactionSync(() => this.store.append(normalized));
       if (stored) {
         this.ctx.waitUntil(this.scheduleArchive());
@@ -172,6 +228,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }
 
   async compact(): Promise<void> {
+    this.retirement.assertActive();
     await this.scheduleArchive();
   }
 
@@ -189,6 +246,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
     });
     await previous;
     try {
+      this.retirement.assertActive();
       return await operation();
     } finally {
       release();
@@ -196,6 +254,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }
 
   private async archiveIfNeeded(): Promise<void> {
+    if (this.retirement.state) return;
     while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
       const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
       if (messages.length === 0) return;

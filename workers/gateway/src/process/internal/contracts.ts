@@ -3,7 +3,7 @@
 import type {
   AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
-import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import type { AssistantTurnClassification } from "../run-tick-policy";
 import type { FrameBody, ResponseFrame } from "../../protocol/frames";
 import type { MessageMetadata, QueuedRun } from "../store";

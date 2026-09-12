@@ -1,3 +1,4 @@
+import type { AdapterDataScope } from "../../shared/src/retirement";
 import type { ProcHilRequest } from "../../../../packages/gsv/src/protocol/syscalls/proc.js";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -51,6 +52,7 @@ export async function prepareTelegramApproval(
   storage: DurableObjectStorage,
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
+  owner?: AdapterDataScope,
 ): Promise<TelegramApprovalControls | null> {
   const presentation = createAdapterHilPresentation(context, request);
   const token = await prepareAdapterHilApproval(
@@ -60,6 +62,7 @@ export async function prepareTelegramApproval(
     context,
     request,
     presentation,
+    owner,
   );
   if (!token) return null;
   return {

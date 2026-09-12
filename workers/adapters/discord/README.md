@@ -2,7 +2,46 @@
 
 Discord bot integration for GSV Gateway.
 
-## Discord Bot Setup
+## Operator application and human pairing
+
+The shared deployment uses `wrangler.shared.jsonc` and the `SharedDiscordChannel`
+service entrypoint. The operator sets `DISCORD_APPLICATION_ID` and the
+`DISCORD_BOT_TOKEN` secret at deployment time. A minute cron starts the single
+`DiscordApplication` provider connection; opening the pairing flow also starts it.
+The application token is read from the binding and is never stored in peer state.
+
+A person installs the bot in a Discord server, mentions it with `pair`, or sends
+it a direct message. The bot sends a private pairing code. In **your GSV →
+Messengers → Discord**, that person inspects the identity and confirms the link.
+Server installation itself does not link anyone or select a space. Two people in
+the same server may link different spaces. A person's server route and direct
+message route are distinct; each route has one active space and local account.
+
+The shared application receives direct messages and messages that mention the bot
+(including replies to it), using the non-privileged Guilds, Guild Messages, and
+Direct Messages intents. It does not request Message Content. The install link
+requests View Channels, Send Messages, Attach Files, and Read Message History.
+The adapter advertises that typing activity is unavailable on this shared path.
+See Discord's [Gateway documentation](https://docs.discord.com/developers/events/gateway)
+for the message-content exceptions for direct messages and bot mentions.
+
+`DiscordPeer` durably owns pairing, delivery, ingress, and its generation-fenced
+route. Delayed messages and media replies recheck the route before crossing the
+Gateway or provider boundary. A relink invalidates the previous generation and
+cleans the old Kernel projection. Approvals remain human-facing and include a
+link to the person's GSV; they do not wake a parent model.
+
+The shared Worker exposes only `/health` over HTTP. Provider ingress arrives on
+the operator's authenticated Gateway connection. Service bindings carry the
+existing attenuated Discord adapter grant. No public route accepts a token,
+installation id, or local account id.
+
+The existing `DiscordGateway` namespace and the following legacy deployment
+instructions are retained until the explicit W7 cutover. Select the shared
+entrypoint in the deployment graph; deploying this source does not migrate old
+namespace records or establish historical erasure evidence.
+
+## Legacy Discord Bot Setup
 
 ### 1. Create Discord Application
 

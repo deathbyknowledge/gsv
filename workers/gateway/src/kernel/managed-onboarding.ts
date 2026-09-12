@@ -302,6 +302,7 @@ managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
   }
 
 async managedWorkGate() {
+    this.host.retirement.assertActive();
     return await managedInstallationWorkGate(
       this.host.env,
       this.host.installationId,

@@ -50,6 +50,17 @@ export class ConnectionRuntime {
 
   private readonly pendingTargetEvents = new Map<string, Promise<void>>();
 
+  invalidateAccountConnections(uid: number): void {
+    const epoch = this.host.auth.credentialEpoch(uid);
+    for (const connection of this.host.connections.values()) {
+      const state = connection.state;
+      if (state.step !== "connected" || state.peer?.principal.account.uid !== uid) continue;
+      if ((state.credentialEpoch ?? 0) >= epoch && !this.host.auth.isAccountDisabled(uid)) continue;
+      connection.setState({ ...state, step: "superseded" });
+      connection.close(1008, "Credentials changed; sign in again");
+    }
+  }
+
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
@@ -103,6 +114,12 @@ onClose(connection: KernelConnection<ConnectionState>): void {
       }
       this.host.connections.set(connection.id, connection);
       if (!state || state.step !== "connected" || !state.peer) continue;
+      if ((state.credentialEpoch ?? 0) !== this.host.auth.credentialEpoch(state.peer.principal.account.uid)
+        || this.host.auth.isAccountDisabled(state.peer.principal.account.uid)) {
+        connection.setState({ ...state, step: "superseded" });
+        connection.close(1008, "Credentials changed; sign in again");
+        continue;
+      }
       if (peerProvidesOperations(state.peer)) {
         onlineTargets.add(state.peer.id);
         this.host.targets.setOnline(state.peer.id, true);
@@ -156,6 +173,9 @@ async handleSysConnect(
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.host.buildContext(connection);
+    const username = frame.args.auth?.username;
+    const existingAccount = username ? ctx.auth.getPasswdByUsername(username) : null;
+    const credentialEpoch = existingAccount ? ctx.auth.credentialEpoch(existingAccount.uid) : 0;
 
     const outcome = await handleConnect(frame.args, ctx);
 
@@ -190,6 +210,7 @@ async handleSysConnect(
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
       credentialMethod: frame.args.auth?.token ? "token" : "password",
+      credentialEpoch,
     } satisfies ConnectionState & { step: "connected" };
 
     if (
@@ -206,6 +227,11 @@ async handleSysConnect(
       });
     }
 
+    if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch
+      || ctx.auth.isAccountDisabled(outcome.peer.principal.account.uid)) {
+      this.host.transport.sendError(connection, frame.id, 401, "Credentials changed; sign in again");
+      return;
+    }
     this.activateConnection(connection, newState);
 
     if (peerProvidesOperations(outcome.peer)) {

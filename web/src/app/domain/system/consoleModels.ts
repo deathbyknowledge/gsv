@@ -60,6 +60,8 @@ export type ConsoleAdapterAccount = {
 export type ConsoleAdapter = {
   adapter: string;
   available: boolean;
+  enabled: boolean;
+  canLink: boolean;
   supportsConnect: boolean;
   supportsDisconnect: boolean;
   supportsSend: boolean;

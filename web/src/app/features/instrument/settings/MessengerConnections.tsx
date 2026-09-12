@@ -11,15 +11,14 @@ import { loadMessengerConnections, messengerConnectionStatus } from "./messenger
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 
-const MESSENGERS = [{ id: "telegram", name: "Telegram" }, { id: "slack", name: "Slack" }] as const;
+const MESSENGERS = [{ id: "telegram", name: "Telegram" }, { id: "slack", name: "Slack" }, { id: "discord", name: "Discord" }] as const;
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
-  const [pairing, setPairing] = useState<"telegram" | "slack" | null>(null);
+  const [pairing, setPairing] = useState<"telegram" | "slack" | "discord" | null>(null);
   const [removing, setRemoving] = useState<ConsoleIdentityLink | null>(null);
   const canList = canConfigure(account, "adapter.list") && canConfigure(account, "sys.link.list");
-  const canPair = account.uid >= 1000 && ["adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"].every((call) => canConfigure(account, call));
   const canUnlink = account.uid >= 1000 && canConfigure(account, "adapter.pair.disconnect");
   const connections = useQuery({
     queryKey: [...INSTRUMENT_MESSENGERS_KEY, account.uid],
@@ -44,7 +43,8 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
-      const available = adapter?.available && adapter.supportsPairing;
+      const available = adapter?.enabled && adapter.supportsPairing;
+      const canPair = adapter?.canLink === true;
       const canConnect = connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
@@ -53,7 +53,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             {pairing === id ? "close setup" : links.length ? "connect another" : `connect ${name}`}
           </button>
         </div>
-        <p class="settings-muted">{id === "telegram" ? "Talk to your Ship from Telegram." : "Talk to your Ship from your Slack workspace."}</p>
+        <p class="settings-muted">{id === "telegram" ? "Talk to your Ship from Telegram." : id === "slack" ? "Talk to your Ship from your Slack workspace." : "Talk to your Ship from Discord DMs and servers."}</p>
         {!available && <p class="settings-muted">{name} linking is not available on this GSV.</p>}
         {available && !canPair && <p class="settings-muted">Your account cannot link a {name} identity.</p>}
         {links.length === 0 && available && <p class="settings-muted">No {name} identity is linked to you.</p>}

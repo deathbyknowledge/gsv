@@ -18,6 +18,10 @@
     "MAIL_DAILY_OUTBOUND_MESSAGE_LIMIT": 2,
     "MAIL_DAILY_OUTBOUND_BYTE_LIMIT": 6291456
   },
+  "services": [
+    { "binding": "MAIL_LIFECYCLE", "service": "gsv-managed-email-test", "entrypoint": "MailLifecycleEntrypoint", "props": { "authority": "installation-deletion" } },
+    { "binding": "MAIL_UNAUTHORIZED", "service": "gsv-managed-email-test", "entrypoint": "MailLifecycleEntrypoint" }
+  ],
   "durable_objects": {
     "bindings": [
       {

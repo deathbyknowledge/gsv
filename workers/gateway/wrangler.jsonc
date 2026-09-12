@@ -66,10 +66,7 @@
 		}
 	],
 	// Workers AI for audio transcription (free)
-	"ai": {
-		"binding": "AI",
-		"remote": true
-	},
+	// Native execution now belongs to the standalone inference companion.
 	// Static Assets - serve UI from Gateway
 	"assets": {
 		"directory": "../../web/dist/",
@@ -79,6 +76,10 @@
 	},
 	// Channel service bindings (Gateway → Channel RPC)
 	"services": [
+		{
+			"binding": "INFERENCE_EXECUTION",
+			"service": "gsv-inference"
+		},
 		{
 			"binding": "CHANNEL_TELEGRAM",
 			"service": "gsv-channel-telegram",

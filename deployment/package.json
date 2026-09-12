@@ -5,20 +5,40 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./manifest": "./src/manifest.ts"
+    "./manifest": "./src/manifest.ts",
+    "./installation-migrations": "./src/installation-migration-adoption.ts",
+    "./installation-migration-adoption-local": "./src/installation-migration-adoption-executor.ts",
+    "./installation-migration-adoption-remote": "./src/installation-migration-adoption-remote.ts",
+    "./installation-migration-d1": "./src/installation-migration-d1.ts",
+    "./installation-migration-command": "./src/installation-migration-command.ts",
+    "./installation-migration-runner": "./src/installation-migration-runner.ts",
+    "./operator-bootstrap": "./src/operator-bootstrap.ts",
+    "./operator-bootstrap-command": "./src/operator-bootstrap-command.ts",
+    "./installation-deletion-evidence": "./src/installation-deletion-evidence.ts",
+    "./installation-deletion-resolver": "./src/installation-deletion-resolver.ts",
+    "./installation-deletion-capture": "./src/installation-deletion-capture.ts",
+    "./installation-deletion-capture-command": "./src/installation-deletion-capture-command.ts",
+    "./r2-multipart-capture": "./src/r2-multipart-capture.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p acceptance/legacy-upgrade/tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "alchemy": "2.0.0-beta.72",
+    "aws4fetch": "1.0.20",
     "effect": "4.0.0-beta.107",
-    "zod": "4.1.13"
+    "fast-xml-parser": "5.11.1",
+    "ws": "8.21.0",
+    "zod": "4.1.13",
+    "wrangler": "4.127.1"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "@cloudflare/workers-types": "5.20260823.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.9"
+    "vitest": "4.1.9",
+    "miniflare": "4.20260722.0",
+    "@cloudflare/vitest-pool-workers": "0.18.8"
   }
 }

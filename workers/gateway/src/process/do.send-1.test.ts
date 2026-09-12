@@ -442,7 +442,7 @@ describe("proc.send", () => {
           if (fails) {
             throw new Error("media config failed");
           }
-          return { ai: process.env.AI };
+          return {};
         });
         const mediaKey = `var/media/0/${pid}/race.png`;
         await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
@@ -501,7 +501,6 @@ describe("proc.send", () => {
         throw new Error("scheduler unavailable");
       });
       process.resources.resolveMediaProcessingOptions = vi.fn(async () => ({
-        ai: process.env.AI,
       }));
       const prepareMedia = vi.spyOn(process.resources, "prepareRunMedia");
       const mediaKey = `var/media/0/${pid}/schedule.png`;
@@ -552,7 +551,7 @@ describe("proc.send", () => {
             markMediaStarted();
             await mediaBlocked;
           }
-          return { ai: process.env.AI };
+          return {};
         },
       );
       process.runs.active = { runId: "run-busy" };

@@ -1,5 +1,7 @@
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
+import { createAssistantMessageEventStream } from "@humansandmachines/gsv/services/inference-context";
+import { bodyFromText, bodyToText, encodeInferenceExecutionStreamEvent } from "@humansandmachines/gsv/protocol";
+import { createGenerationService } from "../inference/execution-client";
+import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import { describe, expect, it } from "vitest";
 import {
   captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, runInProcess,
@@ -686,6 +688,30 @@ describe("model context", () => {
           body: bodyFromText(body),
         };
       };
+
+      const executor: InferenceExecutor = {
+        async generateStream(input, transport) {
+          expect(input.connection).toMatchObject({ provider: "custom", model: "local-chat", baseUrl: "http://localhost:18081/v1" });
+          expect(transport).toBeDefined();
+          const response = await transport!.fetch("provider-request", new Request(`${input.connection.baseUrl}/chat/completions`, {
+            method: "POST",
+            body: JSON.stringify({ model: input.connection.model, messages: input.messages, stream: true }),
+          }));
+          expect(await response.text()).toContain("device hello");
+          const message = assistantResponse([{ type: "text", text: "device hello" }], { usage: testUsage(3, 2) });
+          return new Response(encodeInferenceExecutionStreamEvent({ type: "done", reason: "stop", message })).body!;
+        },
+        async generate() { throw new Error("Expected streamed execution"); },
+        async media() { throw new Error("Unexpected media execution"); },
+        async abort() {},
+      };
+      process.generation = createGenerationService({
+        ...process.env,
+        INFERENCE_EXECUTION: {
+          async getExecutor(installationId) { expect(installationId).toBe(process.installationId); return executor; },
+          async resolveModel(provider, model) { return { provider, model, contextWindowTokens: null }; },
+        },
+      });
 
       process.store.messages.appendMessage("user", "use local gateway");
       process.runs.active = {

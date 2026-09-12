@@ -49,83 +49,106 @@ const usageSchema = z.strictObject({
 const managedMessageFields = {
   role: z.literal("assistant"),
   content: z.array(contentSchema),
-  api: z.literal("gsv-inference"),
-  provider: z.literal(GSV_INFERENCE_PROVIDER),
-  model: z.literal(GSV_INFERENCE_PRODUCT_MODEL),
+  api: z.string(),
+  provider: z.string(),
+  model: z.string(),
   responseModel: z.optional(z.string()),
   responseId: z.optional(z.string()),
   usage: usageSchema,
+  usageCostSource: z.optional(z.nullable(z.enum(["model-pricing", "provider"]))),
   errorMessage: z.optional(z.string()),
   timestamp: nonNegativeIntegerSchema,
 };
-const managedInferenceResultSchema = z.strictObject({
-  ...managedMessageFields,
-  stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
-});
-const managedInferencePartialSchema = z.strictObject({
-  ...managedMessageFields,
-  stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted"]),
-});
+function createInferenceStreamSchema(funded: boolean) {
+  const identity = funded ? {
+    api: z.literal("gsv-inference"),
+    provider: z.literal(GSV_INFERENCE_PROVIDER),
+    model: z.literal(GSV_INFERENCE_PRODUCT_MODEL),
+  } : {};
+  const managedInferenceResultSchema = z.strictObject({
+    ...managedMessageFields,
+    ...identity,
+    stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
+  });
+  const managedInferencePartialSchema = z.strictObject({
+    ...managedMessageFields,
+    ...identity,
+    stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted"]),
+  });
 
-export const managedInferenceStreamEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("start"), partial: managedInferencePartialSchema }),
-  z.strictObject({
-    type: z.literal("text_start"),
-    contentIndex: nonNegativeIntegerSchema,
-    content: textContentSchema,
-  }),
-  z.strictObject({
-    type: z.literal("text_delta"),
-    contentIndex: nonNegativeIntegerSchema,
-    delta: z.string(),
-  }),
-  z.strictObject({
-    type: z.literal("text_end"),
-    contentIndex: nonNegativeIntegerSchema,
-    content: textContentSchema,
-  }),
-  z.strictObject({
-    type: z.literal("thinking_start"),
-    contentIndex: nonNegativeIntegerSchema,
-    content: thinkingContentSchema,
-  }),
-  z.strictObject({
-    type: z.literal("thinking_delta"),
-    contentIndex: nonNegativeIntegerSchema,
-    delta: z.string(),
-  }),
-  z.strictObject({
-    type: z.literal("thinking_end"),
-    contentIndex: nonNegativeIntegerSchema,
-    content: thinkingContentSchema,
-  }),
-  z.strictObject({
-    type: z.literal("toolcall_start"),
-    contentIndex: nonNegativeIntegerSchema,
-    toolCall: toolCallSchema,
-  }),
-  z.strictObject({
-    type: z.literal("toolcall_delta"),
-    contentIndex: nonNegativeIntegerSchema,
-    delta: z.string(),
-    toolCall: toolCallSchema,
-  }),
-  z.strictObject({
-    type: z.literal("toolcall_end"),
-    contentIndex: nonNegativeIntegerSchema,
-    toolCall: toolCallSchema,
-  }),
-  z.strictObject({
-    type: z.literal("done"),
-    reason: z.enum(["stop", "length", "toolUse"]),
-    message: managedInferenceResultSchema,
-  }).check(z.refine((event) => event.message.stopReason === event.reason)),
-  z.strictObject({
-    type: z.literal("error"),
-    reason: z.enum(["error", "aborted"]),
-    error: managedInferenceResultSchema,
-  }).check(z.refine((event) => event.error.stopReason === event.reason)),
-]);
+  return z.discriminatedUnion("type", [
+    z.strictObject({ type: z.literal("start"), partial: managedInferencePartialSchema }),
+    z.strictObject({
+      type: z.literal("text_start"),
+      contentIndex: nonNegativeIntegerSchema,
+      content: textContentSchema,
+    }),
+    z.strictObject({
+      type: z.literal("text_delta"),
+      contentIndex: nonNegativeIntegerSchema,
+      delta: z.string(),
+    }),
+    z.strictObject({
+      type: z.literal("text_end"),
+      contentIndex: nonNegativeIntegerSchema,
+      content: textContentSchema,
+    }),
+    z.strictObject({
+      type: z.literal("thinking_start"),
+      contentIndex: nonNegativeIntegerSchema,
+      content: thinkingContentSchema,
+    }),
+    z.strictObject({
+      type: z.literal("thinking_delta"),
+      contentIndex: nonNegativeIntegerSchema,
+      delta: z.string(),
+    }),
+    z.strictObject({
+      type: z.literal("thinking_end"),
+      contentIndex: nonNegativeIntegerSchema,
+      content: thinkingContentSchema,
+    }),
+    z.strictObject({
+      type: z.literal("toolcall_start"),
+      contentIndex: nonNegativeIntegerSchema,
+      toolCall: toolCallSchema,
+    }),
+    z.strictObject({
+      type: z.literal("toolcall_delta"),
+      contentIndex: nonNegativeIntegerSchema,
+      delta: z.string(),
+      toolCall: toolCallSchema,
+    }),
+    z.strictObject({
+      type: z.literal("toolcall_end"),
+      contentIndex: nonNegativeIntegerSchema,
+      toolCall: toolCallSchema,
+    }),
+    z.strictObject({
+      type: z.literal("done"),
+      reason: z.enum(["stop", "length", "toolUse"]),
+      message: managedInferenceResultSchema,
+    }).check(z.refine((event) => event.message.stopReason === event.reason)),
+    z.strictObject({
+      type: z.literal("error"),
+      reason: z.enum(["error", "aborted"]),
+      error: managedInferenceResultSchema,
+    }).check(z.refine((event) => event.error.stopReason === event.reason)),
+  ]);
+}
+
+export const managedInferenceStreamEventSchema = createInferenceStreamSchema(true);
+export const inferenceExecutionStreamEventSchema = createInferenceStreamSchema(false);
+
+export const encodeInferenceExecutionStreamEvent = encodeManagedInferenceStreamEvent;
+
+export function decodeInferenceExecutionStream(stream: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+  return decodeInferenceStream(stream, signal, inferenceExecutionStreamEventSchema);
+}
+
+export function decodeManagedInferenceStream(stream: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+  return decodeInferenceStream(stream, signal, managedInferenceStreamEventSchema);
+}
 
 export function encodeManagedInferenceStreamEvent(
   event: ManagedInferenceStreamEvent,
@@ -140,9 +163,10 @@ export function encodeManagedInferenceStreamEvent(
   return framed;
 }
 
-export async function* decodeManagedInferenceStream(
+async function* decodeInferenceStream(
   stream: ReadableStream<Uint8Array>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  schema: typeof inferenceExecutionStreamEventSchema,
 ): AsyncGenerator<ManagedInferenceStreamEvent> {
   const reader = stream.getReader();
   const parts: Uint8Array[] = [];
@@ -172,7 +196,7 @@ export async function* decodeManagedInferenceStream(
         if (eventBytes === 0) {
           throw new Error("Managed inference stream emitted an empty event");
         }
-        yield parseEvent(parts, eventBytes);
+        yield parseEvent(parts, eventBytes, schema);
         parts.length = 0;
         eventBytes = 0;
         start = index + 1;
@@ -202,7 +226,7 @@ function appendPart(
   if (part.byteLength > 0) parts.push(part);
 }
 
-function parseEvent(parts: Uint8Array[], byteLength: number): ManagedInferenceStreamEvent {
+function parseEvent(parts: Uint8Array[], byteLength: number, schema: typeof inferenceExecutionStreamEventSchema): ManagedInferenceStreamEvent {
   const payload = new Uint8Array(byteLength);
   let offset = 0;
   for (const part of parts) {
@@ -221,7 +245,7 @@ function parseEvent(parts: Uint8Array[], byteLength: number): ManagedInferenceSt
   } catch {
     throw new Error("Managed inference stream event is not valid JSON");
   }
-  const parsed = managedInferenceStreamEventSchema.safeParse(decoded);
+  const parsed = schema.safeParse(decoded);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "event"}: ${issue.code}`)

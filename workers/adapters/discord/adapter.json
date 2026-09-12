@@ -5,7 +5,9 @@
   "description": "Discord adapter worker",
   "deployOrder": 2,
   "wranglerConfig": "wrangler.jsonc",
-  "devStateDirectories": ["gsv-channel-discord-DiscordGateway"],
+  "devStateDirectories": [
+    "gsv-channel-discord-DiscordGateway"
+  ],
   "standalone": {
     "main": "dist/cloudflare/channel-discord/worker/index.js",
     "bundle": false,
@@ -18,5 +20,67 @@
       }
     ],
     "requiredSecrets": []
+  },
+  "managed": {
+    "main": "workers/adapters/discord/src/shared.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "SharedDiscordChannel",
+    "adapterEntrypoint": "SharedDiscordChannel",
+    "durableObjects": [
+      {
+        "binding": "DISCORD_GATEWAY",
+        "className": "DiscordGateway"
+      },
+      {
+        "binding": "DISCORD_APPLICATION",
+        "className": "DiscordApplication"
+      },
+      {
+        "binding": "DISCORD_PEER",
+        "className": "DiscordPeer"
+      },
+      {
+        "binding": "DISCORD_PAIRING",
+        "className": "DiscordPairing"
+      },
+      {
+        "binding": "DISCORD_INSTALLATIONS",
+        "className": "DiscordInstallation"
+      }
+    ],
+    "requiredSecrets": [
+      "DISCORD_BOT_TOKEN"
+    ],
+    "crons": [
+      "* * * * *"
+    ],
+    "lifecycle": {
+      "entrypoint": "DiscordLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "kind": "adapter-account",
+          "className": "DiscordGateway"
+        },
+        {
+          "kind": "adapter-application",
+          "className": "DiscordApplication"
+        },
+        {
+          "kind": "adapter-peer",
+          "className": "DiscordPeer"
+        },
+        {
+          "kind": "adapter-pairing",
+          "className": "DiscordPairing"
+        },
+        {
+          "kind": "adapter-installation",
+          "className": "DiscordInstallation"
+        }
+      ]
+    },
+    "requiredVariables": [
+      "DISCORD_APPLICATION_ID"
+    ]
   }
 }

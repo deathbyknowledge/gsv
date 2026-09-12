@@ -6,16 +6,34 @@ import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import type { OAuthAccountRecord } from "./oauth-store";
+import type { InferenceExecutor, InferenceMediaResult, InferenceModelMetadata } from "@humansandmachines/gsv/services/inference-execution";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 const generateMock = vi.fn();
+const mediaMock = vi.fn<InferenceExecutor["media"]>();
+const mediaAbortMock = vi.fn<InferenceExecutor["abort"]>(async () => {});
+const mediaInputBodies: Uint8Array[] = [];
+
+function mediaServiceFixture(response?: InferenceMediaResult) {
+  mediaMock.mockImplementation(async (request, body) => {
+    if (body) mediaInputBodies.push(new Uint8Array(await new Response(body).arrayBuffer()));
+    if (response) return response;
+    switch (request.kind) {
+      case "transcription": return { kind: request.kind, result: { text: "turn on the office lights", duration: 1.25, language: "en", provider: request.input.provider ?? "workers-ai", model: request.input.model } };
+      case "image-read": return { kind: request.kind, result: { mode: "caption", text: "A small terminal window with green text.", provider: "workers-ai", model: DEFAULT_IMAGE_READING_MODEL } };
+      case "image-generate": return { kind: request.kind, result: { mimeType: "image/jpeg", size: 3, provider: request.input.provider, model: request.input.model }, body: bodyFromBytes(new Uint8Array([1, 2, 3])).stream };
+      case "speech": return { kind: request.kind, result: { mimeType: "audio/mpeg", size: 3, provider: request.input.provider ?? "workers-ai", model: request.input.model, voice: request.input.voice, encoding: request.input.encoding }, body: bodyFromBytes(new Uint8Array([1, 2, 3])).stream };
+    }
+  });
+  return { getExecutor: vi.fn(async () => ({ media: mediaMock, abort: mediaAbortMock })) };
+}
 const createGenerationServiceMock = vi.fn((_options?: KernelTestValue) => ({
   generate: generateMock,
   stream: vi.fn(),
   generateText: vi.fn(),
 }));
 const seedBuiltinSkillsToHomeMock = vi.fn();
-import * as inferenceService from "../inference/service";
+import * as inferenceService from "../inference/execution-client";
 import * as skillsSeed from "./sys/skills-seed";
 import * as adapterTargets from "./adapter-targets";
 vi.spyOn(inferenceService, "createGenerationService").mockImplementation(createGenerationServiceMock);
@@ -32,13 +50,13 @@ import {
   handleAiTools,
   handleAiTranscriptionCreate,
 } from "./ai";
-import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
+import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/media-defaults";
 import {
   DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_MODEL,
-} from "../inference/image-reading";
-import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
+} from "../inference/media-defaults";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/media-defaults";
 import { inferenceLogicalRequestId } from "../inference/provider";
 import { MAIL_SEND, syscallToolName } from "../syscalls/constants";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
@@ -48,6 +66,9 @@ const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 beforeEach(() => {
   generateMock.mockReset();
+  mediaMock.mockReset();
+  mediaAbortMock.mockClear();
+  mediaInputBodies.length = 0;
   createGenerationServiceMock.mockClear();
   seedBuiltinSkillsToHomeMock.mockReset();
   seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "sam", copied: 0, skipped: 0 });
@@ -1019,9 +1040,7 @@ describe("handleAiConfig", () => {
     }, ctx);
 
     expect(result.text).toBe("managed pong");
-    expect(createGenerationServiceMock).toHaveBeenCalledWith({
-      providers: [expect.objectContaining({ id: "gsv" })],
-    });
+    expect(createGenerationServiceMock).toHaveBeenCalledWith(ctx.env);
   });
 
   it("preserves an explicit blank credential in a complete request model", async () => {
@@ -1246,9 +1265,8 @@ describe("handleAiConfig", () => {
     });
 
     expect(result.text).toBe("pong");
-    expect(createGenerationServiceMock).toHaveBeenCalledWith({
-      fetch: expect.any(Function),
-    });
+    expect(createGenerationServiceMock).toHaveBeenCalledWith(ctx.env);
+    expect(generateMock).toHaveBeenCalledWith(expect.objectContaining({ fetch: expect.any(Function) }));
   });
 
   it("builds a routed fetch for OpenAI Codex text generation targets", async () => {
@@ -1306,9 +1324,8 @@ describe("handleAiConfig", () => {
     });
 
     expect(result.text).toBe("pong");
-    expect(createGenerationServiceMock).toHaveBeenCalledWith({
-      fetch: expect.any(Function),
-    });
+    expect(createGenerationServiceMock).toHaveBeenCalledWith(ctx.env);
+    expect(generateMock).toHaveBeenCalledWith(expect.objectContaining({ fetch: expect.any(Function) }));
   });
 
   it("falls back to the owning human's AI config for agent processes", async () => {
@@ -1839,6 +1856,69 @@ describe("handleAiConfig", () => {
     }
   });
 
+  it("resolves an explicit context limit without depending on provider metadata", async () => {
+    const ctx = makeAiConfigContext();
+    const resolveModel = vi.fn(async () => { throw new Error("metadata unavailable"); });
+    ctx.env.INFERENCE_EXECUTION = {
+      resolveModel,
+      getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }),
+    };
+    const result = await handleAiConfig({
+      modelConfig: { provider: "openai", model: "gpt-4.1-mini", apiKey: "request-key", contextWindowTokens: 64000 },
+    }, ctx);
+    expect(result.contextWindowTokens).toBe(64000);
+    expect(result.contextWindowSource).toBe("config");
+    expect(resolveModel).not.toHaveBeenCalled();
+  });
+
+  it.each([200, 180_000])("bounds metadata resolution with generation timeout %i and disposes a late RPC", async (generationTimeoutMs) => {
+    vi.useFakeTimers();
+    const ctx = makeAiConfigContext({ "users/1000/ai/generation/timeout_ms": String(generationTimeoutMs) });
+    let resolve!: (value: InferenceModelMetadata) => void;
+    const dispose = vi.fn();
+    const rpc = Object.assign(new Promise<InferenceModelMetadata>((done) => { resolve = done; }), { [Symbol.dispose]: dispose });
+    const resolveModel = vi.fn(() => rpc);
+    ctx.env.INFERENCE_EXECUTION = { resolveModel, getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }) };
+    const completed = vi.fn();
+    const failed = vi.fn();
+    const pending = handleAiConfig({ modelConfig: { provider: "openai", model: "gpt-4.1-mini", apiKey: "request-key" } }, ctx).then(completed, failed);
+    const timeoutMs = Math.min(generationTimeoutMs, 5000);
+    try {
+      await vi.advanceTimersByTimeAsync(timeoutMs - 1);
+      expect(resolveModel).toHaveBeenCalledOnce();
+      expect(failed).not.toHaveBeenCalled();
+      expect(dispose).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        name: "TimeoutError", message: `Model metadata resolution timed out after ${timeoutMs}ms`,
+      }));
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      resolve({ provider: "openai", model: "gpt-4.1-mini", contextWindowTokens: 128000 });
+      await pending;
+      vi.useRealTimers();
+    }
+    expect(completed).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a resolved unknown context and clears its metadata deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = makeAiConfigContext();
+      ctx.env.INFERENCE_EXECUTION = {
+        resolveModel: vi.fn(async () => ({ provider: "custom", model: "unknown", contextWindowTokens: null })),
+        getExecutor: vi.fn(async () => { throw new Error("unexpected generation"); }),
+      };
+      const result = await handleAiConfig({ modelConfig: { provider: "custom", model: "unknown", apiKey: "request-key" } }, ctx);
+      expect(result.contextWindowTokens).toBeNull();
+      expect(result.contextWindowSource).toBe("unknown");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a complete request-local model separate from persisted runtime and media settings", async () => {
     const result = await handleAiConfig({
       modelConfig: {
@@ -1970,7 +2050,7 @@ describe("handleAiConfig", () => {
 describe("handleAiTranscriptionCreate", () => {
   function makeTranscriptionContext(options: {
     config?: Record<string, string>;
-    response?: KernelTestValue;
+    response?: InferenceMediaResult;
   } = {}): KernelContext {
     const config = options.config ?? {};
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1985,14 +2065,7 @@ describe("handleAiTranscriptionCreate", () => {
           cwd: "/home/sam",
         }, calls: ["*"] }),
       config: makeTestConfig(config),
-      env: {
-        AI: {
-          run: vi.fn(async () => options.response ?? ({
-            text: "turn on the office lights",
-            transcription_info: { duration: 1.25, language: "en" },
-          })),
-        },
-      },
+      env: { INFERENCE_EXECUTION: mediaServiceFixture(options.response) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -2011,16 +2084,16 @@ describe("handleAiTranscriptionCreate", () => {
     expect(result.duration).toBe(1.25);
     expect(result.language).toBe("en");
     expect(result.model).toBe(DEFAULT_AUDIO_TRANSCRIPTION_MODEL);
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-      expect.objectContaining({
-        audio: "AQID",
-        task: "transcribe",
-        initial_prompt: "short command",
-        vad_filter: true,
-        condition_on_previous_text: false,
-      }),
-      { signal: expect.any(AbortSignal) },
+    expect([...mediaInputBodies[0]]).toEqual([1, 2, 3]);
+    expect(mediaMock.mock.calls[0][0]).toMatchObject({ installationId: TEST_INSTALLATION_ID, actor: { localUid: 1000 }, workload: "kernel" });
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "transcription", input: expect.objectContaining({ model: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+        mode: "transcribe",
+        prompt: "short command",
+        vadFilter: true,
+        conditionOnPreviousText: false,
+      }) }),
+      expect.any(ReadableStream),
     );
   });
 
@@ -2129,20 +2202,20 @@ describe("handleAiTranscriptionCreate", () => {
     const ctx = makeTranscriptionContext();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { requestSignal?: AbortSignal }).requestSignal = controller.signal;
-    vi.mocked(ctx.env.AI.run).mockImplementation((_model, _input, options) =>
-      new Promise((_resolve, reject) => {
-        options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
-      })
-    );
+    mediaMock.mockImplementationOnce(async (_input, body) => {
+      await body?.cancel();
+      return new Promise<never>(() => {});
+    });
 
     const request = handleAiTranscriptionCreate({
       audio: { mimeType: "audio/webm" },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
-    await vi.waitFor(() => expect(ctx.env.AI.run).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mediaMock).toHaveBeenCalledTimes(1));
     controller.abort(new Error("user changed conversation"));
 
     await expect(request).rejects.toThrow("user changed conversation");
-    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
+    expect(mediaMock).toHaveBeenCalledTimes(1);
+    expect(mediaAbortMock).toHaveBeenCalledWith(expect.any(String), "cancelled");
   });
 
   it("uses configured transcription model and byte limits", async () => {
@@ -2183,7 +2256,7 @@ describe("handleAiTranscriptionCreate", () => {
 describe("handleAiImageRead", () => {
   function makeImageReadContext(options: {
     config?: Record<string, string>;
-    response?: KernelTestValue;
+    response?: InferenceMediaResult;
   } = {}): KernelContext {
     const config = options.config ?? {};
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2198,13 +2271,7 @@ describe("handleAiImageRead", () => {
           cwd: "/home/sam",
         }, calls: ["*"] }),
       config: makeTestConfig(config),
-      env: {
-        AI: {
-          run: vi.fn(async () => options.response ?? ({
-            caption: "A small terminal window with green text.",
-          })),
-        },
-      },
+      env: { INFERENCE_EXECUTION: mediaServiceFixture(options.response) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -2223,14 +2290,12 @@ describe("handleAiImageRead", () => {
       text: "A small terminal window with green text.",
       model: DEFAULT_IMAGE_READING_MODEL,
     }));
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_IMAGE_READING_MODEL,
-      expect.objectContaining({
-        task: "caption",
-        caption_length: "normal",
-        max_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
-        image: "data:image/png;base64,AQID",
-      }),
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-read", input: expect.objectContaining({
+        mode: "caption",
+        maxTokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
+      }) }),
+      expect.any(ReadableStream),
     );
   });
 
@@ -2240,9 +2305,7 @@ describe("handleAiImageRead", () => {
         "users/1000/ai/image/read/max_tokens": "77",
         "users/1000/ai/image/read/max_objects": "12",
       },
-      response: {
-        objects: [{ x_min: 0.1, y_min: 0.2, x_max: 0.3, y_max: 0.4 }],
-      },
+      response: { kind: "image-read", result: { mode: "detect", provider: "workers-ai", model: DEFAULT_IMAGE_READING_MODEL, objects: [{ xMin: 0.1, yMin: 0.2, xMax: 0.3, yMax: 0.4 }] } },
     });
 
     const response = await handleAiImageRead({
@@ -2258,28 +2321,23 @@ describe("handleAiImageRead", () => {
       model: DEFAULT_IMAGE_READING_MODEL,
       objects: [{ xMin: 0.1, yMin: 0.2, xMax: 0.3, yMax: 0.4 }],
     }));
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_IMAGE_READING_MODEL,
-      {
-        image: "data:image/png;base64,AQID",
-        stream: false,
-        task: "detect",
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-read", input: expect.objectContaining({
+        mode: "detect",
         target: "button",
-        max_objects: 12,
-      },
+        maxObjects: 12,
+      }) }),
+      expect.any(ReadableStream),
     );
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("returns decoded streaming output as a response body", async () => {
-    const encoded = new TextEncoder().encode("data: {\"text\":\"hello\"}\n\n");
+    const encoded = new TextEncoder().encode("hello");
     const ctx = makeImageReadContext({
-      response: new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoded);
-          controller.close();
-        },
-      }),
+      response: { kind: "image-read", result: { mode: "caption", provider: "workers-ai", model: DEFAULT_IMAGE_READING_MODEL, streamed: true }, body: new ReadableStream({
+        start(controller) { controller.enqueue(encoded); controller.close(); },
+      }) },
     });
 
     const response = await handleAiImageRead({
@@ -2348,7 +2406,7 @@ describe("handleAiImageRead", () => {
 describe("handleAiImageGenerate", () => {
   function makeImageGenerateContext(options: {
     config?: Record<string, string>;
-    response?: KernelTestValue;
+    response?: InferenceMediaResult;
   } = {}): KernelContext {
     const config = options.config ?? {};
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2363,11 +2421,7 @@ describe("handleAiImageGenerate", () => {
           cwd: "/home/sam",
         }, calls: ["*"] }),
       config: makeTestConfig(config),
-      env: {
-        AI: {
-          run: vi.fn(async () => options.response ?? ({ image: "AQID" })),
-        },
-      },
+      env: { INFERENCE_EXECUTION: mediaServiceFixture(options.response) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -2383,9 +2437,9 @@ describe("handleAiImageGenerate", () => {
     });
     expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
     expect(result.data.model).toBe(DEFAULT_IMAGE_GENERATION_MODEL);
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      DEFAULT_IMAGE_GENERATION_MODEL,
-      { prompt: "a green terminal" },
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-generate", input: expect.objectContaining({ model: DEFAULT_IMAGE_GENERATION_MODEL, prompt: "a green terminal" }) }),
+      undefined,
     );
   });
 
@@ -2401,18 +2455,14 @@ describe("handleAiImageGenerate", () => {
     const result = await handleAiImageGenerate({ prompt: "a blue terminal" }, ctx);
 
     expect(result.data.model).toBe("@cf/black-forest-labs/flux-1-schnell");
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/black-forest-labs/flux-1-schnell",
-      { prompt: "a blue terminal" },
+    await result.body?.stream.cancel();
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-generate", input: expect.objectContaining({ model: "@cf/black-forest-labs/flux-1-schnell", prompt: "a blue terminal" }) }),
+      undefined,
     );
   });
 
   it("uses the credential attached to the account image configuration", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ data: [{ b64_json: "AQID" }] }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
     const ctx = makeImageGenerateContext({
       config: {
         "users/1000/ai/image/generation/provider": "openai",
@@ -2420,22 +2470,13 @@ describe("handleAiImageGenerate", () => {
         "users/1000/ai/image/generation/api_key": "sk-image",
       },
     });
-
-    try {
-      const result = await handleAiImageGenerate({ prompt: "a profile terminal" }, ctx);
-
-      expect(result.data.provider).toBe("openai");
-      expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/images/generations"),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer sk-image",
-          }),
-        }),
-      );
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    const result = await handleAiImageGenerate({ prompt: "a profile terminal" }, ctx);
+    expect(result.data.provider).toBe("openai");
+    expect(mediaMock).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "image-generate",
+      input: expect.objectContaining({ provider: "openai", model: "gpt-image-1", apiKey: "sk-image" }),
+    }), undefined);
+    await result.body?.stream.cancel();
   });
 
   it("requires a prompt", async () => {
@@ -2446,7 +2487,7 @@ describe("handleAiImageGenerate", () => {
 describe("handleAiSpeechCreate", () => {
   function makeSpeechContext(options: {
     config?: Record<string, string>;
-    response?: KernelTestValue;
+    response?: InferenceMediaResult;
   } = {}): KernelContext {
     const config = options.config ?? {};
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2461,16 +2502,7 @@ describe("handleAiSpeechCreate", () => {
           cwd: "/home/sam",
         }, calls: ["*"] }),
       config: makeTestConfig(config),
-      env: {
-        AI: {
-          run: vi.fn(async () => options.response ?? new ReadableStream({
-            start(controller) {
-              controller.enqueue(new Uint8Array([1, 2, 3]));
-              controller.close();
-            },
-          })),
-        },
-      },
+      env: { INFERENCE_EXECUTION: mediaServiceFixture(options.response) },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
@@ -2488,13 +2520,13 @@ describe("handleAiSpeechCreate", () => {
     expect(result.data.provider).toBe("workers-ai");
     expect(result.data.model).toBe("@cf/deepgram/aura-2-en");
     expect(result.data.voice).toBe("luna");
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/deepgram/aura-2-en",
-      expect.objectContaining({
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/deepgram/aura-2-en",
         text: "Hello GSV",
-        speaker: "luna",
+        voice: "luna",
         encoding: "mp3",
-      }),
+      }) }),
+      undefined,
     );
   });
 
@@ -2513,19 +2545,20 @@ describe("handleAiSpeechCreate", () => {
 
     expect(result.data.model).toBe("@cf/deepgram/aura-1");
     expect(result.data.voice).toBe("orpheus");
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/deepgram/aura-1",
-      expect.objectContaining({
-        speaker: "orpheus",
+    await result.body?.stream.cancel();
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/deepgram/aura-1",
+        voice: "orpheus",
         encoding: "wav",
-      }),
+      }) }),
+      undefined,
     );
   });
 
   it("normalizes markdown before sending text to the speech model", async () => {
     const ctx = makeSpeechContext();
 
-    await handleAiSpeechCreate({
+    const generated = await handleAiSpeechCreate({
       text: [
         "**Result:**",
         "Ready ✅",
@@ -2542,10 +2575,10 @@ describe("handleAiSpeechCreate", () => {
         "```",
       ].join("\n"),
     }, ctx);
+    await generated.body?.stream.cancel();
 
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/deepgram/aura-2-en",
-      expect.objectContaining({
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/deepgram/aura-2-en",
         text: [
           "Result:",
           "Ready",
@@ -2557,20 +2590,22 @@ describe("handleAiSpeechCreate", () => {
           "",
           "Code block omitted.",
         ].join("\n"),
-      }),
+      }) }),
+      undefined,
     );
   });
 
   it("allows callers to opt out of markdown speech normalization", async () => {
     const ctx = makeSpeechContext();
 
-    await handleAiSpeechCreate({ text: "**literal**", textFormat: "plain" }, ctx);
+    const generated = await handleAiSpeechCreate({ text: "**literal**", textFormat: "plain" }, ctx);
+    await generated.body?.stream.cancel();
 
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/deepgram/aura-2-en",
-      expect.objectContaining({
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/deepgram/aura-2-en",
         text: "**literal**",
-      }),
+      }) }),
+      undefined,
     );
   });
 
@@ -2590,7 +2625,7 @@ describe("handleAiSpeechCreate", () => {
         skipped: true,
       },
     });
-    expect(ctx.env.AI.run).not.toHaveBeenCalled();
+    expect(mediaMock).not.toHaveBeenCalled();
   });
 
   it("uses configured speech defaults and character limits", async () => {
@@ -2602,41 +2637,39 @@ describe("handleAiSpeechCreate", () => {
         "config/ai/speech/encoding": "mp3",
         "config/ai/speech/max_chars": "4",
       },
-      response: { audio: "AQID", mime_type: "audio/mpeg" },
     });
 
     const result = await handleAiSpeechCreate({ text: "test" }, ctx);
 
     expect(result.data.voice).toBe("asteria");
     expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/deepgram/aura-2-en",
-      expect.objectContaining({
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/deepgram/aura-2-en",
         text: "test",
-        speaker: "asteria",
+        voice: "asteria",
         encoding: "mp3",
-      }),
+      }) }),
+      undefined,
     );
     await expect(handleAiSpeechCreate({ text: "too long" }, ctx)).rejects.toThrow("speech limit");
   });
 
-  it("maps MeloTTS requests to the model-specific input shape", async () => {
-    const ctx = makeSpeechContext({
-      response: { audio: "AQID" },
-    });
+  it("forwards the selected speech model and language to inference", async () => {
+    const ctx = makeSpeechContext();
 
-    await handleAiSpeechCreate({
+    const generated = await handleAiSpeechCreate({
       text: "hola",
       model: "@cf/myshell-ai/melotts",
       language: "es",
     }, ctx);
+    await generated.body?.stream.cancel();
 
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/myshell-ai/melotts",
-      {
-        prompt: "hola",
-        lang: "es",
-      },
+    expect(mediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "speech", input: expect.objectContaining({ model: "@cf/myshell-ai/melotts",
+        text: "hola",
+        language: "es",
+      }) }),
+      undefined,
     );
   });
 });

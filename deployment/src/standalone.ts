@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
+import * as Config from "effect/Config";
+import * as Schema from "effect/Schema";
 import type { GsvDeploymentManifest } from "./manifest.ts";
 import { GsvAdapterWorker } from "./adapter.ts";
-import { GsvRuntime } from "./runtime.ts";
+import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeDependencies } from "./runtime.ts";
 
 export type StandaloneGsvDeploymentProps = {
   manifest: GsvDeploymentManifest;
@@ -10,6 +12,7 @@ export type StandaloneGsvDeploymentProps = {
 
 export const StandaloneGsvDeployment = (
   props: StandaloneGsvDeploymentProps,
+  dependencies: GsvRuntimeDependencies = gsvRuntimeDependencies,
 ) =>
   Effect.gen(function* () {
     const requested = new Set(props.adapterIds);
@@ -28,7 +31,7 @@ export const StandaloneGsvDeployment = (
         adapter,
         deployment: adapter.standalone,
         workersDev: { enabled: true, previewsEnabled: false },
-      });
+      }, { ...dependencies, Config, Schema });
       adapters.push({
         id: adapter.id,
         gatewayBinding: adapter.gatewayBinding,
@@ -49,6 +52,6 @@ export const StandaloneGsvDeployment = (
       paths: props.manifest.runtime,
       gatewayWorkersDev: { enabled: true, previewsEnabled: false },
       services: { adapters },
-    });
+    }, dependencies);
     return { ...runtime, adapters };
   });

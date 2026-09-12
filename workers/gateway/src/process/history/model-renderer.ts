@@ -1,6 +1,6 @@
 import type {
   AssistantMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall, ToolResultMessage, UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@humansandmachines/gsv/services/inference-context";
 import type { InteractionOrigin, ProcHistoryEvent, ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { tagAssistantContextIdentity } from "../context-message-metadata";
 import { type StoredProcessMedia } from "../media";

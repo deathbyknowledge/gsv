@@ -1,5 +1,5 @@
 import type { ProcessStore } from "../store";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@humansandmachines/gsv/services/inference-context";
 import {
   procHistoryRecordDataSchema, type JsonObject, type JsonValue, type ProcHistoryRecord,
   type ProcHistoryRecordData, type ProcToolResultOutcome, type ResourceBlock,

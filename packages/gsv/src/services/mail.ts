@@ -13,20 +13,20 @@ import type {
 } from "../protocol/mail";
 /** Mail transport contract implemented by a Gateway deployment. */
 export interface MailGatewayService {
-  acceptManagedInboundMail(
+  acceptInboundMail(
     installation: AdapterInstallationContext,
     metadata: ManagedInboundMailMetadata,
     body: BinaryBody,
   ): Promise<ManagedInboundMailAccepted>;
-  completeManagedInboundMail(
+  completeInboundMail(
     installation: AdapterInstallationContext,
     completion: ManagedInboundMailCompletion,
   ): Promise<void>;
-  claimManagedOutboundMail(
+  claimOutboundMail(
     installation: AdapterInstallationContext,
     reference: ManagedOutboundMailReference,
   ): Promise<ManagedOutboundMailClaimOutcome>;
-  completeManagedOutboundMail(
+  completeOutboundMail(
     installation: AdapterInstallationContext,
     completion: ManagedOutboundMailCompletion,
   ): Promise<void>;
@@ -45,7 +45,12 @@ export interface MailService {
 }
 
 /** @deprecated Import `MailGatewayService` from `@humansandmachines/gsv/services/mail`. */
-export type ManagedMailGatewayService = MailGatewayService;
+export interface ManagedMailGatewayService {
+  acceptManagedInboundMail: MailGatewayService["acceptInboundMail"];
+  completeManagedInboundMail: MailGatewayService["completeInboundMail"];
+  claimManagedOutboundMail: MailGatewayService["claimOutboundMail"];
+  completeManagedOutboundMail: MailGatewayService["completeOutboundMail"];
+}
 /** @deprecated Import `MailService` from `@humansandmachines/gsv/services/mail`. */
 export type ManagedMailService = MailService;
 

@@ -1,3 +1,9 @@
+import { AdapterRetirement, type AdapterDataScope } from "../../shared/src/retirement";
+import { AdapterPeerRetirement } from "../../shared/src/peer-retirement";
+import type { InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
+import type { InstallationDirectoryService } from "../../../../packages/gsv/src/services/directory.js";
+import type { ManagedSlackWorkspace } from "./managed-workspace";
+import type { ManagedSlackPairing } from "./managed-pairing";
 import { DurableObject } from "cloudflare:workers";
 import { SLACK_TARGET_SYSCALLS, type SlackTargetCall } from "./slack-target";
 import { forwardSlackTargetResponse } from "./slack-target-response";
@@ -96,8 +102,9 @@ import {
 
 export interface ManagedSlackPeerEnv extends ManagedSlackPairingEnv {
   GATEWAY: Fetcher & AdapterGatewayBinding & ManagedSlackPairingEnv["GATEWAY"];
-  MANAGED_SLACK_WORKSPACE: DurableObjectNamespace;
-  MANAGED_SLACK_PAIRING: DurableObjectNamespace;
+  MANAGED_SLACK_WORKSPACE: DurableObjectNamespace<ManagedSlackWorkspace>;
+  MANAGED_SLACK_PAIRING: DurableObjectNamespace<ManagedSlackPairing>;
+  ACCOUNTS: InstallationDirectoryService;
 }
 
 export type ManagedSlackAcceptedEvent = {
@@ -142,19 +149,22 @@ type ManagedPairingStub = {
 };
 type ManagedWorkspaceStub = {
   admitEvent(teamId: string): Promise<ManagedSlackWorkspaceAdmission>;
-  openDm(actorId: string, expectedGeneration: string): Promise<{ channelId: string }>;
+  openDm(actorId: string, expectedGeneration: string, owner?: AdapterDataScope): Promise<{ channelId: string }>;
   postMessage(
     expectedGeneration: string,
     input: SlackPostMessageInput,
+    owner?: AdapterDataScope,
   ): Promise<ManagedSlackWorkspacePostResult>;
   updateMessage(
     expectedGeneration: string,
     input: SlackUpdateMessageInput,
+    owner?: AdapterDataScope,
   ): Promise<ManagedSlackWorkspacePostResult>;
   downloadFile(
     expectedGeneration: string,
     fileId: string,
     maxBytes: number,
+    owner?: AdapterDataScope,
   ): Promise<ManagedSlackWorkspaceDownloadResult>;
   uploadFiles(
     expectedGeneration: string,
@@ -164,6 +174,7 @@ type ManagedWorkspaceStub = {
       threadTs?: string;
       files: Array<{ filename: string; mimeType: string; bytes: Uint8Array }>;
     },
+    owner?: AdapterDataScope,
   ): Promise<ManagedSlackWorkspaceUploadResult>;
   getTargetAuthorization(
     actorId: string,
@@ -239,6 +250,8 @@ const PAIRING_CHARACTERS = 12;
 const SLACK_TARGET_ID = "workspace";
 
 export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
+  private readonly retirement = new AdapterRetirement(this.ctx.storage);
+  private readonly lifecycle: AdapterPeerRetirement<ManagedSlackPeerState>;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
   private readonly targetCalls = new Map<string, ActiveManagedSlackTargetCall>();
@@ -247,26 +260,44 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   constructor(ctx: DurableObjectState, env: ManagedSlackPeerEnv) {
     super(ctx, env);
     runAdapterHilSqlMigrations(ctx.storage);
-    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.deliveries = new DeliveryLedger(this.ctx.storage, { retirement: this.retirement });
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_PREFIX,
       {
+        retirement: this.retirement,
         completedRetentionMs: INBOUND_RETENTION_MS,
         maxRecords: INBOUND_MAX_RECORDS,
         pendingOrder: "created",
       },
     );
+    this.lifecycle = new AdapterPeerRetirement(ctx.storage, this.retirement, {
+      stateKey: STATE_KEY, inboundPrefix: INBOUND_PREFIX, inbound: this.inboundDeliveries,
+      outbound: this.deliveries, hil: true,
+      identity: (state) => ({ name: managedSlackPeerObjectName(state.accountId, state.actorId), understood: state.version === 1 && Boolean(state.accountId && state.actorId) }),
+      cancelWork: async (installationId) => {
+        await Promise.all([...this.targetCalls.values()].filter((call) => call.installationId === installationId).map(async (call) => {
+          await this.cancelTarget(installationId, call.routeGeneration, SLACK_TARGET_ID, call.requestId);
+        }));
+      },
+    });
   }
 
+  async inspectInstallationResource(installationId: string) { return await this.lifecycle.inspect(installationId); }
+  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.quiesce(input); }
+  async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
+  async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
+
   async acceptEvent(input: ManagedSlackAcceptedEvent): Promise<{ accepted: true }> {
-    const routeGeneration = await this.ctx.storage.transaction(async (txn) => {
+    const route = await this.ctx.storage.transaction(async (txn) => {
       const current = await txn.get<ManagedSlackPeerState>(STATE_KEY);
       const next = bindManagedSlackPeer(current, input);
       this.assertObjectIdentity(next);
       await txn.put(STATE_KEY, next);
-      return next.activeRoute?.generation;
+      return next.activeRoute;
     });
+    if (this.retirement.retired(route)) return { accepted: true };
+    const routeGeneration = route?.generation;
     await this.inboundDeliveries.enqueueAndArm(
       input.inbound.deliveryId,
       {
@@ -276,6 +307,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         routeGeneration,
       },
       Date.now() + INBOUND_WAKE_DELAY_MS,
+      route ?? null,
     );
     this.ctx.waitUntil(this.drainInbound());
     return { accepted: true };
@@ -290,6 +322,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     const route = state.activeRoute;
     if (
       !route
+      || this.retirement.retired(route)
       || input.accountId !== state.accountId
       || input.teamId !== state.teamId
       || input.botUserId !== state.botUserId
@@ -310,6 +343,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
         routeGeneration: route.generation,
       },
       Date.now() + INBOUND_WAKE_DELAY_MS,
+      route ?? null,
     );
     this.ctx.waitUntil(this.drainInbound());
     return { accepted: true };
@@ -339,25 +373,29 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       await cancelBinaryBody(body, "Slack route changed before delivery");
       return { ok: false, error: "Slack route changed before delivery" };
     }
-    const controls = context?.hil
-      ? await prepareSlackApproval(
-          this.ctx.storage,
-          state.teamId,
-          context,
-          context.hil,
-        )
-      : null;
-    const renderedMessage = controls ? { ...message, text: controls.text } : message;
-    const result = await this.deliverMessage(renderedMessage, {
-      kind: "installation",
-      installationId,
-      generation: route.generation,
-      workspaceGeneration: state.workspaceGeneration,
-    }, body, controls?.blocks);
-    if (result.ok && controls) {
-      await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
-    }
-    return result;
+    try {
+      this.retirement.requireLive(route);
+      const controls = context?.hil
+        ? await prepareSlackApproval(
+            this.ctx.storage,
+            state.teamId,
+            context,
+            context.hil,
+            route,
+          )
+        : null;
+      const renderedMessage = controls ? { ...message, text: controls.text } : message;
+      const result = await this.deliverMessage(renderedMessage, {
+        kind: "installation",
+        installationId,
+        generation: route.generation,
+        workspaceGeneration: state.workspaceGeneration,
+      }, body, controls?.blocks);
+      if (result.ok && controls) {
+        await attachSlackApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+      }
+      return result;
+    } catch (error) { await cancelBinaryBody(body, error); throw error; }
   }
 
   async listTargets(
@@ -405,6 +443,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     if (this.targetCalls.has(key)) {
       return targetError(frame.id, 409, "Slack target request is already running");
     }
+    const release = this.retirement.start({ installationId, generation: routeGeneration });
     const active: ActiveManagedSlackTargetCall = {
       installationId,
       routeGeneration,
@@ -466,6 +505,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       return forwardSlackTargetResponse(response);
     } finally {
       if (this.targetCalls.get(key) === active) this.targetCalls.delete(key);
+      release();
     }
   }
 
@@ -522,10 +562,15 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       canonicalOrigin: requireCanonicalOrigin(input.canonicalOrigin),
       linkedAt: Date.now(),
     };
+    const current = await this.requireState();
+    this.retirement.requireLive(route);
+    await this.env.SLACK_INSTALLATIONS.getByName(route.installationId).registerResource({ kind: "adapter-peer", name: managedSlackPeerObjectName(current.accountId, current.actorId), objectId: this.ctx.id.toString(), generation: route.generation });
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Slack peer is not initialized");
       const existing = state.pairing?.preparedRoute;
+      if (state.pairing?.operationId === input.operationId && existing && (existing.installationId !== route.installationId || existing.localUid !== route.localUid)) throw new Error("Pairing operation identity changed");
       const effectiveRoute = state.pairing?.operationId === input.operationId && existing
         ? existing
         : route;
@@ -547,27 +592,32 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
-    const activated = await this.ctx.storage.transaction(async (txn) => {
-      const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
-      if (!state) throw new Error("Managed Slack peer is not initialized");
-      const activated = activateManagedSlackPairing(state, {
-        claimId,
-        expiresAt,
-        operationId: requireOpaque(input.operationId, "operationId"),
-        route,
+    const release = this.retirement.start(route);
+    try {
+      const activated = await this.ctx.storage.transaction(async (txn) => {
+        this.retirement.requireLive(route);
+        const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
+        if (!state) throw new Error("Managed Slack peer is not initialized");
+        const activated = activateManagedSlackPairing(state, {
+          claimId,
+          expiresAt,
+          operationId: requireOpaque(input.operationId, "operationId"),
+          route,
+        });
+        await txn.put(STATE_KEY, activated.state);
+        return activated;
       });
-      await txn.put(STATE_KEY, activated.state);
-      return activated;
-    });
-    await this.cancelSupersededTargetCalls(activated.state);
-    const activeRoute = activated.state.activeRoute;
-    if (!activeRoute) throw new Error("Managed Slack route activation failed");
-    await this.workspace(activated.state.accountId).registerPeerRoute(
-      activated.state.actorId,
-      activeRoute.installationId,
-      activeRoute.generation,
-    );
-    return activated.preparation;
+      await this.cancelSupersededTargetCalls(activated.state);
+      const activeRoute = activated.state.activeRoute;
+      if (!activeRoute) throw new Error("Managed Slack route activation failed");
+      await this.workspace(activated.state.accountId).registerPeerRoute(
+        activated.state.actorId,
+        activeRoute.installationId,
+        activeRoute.generation,
+      );
+      this.retirement.requireLive(route);
+      return activated.preparation;
+    } finally { release(); }
   }
 
   async finalizePairing(
@@ -577,6 +627,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Slack peer is not initialized");
       const finalized = finalizeManagedSlackPairing(state, {
@@ -610,6 +661,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
 
   async disconnect(input: AdapterPairingDisconnectInput): Promise<{ disconnected: boolean }> {
     const disconnected = await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(input);
       const state = await txn.get<ManagedSlackPeerState>(STATE_KEY);
       if (!state) return { state: undefined, disconnected: false };
       if (
@@ -678,11 +730,12 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     if (state.workspaceGeneration !== payload.workspaceGeneration) return { terminal: true };
     if (payload.kind === "approval") {
       const route = state.activeRoute;
-      if (!route || route.generation !== payload.routeGeneration) return { terminal: true };
+      if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) return { terminal: true };
       const admission = await this.workspace(state.accountId).admitEvent(state.teamId);
       if (!admission.accepted || admission.generation !== payload.workspaceGeneration) {
         return { terminal: true };
       }
+      this.retirement.requireLive(route);
       // The durable approval delivery is authoritative; clearing buttons is best effort.
       await handleSlackApprovalCallback(
         this.ctx.storage,
@@ -698,6 +751,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
                 messageTs: callback.sourceMessageId,
                 ...message,
               },
+              route,
             );
             if (!updated.ok && updated.kind !== "permanent") {
               throw new Error("Slack approval presentation update failed");
@@ -711,7 +765,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       return await this.pairingResponse(payload.inbound);
     }
     const route = state.activeRoute;
-    if (!route || route.generation !== payload.routeGeneration) return { terminal: true };
+    if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) return { terminal: true };
     const admission = await this.workspace(state.accountId).admitEvent(state.teamId);
     if (!admission.accepted || admission.generation !== payload.workspaceGeneration) {
       return { terminal: true };
@@ -724,6 +778,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
           payload.workspaceGeneration,
           fileId,
           maxBytes,
+          route,
         );
         if (result.ok) return result.file;
         if (result.kind === "permanent") return null;
@@ -741,7 +796,8 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       throw error;
     }
     if (
-      current.workspaceGeneration !== payload.workspaceGeneration
+      this.retirement.retired(route)
+      || current.workspaceGeneration !== payload.workspaceGeneration
       || current.activeRoute?.installationId !== route.installationId
       || current.activeRoute.generation !== route.generation
       || !currentAdmission.accepted
@@ -783,6 +839,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       providerMessageId: inbound.messageId,
       actorId: inbound.actorId,
     });
+    if (this.retirement.retired(route)) return { terminal: true };
     if (result.challenge) {
       return await this.pairingResponse(inbound);
     }
@@ -852,6 +909,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     const opened = await this.workspace(state.accountId).openDm(
       state.actorId,
       state.workspaceGeneration,
+      null,
     );
     return await this.ctx.storage.transaction(async (txn) => {
       const current = await txn.get<ManagedSlackPeerState>(STATE_KEY);
@@ -907,6 +965,18 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     body?: BinaryBody,
     blocks?: SlackBlock[],
   ): Promise<AdapterSendResult> {
+    const owner = context.kind === "installation" ? context : null;
+    let release: () => void;
+    try { release = this.retirement.start(owner); }
+    catch (error) { await cancelBinaryBody(body, error); throw error; }
+    try { return await this.deliverOwnedMessage(message, context, owner, body, blocks); }
+    finally { release(); }
+  }
+
+  private async deliverOwnedMessage(
+    message: AdapterOutboundMessage, context: ResponseContext, owner: AdapterDataScope,
+    body?: BinaryBody, blocks?: SlackBlock[],
+  ): Promise<AdapterSendResult> {
     const hasFiles = (message.media?.length ?? 0) > 0;
     let state: ManagedSlackPeerState;
     let renderedText: string;
@@ -950,6 +1020,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     let mediaBytes: Array<Uint8Array | undefined>;
     try {
       mediaBytes = await readAdapterMediaBody(media, body, {
+        signal: owner ? this.retirement.signal(owner) : undefined,
         maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
         maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
       });
@@ -985,7 +1056,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     }
     let claim;
     try {
-      claim = await this.deliveries.claim(message.deliveryId, fingerprint);
+      claim = await this.deliveries.claim(message.deliveryId, fingerprint, owner);
     } catch {
       logSlackFileDeliveryFailure("ledger_claim", "retryable");
       return { ok: false, error: "Slack delivery ledger unavailable", retryable: true };
@@ -1039,6 +1110,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             threadTs: message.surface.threadId,
             files: uploadFiles,
           },
+          owner,
         );
         if (!delivered.ok) {
           logSlackFileDeliveryFailure("provider", delivered.kind);
@@ -1054,6 +1126,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
             threadTs: message.surface.threadId,
             blocks,
           },
+          owner,
         );
         if (!delivered.ok) return await fail(delivered.kind, delivered.error);
         providerMessageId = delivered.ts;
@@ -1083,6 +1156,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       throw new Error("Slack workspace changed before delivery");
     }
     if (context.kind === "installation") {
+      this.retirement.requireLive(context);
       if (
         state.activeRoute?.installationId !== context.installationId
         || state.activeRoute.generation !== context.generation
@@ -1153,6 +1227,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     const route = state.activeRoute;
     if (
       !route
+      || this.retirement.retired(route)
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {
@@ -1169,6 +1244,7 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
     const route = state.activeRoute;
     if (
       !route
+      || this.retirement.retired(route)
       || route.installationId !== requireOpaque(installationId, "installationId")
       || route.generation !== requireOpaque(routeGeneration, "routeGeneration")
     ) {

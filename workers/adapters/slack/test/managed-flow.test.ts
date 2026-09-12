@@ -1276,7 +1276,7 @@ describe("managed Slack clean-instance flow", () => {
     expect(relinked.generation).not.toBe(alice.generation);
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
-        call: "unlinkManagedAdapterIdentity",
+        call: "unlinkAdapterIdentity",
         installation: { installationId: "installation-alice" },
         input: expect.objectContaining({
           accountId,

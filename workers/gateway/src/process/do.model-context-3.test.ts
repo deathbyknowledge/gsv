@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/pi-ai";
+import type { Context } from "@humansandmachines/gsv/services/inference-context";
 import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {

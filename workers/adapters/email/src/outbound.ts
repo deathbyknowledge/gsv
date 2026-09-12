@@ -8,6 +8,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { mailAddressForHandle } from "./address";
 import type { MailEnv, MailLimits } from "./env";
+import type { MailRetirement } from "./retirement";
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
@@ -64,11 +65,13 @@ export class OutboundDeliveryCoordinator {
     private readonly env: MailEnv,
     private readonly installationId: string,
     private readonly limits: MailLimits,
+    private readonly retirement: MailRetirement,
   ) {}
 
   async deliver(
     referenceValue: ManagedOutboundMailReference,
   ): Promise<void> {
+    this.retirement.requireLive();
     const reference = parseReference(referenceValue);
     try {
       await this.runActive(
@@ -145,6 +148,7 @@ export class OutboundDeliveryCoordinator {
       now,
     ).toArray()[0];
     if (!row) return false;
+    this.retirement.requireLive();
     const reference = rowReference(row);
     await this.runActive(
       reference,
@@ -229,6 +233,7 @@ export class OutboundDeliveryCoordinator {
     }
 
     await this.scheduleNextAlarm();
+    if (this.retirement.retired) return;
     const claiming = this.requireByReference(reference);
     if (
       claiming.state === "claiming"
@@ -240,6 +245,7 @@ export class OutboundDeliveryCoordinator {
   }
 
   private async processDueClaim(row: OutboundRow, now: number): Promise<void> {
+    if (this.retirement.retired) return;
     const reference = rowReference(row);
     if (!this.limits.outboundEnabled) {
       this.setTerminal(reference, "failed", "outbound_disabled");
@@ -255,6 +261,7 @@ export class OutboundDeliveryCoordinator {
       const installation = await this.env.ACCOUNTS.resolveInstallation(
         this.installationId,
       );
+      if (this.retirement.retired) return;
       if (!installation.found) {
         this.setTerminal(reference, "failed", "installation_inactive");
         await this.notify(this.requireByReference(reference));
@@ -273,6 +280,7 @@ export class OutboundDeliveryCoordinator {
         this.env.MAIL_DOMAIN,
       );
     } catch (error) {
+      if (this.retirement.retired) return;
       this.deferClaim(reference, reserved.claim_attempts, String(error));
       return;
     }
@@ -289,12 +297,17 @@ export class OutboundDeliveryCoordinator {
     try {
       let outcome: ManagedOutboundMailClaimOutcome;
       try {
-        outcome = await this.env.GATEWAY.claimManagedOutboundMail(
+        outcome = await this.env.GATEWAY.claimOutboundMail(
           { installationId: this.installationId },
           reference,
         );
       } catch (error) {
+        if (this.retirement.retired) return;
         this.deferClaim(reference, reserved.claim_attempts, String(error));
+        return;
+      }
+      if (this.retirement.retired) {
+        if (outcome.status === "ready") await cancelClaimBody(outcome, "Mail installation is retired");
         return;
       }
       if (outcome.status === "rejected") {
@@ -322,6 +335,7 @@ export class OutboundDeliveryCoordinator {
           expectedFrom,
         );
       } catch (error) {
+        if (this.retirement.retired) return;
         if (!(error instanceof InvalidDraftError)) {
           this.deferClaim(reference, reserved.claim_attempts, String(error));
           return;
@@ -331,6 +345,7 @@ export class OutboundDeliveryCoordinator {
         return;
       }
 
+      if (this.retirement.retired) return;
       if (!this.reserveAttempt(reference, outbound.draft.textSize)) {
         await this.notify(this.requireByReference(reference));
         return;
@@ -338,10 +353,13 @@ export class OutboundDeliveryCoordinator {
 
       try {
         await this.scheduleNextAlarm();
+        this.retirement.requireLive();
         const result = await this.send(outbound);
+        if (this.retirement.retired) return;
         const messageId = parseProviderMessageId(result.messageId);
         this.setTerminal(reference, "accepted", null, messageId);
       } catch {
+        if (this.retirement.retired) return;
         this.setTerminal(
           reference,
           "unknown",
@@ -394,6 +412,7 @@ export class OutboundDeliveryCoordinator {
     const bytes = await bodyToBytes(
       claim.body,
       Math.min(ABSOLUTE_MAX_TEXT_BYTES, this.limits.maxOutboundTextBytes),
+      this.retirement.cancellation.signal,
     );
     if (bytes.byteLength !== draft.textSize) {
       throw new InvalidDraftError();
@@ -694,6 +713,7 @@ export class OutboundDeliveryCoordinator {
   }
 
   private async notify(row: OutboundRow): Promise<void> {
+    if (this.retirement.retired) return;
     if (!isTerminal(row.state) || row.callback_completed_at !== null) return;
     const completion: ManagedOutboundMailCompletion = {
       version: 1,
@@ -705,7 +725,7 @@ export class OutboundDeliveryCoordinator {
     };
     const now = Date.now();
     try {
-      await this.env.GATEWAY.completeManagedOutboundMail(
+      await this.env.GATEWAY.completeOutboundMail(
         { installationId: this.installationId },
         completion,
       );
@@ -722,6 +742,7 @@ export class OutboundDeliveryCoordinator {
         row.fingerprint,
       );
     } catch (error) {
+      if (this.retirement.retired) return;
       const attempts = row.callback_attempts + 1;
       this.ctx.storage.sql.exec(
         `UPDATE mail_outbound_deliveries
@@ -765,11 +786,12 @@ export class OutboundDeliveryCoordinator {
   }
 
   private async scheduleNextAlarm(): Promise<void> {
+    if (this.retirement.retired) return;
     const next = this.nextAlarmAt();
     if (next === null) return;
     const target = Math.max(next, Date.now() + 100);
     const existing = await this.ctx.storage.getAlarm();
-    if (existing === null || target < existing) {
+    if (!this.retirement.retired && (existing === null || target < existing)) {
       await this.ctx.storage.setAlarm(target);
     }
   }

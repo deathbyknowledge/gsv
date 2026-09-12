@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import type { JsonValue, ProcHistoryRecordData, ProcToolResultOutcome } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

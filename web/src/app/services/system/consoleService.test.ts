@@ -180,6 +180,8 @@ describe("console agent service", () => {
         supportsStatus: false,
         supportsActivity: false,
         supportsPairing: false,
+        enabled: false,
+        canLink: false,
         accounts: [],
       },
     ]);

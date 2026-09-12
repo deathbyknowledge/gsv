@@ -53,6 +53,7 @@ import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
 import { DevicePairingCreateError } from "./device-pairings";
+import { handleOwnerLink } from "./sys/owner";
 import {
   handleRepoApply,
   handleRepoCompare,
@@ -618,6 +619,33 @@ async function dispatchKernel(
         break;
       case "account.list":
         data = handleAccountList(frame.args, ctx);
+        break;
+      case "account.owner.link":
+        data = await handleOwnerLink(frame.args, ctx);
+        break;
+      case "account.recovery.code.start":
+      case "account.recovery.code.redeem":
+      case "account.recovery.redeem":
+        return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
+      case "account.invite.create":
+        data = await ctx.people.invite(frame.args, ctx);
+        break;
+      case "account.invite.list":
+        data = ctx.people.invitations(ctx);
+        break;
+      case "account.invite.cancel":
+        data = ctx.people.cancel(frame.args.id, ctx);
+        break;
+      case "account.invite.redeem":
+        return errFrame(frame.id, 400, "Human enrollment requires the connection enrollment path");
+      case "account.people.list":
+        data = ctx.people.people(ctx);
+        break;
+      case "account.password.set":
+        data = await ctx.people.setPassword(frame.args, ctx);
+        break;
+      case "account.remove":
+        data = ctx.people.remove(frame.args.uid, ctx);
         break;
 
       // --- sched.* ---

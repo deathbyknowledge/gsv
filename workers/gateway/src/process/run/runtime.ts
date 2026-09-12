@@ -1,6 +1,6 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
-import type { AssistantMessage, Context, ToolCall, Tool } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ToolCall, Tool } from "@humansandmachines/gsv/services/inference-context";
 import { z } from "zod";
 import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {

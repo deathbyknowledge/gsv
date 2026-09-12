@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
+  adapterSourceManifestSchema,
   gsvDeploymentManifestSchema,
   resolveAdapterDeploymentManifest,
 } from "../src/manifest.ts";
 
 const manifest = {
-  version: 1 as const,
+  version: 2 as const,
   runtime: {
     gatewayBundle: "gateway.js",
     webAssets: "assets",
     ripgitBundle: "ripgit.js",
+    installationsBundle: "installations.js",
+    installationsMigrations: "migrations",
+    inferenceBundle: "inference.js",
   },
   adapters: [{
     id: "matrix",
@@ -27,6 +32,14 @@ const manifest = {
 };
 
 describe("deployment manifest", () => {
+  it.each(["telegram", "slack", "discord"])("inventories every %s deployment namespace under its cleanup owner", (id) => {
+    const source = adapterSourceManifestSchema.parse(JSON.parse(readFileSync(new URL(`../../workers/adapters/${id}/adapter.json`, import.meta.url), "utf8")));
+    const deployment = source.managed!;
+    expect(deployment.lifecycle?.entrypoint).toBe(`${id[0].toUpperCase()}${id.slice(1)}LifecycleEntrypoint`);
+    expect(deployment.lifecycle?.namespaces.map((item) => item.className).sort())
+      .toEqual(deployment.durableObjects.map((item) => item.className).sort());
+    expect(deployment.lifecycle?.namespaces).toContainEqual({ className: `${id[0].toUpperCase()}${id.slice(1)}Installation`, kind: "adapter-installation" });
+  });
   it("accepts the checked-in deployment topology", () => {
     expect(gsvDeploymentManifestSchema.parse(manifest)).toEqual(manifest);
   });

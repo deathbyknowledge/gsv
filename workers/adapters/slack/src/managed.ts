@@ -55,13 +55,10 @@ export { managedSlackTargetRequestSchema } from "./slack-target";
 
 export { ManagedSlackWorkspace } from "./managed-workspace";
 export { ManagedSlackPeer } from "./managed-peer";
+export { SlackInstallation, SlackLifecycleEntrypoint } from "./lifecycle";
 export { ManagedSlackPairing } from "./managed-pairing";
 
-interface Env extends ManagedSlackPeerEnv, ManagedSlackHttpEnv {
-  MANAGED_SLACK_WORKSPACE: DurableObjectNamespace;
-  MANAGED_SLACK_PEER: DurableObjectNamespace;
-  MANAGED_SLACK_PAIRING: DurableObjectNamespace;
-}
+type Env = ManagedSlackPeerEnv & ManagedSlackHttpEnv;
 
 type ManagedSlackPeerStub = {
   sendMessage(

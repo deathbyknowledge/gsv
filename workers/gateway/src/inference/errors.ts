@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { isContextOverflow } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
+import { isContextOverflow } from "./context-overflow";
 import { jsonObjectSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 

@@ -1,8 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "runtime": {
     "gatewayBundle": "dist/cloudflare/gateway/worker/index.js",
     "webAssets": "dist/cloudflare/gateway/assets",
-    "ripgitBundle": "dist/cloudflare/ripgit/worker/index.js"
+    "ripgitBundle": "dist/cloudflare/ripgit/worker/index.js",
+    "installationsBundle": "dist/cloudflare/installations/worker/index.js",
+    "installationsMigrations": "dist/cloudflare/installations/migrations",
+    "inferenceBundle": "dist/cloudflare/inference/worker/index.js"
   }
 }

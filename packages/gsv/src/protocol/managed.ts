@@ -1,5 +1,6 @@
 import type { AiStopReason } from "./syscalls/ai";
 import type { AdapterInstallationContext } from "./adapters";
+import type { UnlinkAdapterIdentityInput, UnlinkAdapterIdentityResult } from "../services/adapters";
 import type {
   ManagedInferenceActor,
   ManagedInferencePurpose,
@@ -144,18 +145,10 @@ export type {
   InstallationOnboardingService,
 } from "../services/onboarding";
 
-export type UnlinkManagedAdapterIdentityInput = {
-  operationId: string;
-  accountId: string;
-  actorId: string;
-  surfaceId: string;
-  expectedLocalUid: number;
-  expectedGeneration: string;
-};
-
-export type UnlinkManagedAdapterIdentityResult = {
-  removed: boolean;
-};
+/** @deprecated Use UnlinkAdapterIdentityInput from services/adapters. */
+export type UnlinkManagedAdapterIdentityInput = UnlinkAdapterIdentityInput;
+/** @deprecated Use UnlinkAdapterIdentityResult from services/adapters. */
+export type UnlinkManagedAdapterIdentityResult = UnlinkAdapterIdentityResult;
 
 /** Attenuated cleanup RPC exposed only on a deployment-owned adapter binding. */
 export interface ManagedAdapterGatewayService {

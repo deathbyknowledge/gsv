@@ -1,3 +1,4 @@
+import { sameAdapterDataOwner, type AdapterDataScope, type AdapterRetirement } from "./retirement";
 import type {
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -12,7 +13,7 @@ const MAX_MESSAGE_ID_LENGTH = 256;
 const RECORD_PREFIX = "outbound_delivery:v1:record:";
 const META_KEY = "outbound_delivery:v1:meta";
 
-type DeliveryRecord =
+type DeliveryRecord = (
   | {
       state: "attempting";
       deliveryId: string;
@@ -43,7 +44,7 @@ type DeliveryRecord =
       error: string;
       createdAt: number;
       expiresAt: number;
-    };
+    }) & { owner?: AdapterDataScope };
 
 type DeliveryMeta = {
   count: number;
@@ -55,6 +56,7 @@ export type DeliveryClaim =
   | { claimed: false; result: AdapterSendResult };
 
 export type DeliveryLedgerOptions = {
+  retirement?: AdapterRetirement;
   retentionMs?: number;
   pruneIntervalMs?: number;
   maxRecords?: number;
@@ -135,7 +137,7 @@ export class DeliveryLedger {
 
   constructor(
     private readonly storage: DurableObjectStorage,
-    options: DeliveryLedgerOptions = {},
+    private readonly options: DeliveryLedgerOptions = {},
   ) {
     this.retentionMs = positiveInteger(
       options.retentionMs ?? DEFAULT_RETENTION_MS,
@@ -155,6 +157,7 @@ export class DeliveryLedger {
   async claim(
     deliveryId: string,
     requestFingerprint: string,
+    owner?: AdapterDataScope,
   ): Promise<DeliveryClaim> {
     const validationError = validateDeliveryId(deliveryId);
     if (validationError) {
@@ -172,6 +175,7 @@ export class DeliveryLedger {
 
     const now = this.now();
     return await this.storage.transaction(async (txn) => {
+      this.options.retirement?.requireLive(owner);
       let meta = await txn.get<DeliveryMeta>(META_KEY);
       let existing: DeliveryRecord | undefined;
 
@@ -206,6 +210,9 @@ export class DeliveryLedger {
       }
 
       if (existing) {
+        if (existing.owner !== undefined && !sameAdapterDataOwner(existing.owner, owner)) {
+          return { claimed: false, result: { ok: false, error: "Outbound delivery owner changed" } };
+        }
         if (existing.requestFingerprint !== requestFingerprint) {
           await txn.put(META_KEY, meta);
           return {
@@ -220,6 +227,7 @@ export class DeliveryLedger {
           const attemptId = crypto.randomUUID();
           await txn.put(recordKey(deliveryId), {
             ...existing,
+            ...(owner !== undefined ? { owner } : undefined),
             state: "attempting",
             attemptId,
           } satisfies DeliveryRecord);
@@ -251,6 +259,8 @@ export class DeliveryLedger {
         createdAt: now,
         expiresAt: now + this.retentionMs,
       };
+      if (owner !== undefined) record.owner = owner;
+      this.options.retirement?.requireLive(owner);
       await txn.put(recordKey(deliveryId), record);
       await txn.put(META_KEY, {
         count: meta.count + 1,
@@ -312,16 +322,38 @@ export class DeliveryLedger {
     await this.storage.transaction(async (txn) => {
       const key = recordKey(deliveryId);
       const record = await txn.get<DeliveryRecord>(key);
-      if (!isMatchingAttempt(record, attemptId)) {
+      if (!isMatchingAttempt(record, attemptId) || this.options.retirement?.retired(record.owner)) {
         return;
       }
       await txn.put(key, {
+        ...(record.owner !== undefined ? { owner: record.owner } : undefined),
         state: "retryable",
         deliveryId,
         requestFingerprint: record.requestFingerprint,
         createdAt: record.createdAt,
         expiresAt: record.expiresAt,
       } satisfies DeliveryRecord);
+    });
+  }
+
+  async inspectOwnership(installationId?: string): Promise<{ installationIds: string[]; unattributed: number; ownedCount: number }> {
+    const records = await this.storage.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
+    return {
+      installationIds: [...new Set([...records.values()].flatMap((record) => record.owner ? [record.owner.installationId] : []))],
+      unattributed: [...records.values()].filter((record) => record.owner === undefined).length,
+      ownedCount: [...records.values()].filter((record) => record.owner?.installationId === installationId).length,
+    };
+  }
+
+  async eraseInstallation(installationId: string, limit = 256): Promise<number> {
+    return await this.storage.transaction(async (txn) => {
+      const records = await txn.list<DeliveryRecord>({ prefix: RECORD_PREFIX });
+      const owned = [...records.entries()].filter(([, record]) => record.owner?.installationId === installationId);
+      const keys = owned.slice(0, limit).map(([key]) => key);
+      if (keys.length) await txn.delete(keys);
+      // Recompute the shared count on the next claim; other installations retain their receipts.
+      await txn.delete(META_KEY);
+      return owned.length - keys.length;
     });
   }
 
@@ -333,10 +365,12 @@ export class DeliveryLedger {
     await this.storage.transaction(async (txn) => {
       const key = recordKey(deliveryId);
       const record = await txn.get<DeliveryRecord>(key);
-      if (!isMatchingAttempt(record, attemptId)) {
+      if (!isMatchingAttempt(record, attemptId) || this.options.retirement?.retired(record.owner)) {
         return;
       }
-      await txn.put(key, replacement(record));
+      const next = replacement(record);
+      if (record.owner !== undefined) next.owner = record.owner;
+      await txn.put(key, next);
     });
   }
 }

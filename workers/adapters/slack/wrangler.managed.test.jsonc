@@ -3,7 +3,9 @@
   "name": "gsv-managed-slack-test",
   "main": "src/managed.ts",
   "compatibility_date": "2026-07-29",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "vars": {
     "SLACK_CLIENT_ID": "12345.67890",
     "SLACK_CLIENT_SECRET": "client_secret_123456789",
@@ -24,6 +26,10 @@
       {
         "name": "MANAGED_SLACK_PAIRING",
         "class_name": "ManagedSlackPairing"
+      },
+      {
+        "name": "SLACK_INSTALLATIONS",
+        "class_name": "SlackInstallation"
       }
     ]
   },
@@ -34,6 +40,12 @@
         "ManagedSlackWorkspace",
         "ManagedSlackPeer",
         "ManagedSlackPairing"
+      ]
+    },
+    {
+      "tag": "v2-installation-retirement",
+      "new_sqlite_classes": [
+        "SlackInstallation"
       ]
     }
   ],
@@ -49,12 +61,28 @@
       "entrypoint": "AdapterGatewayEntrypoint",
       "props": {
         "id": "slack",
-        "calls": ["adapter.inbound", "adapter.state.update"]
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
       }
     },
     {
       "binding": "SLACK_API",
       "service": "managed-slack-api-test"
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "managed-slack-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint"
+    },
+    {
+      "binding": "LIFECYCLE",
+      "service": "gsv-managed-slack-test",
+      "entrypoint": "SlackLifecycleEntrypoint",
+      "props": {
+        "authority": "installation-deletion"
+      }
     }
   ]
 }

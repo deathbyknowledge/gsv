@@ -28,6 +28,8 @@ export class IdentityLinkStore {
     linkedByUid: number,
     metadata?: IdentityLinkMetadata,
   ): IdentityLinkRecord {
+    const removed = this.sql.exec<{ disabled_at: number | null }>("SELECT disabled_at FROM account_access WHERE uid = ?", uid).toArray()[0];
+    if (removed?.disabled_at != null) throw new Error("Removed accounts cannot link a messenger");
     const now = Date.now();
     const existing = this.get(adapter, accountId, actorId);
     const createdAt = existing?.createdAt ?? now;

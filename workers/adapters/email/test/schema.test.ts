@@ -20,6 +20,7 @@ describe("managed mail schema migrations", () => {
         id: 4,
         name: "managed_mail_outbound_delivery",
       }),
+      expect.objectContaining({ id: 5, name: "mail_installation_retirement" }),
     ]);
   });
 });

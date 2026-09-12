@@ -11,6 +11,7 @@ const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
 const ACCOUNTS_WORKER = "gsv-accounts-test";
 const INFERENCE_WORKER = "gsv-inference-test";
+const EXECUTION_WORKER = "gsv-execution-test";
 const EMAIL_WORKER = "gsv-managed-email-test";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
@@ -20,8 +21,9 @@ const EMAIL_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "../adapters/email/wrangler.test.jsonc",
 );
+type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
 
-function integrationGatewayConfig(options: {
+export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
   managed?: boolean;
@@ -41,6 +43,10 @@ function integrationGatewayConfig(options: {
         { hideWarnings: true },
       )
     : config;
+  const executionBinding: ServiceBinding = {
+    binding: "INFERENCE_EXECUTION", service: options.managedServices?.inference ?? EXECUTION_WORKER,
+  };
+  if (options.managedServices) executionBinding.entrypoint = "InferenceService";
 
   return {
     name: options.name ?? config.name,
@@ -81,7 +87,7 @@ function integrationGatewayConfig(options: {
     worker_loaders: [{ binding: "LOADER" }],
     ai: undefined,
     services: [
-      { binding: "AI", service: DEPENDENCY_WORKER },
+      executionBinding,
       {
         binding: "CHANNEL_DISCORD",
         service: DEPENDENCY_WORKER,
@@ -110,6 +116,27 @@ function integrationGatewayConfig(options: {
           ]
         : []),
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
+  };
+}
+
+export function integrationExecutionConfig(workersAi = true): Unstable_RawConfig {
+  return {
+    name: EXECUTION_WORKER,
+    main: resolve(GATEWAY_ROOT, "test-integration/fixtures/inference-execution.ts"),
+    compatibility_date: "2026-09-01",
+    compatibility_flags: ["nodejs_compat", "enable_nodejs_os_module"],
+    vars: { INFERENCE_MONTHLY_REQUESTS: 0, INFERENCE_MONTHLY_OUTPUT_TOKENS: 0,
+      INFERENCE_MAX_OUTPUT_TOKENS: 1_048_576, INFERENCE_MAX_DURATION_MS: 2_147_483_647 },
+    durable_objects: { bindings: [{ name: "INFERENCE_EXECUTORS", class_name: "InferenceExecutor" }] },
+    migrations: [{ tag: "v1", new_sqlite_classes: ["InferenceExecutor"] }],
+    services: [
+      { binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER },
+      // Error journeys disable the operator-funded fallback alongside native AI.
+      ...(workersAi ? [
+        { binding: "FUNDED_INFERENCE", service: DEPENDENCY_WORKER, entrypoint: "ManagedInferenceFixture" },
+        { binding: "AI", service: DEPENDENCY_WORKER },
+      ] : []),
+    ],
   };
 }
 
@@ -155,7 +182,7 @@ function integrationEmailConfig(
   };
 }
 
-function integrationDependencyConfig(
+export function integrationDependencyConfig(
   gatewayService: string,
 ): Unstable_RawConfig {
   const config = unstable_readConfig(
@@ -218,6 +245,7 @@ function integrationManagedInferenceConfig(
     migrations: config.migrations,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "INSTALLATION_DIRECTORY", service: ACCOUNTS_WORKER },
       { binding: "AI", service: DEPENDENCY_WORKER },
     ],
   };
@@ -257,6 +285,7 @@ export function createGatewayTestHarness(options: {
       {
         config: integrationDependencyConfig("gsv"),
       },
+      { config: integrationExecutionConfig(options.workersAi) },
     ],
   });
 }
@@ -277,6 +306,7 @@ export function createManagedGatewayTestHarness(): TestHarness {
       {
         config: managedInferenceProbeConfig(),
       },
+      { config: integrationExecutionConfig() },
     ],
   });
 }

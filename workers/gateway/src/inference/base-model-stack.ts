@@ -12,7 +12,7 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
   DEFAULT_WORKERS_AI_MODEL,
 } from "./default-models";
-import { gsvInferenceFeaturesFromEnv } from "./gsv-provider";
+import { gsvInferenceFeaturesFromEnv } from "./features";
 
 export const GSV_INCLUDED_MODEL_ID = "gsv-included";
 export const WORKERS_AI_PRIMARY_MODEL_ID = "workers-ai-glm-5-3-flash";

@@ -1,3 +1,4 @@
+import { sameAdapterDataOwner, type AdapterDataScope, type AdapterRetirement } from "./retirement";
 import type {
   AdapterInboundResult,
   AdapterOutboundMessage,
@@ -12,7 +13,7 @@ export type PendingInboundResponse<ResponseContext = never> = {
   context?: ResponseContext;
 };
 
-type PendingInboundDelivery<Payload, ResponseContext> =
+type PendingInboundDelivery<Payload, ResponseContext> = (
   | {
       state: "provider";
       payload: Payload;
@@ -29,7 +30,7 @@ type PendingInboundDelivery<Payload, ResponseContext> =
       state: "completed";
       createdAt: number;
       expiresAt: number;
-    };
+    }) & { owner?: AdapterDataScope };
 
 export type InboundDeliveryDisposition<ResponseContext = never> = {
   terminal: boolean;
@@ -63,6 +64,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
     private readonly storage: DurableObjectStorage,
     private readonly prefix: string,
     private readonly options: {
+      retirement?: AdapterRetirement;
       completedRetentionMs?: number;
       maxRecords?: number;
       pendingOrder?: "created" | "key";
@@ -77,11 +79,13 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
     deliveryId: string,
     payload: Payload,
     alarmAt: number,
+    owner?: AdapterDataScope,
   ): Promise<void> {
     const normalizedId = requireDeliveryId(deliveryId);
     const normalizedAlarmAt = requireAlarmTime(alarmAt);
     const key = this.recordKey(normalizedId);
     await this.storage.transaction(async (txn) => {
+      this.options.retirement?.requireLive(owner);
       const now = Date.now();
       const records = this.options.maxRecords
         ? await txn.list<PendingInboundDelivery<Payload, ResponseContext>>({ prefix: this.prefix })
@@ -113,11 +117,14 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
         if (removed.length > 0) await txn.delete(removed);
       }
       const existing = await txn.get<PendingInboundDelivery<Payload, ResponseContext>>(key);
+      // A repeated provider delivery keeps its original route even after this peer relinks.
+      if (existing?.owner !== undefined && !sameAdapterDataOwner(existing.owner, owner)) return;
       if (existing?.state === "completed" && existing.expiresAt <= now) {
         await txn.delete(key);
       }
       if (!existing || (existing.state === "completed" && existing.expiresAt <= now)) {
         await txn.put(key, {
+          ...(owner !== undefined ? { owner } : undefined),
           state: "provider",
           payload,
           createdAt: now,
@@ -192,6 +199,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
 
     this.active.add(normalizedId);
     const resetGeneration = this.resetGeneration;
+    let release: (() => void) | undefined;
     try {
       const key = this.recordKey(normalizedId);
       const pending = await this.storage.get<
@@ -200,6 +208,11 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       if (!pending) {
         return { state: "missing" };
       }
+      if (this.options.retirement?.retired(pending.owner)) {
+        await this.storage.delete(key);
+        return { state: "completed" };
+      }
+      release = this.options.retirement?.start(pending.owner);
       if (pending.state === "completed") {
         if (pending.expiresAt > Date.now()) return { state: "completed" };
         await this.storage.delete(key);
@@ -228,16 +241,17 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       if (disposition.terminal) {
         const responses = disposition.responses ?? [];
         if (responses.length === 0) {
-          await this.completeRecord(key, pending.createdAt);
+          await this.completeRecord(key, pending.createdAt, pending.owner);
           return { state: "completed" };
         }
         const responseState: PendingInboundDelivery<Payload, ResponseContext> = {
+          ...(pending.owner !== undefined ? { owner: pending.owner } : undefined),
           state: "responses",
           responses,
           attempt: 0,
           createdAt: pending.createdAt,
         };
-        await this.storage.put(key, responseState);
+        if (!await this.replaceOwnedRecord(key, responseState)) return { state: "completed" };
         return await this.deliverResponses(key, responseState, send, resetGeneration);
       }
 
@@ -246,6 +260,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       if (error) result.error = error;
       return result;
     } finally {
+      release?.();
       this.active.delete(normalizedId);
     }
   }
@@ -283,7 +298,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
     resetGeneration: number,
   ): Promise<InboundDeliveryAttempt> {
     if (resetGeneration !== this.resetGeneration) {
-      await this.completeRecord(key, pending.createdAt);
+      await this.completeRecord(key, pending.createdAt, pending.owner);
       return { state: "completed" };
     }
     if (!send) {
@@ -295,7 +310,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
         event: "inbound_response_retries_exhausted",
         attempts: pending.attempt,
       }));
-      await this.completeRecord(key, pending.createdAt);
+      await this.completeRecord(key, pending.createdAt, pending.owner);
       return { state: "completed" };
     }
 
@@ -305,11 +320,11 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       ...pending,
       attempt: pending.attempt + 1,
     } satisfies PendingInboundDelivery<Payload, ResponseContext>;
-    await this.storage.put(key, attempted);
+    if (!await this.replaceOwnedRecord(key, attempted)) return { state: "completed" };
 
     let retryError: string | undefined;
     for (const response of attempted.responses) {
-      if (resetGeneration !== this.resetGeneration) break;
+      if (resetGeneration !== this.resetGeneration || this.options.retirement?.retired(pending.owner)) break;
       if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) {
         console.warn(JSON.stringify({
           component: "adapter",
@@ -337,7 +352,7 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
     }
 
     if (resetGeneration !== this.resetGeneration) {
-      await this.completeRecord(key, pending.createdAt);
+      await this.completeRecord(key, pending.createdAt, pending.owner);
       return { state: "completed" };
     }
 
@@ -357,17 +372,52 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
         attempts: attempted.attempt,
       }));
     }
-    await this.completeRecord(key, pending.createdAt);
+    await this.completeRecord(key, pending.createdAt, pending.owner);
     return { state: "completed" };
   }
 
-  private async completeRecord(key: string, createdAt: number): Promise<void> {
+  async inspectOwnership(installationId?: string): Promise<{ installationIds: string[]; unattributed: number; ownedCount: number }> {
+    const records = await this.storage.list<PendingInboundDelivery<Payload, ResponseContext>>({ prefix: this.prefix });
+    return {
+      installationIds: [...new Set([...records.values()].flatMap((record) => record.owner ? [record.owner.installationId] : []))],
+      unattributed: [...records.values()].filter((record) => record.owner === undefined).length,
+      ownedCount: [...records.values()].filter((record) => record.owner?.installationId === installationId).length,
+    };
+  }
+
+  async eraseInstallation(installationId: string, limit = 256): Promise<number> {
+    return await this.storage.transaction(async (txn) => {
+      const records = await txn.list<PendingInboundDelivery<Payload, ResponseContext>>({ prefix: this.prefix });
+      const owned = [...records.entries()].filter(([, record]) => record.owner?.installationId === installationId);
+      const keys = owned.slice(0, limit).map(([key]) => key);
+      if (keys.length) await txn.delete(keys);
+      const erased = new Set(keys);
+      if (![...records.entries()].some(([key, record]) => !erased.has(key) && record.state !== "completed")) await txn.deleteAlarm();
+      return owned.length - keys.length;
+    });
+  }
+
+  private async replaceOwnedRecord(key: string, next: PendingInboundDelivery<Payload, ResponseContext>): Promise<boolean> {
+    return await this.storage.transaction(async (txn) => {
+      const current = await txn.get<PendingInboundDelivery<Payload, ResponseContext>>(key);
+      if (!current || current.createdAt !== next.createdAt || !sameAdapterDataOwner(current.owner, next.owner)) return false;
+      if (this.options.retirement?.retired(next.owner)) {
+        await txn.delete(key);
+        return false;
+      }
+      await txn.put(key, next);
+      return true;
+    });
+  }
+
+  private async completeRecord(key: string, createdAt: number, owner?: AdapterDataScope): Promise<void> {
     const retentionMs = this.options.completedRetentionMs ?? 0;
     if (retentionMs <= 0) {
       await this.storage.delete(key);
       return;
     }
-    await this.storage.put(key, {
+    await this.replaceOwnedRecord(key, {
+      ...(owner !== undefined ? { owner } : undefined),
       state: "completed",
       createdAt,
       expiresAt: Date.now() + retentionMs,

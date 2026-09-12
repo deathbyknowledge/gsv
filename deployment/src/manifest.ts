@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
+import { installationResourceKindSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 
-export const GSV_DEPLOYMENT_MANIFEST_VERSION = 1;
+export const GSV_DEPLOYMENT_MANIFEST_VERSION = 2;
 
 const durableObjectSchema = z.strictObject({
   binding: z.string().check(z.minLength(1), z.maxLength(128)),
@@ -16,6 +17,15 @@ export const adapterWorkerDeploymentSchema = z.strictObject({
   requiredSecrets: z.array(
     z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
   ),
+  requiredVariables: z.optional(z.array(z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)))),
+  lifecycle: z.optional(z.strictObject({
+    entrypoint: z.string().check(z.minLength(1), z.maxLength(128)),
+    namespaces: z.array(z.strictObject({
+      className: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]*$/)),
+      kind: z.enum(installationResourceKindSchema.options),
+    })),
+  })),
+  crons: z.optional(z.array(z.string().check(z.minLength(1)))),
   selfUrlBinding: z.optional(
     z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
   ),
@@ -34,7 +44,7 @@ export const adapterDeploymentSchema = z.strictObject({
 });
 
 export const adapterSourceManifestSchema = z.strictObject({
-  version: z.literal(GSV_DEPLOYMENT_MANIFEST_VERSION),
+  version: z.literal(1),
   id: z.string().check(
     z.minLength(1),
     z.maxLength(64),
@@ -53,6 +63,9 @@ const runtimeDeploymentSchema = z.strictObject({
   gatewayBundle: z.string().check(z.minLength(1)),
   webAssets: z.string().check(z.minLength(1)),
   ripgitBundle: z.string().check(z.minLength(1)),
+  installationsBundle: z.string().check(z.minLength(1)),
+  installationsMigrations: z.string().check(z.minLength(1)),
+  inferenceBundle: z.string().check(z.minLength(1)),
 });
 
 export const gsvDeploymentManifestSchema = z.strictObject({

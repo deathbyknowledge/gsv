@@ -16,7 +16,7 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
-import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
+import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { getConversationById } from "../../shared/utils";
 import {

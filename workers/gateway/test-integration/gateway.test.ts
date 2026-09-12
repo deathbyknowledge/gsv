@@ -134,8 +134,20 @@ describe("gateway integration", () => {
       expect(aiModels).toMatchObject({
         preferredModelId: null,
         models: [
-          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
-          { provider: "workers-ai", model: expect.any(String), source: "base", hasCredential: false },
+          {
+            id: "workers-ai-glm-5-3-flash",
+            provider: "workers-ai",
+            model: "@cf/zai-org/glm-5.3-flash",
+            source: "base",
+            hasCredential: false,
+          },
+          {
+            id: "workers-ai-kimi-k2-6",
+            provider: "workers-ai",
+            model: "@cf/moonshotai/kimi-k2.6",
+            source: "base",
+            hasCredential: false,
+          },
         ],
       });
       const configured = await client.sys.config.get({ key: "config/ai/models" });

@@ -1371,7 +1371,7 @@ lowercase hex characters. The receiving client persists a separate random
 `gsv_machine_` credential with a 64-character hex suffix before redemption.
 Its durable machine token has no automatic expiry; explicit device removal or
 token revocation disconnects it. Creation and redemption secrets are excluded
-from ledger arguments. See [device invitations](../../engineering/device-pairing.md).
+from ledger arguments. See [device invitations](https://github.com/deathbyknowledge/gsv/blob/main/engineering/device-pairing.md).
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client
@@ -1566,6 +1566,26 @@ type SystemSyscalls = {
     args: { uid?: number };
     result: { accounts: Array<{ uid: number; username: string; displayName: string; relation: "self" | "personal-agent" | "agent" | "human"; runnable: boolean; capabilities?: string[]; gecos?: string }> };
   };
+  "account.owner.link": {
+    args: { id: string; secret: string };
+    result: { url: string; expiresAt: number };
+  };
+  "account.recovery.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { username: "root" };
+  };
+  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
+  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
+  "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
+  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
+  "account.invite.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { uid: number; username: string };
+  };
+  "account.people.list": { args: {}; result: { people: LocalPerson[] } };
+  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
+  "account.remove": { args: { uid: number }; result: { removed: true } };
 };
 ```
 
@@ -1574,6 +1594,51 @@ authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
 the accounts a human owns: a `human` account gets a personal agent, and an
 `agent` account is a non-login identity the owner can run processes as.
+
+`account.owner.link` requires a signed-in root human and attests the Kernel's
+immutable installation identity to Accounts. The browser then verifies the
+external owner through the configured identity provider. `account.recovery.redeem`
+is available before connection authentication, behind the ordinary installation
+work gate. Accounts authorizes only a short-lived root-reset claim through its
+deployment-granted recovery binding; redemption atomically consumes the claim,
+updates root's password, and revokes earlier root credentials and sessions.
+The receiving browser persists its random proof before redemption. Identical
+retries recover the receipt without rewriting the password; another proof or
+password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+
+Member recovery is available before authentication through `account.recovery.code.start`
+and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
+before requesting a code. The Kernel resolves a previously direct-human-confirmed
+private messenger link for that member; callers cannot select the recipient, uid,
+or space. Manual and legacy links without that confirmation are ineligible. Root
+uses verified owner recovery instead. The start response does not disclose whether
+an account or eligible link exists. At most one code is sent per member per minute;
+the eight hexadecimal digits expire after five minutes and permit five incorrect
+attempts with the matching browser proof. Delivery is a direct adapter request and
+never creates a Process event or wakes a model. A lost response retains the browser
+proof; lost delivery requires a new code after the cooldown or a root password reset.
+Redemption rechecks the exact link generation and account credential epoch, then
+atomically replaces the member password, revokes existing credentials and messenger
+links, and commits the receipt. Identical retries cannot overwrite later credentials.
+
+Human invitations use a separate fixed `human-account` purpose; a device pairing
+cannot create a human. A signed-in root human fixes the username and supplies a
+UUID and 32-byte hexadecimal secret, which the Kernel stores hashed. Invitations
+expire after ten minutes; cancellation or root credential revocation prevents
+consumption. `/join` on the space's own hostname reads the invitation from its
+fragment and stores a recipient-generated proof before clearing the fragment.
+`account.invite.redeem` runs before authentication behind the installation work
+gate. It atomically creates the local account and stores the proof-and-password
+receipt; an identical retry completes home setup without changing credentials.
+The account gets its personal agent on first sign-in.
+
+`account.people.list`, invitation administration, `account.password.set` and
+`account.remove` require a root human session with credential provenance; a
+Process acting as root cannot invoke them. Password reset and removal apply to
+ordinary human accounts. Both revoke earlier credentials and linked messengers;
+removal also disables future sign-in and credential issuance. The uid, groups,
+data and already-admitted Processes remain. A removed uid cannot be linked to a
+messenger again. Enrollment secrets and new passwords never enter the ledger.
 
 ## AI: `ai.*`
 
@@ -1719,7 +1784,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, and caller-visible account status. Older bindings without a descriptor temporarily fall back to method discovery. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and the current human’s linking authority (`canLink`). Shared pairing requires the same advertised capability, configured application, and direct human authority at its Kernel boundary. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
@@ -1730,6 +1795,13 @@ Runtime behavior:
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
+
+For explicit sends, the Kernel resolves the authorized linked actor for the
+requested surface and supplies its current route generation to the adapter.
+Neither value is a public `adapter.send` argument. Multiple matching actors,
+disabled owners, and missing generations on shared routes are rejected before
+provider dispatch. The adapter rechecks that generation before sending to the
+provider, rejecting a delayed send if the link has since moved.
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
 Every private adapter-worker RPC result is validated before the gateway persists
@@ -1742,7 +1814,7 @@ ignored with payload-free diagnostics.
 type AdapterSyscalls = {
   "adapter.list": {
     args: Record<string, never>;
-    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
+    result: { adapters: Array<{ adapter: string; available: boolean; enabled: boolean; canLink: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
   };
 
   "adapter.connect": {

@@ -26,6 +26,7 @@ This document is the root engineering contract for the repository. It explains h
 - Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
 - A platform-owned shared adapter may bind an external identity only through a direct, signed-in human confirmation. Its public webhook and pairing code never choose an installation or local uid; the adapter owns one generation-fenced peer route and rechecks that generation before delayed ingress or delivery.
 - Accounts owns managed installation state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
+- Accounts owns global owner credentials and My spaces sessions separately from Kernel accounts and operator administration. Native email and external identity credentials never merge by matching email. Ownership linking requires current Kernel root authorization plus fresh owner verification; root recovery requires a fresh verification bound to the current owner and exact recovery attempt. An ordinary owner session cannot authorize a root reset. Accounts delivers verification mail independently of the space being recovered.
 - An operator reset never clears a Kernel in place or reuses its installation ID. Accounts atomically moves the handle to a fresh installation, retains the old identity behind inactive routing, and records its data as pending deletion until every owning service confirms cleanup.
 - Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
@@ -84,13 +85,15 @@ Process history uses typed message, note, call, result, and event records. Stora
 
 ## System ownership
 
-- `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
+- `packages/gsv/src/services/`: public Worker RPC contracts for Accounts, inference execution, lifecycle, optional commercial services, mail, and adapters. Operators compose public implementations with their own optional services.
 - `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
+- `workers/installations/`: required public Accounts directory, ownership, onboarding, operator administration, recovery authorization, reset preparation and durable deletion coordination. Commercial policy and usage remain owned by the optional operator service.
 - `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
 - `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
-- `workers/gateway/src/inference/`: provider integration and model transport.
+- `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
+- `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.

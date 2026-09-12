@@ -1,3 +1,4 @@
+import { canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
 import type {
   AdapterPairingCandidate,
   AdapterPairingPreparation,
@@ -14,9 +15,7 @@ import type {
   AdapterPairInspectResult,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
-import { principalOf,
-  type KernelContext,
-} from "./context";
+import type { KernelContext } from "./context";
 import {
   stableOpaqueId,
 } from "../shared/stable-id";
@@ -27,22 +26,15 @@ import {
   SINGLETON_INSTALLATION_ID,
 } from "../installation/identity";
 import {
-  isLocked,
-} from "../auth/shadow";
-import {
   adapterInstallationContext,
+  adapterSupportsPairing,
+  describeAdapterService,
+  readAdapterPairingInfo,
   normalizeAdapterName,
   resolveAdapterService,
 } from "./adapter-service";
 
 /** Managed adapter pairing. */
-const pairingInfoSchema = z.object({
-  accountId: z.string().check(z.minLength(1)),
-  configured: z.boolean(),
-  botUsername: z.optional(z.string()),
-  installUrl: z.optional(z.string().check(z.minLength(1))),
-});
-
 const pairingCandidateSchema = z.object({
   accountId: z.string().check(z.minLength(1), z.maxLength(200)),
   actorId: z.string().check(z.minLength(1), z.maxLength(200)),
@@ -76,27 +68,9 @@ const managedIdentityLinkMetadataSchema = z.looseObject({
 });
 
 function requireInteractivePairingOwner(ctx: KernelContext, syscall: string): number {
-  const identity = principalOf(ctx);
-  if (
-    !identity
-    || identity.kind !== "human"
-    || !ctx.connection
-    || ctx.processId
-  ) {
-    throw new Error(`${syscall} requires a direct signed-in user`);
-  }
-  const uid = identity.account.uid;
-  const user = ctx.auth.getPasswdByUid(uid);
-  const shadow = user ? ctx.auth.getShadowByUsername(user.username) : null;
-  if (
-    !user
-    || uid < 1000
-    || ctx.auth.isPersonalAgentUid(uid)
-    || !shadow
-    || isLocked(shadow)
-  ) {
-    throw new Error(`${syscall} requires an active human account`);
-  }
+  const uid = interactivePairingOwner(ctx);
+  if (uid === null) throw new Error(`${syscall} requires a direct signed-in user with an active human account`);
+  if (syscall === "adapter.pair.confirm" && !canLinkAdapter(ctx)) throw new Error("This account cannot complete messenger linking");
   return uid;
 }
 
@@ -106,20 +80,15 @@ export async function handleAdapterPairInfo(
 ): Promise<AdapterPairInfoResult> {
   requireInteractivePairingOwner(ctx, "adapter.pair.info");
   const adapter = normalizeAdapterName(args.adapter);
-  const service = requirePairingService(ctx, adapter);
-  const info = pairingInfoSchema.safeParse(
-    await service.adapterPairingInfo(adapterInstallationContext(ctx)),
-  );
-  if (!info.success) {
-    throw new Error("Adapter returned invalid pairing information");
-  }
+  const service = await requirePairingService(ctx, adapter);
+  const info = await readAdapterPairingInfo(service, ctx);
   const result: AdapterPairInfoResult = {
     adapter,
-    accountId: info.data.accountId,
-    configured: info.data.configured,
+    accountId: info.accountId,
+    configured: info.configured,
   };
-  if (info.data.botUsername) result.botUsername = info.data.botUsername;
-  if (info.data.installUrl) result.installUrl = info.data.installUrl;
+  if (info.botUsername) result.botUsername = info.botUsername;
+  if (info.installUrl) result.installUrl = info.installUrl;
   return result;
 }
 
@@ -130,7 +99,8 @@ export async function handleAdapterPairInspect(
   requireInteractivePairingOwner(ctx, "adapter.pair.inspect");
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
-  const service = requirePairingService(ctx, adapter);
+  const service = await requirePairingService(ctx, adapter);
+  if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
   const candidate = requirePairingCandidate(await service.adapterPairingInspect!(
     adapterInstallationContext(ctx),
     code,
@@ -143,9 +113,11 @@ export async function handleAdapterPairConfirm(
   ctx: KernelContext,
 ): Promise<AdapterPairConfirmResult> {
   const uid = requireInteractivePairingOwner(ctx, "adapter.pair.confirm");
+  const credentialEpoch = ctx.auth.credentialEpoch(uid);
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
-  const service = requirePairingService(ctx, adapter);
+  const service = await requirePairingService(ctx, adapter);
+  if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
   const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
   if (!canonicalOrigin || ctx.installationId === SINGLETON_INSTALLATION_ID) {
     throw new Error("Managed adapter pairing is not available in this installation");
@@ -197,6 +169,10 @@ export async function handleAdapterPairConfirm(
     throw new Error("Adapter pairing changed during preparation");
   }
 
+  // A password reset or removal during provider preparation cannot restore the old user's link.
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
   ctx.adapters.identityLinks.link(
     adapter,
     prepared.candidate.accountId,
@@ -221,6 +197,9 @@ export async function handleAdapterPairConfirm(
       canonicalOrigin,
     },
   ), ctx.installationId, uid);
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
   if (
     activated.candidate.actorId !== prepared.candidate.actorId
     || activated.candidate.surfaceId !== prepared.candidate.surfaceId
@@ -288,7 +267,7 @@ export async function handleAdapterPairDisconnect(
     throw new Error("This identity is not managed by adapter pairing");
   }
   const { surfaceId, routeGeneration: generation } = metadata.data;
-  const service = requirePairingService(ctx, adapter);
+  const service = await requirePairingService(ctx, adapter);
   const operationId = await stableOpaqueId("adapter-pair-disconnect", [
     adapter,
     ctx.installationId,
@@ -337,26 +316,18 @@ export async function handleAdapterPairDisconnect(
   }
 }
 
-function requirePairingService(
+async function requirePairingService(
   ctx: KernelContext,
   adapter: string,
-): AdapterPairingWorkerInterface {
+): Promise<AdapterPairingWorkerInterface> {
   if (!adapter) throw new Error("adapter is required");
   if (ctx.installationId === SINGLETON_INSTALLATION_ID) {
     throw new Error("Managed adapter pairing is not available in standalone GSV");
   }
   const service = resolveAdapterService(ctx.env, adapter);
-  if (
-    !service
-    || !service.adapterPairingInfo
-    || !service.adapterPairingInspect
-    || !service.adapterPairingPrepare
-    || !service.adapterPairingActivate
-    || !service.adapterPairingFinalize
-    || !service.adapterPairingDisconnect
-  ) {
-    throw new Error(`Adapter does not support managed pairing: ${adapter}`);
-  }
+  if (!adapterSupportsPairing(service)) throw new Error(`Adapter does not support managed pairing: ${adapter}`);
+  const descriptor = await describeAdapterService(adapter, service);
+  if (!descriptor?.capabilities.pairing) throw new Error(`Adapter does not advertise pairing: ${adapter}`);
   return {
     adapterPairingInfo: (...args) => service.adapterPairingInfo!(...args),
     adapterPairingInspect: (...args) => service.adapterPairingInspect!(...args),
@@ -432,4 +403,3 @@ function requirePairingPreparation(
   if (previous) result.previousRoute = previous;
   return result;
 }
-

@@ -56,6 +56,8 @@ import type { GatewayEnv } from "./runtime-env";
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { Conversation } from "./conversation/do";
+export { GatewayLifecycleEntrypoint } from "./installation/deletion-entrypoint";
+export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -256,6 +258,13 @@ export class AdapterGatewayEntrypoint
     );
   }
 
+  async unlinkAdapterIdentity(
+    installation: AdapterInstallationContext,
+    input: UnlinkManagedAdapterIdentityInput,
+  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    return await this.unlinkManagedAdapterIdentity(installation, input);
+  }
+
   private resolveServicePeerProfile(): ServicePeerProfile {
     const parsed = adapterServicePeerProfileSchema.safeParse(this.ctx.props);
     if (!parsed.success || new Set(parsed.data.calls).size !== parsed.data.calls.length) {
@@ -269,6 +278,35 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<GatewayEnv>
   implements MailGatewayService, ManagedTelegramGatewayService
 {
+  async acceptInboundMail(
+    installation: AdapterInstallationContext,
+    metadata: ManagedInboundMailMetadata,
+    body: BinaryBody,
+  ): Promise<ManagedInboundMailAccepted> {
+    return await this.acceptManagedInboundMail(installation, metadata, body);
+  }
+
+  async completeInboundMail(
+    installation: AdapterInstallationContext,
+    completion: ManagedInboundMailCompletion,
+  ): Promise<void> {
+    await this.completeManagedInboundMail(installation, completion);
+  }
+
+  async claimOutboundMail(
+    installation: AdapterInstallationContext,
+    reference: ManagedOutboundMailReference,
+  ): Promise<ManagedOutboundMailClaimOutcome> {
+    return await this.claimManagedOutboundMail(installation, reference);
+  }
+
+  async completeOutboundMail(
+    installation: AdapterInstallationContext,
+    completion: ManagedOutboundMailCompletion,
+  ): Promise<void> {
+    await this.completeManagedOutboundMail(installation, completion);
+  }
+
   async acceptManagedInboundMail(
     installation: AdapterInstallationContext,
     metadata: ManagedInboundMailMetadata,

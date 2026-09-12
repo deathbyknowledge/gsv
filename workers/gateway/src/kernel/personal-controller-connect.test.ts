@@ -81,7 +81,12 @@ describe("Kernel personal controller connect lifecycle", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     const ctx = {
-      auth: { isPersonalAgentUid: vi.fn(() => false) },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getPasswdByUsername: vi.fn(() => PROCESS_IDENTITY),
+        credentialEpoch: vi.fn(() => 0),
+        isAccountDisabled: vi.fn(() => false),
+      },
       conversations: {
         ensureShip: vi.fn(() => ({
           id: "conv:ship",
@@ -115,7 +120,12 @@ describe("Kernel personal controller connect lifecycle", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     const ctx = {
-      auth: { isPersonalAgentUid: vi.fn(() => false) },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getPasswdByUsername: vi.fn(() => PROCESS_IDENTITY),
+        credentialEpoch: vi.fn(() => 0),
+        isAccountDisabled: vi.fn(() => false),
+      },
       conversations: { ensureShip: vi.fn() },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
@@ -172,7 +182,12 @@ describe("Kernel personal controller connect lifecycle", () => {
 
     const create = vi.fn(() => ({ created: true }));
     const ctx = {
-      auth: { isPersonalAgentUid: vi.fn(() => false) },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getPasswdByUsername: vi.fn(() => PROCESS_IDENTITY),
+        credentialEpoch: vi.fn(() => 0),
+        isAccountDisabled: vi.fn(() => false),
+      },
       responsibilitySources: { isEnabled: vi.fn(() => true) },
       responsibilities: { create },
       reconcileResponsibilityWake: vi.fn(async () => undefined),

@@ -1,4 +1,3 @@
-import type { Provider } from "@earendil-works/pi-ai";
 import type { ManagedInferenceWorkload } from "@humansandmachines/gsv/protocol";
 import { stableOpaqueId } from "../shared/stable-id";
 
@@ -11,11 +10,6 @@ export type InferenceAttribution = {
     runId?: string;
   };
   workload?: ManagedInferenceWorkload;
-};
-
-export type InferenceProviderFactory = {
-  id: string;
-  create(attribution: InferenceAttribution, options?: { deadlineAt: number }): Provider;
 };
 
 export async function inferenceLogicalRequestId(

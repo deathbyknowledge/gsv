@@ -9,6 +9,12 @@ import {
 import type {
   TargetRequestOptions,
 } from "./do-shared";
+import type { InstallationDeletionInventoryImport, InstallationDeletionInventoryImported } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import { VERIFIED_INVENTORY_KEY, inspectResourceStorage } from "../installation/retirement";
+import { parseProcessDurableObjectName, parseConversationDurableObjectName } from "../installation/routing";
+import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+import { GatewayDeletion } from "../installation/deletion";
+import { InstallationRetirement, durableResourceName, stateWithRetirementStorage } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
@@ -42,6 +48,10 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
+import { MemberRecoveryStore } from "./member-recovery";
+import { AccountRecoveryStore } from "./account-recovery";
+import { PeopleStore } from "./people";
+import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -369,13 +379,21 @@ export function kernelRuntimes(host: Kernel) {
   };
 }
 
+const INSTALLATION_INVENTORY_IMPORT_KEY = "__gsv_inventory_import__";
+type InstallationInventoryImport = { sha256: string; resources: InstallationDeletionInventoryImport["resources"]; cursor: number };
+
 export class Kernel extends DurableObject<GatewayEnv> {
+  readonly retirement: InstallationRetirement;
+  readonly deletion = new GatewayDeletion(this);
   readonly installationId: string;
   installationIdentity?: InstallationIdentity;
   readonly installationStorage: R2Bucket;
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
   readonly pairings: DevicePairingStore;
+  readonly accountRecovery: AccountRecoveryStore;
+  readonly memberRecovery: MemberRecoveryStore;
+  readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly targets: TargetRegistry;
@@ -412,14 +430,16 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly connectionRuntime: ConnectionRuntime;
   declare readonly transport: Transport;
 
-  constructor(ctx: DurableObjectState<{}>, env: GatewayEnv) {
-    super(ctx, env);
+  constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
+    super(state, env);
+    this.installationId = parseInstallationId(durableResourceName(state, env.KERNEL));
+    this.retirement = new InstallationRetirement(state.storage, this.installationId);
+    const ctx = stateWithRetirementStorage(state, this.retirement);
     this.ctx = ctx;
     this.env = env;
     Object.assign(this, kernelRuntimes(this));
-    this.installationId = parseInstallationId(ctx.id.name);
     const sql = ctx.storage.sql;
-    runKernelSqlMigrations(ctx.storage);
+    if (!this.retirement.state) runKernelSqlMigrations(ctx.storage);
 
     const identity = ctx.storage.kv.get<StoredInstallationIdentity>("install_identity");
     this.installationIdentity = identity
@@ -431,6 +451,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.installationStorage = createInstallationStorage(
       env.STORAGE,
       this.installationId,
+      this.retirement,
     );
     this.installationEnv = envWithInstallationResources(
       env,
@@ -438,17 +459,21 @@ export class Kernel extends DurableObject<GatewayEnv> {
       env.RIPGIT
         ? createInstallationRipgit(env.RIPGIT, this.installationId)
         : undefined,
+      this.retirement,
     );
 
     this.auth = new AuthStore(sql);
 
     this.caps = new CapabilityStore(sql);
-    this.caps.seed();
+    if (!this.retirement.state) this.caps.seed();
 
     this.config = new ConfigStore(sql);
 
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
+    this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
+    this.people = new PeopleStore(ctx.storage, this.auth);
+    this.memberRecovery = new MemberRecoveryStore(ctx.storage, this.auth);
 
     this.routes = new RoutingTable(sql);
     this.ledger = new LedgerStore(sql, ctx.storage, this.storage, (ownerUid, line) => {
@@ -496,6 +521,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mcp.onServerStateChanged(() => {
       this.mcpConnections.broadcastMcpChanged();
     });
+    if (this.retirement.state) return;
     this.mcp.restoreConnectionsFromStorage();
 
     this.connectionRuntime.rehydrateConnections();
@@ -535,6 +561,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
     async ensureInstallationIdentity(input: InstallationIdentity) {
+    this.retirement.assertActive();
     if (input.installationId !== this.installationId) {
       throw new Error("installation identity conflicts with Kernel name");
     }
@@ -563,11 +590,100 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return existing;
   }
 
+  inspectInstallationResource() {
+    return inspectResourceStorage(this.retirement.raw);
+  }
+
+  beginInstallationResourceInventory(input: InstallationDeletionInventoryImport) {
+    if (input.installationId !== this.installationId) throw new Error("Inventory installation mismatch");
+    const sealed = this.retirement.raw.kv.get<{ sha256: string }>(VERIFIED_INVENTORY_KEY);
+    if (sealed) {
+      if (sealed.sha256 !== input.discoverySha256) throw new Error("Inventory already sealed with another manifest");
+      return { cursor: input.resources.length, resources: [], sealed: true };
+    }
+    const resources = [...input.resources].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    const previous = this.retirement.raw.kv.get<InstallationInventoryImport>(INSTALLATION_INVENTORY_IMPORT_KEY);
+    if (previous && (previous.sha256 !== input.discoverySha256 || JSON.stringify(previous.resources) !== JSON.stringify(resources))) throw new Error("Inventory import conflicts with pending manifest");
+    const current = previous ?? { sha256: input.discoverySha256, resources, cursor: 0 };
+    if (!previous) this.retirement.raw.kv.put(INSTALLATION_INVENTORY_IMPORT_KEY, current);
+    return { cursor: current.cursor, resources: current.resources.slice(current.cursor, current.cursor + 16), sealed: false };
+  }
+
+  completeInstallationResourceInventoryBatch(input: { discoverySha256: string; cursor: number }): InstallationDeletionInventoryImported {
+    const current = this.retirement.raw.kv.get<InstallationInventoryImport>(INSTALLATION_INVENTORY_IMPORT_KEY);
+    if (!current) {
+      const sealed = this.retirement.raw.kv.get<{ sha256: string; verifiedAt: number }>(VERIFIED_INVENTORY_KEY);
+      if (sealed?.sha256 !== input.discoverySha256) throw new Error("Inventory import has not started");
+      return { installationId: this.installationId, discoverySha256: sealed.sha256, outcome: "verified", verifiedAt: sealed.verifiedAt };
+    }
+    if (current.sha256 !== input.discoverySha256 || input.cursor > current.cursor) throw new Error("Inventory import cursor mismatch");
+    if (input.cursor === current.cursor) current.cursor = Math.min(current.resources.length, current.cursor + 16);
+    if (current.cursor === current.resources.length) {
+      return this.importInstallationResourceInventory({ installationId: this.installationId, discoverySha256: current.sha256, resources: current.resources });
+    }
+    this.retirement.raw.kv.put(INSTALLATION_INVENTORY_IMPORT_KEY, current);
+    return { installationId: this.installationId, discoverySha256: current.sha256, outcome: "missing-inventory", verifiedAt: Date.now() };
+  }
+
+  private importInstallationResourceInventory(input: InstallationDeletionInventoryImport): InstallationDeletionInventoryImported {
+    if (input.installationId !== this.installationId) throw new Error("Inventory installation mismatch");
+    const previous = this.retirement.raw.kv.get<{ sha256: string }>(VERIFIED_INVENTORY_KEY);
+    if (previous && previous.sha256 !== input.discoverySha256) throw new Error("Inventory already sealed with another manifest");
+    const resources = input.resources.filter((resource) => resource.kind === "process" || resource.kind === "conversation").map((resource) => ({
+      kind: resource.kind,
+      id: resource.kind === "process" ? parseProcessDurableObjectName(resource.name).pid : parseConversationDurableObjectName(resource.name).conversationId,
+    }));
+    const expected = new Set(resources.map((resource) => `${resource.kind}:${resource.id}`));
+    const known = this.retirement.raw.sql.exec<{ kind: string; resource_id: string }>("SELECT kind, resource_id FROM installation_resources").toArray();
+    if (known.some((resource) => !expected.has(`${resource.kind}:${resource.resource_id}`))) throw new Error("Inventory omits known resources");
+    const verifiedAt = Date.now();
+    this.retirement.raw.transactionSync(() => {
+      for (const resource of resources) this.retirement.raw.sql.exec("INSERT OR IGNORE INTO installation_resources(kind, resource_id) VALUES (?, ?)", resource.kind, resource.id);
+      this.retirement.raw.kv.put(VERIFIED_INVENTORY_KEY, { sha256: input.discoverySha256, verifiedAt });
+      this.retirement.raw.kv.delete(INSTALLATION_INVENTORY_IMPORT_KEY);
+    });
+    return { installationId: this.installationId, discoverySha256: input.discoverySha256, outcome: "verified", verifiedAt };
+  }
+
+  async quiesceInstallation(input: InstallationDeletionRequest) {
+    return this.deletion.quiesce(input);
+  }
+
+  async eraseInstallation(input: InstallationDeletionRequest) {
+    return this.deletion.erase(input);
+  }
+
+  async installationDeletionStatus(input: InstallationDeletionRequest) {
+    return this.deletion.status(input);
+  }
+
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity ?? null;
   }
 
+  async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) throw new Error("The space is unavailable");
+    this.accountRecovery.authorize(input);
+    return { authorized: true };
+  }
+
+  async confirmOwnerLinkAuthorization(attemptId: string): Promise<{ authorized: true }> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) throw new Error("The space is unavailable");
+    this.accountRecovery.confirmOwnerLink(attemptId);
+    return { authorized: true };
+  }
+
+  async redeemAccountRecovery(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
+    this.retirement.assertActive();
+    const result = await this.accountRecovery.redeem(input);
+    this.connectionRuntime.invalidateAccountConnections(0);
+    return result;
+  }
+
   async onRequest(request: Request): Promise<Response> {
+    this.retirement.assertActive();
     const url = new URL(request.url);
     if (isFederationPublicPath(url.pathname)) {
       return await handleFederationHttpRequest(request, this.buildKernelContext({}));
@@ -586,6 +702,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    this.retirement.assertActive();
     const url = new URL(request.url);
     if (url.pathname === "/ws") {
       if (
@@ -627,6 +744,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     socket: WebSocket,
     message: KernelWebSocketMessage,
   ): Promise<void> {
+    if (this.retirement.state) { socket.close(1008, "Installation retired"); return; }
     const connection = this.connectionRuntime.connectionForSocket(socket);
     if (!connection) {
       socket.close(1011, "Connection state unavailable");
@@ -641,16 +759,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
     _reason: string,
     _wasClean: boolean,
   ): void {
+    if (this.retirement.state) { socket.close(1008, "Installation retired"); return; }
     const connection = this.connectionRuntime.connectionForSocket(socket);
     if (connection) this.connectionRuntime.onClose(connection);
   }
 
   webSocketError(socket: WebSocket): void {
+    if (this.retirement.state) { socket.close(1008, "Installation retired"); return; }
     const connection = this.connectionRuntime.connectionForSocket(socket);
     if (connection) this.connectionRuntime.onClose(connection);
   }
 
   async alarm(): Promise<void> {
+    if (this.retirement.state) return;
     await this.tasks.alarm();
   }
 
@@ -660,6 +781,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     payload: KernelTask["payload"],
     options?: DurableTaskOptions,
   ) {
+    this.retirement.assertActive();
     const task = KERNEL_TASK_SCHEMA.parse({ callback, payload });
     return this.tasks.schedule(when, task, options);
   }
@@ -722,6 +844,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
     processId: string,
     frame: ProcessOutboundFrame,
   ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
+    try { this.retirement.assertActive(); } catch (error) {
+      await cancelUnlockedBody("body" in frame ? frame.body : undefined, "Installation admission is closed");
+      throw error;
+    }
     if (frame.type === "req") {
       if (frame.call === "proc.message.commit") {
         try {
@@ -880,6 +1006,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
+      this.retirement.assertActive();
       if (frame.type !== "req") {
         return null;
       }
@@ -1275,6 +1402,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       installationIdentity,
       auth: this.auth,
       pairings: this.pairings,
+      accountRecovery: this.accountRecovery,
+      memberRecovery: this.memberRecovery,
+      people: this.people,
+      invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
       targets: this.targets,
@@ -1381,6 +1512,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       throwOnCancel?: boolean;
     },
   ): Promise<ResponseFrame | null> {
+    this.retirement.assertActive();
     const peer = ctx.peer;
     if (!peer) {
       return rejectBeforeDispatch(inputFrame, 403, "Request has no authenticated peer");
@@ -1498,7 +1630,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "sys.pair.create"
+      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem" || frame.call === "account.invite.redeem"
+        || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
+        ? { id: frame.args.id }
+        : frame.call === "account.invite.create" ? { id: frame.args.id, username: frame.args.username }
+        : frame.call === "account.password.set" ? { uid: frame.args.uid }
+        : frame.call === "sys.pair.create"
         ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
         : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
         : frame.args) as JsonLike;
@@ -1662,11 +1799,22 @@ function envWithInstallationResources(
   env: GatewayEnv,
   storage: R2Bucket,
   ripgit: Fetcher | undefined,
+  retirement: InstallationRetirement,
 ): GatewayEnv {
   return new Proxy(env, {
     get(target, property) {
       if (property === "STORAGE") return storage;
       if (property === "RIPGIT") return ripgit;
+      if (property === "MANAGED_MAIL_OUTBOUND") {
+        const queue = target.MANAGED_MAIL_OUTBOUND;
+        if (!queue) return undefined;
+        const guarded: NonNullable<GatewayEnv["MANAGED_MAIL_OUTBOUND"]> = {
+          send: (...args) => retirement.write(() => queue.send(...args)),
+          sendBatch: (...args) => retirement.write(() => queue.sendBatch(...args)),
+          metrics: () => queue.metrics(),
+        };
+        return guarded;
+      }
       // SAFETY: Proxy keys outside these overrides are ordinary Env properties.
       return target[property as keyof GatewayEnv];
     },
