@@ -123,6 +123,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'package.json'
               - 'package-lock.json'
+              - 'alchemy.run.ts'
               - 'deployment/**'
               - 'scripts/capture-ai-gateway-logs.ts'
               - 'scripts/build-cloudflare-bundles.sh'
