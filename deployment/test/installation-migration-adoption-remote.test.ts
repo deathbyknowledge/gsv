@@ -36,12 +36,14 @@ async function fixture(directory = path.join(root, "workers/installations/migrat
   workers.add(worker);
   const db = await worker.getD1Database("DB");
   const migrations = (await readD1Migrations(directory)).slice(0, count);
-  await db.prepare("CREATE TABLE d1_migrations (id TEXT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)").run();
-  for (const [index, migration] of migrations.entries()) {
-    await db.batch([...migration.queries.map((sql) => db.prepare(sql)),
-      db.prepare("INSERT INTO d1_migrations VALUES (?, ?, ?)").bind(String(index + 1).padStart(5, "0"), migration.name, "2026-09-01 00:00:00")]);
-  }
-  await db.prepare("INSERT INTO principals VALUES ('principal', 'owner@example.invalid', 'owner@example.invalid', 'Owner', 1, 'active', 1, 1)").run();
+  // Seed the historical fixture in one ordered batch; the actual adoption and
+  // failure/retry operations below still use the real D1 driver independently.
+  await db.batch([
+    db.prepare("CREATE TABLE d1_migrations (id TEXT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)"),
+    ...migrations.flatMap((migration, index) => [...migration.queries.map((sql) => db.prepare(sql)),
+      db.prepare("INSERT INTO d1_migrations VALUES (?, ?, ?)").bind(String(index + 1).padStart(5, "0"), migration.name, "2026-09-01 00:00:00")]),
+    db.prepare("INSERT INTO principals VALUES ('principal', 'owner@example.invalid', 'owner@example.invalid', 'Owner', 1, 'active', 1, 1)"),
+  ]);
   const database: MigrationD1Database = {
     identity: { accountId: context.accountId, databaseId: context.databaseId },
     async batch(statements) {
@@ -143,14 +145,15 @@ describe("remote D1 ownership handoff", () => {
 });
 
 const privateMigrations = process.env.GSV_ADOPTION_LEGACY_MIGRATIONS;
-describe.skipIf(!privateMigrations)("remote adoption with actual private migration sources", () => {
+// These integration cases boot workerd and exercise a full legacy D1 handoff;
+// ordinary successful CI runs can exceed the default five-second unit budget.
+describe.skipIf(!privateMigrations)("remote adoption with actual private migration sources", { timeout: 15_000 }, () => {
   async function complete(count = 12) { return fixture(privateMigrations, count); }
   async function addReset(state: Awaited<ReturnType<typeof complete>>) {
-    for (const [id, status] of [["previous", "retained"], ["replacement", "active"]]) {
-      await state.db.prepare("INSERT INTO installations (id, owner_principal_id, handle, canonical_origin, state, provision_version, created_at) VALUES (?, 'principal', ?, ?, ?, 1, 1)")
-        .bind(id, id, `https://${id}.example.invalid`, status).run();
-    }
     await state.db.batch([
+      ...[["previous", "retained"], ["replacement", "active"]].map(([id, status]) =>
+        state.db.prepare("INSERT INTO installations (id, owner_principal_id, handle, canonical_origin, state, provision_version, created_at) VALUES (?, 'principal', ?, ?, ?, 1, 1)")
+          .bind(id, id, `https://${id}.example.invalid`, status)),
       state.db.prepare("INSERT INTO installation_reset_operations VALUES ('reset', 'previous', 'replacement', 'ship', 'https://ship.example.invalid', 'ship.example.invalid', 'pending', NULL, 1, 2, NULL)"),
       state.db.prepare("INSERT INTO managed_inference_policies VALUES ('previous', 0, 100, 2)"),
       state.db.prepare("INSERT INTO managed_inference_policies VALUES ('replacement', 1, 900, 99)"),
