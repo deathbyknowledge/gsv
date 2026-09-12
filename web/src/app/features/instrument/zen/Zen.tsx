@@ -24,6 +24,7 @@ import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { FirstDay } from "../firstday/FirstDay";
+import { useFirstDay } from "../firstday/useFirstDay";
 import { ActivityWorking } from "./ActivityWorking";
 import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
@@ -455,7 +456,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const loadOlder = useCallback(async () => {
     await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
   }, [conversation.loadOlder, processRuntime.loadOlderHistory]);
-  const scrolling = useZenScroll({ moments, ready, promptFocused,
+  const firstDay = useFirstDay({ enabled: !pidProp, ready, gateway: snapshot.url,
+    conversationId: conversation.conversation?.id ?? null,
+    ownerUid: conversation.conversation?.ownerUid ?? null,
+    hasHumanMessages: conversation.rows.some((row) => row.role === "user"),
+    hasEarlierMessages: conversation.hasMore });
+  const scrolling = useZenScroll({ moments, ready: ready && !firstDay.visible, promptFocused,
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
   const { browse, viewport: momentsRef, content: contentRef } = scrolling;
@@ -569,6 +575,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         });
         if (mounted.current) {
           conversation.acceptMessage(result.message);
+          firstDay.showConversation();
           setAttachments((current) => current.filter((file) => !intent.media.some((sent) => sent.id === file.id)));
           retryIntent.current = null;
           setNote(null);
@@ -582,21 +589,26 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (mounted.current) setSending(null);
       }
     },
-    [attachments, client, conversation, pid, places, scrolling.follow, where],
+    [attachments, client, conversation, firstDay.showConversation, pid, places, scrolling.follow, where],
   );
 
   const runDirectly = useCallback(
     (command: string) => {
       try {
         const id = sessions.start(command, where ?? defaultPlace(places), pidProp ?? "ship");
+        firstDay.showConversation();
         scrolling.follow();
         setOpenActivities((current) => new Set([...current, id]));
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The command did not run.");
       }
     },
-    [sessions, places, where, pidProp, scrolling.follow],
+    [sessions, places, where, pidProp, scrolling.follow, firstDay.showConversation],
   );
+
+  const meetShip = useCallback(() => {
+    if (!dirty) void say("Hi! Introduce yourself and help me get started with GSV.");
+  }, [dirty, say]);
 
   const onSubmit = useCallback(
     (raw: string) => {
@@ -782,12 +794,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
-          {moments.map((moment, index) => (
+          {!firstDay.visible && moments.map((moment, index) => (
             <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}${browse === index ? " is-focus" : ""}`} />
           ))}
         </div>
-        {empty ? (
-          pidProp ? <div class="zen-empty"><p>This helper has no messages yet.</p></div> : <FirstDay />
+        {firstDay.visible ? (
+          <FirstDay onConversation={moments.length > 0 ? firstDay.showConversation : undefined}
+            onMeet={meetShip} meetDisabled={!connected || !pid || dirty} hasDraft={draftText !== "" || attachments.length > 0} />
+        ) : empty ? (
+          <div class="zen-empty"><p>{pidProp ? "This helper has no messages yet." : "Send a message to your Ship."}</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef}>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
@@ -967,6 +982,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
+            {!pidProp && ready && !firstDay.visible && <button type="button" onClick={firstDay.showSetup}>setup</button>}
             {sending ? <>
               <LoadingState>{sending === "uploading" ? "uploading…" : "sending…"}</LoadingState>
               {sending === "uploading" && <button type="button" onClick={() => pendingSend.current?.controller.abort(new Error("Upload cancelled. Your draft is still here."))}>cancel upload</button>}
