@@ -6,6 +6,18 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it.each([
+    "account.passkey.register.begin",
+    "account.passkey.register.finish",
+    "account.passkey.authenticate.begin",
+    "account.passkey.authenticate.finish",
+    "account.passkey.list",
+    "account.passkey.revoke",
+  ])("rejects the retired passkey syscall %s before dispatch", (call) => {
+    expect(() => decodeWireFrameJson(JSON.stringify({ type: "req", id: "retired-passkey", call, args: {} })))
+      .toThrow(InvalidWireFrameError);
+  });
+
   it.each([{}, { targets: [] }])("preserves unavailable versus empty target catalogs over the wire: %j", (targets) => {
     const response = {
       type: "res" as const,

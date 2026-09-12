@@ -164,12 +164,10 @@ admitted. The operator's lever remains disabling the whole installation.
 
 **Recovery, in layers.**
 
-1. Passkeys as the day-to-day credential, with the password as fallback, so
-   there is less to forget.
-2. A person who forgot their password receives a one-time code through a
+1. A person who forgot their password receives a one-time code through a
    messenger they linked earlier, inside the Kernel, which owns the link and
    knows the signed-in human confirmed it. Or root resets it.
-3. Root recovery uses the owner principal. Accounts freshly authenticates
+2. Root recovery uses the owner principal. Accounts freshly authenticates
    that verified owner at the operator's front door and authorizes a
    short-lived, single-use root reset claim. The owner redeems it at the
    installation, where the Kernel changes the credential. Accounts is a
@@ -182,20 +180,17 @@ binding configuration. The existing outbound directory lookup binding does
 not authorize an incoming reset request. Fix the immutable installation id,
 reset purpose, and recovery attempt in the claim; the Kernel atomically
 consumes it and replaces the root password. Invalidate pre-reset root
-credentials and sessions, including enrolled root passkeys, so they cannot
-undo recovery; let the recovered owner enroll credentials again. Ordinary
+credentials and sessions so they cannot undo recovery. Ordinary
 human accounts retain their credentials. Log outcomes without claim secrets
 or credential material. Retired-installation claims remain invalid after
 hostname reuse.
 
-Passkeys are new work within W1b, with enrollment, authentication, revocation,
-and password fallback covered explicitly. Their implementation may follow
-the service extraction; existing password sign-in keeps working throughout.
+Password sign-in remains the local credential throughout consolidation.
 
 **New Kernel operations this needs:** a root-only operation to set another
 local account's password, exposed in Settings; a recovery-code flow over an
-existing link; the Accounts-authorized root reset contract above; passkey
-enrollment and revocation. Ownership linking alone changes no credentials.
+existing link; and the Accounts-authorized root reset contract above.
+Ownership linking alone changes no credentials.
 
 Acceptance:
 
@@ -211,7 +206,7 @@ Acceptance:
 - Invalid, expired, reused, and wrong-installation recovery claims fail;
   pre-reset root credentials fail afterwards. Existing human credentials,
   CLI/machine credentials, web sessions, and adapter links survive an
-  ordinary upgrade. Passkey enrollment and removal preserve password access.
+  ordinary upgrade.
 
 ### W1c. A real owner principal for every installation
 
@@ -726,7 +721,7 @@ no SSO beyond Access, no audit exports until a company asks and says which.
 2. W2a extracts public Accounts and shared inference machinery, provides the
    reference service, and connects H&M's private commercial services. Prove
    the migration handoff through W4's staging adoption.
-3. W1b/W1c implement people, invitations, recovery, passkeys, and verified
+3. W1b/W1c implement people, invitations, recovery, and verified
    owner linking while preserving existing credentials. W2b completes
    deletion across all data owners and resumes pending resets.
 4. W3 supplies the common deployment/bootstrap and the public-only fresh

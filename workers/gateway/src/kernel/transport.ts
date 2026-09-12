@@ -310,19 +310,6 @@ async handleReq(
         return;
       }
 
-      if (frame.call === "account.passkey.authenticate.begin" || frame.call === "account.passkey.authenticate.finish") {
-        try {
-          const ctx = this.host.buildContext(connection);
-          const data = frame.call === "account.passkey.authenticate.begin"
-            ? await ctx.passkeys.beginAuthentication(frame.args, ctx)
-            : await ctx.passkeys.finishAuthentication(frame.args, ctx);
-          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
-        } catch {
-          this.sendError(connection, frame.id, 400, "Passkey sign-in failed. Try again or use your password.");
-        }
-        return;
-      }
-
       if (!state || state.step !== "connected" || !state.peer) {
         if (this.host.auth.isSetupMode()) {
           if (this.host.onboarding.managedOnboardingService()) {

@@ -16,8 +16,6 @@ type LoginScreenProps = {
   onUsername: (value: string) => void;
   onPassword: (value: string) => void;
   onSubmit: (event: Event) => void;
-  onPasskey: () => void;
-  passkeysSupported: boolean;
 };
 
 /** On-brand skeleton (periwinkle shimmer) shown while the session is booting. */
@@ -47,8 +45,6 @@ export function LoginScreen({
   onUsername,
   onPassword,
   onSubmit,
-  onPasskey,
-  passkeysSupported,
 }: LoginScreenProps) {
   return (
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-login">
@@ -94,7 +90,6 @@ export function LoginScreen({
                   disabled={busy}
                   type="submit"
                 />
-                {passkeysSupported && <Button variant="secondary" label="USE A PASSKEY" block type="button" disabled={busy || !username.trim()} onClick={onPasskey} />}
               </div>
               <a href="/recover-member">Forgot your password?</a>
               </form>

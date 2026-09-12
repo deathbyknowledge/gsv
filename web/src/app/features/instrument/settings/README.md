@@ -28,9 +28,6 @@ lost-reply retry. Password reset and removal explain credential and messenger
 revocation; removal preserves data and already-running work. People drafts use
 the same navigation guard as the other Settings sections.
 
-Sign-in lists the current human's passkeys, supports enrollment through the
-browser authenticator and requires an inline confirmation to remove one. Password
-access remains available. Root's verified-owner linking control lives here too.
-The login screen offers a passkey after entering a username; the verified token
-uses the existing session service and token rotation. Authenticator cancellation
-leaves password sign-in available. No credential material is kept in UI drafts.
+Root's Sign-in section holds the verified-owner linking control. Local accounts
+sign in with their password through the existing session service and token
+rotation. No credential material is kept in UI drafts.

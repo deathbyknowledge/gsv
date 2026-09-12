@@ -61,6 +61,10 @@ describe("gateway authentication integration", () => {
   it("authenticates users with passwords or scoped user tokens", async () => {
     await setup();
 
+    const retiredClient = new GSVClient();
+    await expect(retiredClient.requestOnce(webSocketUrl(baseUrl), "account.passkey.authenticate.begin", { username: USERNAME }))
+      .rejects.toMatchObject({ code: 400, message: "Invalid account.passkey.authenticate.begin arguments" });
+
     await expect(connectOnce({
       protocol: 4,
       peer: peerInfo("missing-auth"),
@@ -89,6 +93,9 @@ describe("gateway authentication integration", () => {
       principal: { kind: "human", account: { uid: 1000, username: USERNAME } },
     });
     expect(connected.peer.grant.calls).toContain("proc.*");
+
+    await expect(user.call("account.passkey.register.begin", { label: "retired" }))
+      .rejects.toMatchObject({ code: 400, message: "Invalid account.passkey.register.begin arguments" });
 
     const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
       kind: "human",

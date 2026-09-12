@@ -27,8 +27,6 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
           onUsername={state.login.onUsername}
           onPassword={state.login.onPassword}
           onSubmit={state.login.onSubmit}
-          onPasskey={state.login.onPasskey}
-          passkeysSupported={state.login.passkeysSupported}
         />
         <SetupScreen
           snapshot={snapshot}

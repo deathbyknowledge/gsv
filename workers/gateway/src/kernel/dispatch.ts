@@ -647,21 +647,6 @@ async function dispatchKernel(
       case "account.remove":
         data = ctx.people.remove(frame.args.uid, ctx);
         break;
-      case "account.passkey.register.begin":
-        data = await ctx.passkeys.beginRegistration(frame.args, ctx);
-        break;
-      case "account.passkey.register.finish":
-        data = await ctx.passkeys.finishRegistration(frame.args, ctx);
-        break;
-      case "account.passkey.list":
-        data = ctx.passkeys.list(ctx);
-        break;
-      case "account.passkey.revoke":
-        data = ctx.passkeys.revoke(frame.args, ctx);
-        break;
-      case "account.passkey.authenticate.begin":
-      case "account.passkey.authenticate.finish":
-        return errFrame(frame.id, 400, "Passkey sign-in requires the connection authentication path");
 
       // --- sched.* ---
       case "sched.list":

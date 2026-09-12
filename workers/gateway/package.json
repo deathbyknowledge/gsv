@@ -29,7 +29,6 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
-    "zod": "4.3.6",
-    "@simplewebauthn/server": "^14.0.1"
+    "zod": "4.3.6"
   }
 }

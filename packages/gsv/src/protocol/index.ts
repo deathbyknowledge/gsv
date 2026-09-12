@@ -1,6 +1,5 @@
 export type * from "./syscalls/system";
 export type * from "./syscalls/pairing";
-export type * from "./syscalls/passkeys";
 export * from "./pairing";
 export type * from "./syscalls/fs";
 export type * from "./syscalls/shell";

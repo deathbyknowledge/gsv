@@ -95,9 +95,8 @@ to that space's `/recover` page. Kernel redemption changes only root's password
 and revokes earlier root tokens, sessions, pending device invitations and root
 adapter links. An identical receiver-bound retry returns the existing receipt
 without overwriting later changes or disconnecting newly authenticated sessions.
-Existing ordinary human credentials and data remain unchanged. Root recovery
-also revokes enrolled root passkeys. Kernel Settings owns people, human
-invitations, member password resets, removal, and passkey enrollment/revocation.
+Existing ordinary human credentials and data remain unchanged. Kernel Settings
+owns people, human invitations, member password resets, and removal.
 
 Members can recover at `/recover-member` using a private messenger link they
 previously confirmed while signed in. The Kernel sends a five-minute code through
@@ -105,8 +104,7 @@ the exact linked adapter route without waking a model. The browser stores a
 random proof before requesting the code; only that browser can redeem it. A
 successful reset revokes that member's previous credentials and messenger links.
 Manual or legacy links without direct human confirmation require relinking while
-signed in or a root password reset. Ordinary password sign-in remains available
-alongside passkeys.
+signed in or a root password reset. Ordinary password sign-in remains available.
 
 `0013_installation_owner_identity.sql` adds the external-subject mapping and
 durable owner attempts. On an existing H&M database it runs only through the
