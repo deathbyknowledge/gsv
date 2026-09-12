@@ -103,6 +103,19 @@ export async function prepareCloudLifecycle(configuration: LifecycleConfiguratio
   return state;
 }
 
+function accountsDeletionProof(state: LifecycleState, progress: Deletion) {
+  const oldId = state.configuration.fixtures.a.installationId;
+  requireCondition(progress.installationId === oldId && progress.operationId === state.deletionOperationId, "Deletion status belongs to another operation");
+  // The coordinator removes owner receipts once its final tombstone records complete erasure.
+  if (progress.phase === "erased") return { erased: true, erasing: true };
+  const receipt = progress.owners.find((owner) => owner.id === "accounts")?.receipt;
+  const matching = receipt?.installationId === oldId && receipt.operationId === state.deletionOperationId;
+  return {
+    erased: Boolean(matching && ["live-erased", "erased"].includes(receipt.phase) && receipt.pendingResources === 0),
+    erasing: Boolean(matching && ["erasing", "live-erased", "erased"].includes(receipt.phase)),
+  };
+}
+
 /** Fail closed on a new space, changed bystander, or a replacement without the trusted reset relationship. */
 async function preserveRegistry(state: LifecycleState, deps: LifecycleDependencies): Promise<Installation | null> {
   const rows = await deps.snapshot();
@@ -113,12 +126,7 @@ async function preserveRegistry(state: LifecycleState, deps: LifecycleDependenci
   if (state.retired && state.inventorySha256 && (!original || state.deletion)) {
     // Query current server progress: the erase reply may have been lost before the local checkpoint.
     const progress = lifecycleDeletionSchema.parse(await deps.deletion("deletion-status", oldId, state.deletionOperationId, state.inventorySha256));
-    requireCondition(progress.installationId === oldId && progress.operationId === state.deletionOperationId, "Deletion status belongs to another operation");
-    const receipt = progress.owners.find((owner) => owner.id === "accounts")?.receipt;
-    accountsErased = Boolean(receipt && receipt.installationId === oldId && receipt.operationId === state.deletionOperationId
-      && ["live-erased", "erased"].includes(receipt.phase) && receipt.pendingResources === 0);
-    accountsErasing = Boolean(receipt && receipt.installationId === oldId && receipt.operationId === state.deletionOperationId
-      && ["erasing", "live-erased", "erased"].includes(receipt.phase));
+    ({ erased: accountsErased, erasing: accountsErasing } = accountsDeletionProof(state, progress));
     state.deletion = progress;
   }
   requireCondition(Boolean(original) || accountsErased, "Original immutable identity disappeared without Accounts erasure proof");
@@ -135,13 +143,7 @@ async function preserveRegistry(state: LifecycleState, deps: LifecycleDependenci
   const replacement = await deps.installation(extra[0].id);
   if (!replacement.reset && !accountsErased && state.retired && state.inventorySha256) {
     const progress = lifecycleDeletionSchema.parse(await deps.deletion("deletion-status", oldId, state.deletionOperationId, state.inventorySha256));
-    const receipt = progress.owners.find((owner) => owner.id === "accounts")?.receipt;
-    accountsErased = progress.installationId === oldId && progress.operationId === state.deletionOperationId
-      && Boolean(receipt && receipt.installationId === oldId && receipt.operationId === state.deletionOperationId
-        && ["live-erased", "erased"].includes(receipt.phase) && receipt.pendingResources === 0);
-    accountsErasing = progress.installationId === oldId && progress.operationId === state.deletionOperationId
-      && Boolean(receipt && receipt.installationId === oldId && receipt.operationId === state.deletionOperationId
-        && ["erasing", "live-erased", "erased"].includes(receipt.phase));
+    ({ erased: accountsErased, erasing: accountsErasing } = accountsDeletionProof(state, progress));
     if (accountsErasing) state.deletion = progress;
   }
   const target = state.configuration.fixtures.a;

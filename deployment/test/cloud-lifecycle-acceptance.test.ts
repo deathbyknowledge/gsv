@@ -11,7 +11,7 @@ function fixture() {
   let replacement: Awaited<ReturnType<LifecycleDependencies["installation"]>> | null = null;
   let replacementCredentials: LifecycleGateway["credentials"] | null = null;
   let history = "existing welcome";
-  let loseReset = false, loseSetup = false, failSave = false, deleted = false, erasing = false;
+  let loseReset = false, loseSetup = false, failSave = false, deleted = false, erasing = false, erased = false;
   const files = new Map<string, string>();
   const writes: { kind: string; id?: string; operationId?: string; handle?: string }[] = [];
   const route = (g: LifecycleGateway) => g.origin === config.fixtures.b.canonicalOrigin ? "b" : replacement ? "replacement" : "a";
@@ -48,6 +48,7 @@ function fixture() {
     async retire(id, operationId, handle) { expect(persisted.deletionOperationId).toBe(operationId); writes.push({ kind: "retire", id, operationId, handle }); },
     async deletion(action, id, operationId) {
       if (action !== "deletion-status") writes.push({ kind: action, id, operationId });
+      if (erased) return { operationId, installationId: id, phase: "erased", owners: [] };
       return { operationId, installationId: id, phase: deleted ? "live-erased" : erasing ? "erasing" : "quiescing", owners: [{ id: "accounts", outcome: deleted ? "retention-pending" : "progress", receipt: {
         version: 1, operationId, installationId: id, phase: deleted ? "live-erased" : erasing ? "erasing" : "quiescing", updatedAt: 1, pendingResources: deleted ? 0 : 1,
         outcome: deleted ? "retention-pending" : "progress", retainedCopies: deleted ? [{ id: "backup", kind: "backup", expiresAt: 9999999999999 }] : [],
@@ -59,6 +60,7 @@ function fixture() {
     loseReset: () => { loseReset = true; }, loseSetup: () => { loseSetup = true; }, failSave: () => { failSave = true; },
     changeProtected: () => { rows.find((row) => row.id === "real-user")!.state = "restricted"; }, changeHistory: () => { history = "changed"; },
     eraseAccounts: () => { deleted = true; rows = rows.filter((row) => row.id !== "a"); replacement!.reset = null; },
+    finishDeletion: () => { erased = true; rows = rows.filter((row) => row.id !== "a"); replacement!.reset = null; },
     eraseResetLink: () => { erasing = true; replacement!.reset = null; },
     removeOriginal: () => { rows = rows.filter((row) => row.id !== "a"); },
   };
@@ -115,6 +117,28 @@ describe("guarded cloud lifecycle acceptance", () => {
     const t = fixture(); await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.eraseAccounts();
     await step(t, "deletion-status"); await step(t, "verify"); expect(cloudLifecycleReport(t.saved())).toMatchObject({ phase: "verified", deletionPhase: "live-erased", deletionComplete: false });
     expect(t.files.get(`b:${t.saved().path}`)).toBe(t.saved().markers.b); expect(t.files.get(`replacement:${t.saved().path}`)).toBe(t.saved().markers.replacement);
+  });
+  it("replays complete erasure after the coordinator removes owner receipts, the old row and reset linkage", async () => {
+    const t = fixture(); await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.finishDeletion();
+    expect(t.saved().deletion?.phase).toBe("quiescing");
+    await step(t, "deletion-status"); await step(t, "verify"); await step(t, "deletion-status");
+    expect(cloudLifecycleReport(t.saved())).toMatchObject({ phase: "verified", replacementId: "replacement", deletionPhase: "erased", deletionComplete: true, owners: [] });
+    expect(t.files.get(`b:${t.saved().path}`)).toBe(t.saved().markers.b); expect(t.files.get(`replacement:${t.saved().path}`)).toBe(t.saved().markers.replacement);
+    await t.deps.save({ ...t.saved(), replacementId: null });
+    await expect(step(t, "deletion-status")).rejects.toThrow("Replacement does not belong to this reset");
+  });
+  it.each(["operationId", "installationId"] as const)("rejects a terminal tombstone for another %s", async (field) => {
+    const t = fixture(); await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.finishDeletion();
+    const original = t.deps.deletion;
+    t.deps.deletion = async (...args) => ({ ...await original(...args), [field]: "foreign" });
+    await expect(step(t, "deletion-status")).rejects.toThrow("another operation");
+    expect(t.saved().deletion?.phase).toBe("quiescing");
+  });
+  it.each(["quiescing", "erasing", "live-erased"] as const)("rejects missing Accounts proof while the coordinator is %s", async (phase) => {
+    const t = fixture(); await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.finishDeletion();
+    const original = t.deps.deletion;
+    t.deps.deletion = async (...args) => ({ ...await original(...args), phase });
+    await expect(step(t, "deletion-status")).rejects.toThrow("without Accounts erasure proof");
   });
   it("resumes a bounded Accounts erasing batch after its reset link is removed while the old row remains", async () => {
     const t = fixture(); await setup(t); await step(t, "retire"); await step(t, "delete", "a".repeat(64)); t.eraseResetLink();
