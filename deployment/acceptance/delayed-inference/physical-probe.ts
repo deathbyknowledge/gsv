@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { InstallationDeletionRequest } from "../../../packages/gsv/src/services/lifecycle.ts";
 
 const resourceSchema = z.strictObject({
   ownerId: z.enum(["gateway", "inference"]),
@@ -14,7 +15,7 @@ export const physicalRequestSchema = z.strictObject({ installationId: z.string()
 type PhysicalRequest = z.infer<typeof physicalRequestSchema>;
 type PhysicalStub = {
   inspectInstallationResource(): Promise<{ name?: string; empty: boolean }>;
-  installationDeletionStatus(input: PhysicalRequest): Promise<{ installationId: string; operationId: string; phase: string; pendingResources: number }>;
+  installationDeletionStatus(input: InstallationDeletionRequest): Promise<{ installationId: string; operationId: string; phase: string; pendingResources: number }>;
   fetch(request: Request): Promise<Response>;
 };
 type PhysicalNamespace = {
@@ -75,7 +76,7 @@ export async function inspectPhysicalResources(env: PhysicalEnvironment, input: 
     const measurement = resource.kind === "inference-executor" ? "executor-row-and-active-count" : "application-nonempty-indicator";
     if (resource.kind === "inference-executor") {
       const status = z.object({ installationId: z.literal(scope.installationId), operationId: z.literal(scope.operationId),
-        phase: z.enum(["live-erased", "erased"]), pendingResources: z.number().int().nonnegative() }).parse(await stub.installationDeletionStatus(request));
+        phase: z.enum(["live-erased", "erased"]), pendingResources: z.number().int().nonnegative() }).parse(await stub.installationDeletionStatus({ version: 1, ...request }));
       liveCount = status.pendingResources;
     } else {
       let raw: unknown;

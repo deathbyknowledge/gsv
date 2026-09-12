@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { inspectPhysicalResources } from "../acceptance/delayed-inference/physical-probe.ts";
+import { installationDeletionRequestSchema, type InstallationDeletionRequest } from "../../packages/gsv/src/services/lifecycle.ts";
 
 const installationId = "inst_11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";
@@ -18,7 +19,7 @@ function fixture() {
     getByName(name: string) { open(kind, name); return {
       inspectInstallationResource: async () => ({ name, empty: !live }),
       fetch: async () => Response.json({ name, empty: !live }),
-      installationDeletionStatus: async () => ({ ...request, phase: nativePhase, pendingResources: live ? 3 : 0 }),
+      installationDeletionStatus: async (input: InstallationDeletionRequest) => ({ ...installationDeletionRequestSchema.parse(input), phase: nativePhase, pendingResources: live ? 3 : 0 }),
     }; } });
   const scope = { ...request, resources };
   const env = { DELAY_INSTALLATION_ID: installationId, DELAY_PROCESS_ID: "proc:test", get PHYSICAL_SCOPE() { return JSON.stringify(scope); },
