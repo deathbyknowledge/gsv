@@ -21,7 +21,7 @@
     "./r2-multipart-capture": "./src/r2-multipart-capture.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p acceptance/legacy-upgrade/tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {

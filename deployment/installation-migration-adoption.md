@@ -243,9 +243,17 @@ checks freeze/cancellation, integer precision, both ledger shapes, failed-batch
 rollback, lost replies at each phase, changed schema/guards, historical reset
 imports, pending service preparation, and forward migration receipts.
 
-This implementation has not itself adopted staging or production. The remaining
-live procedure is to review the evidence and exact release, disable the old
-runner, drain writes, prepare/review/apply the staging snapshot, verify both
+The [isolated historical upgrade fixture](acceptance/legacy-upgrade/README.md)
+deploys pinned pre-extraction services, creates real credentials and a pending
+reset, then exercises this same handoff against the retained resources. It
+checks password/token, file and nonempty history continuity without issuing
+replacement credentials. Its synthetic operator admission does not establish
+Cloudflare Access or existing messenger-link continuity. Recorded live results
+and remaining release coverage are in the
+[cloud acceptance report](../engineering/hosting-consolidation-cloud-acceptance-2026-09-12.md).
+
+For each adopted deployment, review the evidence and exact release, disable the old
+runner, drain writes, prepare/review/apply its snapshot, verify both
 owners and data preservation, run the owned forward migrations, then perform
 the two-installation routing/reset/deletion acceptance flow. Worker cutover is
 still an explicit operator decision.
