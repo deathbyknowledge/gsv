@@ -78,15 +78,61 @@ B's 24-byte synthetic part was unchanged; A's original ID returned
 therefore used the original saved key and upload ID. This is observed provider
 behavior, not an asserted guarantee about the encoding of opaque identifiers.
 
+## Historical upgrade acceptance
+
+A separate `gsv-upgrade-5de18320` deployment on the personal account completed
+the old-to-new upgrade at 18:11 UTC. It used genuine pre-extraction public
+`6915d5e6` and private `3777be4b` sources, then adopted the same resources with
+public `3c65ead6` and private `8a2b01fb`. Later public changes add acceptance
+tooling and reports; they do not change those runtime artifacts.
+
+The old implementation created two spaces, issued their credentials and
+performed a real reset with durable inference preparation and pending deletion.
+The handoff removed its migration runner, froze D1, saved a reviewed snapshot
+and survived a separate-process status check. Applying the exact approved
+snapshot and replaying that apply produced the same released receipt. Nine
+forward migrations completed through the new owners; the twelve-entry legacy
+ledger remained unchanged, all 21 migration sources matched, and foreign-key
+checks were clean.
+
+The current deployment passed 63 module, binding, resource and schema checks,
+followed by 33 credential/state checks. Both spaces retained their original
+human/root passwords and web/CLI/machine protocol tokens, isolated contents at
+the same file path, and Process/Conversation identities. Retired A's old
+password and token remained rejected at the replacement address. Its existing
+pending deletion and preparation survived; this test did not initiate a purge.
+
+The full saved history prefixes also survived: one committed user message and
+six typed Process records, including a real inference error, with no edits,
+removals or reordering. Verification sent no new explicit messages. Inference
+was disabled and the stack contained only deployment-base GSV entries; zero
+external inference requests is derived from that checked execution path, not
+from provider telemetry. The test does not claim a generated assistant reply
+or populated commercial usage history.
+
+The [repeatable harness](../deployment/acceptance/legacy-upgrade/README.md)
+has 21 focused tests and a CI typecheck. Its operator admission is synthetic;
+the machine check reconnects a protocol fixture, not physical hardware.
+Cloudflare Access and existing messenger-link continuity remain separate
+coverage. These fixture resources are retained for inspection. H&M staging
+and production were not changed by this acceptance run.
+
 ## Remaining release coverage
 
 The live reset/cleanup result does not replace the other cases in
 [W6](hosting-consolidation-spec.md): real Telegram linking and delivery for two
-controlled actors, BYO model credentials, populated inference/adapters, delayed
-work after deletion, and genuine H&M staging resource/credential/link adoption.
-Retained-copy evidence also remains open. The isolated historical upgrade
-acceptance is being run separately; its synthetic operator admission cannot
-establish Cloudflare Access or existing messenger-link continuity.
+controlled actors, BYO model credentials, populated inference/adapters and delayed
+work after deletion. H&M staging resource adoption and migration ownership
+handoff were completed earlier; remaining adoption evidence concerns older
+client credentials, messenger links and authenticated operator admission.
+Its controlled human/root passwords were verified across later rollouts, but
+that fixture was created after extraction and had no earlier client tokens or
+messenger links. Those historical checks are recorded in the workstream notes;
+their original temporary receipts are no longer available for re-inspection.
+
+Retained-copy evidence also remains open. The completed isolated upgrade
+supplies genuine historical client/history and migration recovery evidence;
+it does not replace the remaining H&M admission and messenger-link checks.
 
 W7's executable standalone removal remains gated on that coverage and a last
 verified standalone release. This report does not authorize a production
