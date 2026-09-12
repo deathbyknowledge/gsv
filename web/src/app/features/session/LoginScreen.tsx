@@ -3,6 +3,7 @@ import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
 import { AuthLayout } from "./AuthLayout";
+import { SessionLink } from "./sessionNavigation";
 import "./LoginScreen.css";
 
 type LoginScreenProps = {
@@ -91,7 +92,7 @@ export function LoginScreen({
                   type="submit"
                 />
               </div>
-              <a href="/recover-member">Forgot your password?</a>
+              <SessionLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">Forgot your password?</SessionLink>
               </form>
             )}
           </div>
