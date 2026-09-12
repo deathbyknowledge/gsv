@@ -96,10 +96,16 @@ describe("installation onboarding claims", () => {
     });
   });
 
-  it("reissuing a claim invalidates the prior link", async () => {
+  it("rotates the onboarding bearer while preserving the claim retained by the Kernel", async () => {
     const fixture = await provisioningInstallation("reissue");
     const first = await fixture.onboarding.issue(fixture.installationId);
-    const second = await fixture.onboarding.issue(fixture.installationId);
+    const original = await fixture.onboarding.authorize({
+      installationId: fixture.installationId,
+      token: new URL(first.onboardingUrl).hash.slice(1),
+    });
+    if (!original.ok) throw new Error("original claim was not authorized");
+    const second = await fixture.onboarding.issue(fixture.installationId, first.expiresAt);
+    expect(second.expiresAt).toBeGreaterThan(first.expiresAt);
 
     await expect(fixture.onboarding.authorize({
       installationId: fixture.installationId,
@@ -108,6 +114,23 @@ describe("installation onboarding claims", () => {
     await expect(fixture.onboarding.authorize({
       installationId: fixture.installationId,
       token: new URL(second.onboardingUrl).hash.slice(1),
-    })).resolves.toMatchObject({ ok: true });
+    }, first.expiresAt)).resolves.toMatchObject({ ok: true, claimId: original.claimId });
+
+    await expect(fixture.onboarding.complete({
+      installationId: fixture.installationId,
+      claimId: original.claimId,
+    })).resolves.toEqual({ state: "complete", installationId: fixture.installationId });
+    await expect(fixture.accounts.resolveInstallation(fixture.installationId))
+      .resolves.toMatchObject({ found: true, state: "active" });
+    await expect(fixture.onboarding.authorize({
+      installationId: fixture.installationId,
+      token: new URL(second.onboardingUrl).hash.slice(1),
+    }, first.expiresAt)).resolves.toEqual({ ok: false });
+    await expect(fixture.onboarding.issue(fixture.installationId))
+      .rejects.toThrow("installation is not awaiting onboarding");
+    await expect(fixture.onboarding.complete({
+      installationId: fixture.installationId,
+      claimId: original.claimId,
+    })).rejects.toThrow("installation onboarding claim is unavailable");
   });
 });

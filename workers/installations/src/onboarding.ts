@@ -84,6 +84,7 @@ export class InstallationOnboardingStore {
     if (!installation) throw new Error("installation is not awaiting onboarding");
 
     const token = await createOpaqueToken("onboard");
+    // The Kernel retains this claim across activation retries; reissue only rotates its bearer.
     const claimId = `onboarding_${crypto.randomUUID()}`;
     const expiresAt = now + ONBOARDING_TOKEN_TTL_MS;
     const result = await this.db.prepare(
@@ -92,7 +93,6 @@ export class InstallationOnboardingStore {
          expires_at, completed_at, revoked_at, created_at
        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
        ON CONFLICT (installation_id) DO UPDATE SET
-         id = excluded.id,
          token_prefix = excluded.token_prefix,
          token_hash = excluded.token_hash,
          expires_at = excluded.expires_at,
