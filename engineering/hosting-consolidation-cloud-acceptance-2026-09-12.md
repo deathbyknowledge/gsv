@@ -43,10 +43,21 @@ and three other existing spaces were preservation controls.
 
 The operation deliberately remains **retention-pending**, not fully erased.
 Accounts, Gateway and Inference retain their declared platform backup windows.
-The configured Gateway/Ripgit logs, Workers AI provider copy, and AI Gateway
-logs/cache have no verified expiry or absence proof yet. The personal API token
-still receives HTTP 403 for AI Gateway settings. Unknown retention was not
+Accounts recorded a conservative seven-day policy for Gateway and Ripgit's
+native Workers Logs, expiring September 19 at 17:52 UTC. This uses
+[Cloudflare's documented maximum](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#limits)
+and fresh Worker settings, without assuming a billing tier or claiming that
+historical exports are absent. Workers AI provider retention and AI Gateway
+logs/cache still have no verified expiry or absence proof. The personal API
+token receives HTTP 403 for AI Gateway settings. Unknown retention was not
 converted into an empty-store claim.
+
+The native Workers AI limitation is separate from API permissions: its
+[data policy](https://developers.cloudflare.com/workers-ai/platform/data-usage/)
+restricts training use but supplies no finite retention guarantee, and its
+[prompt-caching documentation](https://developers.cloudflare.com/workers-ai/features/prompt-caching/)
+does not specify a maximum cache lifetime. Disabling AI Gateway log collection
+does not establish upstream provider erasure.
 
 The capture, immutable evidence, credentials and operation receipts remain in
 private operator storage. No credentials, message bodies or file contents are
