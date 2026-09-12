@@ -157,11 +157,39 @@ describe("public operator composition", () => {
   it("uses supplied operator services without creating a D1 or replacing either service", async () => {
     const directory = await run(dependencies.Cloudflare.Worker("ProvidedDirectory", { name: "existing-directory", main: "provided.js" }));
     const executor = await run(dependencies.Cloudflare.Worker("ProvidedExecutor", { name: "existing-executor", main: "provided.js" }));
+    const adapter = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram", main: "telegram.js" }));
     recorded.workers.length = 0;
-    await run(GsvDeployment({ ...input, services: { installationDirectory: directory, inferenceExecution: executor } }, dependencies));
+    await run(GsvDeployment({ ...input, services: { installationDirectory: directory, inferenceExecution: executor,
+      inferenceLifecycle: { worker: executor, entrypoint: "ProvidedInferenceLifecycle", namespaces: [
+        { className: "InferenceExecutor", kind: "inference-executor" },
+      ] },
+      adapters: [{ id: "telegram", worker: adapter, gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel",
+        lifecycle: { entrypoint: "TelegramLifecycleEntrypoint", namespaces: [{ className: "TelegramInstallation", kind: "adapter-installation" }] } }],
+    } }, dependencies));
     expect(recorded.databases).toEqual([]);
     expect(recorded.workers.map((worker) => worker.id)).toEqual(["FixtureRipgit", "FixtureGateway"]);
     expect(recorded.workers[1].props.env?.INFERENCE_EXECUTION).toBe(executor);
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInferenceDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_INFERENCE", service: "existing-executor", entrypoint: "ProvidedInferenceLifecycle",
+      props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toEqual({
+      ["1".repeat(32)]: { ownerId: "gateway", kind: "kernel" },
+      ["2".repeat(32)]: { ownerId: "gateway", kind: "process" },
+      ["3".repeat(32)]: { ownerId: "gateway", kind: "conversation" },
+      ["4".repeat(32)]: { ownerId: "gateway", kind: "ripgit" },
+      ["5".repeat(32)]: { ownerId: "inference", kind: "inference-executor" },
+      ["6".repeat(32)]: { ownerId: "telegram", kind: "adapter-installation" },
+    });
+  });
+
+  it("rejects supplied execution without a cleanup owner before creating resources", async () => {
+    const executor = await run(dependencies.Cloudflare.Worker("ProvidedExecutor", { name: "existing-executor", main: "provided.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvDeployment({ ...input, services: { inferenceExecution: executor } }, dependencies)))
+      .rejects.toThrow("Supplied inference execution requires its owned lifecycle");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
   });
 
   it("binds adapter cleanup to Accounts with the exact deployment-owned authority", async () => {

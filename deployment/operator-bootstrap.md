@@ -110,6 +110,14 @@ are documented in the [operator evidence contract](../engineering/installation-d
 Without that file, ordinary service works but full deletion admission remains
 unavailable. Configuration never supplies an erasure receipt.
 
+When supplying `services.inferenceExecution`, also supply
+`services.inferenceLifecycle`: its actual Worker, cleanup `entrypoint`, and
+owned `namespaces` (`className` plus `inference-executor` or
+`inference-installation` kind). The execution RPC binding may be a named
+entrypoint; it does not itself describe cleanup ownership. `GsvDeployment`
+combines this explicit inventory with Gateway, ripgit and adapter namespaces
+and binds the supplied cleanup service to the directory.
+
 `GsvDeletionResourceBindings` combines the operator catalog with the exact
 application-owner storage scopes. `GsvDeployment` derives those scopes for its
 fresh public components. An overlay supplying its own directory, inference or

@@ -2,7 +2,7 @@ import type * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
-import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
+import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string;
@@ -12,7 +12,14 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
   domain: string;
   adminOrigin: string;
   access: GsvOperatorAccess;
-  services?: GsvRuntimeServices;
+  services?: GsvRuntimeServices & {
+    /** Supplied execution owns its cleanup and physical namespaces, independently of its RPC entrypoint. */
+    inferenceLifecycle?: {
+      worker: Cloudflare.Workers.Worker;
+      entrypoint: string;
+      namespaces: readonly Pick<GsvDeletionNamespace, "className" | "kind">[];
+    };
+  };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
   deletion?: { operatorResources: OperatorResourceCatalog };
   installations: {
@@ -46,6 +53,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   return Effect.gen(function* () {
   if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound)) {
     throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
+  }
+  if (Boolean(props.services?.inferenceExecution) !== Boolean(props.services?.inferenceLifecycle)) {
+    throw new Error("Supplied inference execution requires its owned lifecycle and namespace inventory");
+  }
+  if (props.services?.inferenceLifecycle && (!props.services.inferenceLifecycle.entrypoint.trim()
+    || props.services.inferenceLifecycle.namespaces.some((namespace) => !namespace.className.trim()
+      || !["inference-executor", "inference-installation"].includes(namespace.kind)))) {
+    throw new Error("Supplied inference lifecycle requires valid inference namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
   const admin = new URL(props.adminOrigin);
@@ -152,20 +167,22 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const runtime = yield* GsvRuntime({ ...props, mode: "managed", compatibility,
     services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
-  if (inferenceWorker) {
-    yield* directory.bind(`${props.logicalPrefix}DirectoryInferenceDeletionBinding`, {
-      bindings: [{ type: "service", name: "DELETION_OWNER_INFERENCE", service: props.inference.workerName,
-        entrypoint: "InferenceLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
-    });
-    yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
-      { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
-      { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
-      { ownerId: "gateway", worker: runtime.gateway, className: "Conversation", kind: "conversation" },
-      { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
-      { ownerId: "inference", worker: inferenceWorker, className: "InferenceExecutor", kind: "inference-executor" },
-      ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
-    ]);
-  }
+  const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
+    worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",
+    namespaces: [{ className: "InferenceExecutor", kind: "inference-executor" as const }],
+  };
+  yield* directory.bind(`${props.logicalPrefix}DirectoryInferenceDeletionBinding`, {
+    bindings: [{ type: "service", name: "DELETION_OWNER_INFERENCE", service: inferenceLifecycle.worker.workerName,
+      entrypoint: inferenceLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
+  });
+  yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
+    { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
+    { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
+    { ownerId: "gateway", worker: runtime.gateway, className: "Conversation", kind: "conversation" },
+    { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
+    ...inferenceLifecycle.namespaces.map((namespace) => ({ ...namespace, ownerId: "inference", worker: inferenceLifecycle.worker })),
+    ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
+  ]);
   if (catalog && database) {
     const adapters = props.services?.adapters ?? [];
     const scopes = Output.all(database.databaseId, ...adapters.map((adapter) => adapter.worker.workerName))
