@@ -17,6 +17,8 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_WORKER_PREFIX` | Physical resource name prefix; defaults to `gsv`. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
+| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My spaces and recovery. |
+| `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
 | `GSV_INFERENCE_PROVIDER`, `GSV_INFERENCE_MODEL` | Operator default provider and model. |
@@ -50,6 +52,33 @@ It prints a one-time link only to your local controlling terminal. The link
 creates the first installation and its setup invitation. Further installations
 are created explicitly in administration. Ordinary redeployments do not create
 installations or rotate credentials.
+
+## Give someone a space
+
+Operator administration and owner sign-in have separate jobs. In `operator`
+access mode, open `<admin-origin>/operator` and sign in with the operator
+credential saved during bootstrap. In `access` mode, open
+`<admin-origin>/admin` through the configured Cloudflare Access policy.
+Choose **New space**, reserve its handle, and give the person the resulting
+one-time setup link. They use that link to create their local account and
+root password. Further spaces use this same administration flow.
+
+With native owner email enabled, `<admin-origin>/owner/login` verifies the
+person's email and opens **My spaces**. Signing in there does not create a
+space or grant operator administration. To add an existing space to that
+list, sign in to the space as **root**, open **Settings → sign-in → Space
+ownership → link owner identity**, and verify the email again. This binds
+current root authorization to the verified owner; onboarding does not yet
+perform that link automatically. The owner can then see the space in My
+spaces and start root recovery there if needed.
+
+The sending address must be enabled with the provider and its DNS records
+verified before codes can be delivered. The public deployment creates and
+preserves the owner-authentication secret. Keep the deployment state on
+redeploy so existing verification and session records remain usable. Owner
+verification mail is independent of a space's messaging adapters.
+
+## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter
 manifest, along with its `requiredVariables`. Telegram needs its bot username
