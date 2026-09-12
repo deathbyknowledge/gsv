@@ -1,6 +1,7 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Output from "alchemy/Output";
+import * as Redacted from "effect/Redacted";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
@@ -57,6 +58,36 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it("binds restricted owner email and the stable redacted secret only to Accounts", async () => {
+    const authSecret = Redacted.make("synthetic-stable-owner-secret");
+    await run(GsvDeployment({ ...input, installations: { ...input.installations,
+      ownerIdentity: { issuer: "https://identity.example.com", clientId: "owner-client" },
+      ownerEmail: { from: "accounts@example.com", allowedRecipients: ["owner@example.com"], authSecret },
+    } }, dependencies));
+    const accounts = recorded.workers.find((worker) => worker.id === "FixtureInstallations")!.props.env!;
+    expect(accounts.GSV_OWNER_EMAIL_FROM).toBe("accounts@example.com");
+    expect(accounts.GSV_OWNER_AUTH_SECRET).toBe(authSecret);
+    expect(JSON.stringify(accounts.GSV_OWNER_AUTH_SECRET)).not.toContain("synthetic-stable-owner-secret");
+    expect(accounts.GSV_OWNER_OIDC_CLIENT_ID).toBe("owner-client");
+    if (!Effect.isEffect(accounts.OWNER_EMAIL)) throw new Error("Expected native email binding");
+    expect(await run(accounts.OWNER_EMAIL)).toMatchObject({
+      kind: "Cloudflare.Email.SendEmail", name: "OWNER_EMAIL",
+      allowedSenderAddresses: ["accounts@example.com"], allowedDestinationAddresses: ["owner@example.com"],
+    });
+    for (const worker of recorded.workers.filter((worker) => worker.id !== "FixtureInstallations")) {
+      expect(worker.props.env).not.toHaveProperty("OWNER_EMAIL");
+      expect(worker.props.env).not.toHaveProperty("GSV_OWNER_AUTH_SECRET");
+    }
+  });
+
+  it("does not configure owner email when no sender has been selected", async () => {
+    await run(GsvDeployment(input, dependencies));
+    const accounts = recorded.workers.find((worker) => worker.id === "FixtureInstallations")!.props.env!;
+    expect(accounts).not.toHaveProperty("OWNER_EMAIL");
+    expect(accounts).not.toHaveProperty("GSV_OWNER_EMAIL_FROM");
+    expect(accounts).not.toHaveProperty("GSV_OWNER_AUTH_SECRET");
+  });
+
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
     await run(GsvDeployment(input, dependencies));
     expect(recorded.databases).toEqual([{ name: "directory-db", migrationsDir: "public/migrations", migrationsTable: "installation_migrations" }]);

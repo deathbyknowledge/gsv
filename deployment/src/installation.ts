@@ -21,6 +21,8 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
     workerBundle: string;
     migrationsDirectory: string;
     ownerIdentity?: { issuer: string; clientId: string; clientSecret?: Cloudflare.Workers.WorkerBindingProps[string] };
+    /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
+    ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
   };
   inference: {
     workerName: string;
@@ -105,6 +107,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
+    if (props.installations.ownerEmail) {
+      const owner = props.installations.ownerEmail;
+      bindings.OWNER_EMAIL = Cloudflare.Email.SendEmail("OWNER_EMAIL", {
+        allowedSenderAddresses: [owner.from], allowedDestinationAddresses: owner.allowedRecipients,
+      });
+      bindings.GSV_OWNER_EMAIL_FROM = owner.from;
+      bindings.GSV_OWNER_AUTH_SECRET = owner.authSecret;
+    }
     if (props.telemetry) bindings.GSV_TELEMETRY_ENABLED = "1";
     directory = yield* Cloudflare.Worker(`${props.logicalPrefix}Installations`, {
       name: props.installations.workerName, main: props.installations.workerBundle, bundle: false,
