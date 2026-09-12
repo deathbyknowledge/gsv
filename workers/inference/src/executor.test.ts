@@ -162,11 +162,13 @@ describe("public inference executor RPC", () => {
   });
 
   it("bounds a stuck directory lookup by the supplied deadline", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => completion()));
     const executor = await service.getExecutor("space_stuck_admission");
     await directory.setState("space_stuck_admission", "stuck");
     const input = request("space_stuck_admission");
     input.deadlineAt = Date.now() + 40;
     expect(await executor.generate(input)).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
+    expect(fetch).not.toHaveBeenCalled();
     expect((await rows(input.installationId)).usage).toHaveLength(0);
   });
 
@@ -182,16 +184,40 @@ describe("public inference executor RPC", () => {
   });
 
   it("cancels native response bodies that arrive after the deadline", async () => {
-    const cancel = vi.fn();
+    let entered!: () => void;
+    const dispatched = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let cancelled!: () => void;
+    const cancellation = new Promise<void>((resolve) => { cancelled = resolve; });
+    const cancel = vi.fn(() => { cancelled(); });
     vi.stubGlobal("fetch", vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      entered();
+      await held;
       return new Response(new ReadableStream({ cancel }), { headers: { "content-type": "text/event-stream" } });
     }));
     const executor = await service.getExecutor("space_late_body");
     const input = request("space_late_body");
-    input.deadlineAt = Date.now() + 30;
-    expect((await executor.generate(input)).stopReason).toBe("error");
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+    const pending = Promise.resolve(executor.generate(input));
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      await dispatched;
+      expect(fetch).toHaveBeenCalledTimes(1);
+      // Expire admitted work through the real persisted deadline, independently of RPC startup time.
+      clock = vi.spyOn(Date, "now").mockReturnValue(input.deadlineAt + 1);
+      await runDurableObjectAlarm(env.INFERENCE_EXECUTORS.getByName(input.installationId));
+      expect(await pending).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
+      expect(cancel).not.toHaveBeenCalled();
+      release();
+      await cancellation;
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect((await rows(input.installationId)).requests[0]).toMatchObject({ state: "timeout", reserved_tokens: 0 });
+    } finally {
+      clock?.mockRestore();
+      release();
+      await env.INFERENCE_EXECUTORS.getByName(input.installationId).abort(input.logicalRequestId);
+      await pending;
+    }
   });
 
   it("reserves capacity across concurrent requests and enforces request limits", async () => {
