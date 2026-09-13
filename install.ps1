@@ -278,5 +278,7 @@ if (-not $Version) {
 Write-Success "Installed gsv and gsvd to $InstallDir"
 Write-Warn "GSV Desktop is not yet released for Windows."
 Write-Host ""
-Write-Host "  Next: gsv auth setup"
+Write-Host "  Next: finish setting up your space in your browser."
+Write-Host "  CLI login: gsv --url wss://your-space.example/ws auth login"
+Write-Host "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
 Write-Host ""
