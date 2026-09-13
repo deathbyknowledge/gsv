@@ -1793,7 +1793,8 @@ describe("scheduler", () => {
         ).toArray(),
       };
     });
-    expect(state.outbound).toEqual({ state: "failed", error_code: "body_unavailable" });
+    // Queued intent stays recoverable; Mail's claim owns body validation and completion.
+    expect(state.outbound).toEqual({ state: "queued", error_code: null });
     expect(state.wakes).toHaveLength(1);
     expect(state.wakes[0]).toMatchObject({ payload: JSON.stringify(seeded.outboundId) });
     expect(state.wakes[0]?.id).not.toBe(seeded.wakeId);
