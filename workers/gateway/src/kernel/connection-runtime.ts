@@ -447,7 +447,7 @@ broadcastTargetStatus(
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
-      if (!peer?.grant.signals.includes("target.status")) continue;
+      if (state?.step !== "connected" || !peer?.grant.signals.includes("target.status")) continue;
       if (peer.principal.kind === "service") continue;
 
       if (peer.principal.kind === "human") {
@@ -461,7 +461,11 @@ broadcastTargetStatus(
         }
       }
 
-      conn.send(json);
+      try {
+        conn.send(json);
+      } catch {
+        conn.close(1011, "Target feed interrupted");
+      }
     }
   }
 }

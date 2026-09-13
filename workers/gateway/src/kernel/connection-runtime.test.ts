@@ -34,6 +34,64 @@ function runtimeWith(sockets: ReturnType<typeof fakeSocket>[]) {
   return { runtime: new ConnectionRuntime(host as never), host, setOnline };
 }
 
+function targetRuntimeWith(sockets: ReturnType<typeof fakeSocket>[]) {
+  const fixture = runtimeWith(sockets);
+  const waits: Promise<unknown>[] = [];
+  Object.assign(fixture.host.ctx, { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); } });
+  const canAccess = vi.fn((_targetId: string, uid: number) => uid === 1000);
+  Object.assign(fixture.host.targets, { get: () => ({ target_id: "macbook", owner_uid: 1000 }), canAccess });
+  Object.assign(fixture.host, { signalWatches: { matchTarget: () => [] } });
+  return { ...fixture, waits, canAccess };
+}
+
+describe("ConnectionRuntime target-status broadcast", () => {
+  it("skips a revoked socket still indexed before its close callback", async () => {
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" } };
+    const old = fakeSocket({ step: "connected", protocol: 4, peer, credentialEpoch: 0 });
+    const current = fakeSocket({ step: "connected", protocol: 4, peer });
+    old.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const { runtime, host, waits } = targetRuntimeWith([old, current]);
+    runtime.rehydrateConnections();
+    runtime.activateConnection(Array.from(host.connections.values())[1], { step: "connected", protocol: 4, peer, credentialEpoch: 1 });
+    host.auth.credentialEpoch.mockReturnValue(1);
+    runtime.invalidateAccountConnections(1000);
+    expect(old.close).toHaveBeenCalledWith(1008, "Credentials changed; sign in again");
+    expect(host.connections.size).toBe(2);
+
+    expect(() => runtime.broadcastTargetStatus("macbook", "connected")).not.toThrow();
+    await Promise.all(waits);
+    expect(old.send).not.toHaveBeenCalled();
+    expect(current.send).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('"signal":"target.status"'));
+    expect(current.close).not.toHaveBeenCalled();
+  });
+
+  it("isolates a failed recipient while preserving visibility, signal grants and exact machine routing", async () => {
+    const socket = (kind: "human" | "machine" | "service", uid = 1000, id = "macbook", signals = ["target.status"], step: KernelConnectionState["step"] = "connected") => fakeSocket({
+      step, protocol: 4,
+      peer: { ...MACHINE_PEER, id, principal: { kind, account: { ...MACHINE_PEER.principal.account, uid } }, grant: { calls: [], signals, implements: [] } },
+    });
+    const failed = socket("human");
+    const healthy = socket("human");
+    const machine = socket("machine");
+    const rejected = [
+      socket("human", 1001), socket("human", 1000, "macbook", []),
+      socket("machine", 1000, "different-target"), socket("service"),
+      socket("human", 1000, "macbook", ["target.status"], "pending"),
+      socket("human", 1000, "macbook", ["target.status"], "superseded"),
+    ];
+    failed.send.mockImplementation(() => { throw new Error("Recipient disconnected during delivery"); });
+    const { runtime, waits, canAccess } = targetRuntimeWith([failed, healthy, machine, ...rejected]);
+    runtime.rehydrateConnections();
+
+    expect(() => runtime.broadcastTargetStatus("macbook", "disconnected")).not.toThrow();
+    await Promise.all(waits);
+    expect(failed.close).toHaveBeenCalledWith(1011, "Target feed interrupted");
+    for (const recipient of [healthy, machine]) expect(recipient.send).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('"event":"disconnected"'));
+    for (const recipient of rejected) expect(recipient.send).not.toHaveBeenCalled();
+    expect(canAccess.mock.calls.map(([, uid]) => uid)).toEqual([1000, 1000, 1001]);
+  });
+});
+
 describe("ConnectionRuntime.rehydrateConnections", () => {
   it("restores sockets that negotiated the current protocol", () => {
     const socket = fakeSocket({ step: "connected", protocol: 4, peer: MACHINE_PEER });
