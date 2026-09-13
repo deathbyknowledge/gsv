@@ -144,10 +144,10 @@ export class InstallationOwnerStore {
         AND principal_id = ? AND EXISTS (SELECT 1 FROM installations i JOIN installation_owner_attempts a ON a.installation_id = i.id
         WHERE a.id = ? AND a.state = 'verified' AND i.owner_principal_id = a.principal_id)`)
         .bind(id, this.registryPrincipalId, id),
-      this.db.prepare(`INSERT INTO memberships (installation_id, principal_id, role, state, created_at)
-        SELECT a.installation_id, a.principal_id, 'owner', 'active', ? FROM installation_owner_attempts a JOIN installations i ON i.id = a.installation_id
+      this.db.prepare(`INSERT INTO memberships (installation_id, principal_id, state, created_at)
+        SELECT a.installation_id, a.principal_id, 'active', ? FROM installation_owner_attempts a JOIN installations i ON i.id = a.installation_id
         WHERE a.id = ? AND a.state = 'verified' AND i.owner_principal_id = a.principal_id
-        ON CONFLICT(installation_id, principal_id) DO UPDATE SET state = 'active', role = 'owner'`).bind(now, id),
+        ON CONFLICT(installation_id, principal_id) DO UPDATE SET state = 'active'`).bind(now, id),
       this.db.prepare(`UPDATE installation_owner_attempts SET state = 'complete' WHERE id = ? AND purpose = 'link' AND state = 'verified'
         AND EXISTS (SELECT 1 FROM installations i WHERE i.id = installation_id AND i.owner_principal_id = principal_id)`)
         .bind(id),

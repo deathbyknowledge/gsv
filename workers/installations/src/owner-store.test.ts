@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { applyD1Migrations } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { AccountStore } from "./store";
 import { InstallationOwnerStore, OWNER_ATTEMPT_TTL_MS, type VerifiedOwnerIdentity } from "./owner-store";
@@ -34,6 +35,76 @@ async function fixture() {
 }
 
 describe("verified space ownership", () => {
+  it.each([
+    { removedColumns: false, existingMembership: false },
+    { removedColumns: false, existingMembership: true },
+    { removedColumns: true, existingMembership: false },
+    { removedColumns: true, existingMembership: true },
+  ])("links and replays ownership across schema retirement ($removedColumns, existing: $existingMembership)", async ({ removedColumns, existingMembership }) => {
+    const f = await fixture();
+    const db = env.INSTALLATIONS_DB;
+    const link = await f.begin();
+    const verified = await f.verify(link.id, link.input.secretHash);
+    if (existingMembership) await db.prepare(`INSERT INTO memberships (installation_id, principal_id, state, created_at)
+      VALUES (?, ?, 'revoked', 1)`).bind(f.installation.installationId, verified.attempt.principal_id).run();
+    const otherMembership = await db.prepare("SELECT installation_id, principal_id, state, created_at FROM memberships WHERE installation_id = ?")
+      .bind(f.other.installationId).first();
+    const originalSchema = await db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'memberships'").first<{ sql: string }>();
+    if (!originalSchema) throw new Error("Missing membership schema");
+    const triggers = await db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'memberships' ORDER BY name")
+      .all<{ sql: string }>();
+    let schemaChanged = false;
+    try {
+      if (removedColumns) {
+        // Test-only future schema: retain ownership rows, constraints and lifecycle fences.
+        await applyD1Migrations(db, [{ name: `9999_test_membership_column_retirement_${existingMembership}.sql`, queries: [
+          `CREATE TABLE memberships_next (
+            installation_id TEXT NOT NULL REFERENCES installations(id) ON DELETE CASCADE,
+            principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK (state IN ('pending', 'active', 'revoked')),
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (installation_id, principal_id)
+          )`,
+          "INSERT INTO memberships_next SELECT installation_id, principal_id, state, created_at FROM memberships",
+          "DROP TABLE memberships",
+          "ALTER TABLE memberships_next RENAME TO memberships",
+          ...triggers.results.map((trigger) => trigger.sql),
+        ] }], "installation_migrations");
+        schemaChanged = true;
+        expect((await db.prepare("PRAGMA table_info(memberships)").all<{ name: string }>()).results.map((column) => column.name))
+          .toEqual(["installation_id", "principal_id", "state", "created_at"]);
+      }
+      const now = Date.now();
+      await f.store.completeLink(link.id, verified.browserSecretHash, now);
+      const restarted = new InstallationOwnerStore(db, f.registry);
+      await restarted.completeLink(link.id, verified.browserSecretHash, now + 1);
+      expect(await db.prepare("SELECT owner_principal_id FROM installations WHERE id = ?").bind(f.installation.installationId).first("owner_principal_id"))
+        .toBe(verified.attempt.principal_id);
+      expect((await db.prepare("SELECT principal_id, state, created_at FROM memberships WHERE installation_id = ? AND state = 'active'")
+        .bind(f.installation.installationId).all()).results).toEqual([
+        { principal_id: verified.attempt.principal_id, state: "active", created_at: existingMembership ? 1 : now },
+      ]);
+      expect(await db.prepare("SELECT state FROM memberships WHERE installation_id = ? AND principal_id = ?")
+        .bind(f.installation.installationId, f.registry).first("state")).toBe("revoked");
+      expect(await db.prepare("SELECT installation_id, principal_id, state, created_at FROM memberships WHERE installation_id = ?")
+        .bind(f.other.installationId).first()).toEqual(otherMembership);
+      expect((await restarted.get(link.id))?.state).toBe("complete");
+      expect(await restarted.destination(verified.attempt)).toEqual({ installationId: f.installation.installationId, canonicalOrigin: f.installation.canonicalOrigin });
+      if (!removedColumns) expect(await db.prepare("SELECT role, local_uid FROM memberships WHERE installation_id = ? AND principal_id = ?")
+        .bind(f.installation.installationId, verified.attempt.principal_id).first()).toEqual({ role: "owner", local_uid: null });
+      expect((await db.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
+    } finally {
+      if (schemaChanged) await db.batch([
+        db.prepare("ALTER TABLE memberships RENAME TO memberships_test_retired"),
+        db.prepare(originalSchema.sql),
+        db.prepare(`INSERT INTO memberships (installation_id, principal_id, state, created_at)
+          SELECT installation_id, principal_id, state, created_at FROM memberships_test_retired`),
+        db.prepare("DROP TABLE memberships_test_retired"),
+        ...triggers.results.map((trigger) => db.prepare(trigger.sql)),
+      ]);
+    }
+  });
+
   it("binds root's exact space and verified provider subject, atomically replacing only registry ownership", async () => {
     const f = await fixture();
     const link = await f.begin();
