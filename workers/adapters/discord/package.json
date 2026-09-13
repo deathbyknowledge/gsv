@@ -8,6 +8,7 @@
     "deploy": "wrangler deploy --config wrangler.shared.jsonc --minify",
     "deploy:shared": "wrangler deploy --config wrangler.shared.jsonc --minify",
     "test": "vitest run",
+    "test:run": "npm run test && npm run test:shared",
     "test:shared": "vitest run --config vitest.shared.config.ts",
     "typecheck": "tsc --noEmit"
   },
