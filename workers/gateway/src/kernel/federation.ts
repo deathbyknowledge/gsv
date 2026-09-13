@@ -1381,6 +1381,9 @@ async function acceptRemoteInvite(
     if (currentInvite.expiresAtMs <= claimNow) {
       throw new PublicFederationError(410, "Contact invite has expired");
     }
+    if (ctx.auth.isAccountDisabled(currentInvite.ownerUid)) {
+      throw new PublicFederationError(410, "Contact invite owner is unavailable");
+    }
     assertContactCapacity(
       currentInvite.ownerUid,
       input.document.shipId,
@@ -1497,6 +1500,17 @@ async function receiveRemoteDelivery(
       }
       const received = existing ?? ctx.federation.transaction(() => {
         if (envelope.payload.kind !== "contact.revoked") {
+          if (ctx.auth.isAccountDisabled(currentContact.ownerUid)) {
+            const payload = envelope.payload;
+            const request = payload.kind === "request.update"
+              ? ctx.federation.requestForRemoteUpdate(currentContact.id, currentContact.generation, payload.requestId)
+              : null;
+            if (payload.kind !== "request.update" || !request
+              || request.revision !== payload.expectedRevision
+              || !isRequestTransitionAllowed(request.state, payload.state)) {
+              throw new PublicFederationError(404, "Contact not found");
+            }
+          }
           assertInboundCapacity(currentContact, envelope.payload, ctx, now);
           consumeInboundDeliveryRate(currentContact, ctx, now);
         }
@@ -1687,18 +1701,20 @@ async function commitInboundDelivery(
         );
       });
       if (contact.state !== "revoked") ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
-      createFederationResponsibility({
-        ownerUid: contact.ownerUid,
-        title: `Review contact change ${contact.id}`,
-        details: {
-          eventType: "federation.contact.revoked",
-          contactId: contact.id,
+      if (!ctx.auth.isAccountDisabled(contact.ownerUid)) {
+        createFederationResponsibility({
+          ownerUid: contact.ownerUid,
+          title: `Review contact change ${contact.id}`,
+          details: {
+            eventType: "federation.contact.revoked",
+            contactId: contact.id,
+            deliveryId: inbox.deliveryId,
+            remoteDisplayName: contactDisplayName(contact),
+          },
+          dedupeKey: `federation.contact.revoked:${contact.id}:${contact.generation}`,
           deliveryId: inbox.deliveryId,
-          remoteDisplayName: contactDisplayName(contact),
-        },
-        dedupeKey: `federation.contact.revoked:${contact.id}:${contact.generation}`,
-        deliveryId: inbox.deliveryId,
-      }, ctx);
+        }, ctx);
+      }
       await ctx.reconcileResponsibilityWake(contact.ownerUid);
   }
 }
@@ -1963,7 +1979,8 @@ async function serveRemoteResource(request: Request, ctx: KernelContext): Promis
   }
   const now = Date.now();
   const readId = ctx.federation.transaction(() => {
-    if (!isCurrentFederationResource(contact.id, contact.generation, resourceId, ctx)) {
+    if (ctx.auth.isAccountDisabled(contact.ownerUid)
+      || !isCurrentFederationResource(contact.id, contact.generation, resourceId, ctx)) {
       throw new PublicFederationError(404, "Resource not found");
     }
     pruneFederationState(ctx, now);
