@@ -223,18 +223,51 @@ expected bytes. After correcting that driver, verification recovered the
 already stored A message before sending B's message; A's intake was not replayed.
 The final deployment comparison passed all 179 checks. A was reset to a fresh
 identity, old passwords were rejected, and B retained its stored Mail and quiet
-history. Cleanup is awaiting a complete inventory: scans omitted the known
-initialized replacement Kernel and Process even when their before/after object
-lists matched. Those scans are retained as incomplete evidence and have not
-authorized deletion.
+history. Initial scans omitted known initialized replacement objects even when
+their before/after lists matched. Those scans remain incomplete evidence. A
+later capture accounted for all 57 stored objects, including the replacement's
+Kernel, Process, Conversation and six repositories, with no unidentified objects.
+Its 32 evidence parts were preserved and verified before registration.
+
+On September 13, all ten cleanup and preservation commands passed. Accounts,
+Gateway, Inference, Mail and operator-resources each reported `live-erased` with
+zero pending resources. Two fresh reads confirmed that the original Mail
+physical object and old R2 prefix were empty. A fresh multipart listing was
+empty and its scoped attestation was accepted. B's stored MIME/text hashes and
+quiet histories, the replacement's credentials and marker, and the original
+control spaces remained intact. No additional intake or inference was issued.
+
+B then passed direct deletion, without another reset or replacement. Its fresh
+capture accounted for all 58 stored objects with no unidentified objects and
+preserved every previously observed surviving control object. All five owners
+reported `live-erased` with zero pending resources. The original B Mail object
+and R2 prefix were empty on two fresh inspections, and multipart cleanup was
+confirmed. The three surviving spaces retained their complete Process and
+Conversation histories, marker files and human/root credentials. Earlier
+deletion receipts remained intact, foreign keys were valid, and B's hostname
+returned the Gateway's exact `404 Not Found` response.
+
+Mail's usage endpoint reads the current UTC day. The overnight verification
+preserved the original receipt and allowed only the expected new empty daily
+counter window; all other receipt fields, file hashes and histories remained
+equal. It did not reread yesterday's usage row. Zero provider/outbound activity
+is supported by the fixture's enforced zero quotas and absent provider bindings.
+
+This is live erasure, not final erasure or a delayed Mail delivery proof.
+Recorded backup expiries extend through October 13; native provider, AI Gateway
+and relay retained-copy expiry remains unknown. The immutable 103-artifact
+evidence index and qualified result remain in private operator evidence under
+`mail-owner-acceptance-20260912`.
 
 ## Remaining release coverage
 
 The live reset/cleanup result does not replace the other cases in
 [W6](hosting-consolidation-spec.md): real Telegram linking and delivery for two
-controlled actors, BYO model credentials, and the remaining populated service
-owners and delayed adapter work. The native response case above provides
-qualified live-state evidence without completing those other cases. H&M staging
+controlled actors, BYO model credentials, and populated private commercial
+metering/reservation/history cleanup on H&M staging. The messenger contract
+suite already covers controlled delayed delivery through the actual adapter
+and Gateway code; it does not establish the live Telegram journey. The native
+response case above provides qualified live-state evidence. H&M staging
 resource adoption and migration ownership
 handoff were completed earlier; remaining adoption evidence concerns older
 client credentials, messenger links and authenticated operator admission.
@@ -243,9 +276,14 @@ that fixture was created after extraction and had no earlier client tokens or
 messenger links. Those historical checks are recorded in the workstream notes;
 their original temporary receipts are no longer available for re-inspection.
 
-Retained-copy evidence also remains open. The completed isolated upgrade
-supplies genuine historical client/history and migration recovery evidence;
-it does not replace the remaining H&M admission and messenger-link checks.
+Retained-copy evidence also remains open: personal provider/AI Gateway expiry,
+and H&M's historical telemetry/provider scope and deletion catalog are not
+fully established. Known backup expiry may remain pending after live erasure;
+unknown scope or expiry remains unresolved. The completed isolated upgrade
+supplies genuine historical client/history, migration recovery and inherited
+pending-reset cleanup evidence. It does not replace the specified H&M checks
+for historical credentials, messenger links, operator admission and an
+inherited pending deletion.
 
 W7's executable standalone removal remains gated on that coverage and a last
 verified standalone release. This report does not authorize a production
