@@ -126,7 +126,10 @@ jobs:
               - 'deployment/**'
               - 'scripts/capture-ai-gateway-logs.ts'
               - 'scripts/build-cloudflare-bundles.sh'
+              - 'scripts/build-deployment-manifest.mjs'
+              - 'scripts/adapter-catalog.mjs'
               - 'scripts/normalize-worker-text-modules.mjs'
+              - 'workers/adapters/*/adapter.json'
               - 'workers/installations/migrations/**'
             deletion_stack:
               - '.github/workflows/ci.yml'
@@ -318,7 +321,7 @@ jobs:
 
       - name: Check deployment package
         if: needs.changes.outputs.deployment == 'true'
-        run: npm run check --workspace deployment
+        run: npm run deployment:check
 
       - name: Test deployment package
         if: needs.changes.outputs.deployment == 'true'
