@@ -1,11 +1,17 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 
-import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, type BinaryBody } from "@humansandmachines/gsv/protocol";
+import { hashPassword, makeShadowEntry } from "../auth/shadow";
+import * as stableId from "../shared/stable-id";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { testPeer } from "../test-support/peers";
 import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
+import type { Kernel } from "./do";
 import { MailboxStore } from "./mailbox-store";
 import { ResponsibilityStore } from "./responsibility-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
@@ -294,6 +300,143 @@ describe("managed Kernel mailbox", () => {
   });
 });
 
+describe("managed mailbox account removal", () => {
+  it("rejects fresh mail for the removed primary owner without reassigning the mailbox, while replay and summaries finish", async () => {
+    await withMailboxKernel(async (kernel, root) => {
+      const accepted = await kernel.acceptManagedInboundMail(METADATA, bodyFromBytes(RAW));
+      const mailbox = kernel.mailboxes.getPrimaryMailbox();
+      const writes = vi.spyOn(kernel.bindings.STORAGE, "put");
+      const wake = vi.spyOn(kernel.responsibilityRuntime, "reconcileResponsibilityWake");
+      await kernel.people.remove(1000, root);
+      expect(kernel.auth.isAccountDisabled(1000)).toBe(true);
+      const cancelled = vi.fn();
+      await expect(kernel.acceptManagedInboundMail({ ...METADATA, intakeId: "fresh-after-removal", digest: `sha256:${"c".repeat(64)}` }, unreadBody(cancelled)))
+        .rejects.toThrow("active human account");
+      expect(cancelled).toHaveBeenCalledOnce();
+      expect(writes).not.toHaveBeenCalled();
+      expect(kernel.mailboxes.getIntake("fresh-after-removal")).toBeNull();
+      expect(kernel.mailboxes.getPrimaryMailbox()).toEqual(mailbox);
+      expect(kernel.mailboxes.getMailboxForOwner(1001)).toBeNull();
+      expect(managedMailAddressForOwner(1000, root)).toBe(METADATA.envelope.to);
+
+      for (const intakeId of [METADATA.intakeId, "accepted-digest-retry"]) {
+        await expect(kernel.acceptManagedInboundMail({ ...METADATA, intakeId }, bodyFromBytes(RAW))).resolves.toEqual(accepted);
+      }
+      await expect(kernel.acceptManagedInboundMail({ ...METADATA, intakeId: "wrong-address", envelope: { ...METADATA.envelope, to: "other@gsv.space" } }, bodyFromBytes(RAW)))
+        .rejects.toThrow("Mailbox identity conflicts");
+      expect(kernel.mailboxes.getIntake("wrong-address")).toBeNull();
+      const completion = { version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId, summary: {
+        summary: "Previously accepted email", category: "work", requiresAttention: true, confidence: 0.9,
+      } } satisfies Parameters<Kernel["completeManagedInboundMail"]>[0];
+      await kernel.completeManagedInboundMail(completion);
+      await kernel.completeManagedInboundMail(completion);
+      expect(kernel.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
+        summary: completion.summary.summary, eventDeliveredAt: expect.any(Number),
+      });
+      expect(kernel.mailboxes.list(1000).count).toBe(1);
+      expect(kernel.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+      expect(wake).not.toHaveBeenCalled();
+      expect(writes).not.toHaveBeenCalled();
+    });
+  });
+
+  it("excludes removed humans when selecting the first mailbox owner", async () => {
+    await withMailboxKernel(async (kernel, root) => {
+      await kernel.people.remove(1000, root);
+      const accepted = await kernel.acceptManagedInboundMail(METADATA, bodyFromBytes(RAW));
+      expect(kernel.mailboxes.getPrimaryMailbox()).toMatchObject({ ownerUid: 1001, mailboxId: "mailbox:1001:primary" });
+      expect(kernel.mailboxes.getMessage(1001, accepted.messageId)?.rawPath).toContain("/home/sam/");
+      expect(kernel.mailboxes.list(1000).count).toBe(0);
+    });
+  });
+
+  it("does not create a mailbox or consume the body when no enabled human remains", async () => {
+    await withMailboxKernel(async (kernel, root) => {
+      await kernel.people.remove(1000, root);
+      await kernel.people.remove(1001, root);
+      const writes = vi.spyOn(kernel.bindings.STORAGE, "put");
+      const cancelled = vi.fn();
+      await expect(kernel.acceptManagedInboundMail(METADATA, unreadBody(cancelled))).rejects.toThrow("configured human account");
+      expect(kernel.mailboxes.getPrimaryMailbox()).toBeNull();
+      expect(writes).not.toHaveBeenCalled();
+      expect(cancelled).toHaveBeenCalledOnce();
+    });
+  });
+
+  it.each([false, true])("rechecks removal after the message hash before storage (existing mailbox: %s)", async (persisted) => {
+    await withMailboxKernel(async (kernel, root) => {
+      if (persisted) kernel.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, METADATA.envelope.to);
+      const before = kernel.mailboxes.getPrimaryMailbox();
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const originalHash = stableId.stableOpaqueId;
+      const hash = vi.spyOn(stableId, "stableOpaqueId").mockImplementationOnce(async (...args) => {
+        entered.resolve(); await release.promise; return originalHash(...args);
+      });
+      const writes = vi.spyOn(kernel.bindings.STORAGE, "put");
+      const cancelled = vi.fn();
+      try {
+        const pending = kernel.acceptManagedInboundMail(METADATA, unreadBody(cancelled));
+        await entered.promise;
+        await kernel.people.remove(1000, root);
+        release.resolve();
+        await expect(pending).rejects.toThrow("active human account");
+        expect(kernel.mailboxes.getPrimaryMailbox()).toEqual(before);
+        expect(kernel.mailboxes.getIntake(METADATA.intakeId)).toBeNull();
+        expect(writes).not.toHaveBeenCalled();
+        expect(cancelled).toHaveBeenCalledOnce();
+      } finally { release.resolve(); hash.mockRestore(); }
+    });
+  });
+
+  it("finishes storage admitted before removal and completes its summary without new notification work", async () => {
+    await withMailboxKernel(async (kernel, root) => {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const body: BinaryBody = { length: RAW.byteLength, stream: new ReadableStream<Uint8Array>({
+        async pull(controller) { entered.resolve(); await release.promise; controller.enqueue(RAW); controller.close(); },
+      }, { highWaterMark: 0 }) };
+      const pending = kernel.acceptManagedInboundMail(METADATA, body);
+      await entered.promise;
+      expect(kernel.mailboxes.getPrimaryMailbox()?.ownerUid).toBe(1000);
+      await kernel.people.remove(1000, root);
+      release.resolve();
+      const accepted = await pending;
+      const stored = kernel.mailboxes.getMessage(1000, accepted.messageId)!;
+      const raw = await kernel.bindings.STORAGE.get(stored.rawPath.slice(1));
+      expect(new Uint8Array(await raw!.arrayBuffer())).toEqual(RAW);
+      await kernel.completeManagedInboundMail({ version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId, summary: {
+        summary: "Accepted before removal", category: "work", requiresAttention: true, confidence: 0.9,
+      } });
+      expect(kernel.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt).toEqual(expect.any(Number));
+      expect(kernel.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+    });
+  });
+});
+
+async function withMailboxKernel(work: (kernel: Kernel, root: KernelContext) => Promise<void>) {
+  await runInDurableObject(env.KERNEL.getByName(`inst_mail_${crypto.randomUUID()}`), async (kernel: Kernel) => {
+    const password = await hashPassword("mailbox-fixture-password");
+    kernel.auth.setShadow(makeShadowEntry("root", password));
+    for (const [uid, username] of [[1000, "hank"], [1001, "sam"]] as const) {
+      kernel.auth.addUser({ username, uid, gid: uid, gecos: username, home: `/home/${username}`, shell: "/bin/init" });
+      kernel.auth.addGroup({ name: username, gid: uid, members: [] });
+      kernel.auth.setShadow(makeShadowEntry(username, password));
+    }
+    const root = kernel.buildKernelContext({ peer: testPeer({
+      account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"],
+    }) });
+    const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
+    try { await work(kernel, root); } finally { gate.mockRestore(); }
+  });
+}
+
+function unreadBody(cancelled: () => void): BinaryBody {
+  return { length: RAW.byteLength, stream: new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(RAW); controller.close(); }, cancel: cancelled,
+  }, { highWaterMark: 0 }) };
+}
+
 function mailboxContext(
   sql: SqlStorage,
   kernelStorage: DurableObjectStorage,
@@ -308,6 +451,7 @@ function mailboxContext(
     getPasswdByUid: (uid: number) => humans.find((entry) => entry.uid === uid) ?? null,
     getShadowByUsername: (username: string) => ({ username, hash: "password-hash" }),
     isPersonalAgentUid: () => false,
+    isAccountDisabled: () => false,
     resolveGids: (_username: string, gid: number) => [gid, 100],
   };
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

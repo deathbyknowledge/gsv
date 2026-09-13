@@ -948,6 +948,7 @@ function outboundContext(
       getPasswdByUid: (uid: number) => humans.find((entry) => entry.uid === uid) ?? null,
       getShadowByUsername: (username: string) => ({ username, hash: "password-hash" }),
       isPersonalAgentUid: () => false,
+      isAccountDisabled: () => false,
       resolveGids: (_username: string, gid: number) => [gid, 100],
     },
     mailboxes: new MailboxStore(sql),
