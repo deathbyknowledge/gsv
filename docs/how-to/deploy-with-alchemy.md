@@ -9,7 +9,9 @@ deployment in place.
 ## Deploy a new operator
 
 Use a Cloudflare account and a domain in one of its DNS zones, plus Node.js 22 or
-newer, npm and Rust for the source build. Run these commands from the repository
+newer, npm and Rust for the source build. The composition includes CodeMode
+and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/).
+Run these commands from the repository
 root. Replace the account, domain and zone values with your own:
 
 ```bash
@@ -67,7 +69,7 @@ in the [owner sign-in guide](../../deployment/operator-bootstrap.md#owner-email-
 No messenger adapters are enabled by default. Set `GSV_ADAPTERS` to a
 comma-separated list of operator-supported adapter IDs after supplying each
 adapter's deployment configuration. Its `adapter.json` declares the required
-application secrets and variables in the current `managed` manifest section.
+application secrets and variables in its single `deployment` manifest section.
 For example, [Telegram's manifest](../../workers/adapters/telegram/adapter.json)
 requires the bot token, webhook secret, bot username and public webhook origin.
 
@@ -87,24 +89,7 @@ ordinary updates of an adopted public database use its migration ledger.
 Deployments with an existing Mail queue also follow the
 [reader-before-writer upgrade](../../deployment/mail-queue-upgrade.md).
 
-The root operator commands do not adopt an existing `standalone` Alchemy stage.
-Keep that deployment's original composition and state until an explicit
-migration is prepared. The separate Wrangler compatibility path below remains
-available for existing Wrangler deployments.
-
-## Existing standalone Wrangler deployments
-
-The Gateway package's `dev` and `start` commands run both the Gateway and its
-standalone inference companion. The `deploy` command deploys the companion first,
-then the Gateway. Both retain the existing `singleton` identity and storage names;
-the companion owns the native Workers AI binding.
-
-```bash
-GSV_GATEWAY_ORIGIN=https://your-existing-gsv.example.com npm run deploy --workspace gateway
-```
-
-Set the exact existing Gateway HTTPS origin, without a trailing slash. The
-companion's directory uses that origin and admits only `singleton`; it has no
-public endpoint. Use these package commands instead of deploying the Gateway
-alone with raw Wrangler. Custom Worker names or environments belong in an
-explicit deployment composition, which must wire both Workers together.
+The common stack does not adopt an old standalone deployment in place. Keep
+that deployment on its preserved source or release until its data has been
+exported and a new operator environment prepared. See the
+[standalone retirement guide](./standalone-retirement.md).

@@ -6,10 +6,10 @@ lifecycle state. The Kernel owns local accounts, credentials, roles, and
 ordinary syscall authorization. Resolving an installation establishes which
 Kernel may receive a request; it does not sign a person into that Kernel.
 
-This document describes the implemented directory and onboarding interfaces.
-The [hosting consolidation plan](https://github.com/deathbyknowledge/gsv/blob/main/engineering/hosting-consolidation-spec.md)
-adds public Accounts, owner recovery, and complete data deletion in later
-slices. Those operations must not be inferred from a directory lookup.
+This document describes the directory and onboarding interfaces supplied by
+public Accounts in `workers/installations/`. Accounts also owns verified owner
+identity, root-recovery authorization and deletion coordination. Each operation
+has its own authority; none follows merely from possession of a lookup binding.
 
 ## Public interfaces
 
@@ -63,9 +63,9 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
-The currently supported standalone deployment retains its explicit
-`singleton` projection until the planned cutover. A failed directory lookup
-in a deployment with a directory never falls back to that projection.
+All deployments require directory resolution. There is no singleton fallback,
+even when the binding is absent. Historical standalone data remains outside
+current routing; see the [retirement guide](../how-to/standalone-retirement.md).
 
 ## Setup and ownership
 
@@ -80,9 +80,10 @@ Accounts call fails.
 
 The directory's `memberships` rows are ownership records, with an
 installation id, principal id, state, and creation time. They are not Kernel
-memberships or a grant of local permissions. Existing registry-principal
-records remain bookkeeping until the separate verified-owner linking flow
-is implemented. Successful setup does not assign that principal a Kernel uid.
+memberships or a grant of local permissions. Linking a verified owner requires
+current Kernel root authorization and fresh owner verification. Native email
+and external-provider identities remain separate even when email addresses
+match. Successful setup does not assign that principal a Kernel uid.
 
 The legacy `role` and `local_uid` columns are being retired. They do not
 govern current local admission. The inference usage ledger's `local_uid`
@@ -94,20 +95,24 @@ An installation reset creates a new immutable id, moves the canonical
 hostname, retires old routing, and records the old installation's data as
 pending deletion. It preserves the reset operation identity so retries
 recover the same replacement instead of creating another one. Existing
-policy copying and disablement are owned by the current Accounts
-implementation until their service separation lands.
+policy copying and disablement remain service-owned.
 
-Pending deletion means data remains stored. Current reset does not erase
-Kernel, Process, Conversation, R2, ripgit, adapter, mail or inference state.
-The consolidation deletion slice adds a durable coordinator and per-owner
-quiesce/erase acknowledgements, including old pending resets. It must retain
-resource inventories until children are erased and prevent stale writes
-from recreating user data. Retiring routing alone is not erasure.
+Pending deletion means data remains stored. Accounts durably coordinates
+quiesce and erase operations across the captured resource inventory, including
+pending resets inherited from an older source. Kernel, Process, Conversation,
+R2, ripgit, adapters, mail and inference report their own cleanup receipts.
+Missing inventory or owner evidence prevents a claim of completed erasure.
+Stale work cannot recreate data after its owner has retired the identity.
 
-Root recovery is also a separate trusted operation in the consolidation
-plan. Accounts authenticates ownership and authorizes it; the Kernel changes
-credentials. Possession of a directory lookup binding does not expose that
-future incoming recovery capability.
+Live erasure and retained copies are separate states. Backups, queues, telemetry
+and provider logs require operator-specific retention or deletion evidence;
+routing retirement alone proves neither. See the
+[operator cleanup guide](../how-to/operate-gsv.md#connect-services-and-verify-cleanup).
+
+Root recovery authenticates the current verified owner and requires fresh
+verification bound to the exact recovery attempt. An ordinary owner session is
+insufficient. Accounts authorizes the operation; the Kernel changes local root
+credentials. Verification mail is independent of the space being recovered.
 
 ## Validation and schema rollout
 

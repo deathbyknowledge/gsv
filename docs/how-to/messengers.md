@@ -6,91 +6,15 @@ GSV adapters are extensible. This page documents the messenger implementations
 bundled with the current release; it is not a complete list of transports an
 adapter can implement.
 
-Connecting a bot or phone account and linking your messenger identity are
-separate steps. If you leave setup after the connection succeeds but before
-entering the authorization code, do not create another account. Return to
-**Messengers** and use **Link messenger identity**. Message the connected bot
-or account again if the previous one-time code has expired.
+Your deployment operator enables the Telegram, Slack, and Discord apps offered
+in **Messengers**. You link your human identity to a space by inspecting and
+confirming a short-lived code while signed in. You do not need to create a bot
+or paste its token into the space. If a code expires, message the app again.
 
-## WhatsApp
-
-WhatsApp connects as a linked device. You need a second WhatsApp account and
-phone number, but not necessarily a second phone. The official WhatsApp app can
-keep two accounts on one compatible Android or iOS phone; the second account
-still needs its own number and SIM, multi-SIM, or eSIM. See Meta's
-[multi-account setup](https://about.fb.com/news/2023/10/multiple-accounts-on-whatsapp/)
-and [iOS announcement](https://about.fb.com/news/2026/03/whatsapp-new-features-simplify-storage-switch-accounts/).
-
-1. Confirm the deployment includes the WhatsApp adapter. Standalone includes
-   every bundled adapter by default; managed installations expose the adapters
-   enabled by their operator.
-2. In GSV, open **Messengers**, choose **WhatsApp**, and give this connection a stable account ID such as `personal`.
-3. Start pairing. Display GSV's QR code on a computer or another screen so the phone can scan it.
-4. On the phone that owns the second WhatsApp account, open **Settings → Linked Devices → Link a Device** and scan the code.
-5. Wait for GSV to show the account as authenticated. Pairing connects the GSV number, but does not yet identify the person who will message it.
-6. Switch to the personal WhatsApp account that should represent you and send a new direct message to the WhatsApp number paired with GSV. GSV replies with a one-time link code.
-7. Enter the code in GSV's **Link user** step. The code links that WhatsApp sender to the GSV user currently signed in. It expires after ten minutes.
-8. Send another message to begin chatting. The first message requested the code and is not forwarded to an agent.
-
-The QR payload is a short-lived pairing credential. Treat it like a password:
-do not paste it into chat, save it, log it, or share a screenshot. GSV renders
-the code locally and should never print the underlying payload when rendering
-fails.
-
-You can also pair from a UTF-8 terminal:
-
-```bash
-gsv adapter connect --adapter whatsapp --account-id personal
-gsv adapter status --adapter whatsapp --account-id personal
-```
-
-Rerun the normal connect command if an unscanned QR expires. Use
-`--config-json '{"force":true}'` only to discard a broken or logged-out session
-and perform a fresh link; it clears the saved WhatsApp authentication and needs
-a new QR scan.
-
-### Connection lifecycle
-
-The adapter keeps an outbound WhatsApp WebSocket in its account Durable Object.
-An active outbound connection now prevents eviction, but Cloudflare limits that
-[keepalive effect to 15 minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
-The connection can continue after 15 minutes, but it no longer keeps the object
-resident. GSV therefore schedules an account alarm every 30 seconds. Each alarm
-is an incoming Durable Object event inside Cloudflare's minimum 70-second idle
-eviction window, so the object remains resident without periodically opening a
-second WhatsApp session. Baileys pings WhatsApp separately and reconnects only
-when the provider transport is unhealthy. An explicit **Log out** or a forced
-re-pair is different and removes the linked-device credentials.
-
-WhatsApp uses the unofficial open-source Baileys client rather than an official
-WhatsApp Business API integration. WhatsApp protocol changes or linked-device
-policy can therefore cause temporary breakage. Keep GSV updated and avoid
-running another client that repeatedly replaces the same linked session.
-
-### Troubleshooting WhatsApp
-
-- **The QR expired:** run Connect again to obtain a fresh code. Never reuse a saved QR payload.
-- **The phone says linked but GSV is still waiting:** check `gsv adapter status --adapter whatsapp --account-id personal`, wait for one reconnect cycle, then retry normal Connect.
-- **The account is paired but no link code arrives:** pairing only connects the GSV number. Confirm adapter status is connected and authenticated, then send a fresh direct message from the personal sender account to the paired GSV number. Do not send it from the paired account itself or in a group.
-- **The direct message gets no reply:** verify that both the Gateway and `channel-whatsapp` workers are deployed and their service bindings target each other. Inspect both workers' live logs: the inbound message reaches the Gateway before the adapter sends the link-code reply.
-- **GSV rejects the link code:** codes are single-use and expire after ten minutes. Send another new direct message, then enter the new code while signed in as the GSV user you want to link. CLI users can run `gsv auth link CODE`.
-- **The code was accepted but the original message got no agent answer:** send another message. The message that generated the code is used only for identity linking and is not replayed to an agent.
-- **The account was logged out or replaced:** remove stale linked-device entries in WhatsApp, then use the confirmed force re-pair flow once.
-- **It reconnects repeatedly while idle:** this is not routine maintenance. Inspect the adapter's structured `socket_closed` logs and provider status code.
-- **Several accounts do not stay connected on Workers Free:** the limiting resource is Durable Object duration, not the roughly 2,880 residency alarms per day. Treat one continuously connected WhatsApp account as the Free-plan baseline and use Workers Paid for more always-resident accounts.
-
-The Workers Free plan supports the SQLite-backed Durable Objects used by GSV;
-Containers are not required. One continuously resident 128 MB account consumes
-about 11,060 GB-s of the current 13,000 GB-s daily Durable Object allowance.
-That is an operating estimate, not a capacity guarantee: other active Durable
-Objects consume the same allowance. Leave headroom for the rest of GSV and
-check Cloudflare's current
-[Durable Objects pricing and limits](https://developers.cloudflare.com/durable-objects/platform/pricing/)
-before adding continuously connected accounts.
+The previous WhatsApp linked-device adapter is no longer bundled. There is no
+WhatsApp connection or QR setup flow in this deployment model.
 
 ## Telegram
-
-### Managed GSV
 
 1. In GSV, open **Messengers → Telegram** and use the link to open the official
    GSV bot.
@@ -100,24 +24,12 @@ before adding continuously connected accounts.
    and numeric identity that requested it.
 4. Confirm only if that is your Telegram identity. The code alone cannot choose
    an installation or user; the signed-in GSV session supplies both.
-5. Send another message in Telegram. It reaches the same Personal intelligence
+5. Send another message in Telegram. It reaches the same Ship conversation
    you use in GSV, without selecting a process.
 
 If the Telegram identity was linked to another GSV, requesting or inspecting a
 code does not interrupt it. The route moves only after confirmation succeeds.
 Use **Disconnect** on the linked identity to revoke it.
-
-### Standalone GSV
-
-1. In GSV, open **Messengers** and click **Connect messenger.**
-2. Open [@BotFather](https://t.me/botfather) in Telegram and press **Start.**
-3. Send `/newbot`. Pick a display name, then a username ending in `bot`.
-4. Paste BotFather's token into the GSV connect flow.
-5. Open the new bot and press **Start**. Paste its one-time access code back
-   into GSV to link your Telegram identity.
-
-Managed GSV never asks for a BotFather token. That credential belongs only to
-the platform-owned Worker.
 
 Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 
@@ -140,8 +52,6 @@ in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse
 a command from an older prompt.
 
 ## Slack
-
-### Managed GSV
 
 1. In GSV, open **Messengers → Slack** and choose **Install GSV in Slack**.
 2. Approve the official GSV app for the intended Slack workspace. If another
@@ -166,37 +76,32 @@ example **From @Alice's GSV:**. Direct-message responses omit that prefix.
 Relinking a Slack identity moves future messages only after confirmation
 succeeds; delayed messages and replies from the old link are rejected.
 
-### Standalone GSV
-
-Standalone keeps the same Slack behavior but uses an app you own:
-
-1. Create a Slack app at [Slack API Apps](https://api.slack.com/apps).
-2. Add the bot scopes `app_mentions:read`, `chat:write`, `im:history`, and
-   `im:write`.
-3. Enable the App Home Messages tab and allow users to send messages.
-4. Subscribe the bot to `app_mention`, `message.im`, and `app_uninstalled`, then
-   enable Socket Mode.
-5. Create an app-level `xapp-…` token with `connections:write`, install the app
-   in your workspace, and copy its `xoxb-…` bot token.
-6. In **GSV → Messengers → Slack**, paste both tokens. They are stored by your
-   own Slack adapter deployment, not the managed service.
-7. Direct-message the app once and enter its one-time authorization code in
-   GSV. You can then use DMs or public `@GSV` mentions.
-
-Slack file and GSV attachment transfer are not supported in this first version.
-Operators can find deployment configuration and security details in
-`workers/adapters/slack/README.md` in the source tree.
+Slack supports incoming files and GSV resource attachments in addressed messages.
+With personal Slack authorization, the paired workspace can also appear as a
+read-only filesystem and command target. The operator-owned app performs writes;
+your personal OAuth token determines read visibility. See the Slack adapter
+README in the source tree for configuration and target details.
 
 ## Discord
 
-1. In GSV, open **Messengers** and click **Connect messenger → Discord.**
-2. Go to the [Discord Developer Portal](https://discord.com/developers/applications), click **New Application**, and name your bot.
-3. In the left sidebar, go to **Bot**. Under **Token**, click **Reset Token**, copy it, and save it — this is your bot token.
-4. On the same page, under **Privileged Gateway Intents**, enable **Message Content Intent**. Without this the bot receives messages but cannot read them.
-5. Go to **OAuth2 → URL Generator**. Select the `bot` scope, then select these permissions: **Send Messages**, **Attach Files**, **Read Message History**, **View Channels**. Copy the generated URL, open it in your browser, and invite the bot to your server.
-6. Back in GSV, paste the bot token to finish connecting.
+1. Open **Messengers → Discord** in the space you want to link.
+2. Use the operator application's install link if the bot is not already in the
+   intended server, or open a direct message with it.
+3. Mention the bot with `pair`, or message it privately. It sends a private code.
+4. Enter the code in GSV, inspect the Discord identity, and confirm it.
+5. Send another DM or server mention to start a conversation.
 
-In a server channel the bot only responds when mentioned. In a DM it responds to every message.
+Installing the bot does not link everyone in a server. Each person pairs their
+own identity, and a server route is separate from a direct-message route. Two
+people in the same server can use different spaces. Replies remain bound to the
+confirmed author and observed destination.
+
+## Disconnect or change a space
+
+Use **Disconnect** on the linked identity to revoke its route. To move an
+identity, request a new code and confirm it from the destination space. Issuing
+or inspecting a code leaves the old route active; confirmation changes its
+generation. Delayed messages from the old route cannot cross into the new one.
 
 ## See also
 

@@ -45,5 +45,5 @@ its existing ID. **Forget place** removes the place and revokes its device keys.
 ## See also
 
 - [Get Started](/get-started/)
-- [Connect a Messenger](/how-to/messengers) — reach GSV from your phone via WhatsApp, Telegram, Discord, or Slack
+- [Connect a Messenger](/how-to/messengers) — reach GSV from your phone via Telegram, Discord, or Slack
 - [Architecture: The Adapter Model](/architecture/adapter-model)

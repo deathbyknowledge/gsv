@@ -245,8 +245,9 @@ the returned grants.
 ```
 
 `server.features` is an optional list of runtime capabilities advertised by the
-connected deployment. Managed gateways with the private GSV inference binding
-include `ai.provider.gsv`; standalone gateways omit it.
+connected deployment. Gateways with the `INFERENCE_EXECUTION` service binding
+include `ai.provider.gsv`, whether the operator uses the public reference service
+or its own inference policy and funding implementation.
 
 The three grant axes are independent:
 

@@ -39,7 +39,7 @@ npx alchemy plan --stage operator
 npx alchemy deploy --stage operator --yes
 ```
 
-The release manifest is version 2 and includes the installation directory Worker,
+The release manifest is version 3 and includes the installation directory Worker,
 its public migrations and the inference Worker alongside Gateway, web assets,
 ripgit and adapter bundles. A version 1 singleton bundle is not accepted by this
 composition. Existing singleton deployments require an explicit migration before

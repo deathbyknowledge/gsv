@@ -22,10 +22,10 @@ Follow [Deploy GSV with Alchemy](./deploy-with-alchemy.md) for the complete flow
 3. Issue the one-time bootstrap link and create the first space through its
    setup invitation. Create further spaces explicitly in administration.
 
-For an existing singleton deployment, use its original deployment composition
-until an explicit migration is prepared. The root operator commands do not
-adopt its state. Existing Wrangler users retain the
-[standalone wrapper](./deploy-with-alchemy.md#existing-standalone-wrangler-deployments).
+Existing standalone deployments must remain on their preserved release or source
+until an explicit migration is prepared. This revision has no singleton route
+or standalone Wrangler wrapper and does not adopt unscoped data. See the
+[standalone retirement guide](./standalone-retirement.md).
 
 ### Update
 

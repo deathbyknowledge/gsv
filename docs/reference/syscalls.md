@@ -344,8 +344,8 @@ caller's mailbox, derives its recipient and threading headers, and derives a
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
-caller cannot choose it. Standalone deployments do not bind the managed email
-queue, so this syscall returns an unavailable operation result there.
+caller cannot choose it. Operators may omit the mail service; this syscall
+returns an unavailable operation result when its outbound queue is not bound.
 
 `deliveryId` is the caller's required durable idempotency key. A direct protocol
 or SDK caller must retain it before sending so a timeout or disconnect can be
@@ -634,7 +634,7 @@ Changing the selection changes the conversation message's idempotency payload.
 ## Contacts And Cross-GSV Requests: `contact.*`
 
 `contact.*` connects an owner on one GSV installation to an owner on another.
-The relationship works between standalone and managed installations without a
+The relationship works between spaces served by the same or different operators without a
 shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
