@@ -60,6 +60,7 @@ describe("Kernel responsibility wakes", () => {
     // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
     const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.auth = { isAccountDisabled: vi.fn(() => false) };
     kernel.responsibilities = {
       wakeState: vi.fn(() => ({
         ownerUid: 1000,
@@ -68,6 +69,7 @@ describe("Kernel responsibility wakes", () => {
         scheduledAtMs: 1,
       })),
       createReadyBatch: vi.fn(() => batch),
+      pendingBatch: vi.fn(() => null),
       markBatchDelivered: vi.fn(),
       markBatchFailed: vi.fn(),
     };
