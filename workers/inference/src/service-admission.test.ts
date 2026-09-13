@@ -16,7 +16,7 @@ describe("inference directory admission", () => {
     for (const directory of denied) {
       await expect(getInferenceExecutor({ ...env, INSTALLATION_DIRECTORY: directory }, "space_admission_denied")).rejects.toThrow();
     }
-    const missing: InferenceServiceEnvironment = { ...env };
+    const missing: InferenceServiceEnvironment = { ...env, INSTALLATION_DIRECTORY: denied[0] };
     Reflect.deleteProperty(missing, "INSTALLATION_DIRECTORY");
     await expect(getInferenceExecutor(missing, "space_admission_denied")).rejects.toThrow();
     expect(await listDurableObjectIds(env.INFERENCE_EXECUTORS)).toHaveLength(before.length);
