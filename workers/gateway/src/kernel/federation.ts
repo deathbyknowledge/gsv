@@ -1901,10 +1901,8 @@ async function commitInboundRequestUpdate(
       conversationId: conversation.id,
       deliveryId: inbox.deliveryId,
       remoteInput: true,
-      createAllowed: ctx.responsibilitySources.isEnabled(
-        contact.ownerUid,
-        "federation.received",
-      ),
+      createAllowed: !ctx.auth.isAccountDisabled(contact.ownerUid)
+        && ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received"),
       now: receivedAtMs,
     }, ctx);
     return next;

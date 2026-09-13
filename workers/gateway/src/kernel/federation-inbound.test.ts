@@ -796,6 +796,52 @@ describe("federation inbound boundary", () => {
     ]);
   });
 
+  it.each([false, true])("controls missing request responsibility creation after a source toggle and removal=%s", async (removed) => {
+    const requestId = "request:source-toggle";
+    const offered = await signedEnvelope({
+      kind: "request",
+      request: {
+        id: requestId,
+        kind: "task",
+        title: "An existing request without a tracking responsibility",
+        state: "offered",
+        revision: 1,
+      },
+    }, "delivery:source-toggle-offered");
+    expect((await deliver(offered)).status).toBe(200);
+    await runInDurableObject(kernel, async (instance: Kernel) => {
+      expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
+      instance.responsibilitySources.set(OWNER.uid, "federation.received", true);
+      if (removed) await removeOwner(instance);
+    });
+
+    for (const [index, state] of (["accepted", "active", "completed"] as const).entries()) {
+      const envelope = await signedEnvelope({
+        kind: "request.update",
+        requestId,
+        expectedRevision: index + 1,
+        state,
+      }, `delivery:source-toggle-${state}`);
+      const response = await deliver(envelope);
+      expect(response.status).toBe(200);
+      const receipt = await response.json();
+      expect(await (await deliver(envelope)).json()).toEqual(receipt);
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        expect(instance.federation.requestForRemoteUpdate(contact.id, contact.generation, requestId))
+          .toMatchObject({ state, revision: index + 2 });
+        expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId))
+          .toMatchObject({ state: "committed" });
+        const responsibilities = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
+        expect(responsibilities).toHaveLength(removed ? 0 : 1);
+        if (!removed) expect(responsibilities[0]).toMatchObject({
+          details: { state, revision: index + 2 },
+          state: state === "completed" ? "resolved" : "active",
+        });
+      });
+    }
+    expect(messages).toHaveLength(4);
+  });
+
   it("keeps exact contact content in Conversation history rather than responsibility details", async () => {
     await runInDurableObject(kernel, (instance: Kernel) => {
       kernelInternals(instance).responsibilitySources.set(
