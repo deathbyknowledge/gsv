@@ -1732,7 +1732,7 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-mail-recovery-test-${crypto.randomUUID()}`,
     );
-    const seeded = await runInDurableObject(kernel, async (instance: Kernel) => {
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const k = instance as {
         mailboxes: {
@@ -1747,57 +1747,56 @@ describe("scheduler", () => {
           options: SchedulerOptions,
         ) => Promise<{ id: string }>;
       };
-      const outboundId = `mail-recovery-${crypto.randomUUID()}`;
-      const fingerprint = `sha256:${"a".repeat(64)}`;
-      k.mailboxes.ensureOutbound({
-        version: 1,
-        outboundId,
-        ownerUid: USER_IDENTITY.uid,
-        deliveryId: "scheduled-recovery",
-        fingerprint,
-        from: "sam@gsv.space",
-        to: "mike@example.com",
-        subject: "Recovery",
-        bodyDigest: `sha256:${"b".repeat(64)}`,
-        bodyPath: `/home/sam/.gsv/mail/outbox/${outboundId}/message.txt`,
-        textSize: 8,
-        createdAt: Date.now(),
+      // Manual alarm helpers run as requests, outside native alarm serialization.
+      // Keep seeding, execution and observation within one event gate.
+      return k.ctx.blockConcurrencyWhile(async () => {
+        const outboundId = `mail-recovery-${crypto.randomUUID()}`;
+        const fingerprint = `sha256:${"a".repeat(64)}`;
+        k.mailboxes.ensureOutbound({
+          version: 1,
+          outboundId,
+          ownerUid: USER_IDENTITY.uid,
+          deliveryId: "scheduled-recovery",
+          fingerprint,
+          from: "sam@gsv.space",
+          to: "mike@example.com",
+          subject: "Recovery",
+          bodyDigest: `sha256:${"b".repeat(64)}`,
+          bodyPath: `/home/sam/.gsv/mail/outbox/${outboundId}/message.txt`,
+          textSize: 8,
+          createdAt: Date.now(),
+        });
+        k.mailboxes.markOutboundQueued(outboundId, fingerprint);
+        const wake = await k.schedule(
+          new Date(Date.now() + 1_000),
+          "onManagedOutboundEnqueue",
+          outboundId,
+          { idempotent: false },
+        );
+        k.ctx.storage.sql.exec(
+          "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+          Math.floor((Date.now() - 1_000) / 1_000),
+          wake.id,
+        );
+        await instance.alarm();
+        return {
+          outboundId,
+          wakeId: wake.id,
+          outbound: k.ctx.storage.sql.exec<{ state: string; error_code: string | null }>(
+            "SELECT state, error_code FROM mail_outbound WHERE outbound_id = ?",
+            outboundId,
+          ).one(),
+          wakes: k.ctx.storage.sql.exec<{ id: string; payload: string }>(
+            "SELECT id, payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'",
+          ).toArray(),
+        };
       });
-      k.mailboxes.markOutboundQueued(outboundId, fingerprint);
-      const wake = await k.schedule(
-        new Date(Date.now() + 1_000),
-        "onManagedOutboundEnqueue",
-        outboundId,
-        { idempotent: false },
-      );
-      k.ctx.storage.sql.exec(
-        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
-        Math.floor((Date.now() - 1_000) / 1_000),
-        wake.id,
-      );
-      return { outboundId, wakeId: wake.id };
-    });
-
-    await runDurableObjectAlarm(kernel);
-
-    const state = await runInDurableObject(kernel, (instance: Kernel) => {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      const k = instance as { ctx: DurableObjectState };
-      return {
-        outbound: k.ctx.storage.sql.exec<{ state: string; error_code: string | null }>(
-          "SELECT state, error_code FROM mail_outbound WHERE outbound_id = ?",
-          seeded.outboundId,
-        ).one(),
-        wakes: k.ctx.storage.sql.exec<{ id: string; payload: string }>(
-          "SELECT id, payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'",
-        ).toArray(),
-      };
     });
     // Queued intent stays recoverable; Mail's claim owns body validation and completion.
     expect(state.outbound).toEqual({ state: "queued", error_code: null });
     expect(state.wakes).toHaveLength(1);
-    expect(state.wakes[0]).toMatchObject({ payload: JSON.stringify(seeded.outboundId) });
-    expect(state.wakes[0]?.id).not.toBe(seeded.wakeId);
+    expect(state.wakes[0]).toMatchObject({ payload: JSON.stringify(state.outboundId) });
+    expect(state.wakes[0]?.id).not.toBe(state.wakeId);
   });
 
   it("preserves due work while a managed installation is suspended", async () => {
