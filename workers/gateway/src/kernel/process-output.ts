@@ -308,7 +308,8 @@ broadcastProcessSignal(
       const state = connection.state;
       const peer = state?.peer;
       if (
-        !peer
+        state.step !== "connected"
+        || !peer
         || peer.principal.kind !== "human"
         || peer.principal.account.uid !== uid
       ) {
@@ -316,10 +317,14 @@ broadcastProcessSignal(
       }
       const routed = route?.kind === "connection" && route.connectionId === connectionId;
       const observing = state.observedProcessIds?.includes(processId) === true;
-      if ((routed || observing) && peer.grant.signals.includes(frame.signal)) {
-        connection.send(json);
-      } else if (ambient && peer.grant.signals.includes("proc.changed")) {
-        connection.send(ambient);
+      try {
+        if ((routed || observing) && peer.grant.signals.includes(frame.signal)) {
+          connection.send(json);
+        } else if (ambient && peer.grant.signals.includes("proc.changed")) {
+          connection.send(ambient);
+        }
+      } catch {
+        connection.close(1011, "Process feed interrupted");
       }
     }
   }

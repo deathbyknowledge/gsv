@@ -12,6 +12,7 @@ const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
 import { AdapterDelivery } from "./adapter-delivery";
+import type { KernelConnectionState } from "./connection";
 import type { ProcessRecord } from "./processes";
 import {
   BINARY_FRAME_CANCEL,
@@ -1257,22 +1258,24 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends raw Process activity only to its routed or observing connections", () => {
     const routed = {
-      state: { peer: connectedPeer("human", "routed", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const observing = {
       state: {
+        step: "connected",
         peer: connectedPeer("human", "observing", 1000),
         observedProcessIds: ["proc-1"],
       },
       send: vi.fn(),
     };
     const idle = {
-      state: { peer: connectedPeer("human", "idle", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     const other = {
       state: {
+        step: "connected",
         peer: connectedPeer("human", "other", 2000),
         observedProcessIds: ["proc-1"],
       },
@@ -1306,11 +1309,11 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends only a content-free Process invalidation to idle owner connections", () => {
     const routed = {
-      state: { peer: connectedPeer("human", "routed", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const idle = {
-      state: { peer: connectedPeer("human", "idle", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1352,6 +1355,95 @@ describe("Kernel user signal broadcasts", () => {
         historyResetRevision: 8,
       },
     });
+  });
+
+  function processReader(id: string, input: {
+    uid?: number;
+    credentialEpoch?: number;
+    observing?: boolean;
+    step?: KernelConnectionState["step"];
+    signals?: string[];
+    kind?: "human" | "machine" | "service";
+  } = {}) {
+    const peer = connectedPeer(input.kind ?? "human", id, input.uid ?? 1000);
+    if (input.signals) peer.grant.signals = input.signals;
+    let state: KernelConnectionState = {
+      step: input.step ?? "connected", peer,
+      credentialEpoch: input.credentialEpoch ?? 0,
+      observedProcessIds: input.observing ? ["proc-1"] : [],
+    };
+    return {
+      get state() { return state; },
+      setState(next: KernelConnectionState) { state = next; },
+      send: vi.fn(),
+      close: vi.fn(),
+    };
+  }
+
+  it.each(["routed", "observing", "ambient"] as const)("skips a revoked %s Process reader while its close callback is pending", (mode) => {
+    const signal = mode === "ambient" ? "proc.changed" : "proc.run.stream";
+    const old = processReader("old", { observing: mode === "observing" });
+    const healthy = processReader("healthy", { observing: mode !== "ambient", credentialEpoch: 1 });
+    old.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const kernel = bareKernel();
+    kernel.connections = new Map([["old", old], ["healthy", healthy]]);
+    kernel.auth = { credentialEpoch: () => 1, isAccountDisabled: () => false };
+    kernel.connectionRuntime.invalidateAccountConnections(1000);
+    const frame = { type: "sig", signal, payload: { pid: "proc-1", runId: "run-1", changes: ["messages"], content: "private activity" } };
+    const route = mode === "routed" ? { kind: "connection", connectionId: "old" } : null;
+
+    expect(() => kernel.processOutput.broadcastProcessSignal(1000, "proc-1", route, frame)).not.toThrow();
+
+    expect(kernel.connections.size).toBe(2);
+    expect(old.state.step).toBe("superseded");
+    expect(old.close).toHaveBeenCalledWith(1008, "Credentials changed; sign in again");
+    expect(old.send).not.toHaveBeenCalled();
+    expect(healthy.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === "ambient"
+      ? { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"] } }
+      : frame));
+  });
+
+  it.each(["routed", "observing", "ambient"] as const)("isolates a failed active %s Process recipient", (mode) => {
+    const signal = mode === "ambient" ? "proc.changed" : "proc.run.stream";
+    const failed = processReader("failed", { observing: mode === "observing" });
+    const healthy = processReader("healthy", { observing: mode !== "ambient" });
+    failed.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const kernel = bareKernel();
+    kernel.connections = new Map([["failed", failed], ["healthy", healthy]]);
+    const frame = { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"], content: "private activity" } };
+    const route = mode === "routed" ? { kind: "connection", connectionId: "failed" } : null;
+
+    expect(() => kernel.processOutput.broadcastProcessSignal(1000, "proc-1", route, frame)).not.toThrow();
+
+    expect(failed.close).toHaveBeenCalledWith(1011, "Process feed interrupted");
+    expect(healthy.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === "ambient"
+      ? { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"] } }
+      : frame));
+  });
+
+  it("preserves owner, signal, observation and connected-state gates for Process activity", () => {
+    const allowed = processReader("allowed", { observing: true });
+    const rejected = [
+      processReader("other", { uid: 2000, observing: true }),
+      processReader("root", { uid: 0, observing: true }),
+      processReader("ungranted", { observing: true, signals: [] }),
+      processReader("pending", { observing: true, step: "pending" }),
+      processReader("idle"),
+      processReader("machine", { kind: "machine", observing: true, signals: ["proc.run.stream", "proc.changed"] }),
+      processReader("service", { kind: "service", observing: true, signals: ["proc.run.stream", "proc.changed"] }),
+    ];
+    const kernel = bareKernel();
+    kernel.connections = new Map([["allowed", allowed], ...rejected.map((connection, i) => [`rejected-${i}`, connection])]);
+    const frame = { type: "sig", signal: "proc.run.stream", payload: { pid: "proc-1", content: "private activity" } };
+
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", null, frame);
+
+    expect(allowed.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(frame));
+    for (const connection of rejected) expect(connection.send).not.toHaveBeenCalled();
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", null, { ...frame, signal: "proc.changed" });
+    for (const connection of rejected.filter((connection) => connection.state.peer?.id !== "idle")) {
+      expect(connection.send).not.toHaveBeenCalled();
+    }
   });
 });
 
