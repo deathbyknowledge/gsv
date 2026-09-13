@@ -72,33 +72,33 @@ describe("AdapterGatewayEntrypoint", () => {
     expect("serviceFrame" in GatewayEntrypoint.prototype).toBe(false);
   });
 
-  it("routes standalone calls with explicit singleton context and binding authority", async () => {
+  it("routes directory-admitted calls with binding authority", async () => {
     const response = {
       type: "res" as const,
-      id: "standalone",
+      id: "scoped",
       ok: true,
       data: { routed: true },
     };
     const peerFrame = vi.fn(async () => response);
     const getByName = vi.fn(() => ({ peerFrame }));
     const gateway = gatewayWithEnv(
-      { KERNEL: { getByName } },
+      { KERNEL: { getByName }, INSTALLATION_DIRECTORY: activeDirectory() },
       { id: "discord", calls: ["adapter.inbound"] },
     );
-    const frame = requestFrame("standalone");
+    const frame = requestFrame("scoped");
 
     await expect(gateway.serviceFrame(
-      { installationId: "singleton" },
+      { installationId: "inst_adapter_fixture" },
       frame,
     )).resolves.toEqual(response);
-    expect(getByName).toHaveBeenCalledWith("singleton");
+    expect(getByName).toHaveBeenCalledWith("inst_adapter_fixture");
     expect(peerFrame).toHaveBeenCalledWith(
       { id: "discord", calls: ["adapter.inbound"] },
       frame,
     );
   });
 
-  it("routes linked-human calls with explicit singleton context", async () => {
+  it("routes linked-human calls with directory-admitted context", async () => {
     const response = {
       type: "res" as const,
       id: "linked-approval",
@@ -107,7 +107,7 @@ describe("AdapterGatewayEntrypoint", () => {
     };
     const linkedAdapterPeerFrame = vi.fn(async () => response);
     const getByName = vi.fn(() => ({ linkedAdapterPeerFrame }));
-    const gateway = gatewayWithEnv({ KERNEL: { getByName } });
+    const gateway = gatewayWithEnv({ KERNEL: { getByName }, INSTALLATION_DIRECTORY: activeDirectory() });
     const context = {
       accountId: "default",
       actorId: "telegram:user:42",
@@ -122,11 +122,11 @@ describe("AdapterGatewayEntrypoint", () => {
     };
 
     await expect(gateway.linkedPeerFrame(
-      { installationId: "singleton" },
+      { installationId: "inst_adapter_fixture" },
       context,
       frame,
     )).resolves.toEqual(response);
-    expect(getByName).toHaveBeenCalledWith("singleton");
+    expect(getByName).toHaveBeenCalledWith("inst_adapter_fixture");
     expect(linkedAdapterPeerFrame).toHaveBeenCalledWith(
       { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
       context,
@@ -166,25 +166,22 @@ describe("AdapterGatewayEntrypoint", () => {
     );
   });
 
-  it("fails closed across deployment modes and cancels request bodies", async () => {
+  it("rejects unavailable or missing directories before selecting a Kernel and cancels bodies", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const managedRequest = requestFrameWithTrackedBody("managed-singleton");
-    const managedGateway = gatewayWithEnv({ INSTALLATION_DIRECTORY: {}, KERNEL: {} });
-
-    await expect(managedGateway.serviceFrame(
-      { installationId: "singleton" },
-      managedRequest.frame,
-    )).resolves.toBeNull();
-    expect(managedRequest.cancelled()).toBe("Gateway service request failed");
-
     const getByName = vi.fn();
-    const standaloneRequest = requestFrameWithTrackedBody("standalone-managed");
-    const standaloneGateway = gatewayWithEnv({ KERNEL: { getByName } });
-    await expect(standaloneGateway.serviceFrame(
-      { installationId: "inst_adapter_gateway" },
-      standaloneRequest.frame,
+    const unavailable = requestFrameWithTrackedBody("unavailable-directory");
+    const gateway = gatewayWithEnv({
+      INSTALLATION_DIRECTORY: { resolveInstallation: vi.fn(async () => ({ found: false })) },
+      KERNEL: { getByName },
+    });
+    await expect(gateway.serviceFrame({ installationId: "inst_missing" }, unavailable.frame))
+      .resolves.toMatchObject({ ok: false, error: { code: 503 } });
+    expect(unavailable.cancelled()).toBe("Managed installation is unavailable");
+    const missing = requestFrameWithTrackedBody("missing-directory");
+    await expect(gatewayWithEnv({ KERNEL: { getByName } }).serviceFrame(
+      { installationId: "inst_missing" }, missing.frame,
     )).resolves.toBeNull();
-    expect(standaloneRequest.cancelled()).toBe("Gateway service request failed");
+    expect(missing.cancelled()).toBe("Gateway service request failed");
     expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
   });
@@ -199,7 +196,7 @@ describe("AdapterGatewayEntrypoint", () => {
     );
 
     await expect(gateway.serviceFrame(
-      { installationId: "singleton" },
+      { installationId: "inst_adapter_fixture" },
       request.frame,
     )).resolves.toBeNull();
     expect(request.cancelled()).toBe("Gateway service request failed");
@@ -207,3 +204,12 @@ describe("AdapterGatewayEntrypoint", () => {
     error.mockRestore();
   });
 });
+
+function activeDirectory() {
+  return {
+    resolveInstallation: vi.fn(async (installationId: string) => ({
+      found: true as const, installationId, state: "active" as const,
+      handle: "fixture", canonicalOrigin: "https://fixture.invalid",
+    })),
+  };
+}

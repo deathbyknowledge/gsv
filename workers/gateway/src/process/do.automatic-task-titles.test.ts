@@ -9,7 +9,7 @@ describe("automatic task titles", () => {
   it("generates one title from the first admitted message", async () => {
     const pid = "mech-auto-task-title";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
     await stub.recvFrame(
       makeReq("proc.setidentity", {
         identity: ROOT_IDENTITY,
@@ -66,7 +66,7 @@ describe("automatic task titles", () => {
   it("starts title generation after admitting the first IPC message", async () => {
     const pid = "mech-auto-task-title-ipc";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
     await stub.recvFrame(
       makeReq("proc.setidentity", {
         identity: ROOT_IDENTITY,
@@ -102,7 +102,7 @@ describe("automatic task titles", () => {
   it("keeps the bounded first-message fallback when generation fails", async () => {
     const pid = "mech-auto-task-title-fallback";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
     await stub.recvFrame(
       makeReq("proc.setidentity", {
         identity: ROOT_IDENTITY,
@@ -141,7 +141,7 @@ describe("automatic task titles", () => {
   it("cancels title generation and ignores a late result after process reset", async () => {
     const pid = "mech-auto-task-title-reset";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
     await stub.recvFrame(
       makeReq("proc.setidentity", {
         identity: ROOT_IDENTITY,

@@ -127,18 +127,10 @@ export async function handleConnect(
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {
-    if (ctx.env.INSTALLATION_DIRECTORY) {
-      return {
-        ok: false,
-        code: 503,
-        message: "Managed installation provisioning is incomplete",
-      };
-    }
     return {
       ok: false,
-      code: SETUP_REQUIRED_ERROR_CODE,
-      message: "Setup required",
-      details: setupRequiredDetails(),
+      code: 503,
+      message: "Space provisioning is incomplete",
     };
   }
 

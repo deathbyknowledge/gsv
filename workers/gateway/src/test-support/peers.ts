@@ -11,7 +11,7 @@ export function testPeer(input: {
   const kind = input.kind ?? "human";
   const id = input.peerId ?? `${kind}:${input.account.username}`;
   return {
-    installationId: "singleton",
+    installationId: "inst_test",
     peer: {
       id,
       sessionId: `session:${id}`,

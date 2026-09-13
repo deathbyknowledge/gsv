@@ -1,6 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { baseAiModelStack } from "../base-model-stack";
-import type { GatewayEnv } from "../../runtime-env";
 import type { InferenceExecutionService, InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 
 type FixtureEnv = {
@@ -14,13 +13,12 @@ export default class Client extends WorkerEntrypoint<FixtureEnv> {
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname.split("/");
     if (path[1] === "calls") return Response.json({ calls: await this.env.COUNTS.count(), dispatch: await this.env.COUNTS.dispatch() });
-    const installationId = path[2] || "singleton";
+    const installationId = path[2] || "inst_execution_fixture";
     try {
       const executor = path[1] === "direct" ? this.env.EXECUTORS.getByName(installationId)
         : await (path[1] === "invalid" ? this.env.INVALID : this.env.INFERENCE).getExecutor(installationId);
       if (path[1] === "text") {
-        // SAFETY: model-stack selection reads only inference/directory feature bindings; this fixture supplies the standalone subset.
-        const model = baseAiModelStack({ INFERENCE_EXECUTION: this.env.INFERENCE } as GatewayEnv)[0];
+        const model = baseAiModelStack()[0];
         if (model.maxTokens === undefined) throw new Error("The base model must supply an output limit");
         const result = await executor.generate({ version: 1, installationId, logicalRequestId: crypto.randomUUID(),
           actor: { localUid: 1000 }, timeoutMs: 10_000, deadlineAt: Date.now() + 10_000,

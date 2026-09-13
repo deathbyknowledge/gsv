@@ -62,7 +62,6 @@ export class GatewayDeletion {
     if (ripgit && ripgit.phase !== "live-erased") return this.receipt(input, "erasing", "progress");
     // Always start at the prefix head: deleting a page must not invalidate a saved list cursor.
     const prefix = installationStoragePrefix(input.installationId);
-    if (!prefix) throw new Error("Unscoped standalone storage cannot be erased by installation cleanup");
     const page = await this.host.env.STORAGE.list({ prefix, limit: 1000 });
     if (page.objects.length) {
       await this.host.env.STORAGE.delete(page.objects.map((object) => object.key));

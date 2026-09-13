@@ -24,7 +24,7 @@ async function fixture(work: (store: MemberRecoveryStore, ctx: KernelContext, sq
       return { type: "res", id: frame.id, ok: true, data: { ok: true, adapter: "telegram", accountId: context.accountId, surfaceId: context.surface.id, deliveryId: context.deliveryId } };
     });
     // SAFETY: recovery uses only these durable identity/auth stores and the ordinary adapter binding boundary.
-    const ctx = { auth, installationId: "singleton", installationIdentity: { canonicalOrigin: "https://space.example.com" },
+    const ctx = { auth, installationId: "inst_test", installationIdentity: { canonicalOrigin: "https://space.example.com" },
       env: { CHANNEL_TELEGRAM: { adapterFrame } }, connection: null,
       adapters: { identityLinks: new IdentityLinkStore(sql), privateDestinations: { get: () => null }, surfaceRoutes: { get: () => null } },
       invalidateAccountConnections: vi.fn(),

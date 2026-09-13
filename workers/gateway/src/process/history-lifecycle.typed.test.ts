@@ -1,3 +1,4 @@
+import { createInstallationStorage } from "../installation/storage";
 import { evictDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -67,7 +68,7 @@ describe("typed history lifecycle", () => {
     const source = await initProcess(pid, ROOT_IDENTITY);
     const sourceKey = `var/media/0/${pid}/typed-only.png`;
     const bytes = new Uint8Array([7, 8, 9]);
-    await env.STORAGE.put(sourceKey, bytes, {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(sourceKey, bytes, {
       httpMetadata: { contentType: "image/png" },
       customMetadata: { uid: "0", gid: "0", mode: "400", processId: pid },
     });
@@ -112,7 +113,7 @@ describe("typed history lifecycle", () => {
       await process.resources.deleteUnreferencedActiveMedia([sourceKey]);
       return messageId;
     });
-    expect(await env.STORAGE.head(sourceKey)).not.toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(sourceKey)).not.toBeNull();
     await evictDurableObject(source);
 
     const exported = await runInProcess(source, async (process: Process) => {
@@ -161,8 +162,8 @@ describe("typed history lifecycle", () => {
       process.controller.handleProcReset()
     ));
     if (!reset.ok || !reset.archivedTo) throw new Error("Reset did not archive typed history");
-    expect(await env.STORAGE.head(sourceKey)).toBeNull();
-    const retained = await env.STORAGE.get(retainedKey);
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(sourceKey)).toBeNull();
+    const retained = await createInstallationStorage(env.STORAGE, "inst_test").get(retainedKey);
     expect(retained && [...new Uint8Array(await retained.arrayBuffer())]).toEqual([...bytes]);
 
     const archived = await runInProcess(source, (process: Process) => (

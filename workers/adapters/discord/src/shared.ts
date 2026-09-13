@@ -26,20 +26,20 @@ export class SharedDiscordChannel extends WorkerEntrypoint<SharedDiscordEnv> imp
   }
   async adapterFrame(installation: AdapterInstallationContext, context: AdapterDeliveryContext, frame: GatewayRequestFrame): Promise<GatewayResponseFrame> {
     try {
-      parseInstallation(installation);
+      parseAdapterInstallationContext(installation);
       const peer = this.peer(context.accountId, context.actorId ?? "");
       return await handleAdapterFrame("discord", context, frame, { send: (delivery, body) => peer.sendMessage(installation.installationId, delivery.message, body, context) });
     } catch (error) { await cancelBinaryBody(frame.body, error); throw error; }
   }
   async adapterStatus(installation: AdapterInstallationContext, accountId?: string): Promise<AdapterAccountStatus[]> {
-    parseInstallation(installation);
+    parseAdapterInstallationContext(installation);
     if (!sharedDiscordConfigured(this.env)) return [];
     if (accountId) parseDiscordAccount(accountId, this.applicationId());
     const status = await this.application().getStatus();
     return [{ ...status, accountId: accountId ?? discordAccount(this.applicationId()), authenticated: false, mode: "managed-shared" }];
   }
   async adapterPairingInfo(installation: AdapterInstallationContext): Promise<AdapterPairingInfo> {
-    parseInstallation(installation);
+    parseAdapterInstallationContext(installation);
     const configured = sharedDiscordConfigured(this.env);
     if (!configured) return { accountId: "shared", configured: false };
     const applicationId = this.applicationId();
@@ -51,7 +51,7 @@ export class SharedDiscordChannel extends WorkerEntrypoint<SharedDiscordEnv> imp
     return { accountId: discordAccount(applicationId), configured, installUrl: url.toString() };
   }
   async adapterPairingInspect(installation: AdapterInstallationContext, code: string): Promise<AdapterPairingCandidate> {
-    parseInstallation(installation);
+    parseAdapterInstallationContext(installation);
     return await this.pairing(code).inspect();
   }
   async adapterPairingPrepare(installation: AdapterInstallationContext, input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation> {
@@ -79,7 +79,7 @@ export class SharedDiscordChannel extends WorkerEntrypoint<SharedDiscordEnv> imp
   }
   private pairing(code: string) { return this.env.DISCORD_PAIRING.getByName(`pair:${discordPairingCode(code)}`); }
   private assertInstallation(installation: AdapterInstallationContext, expected: string): void {
-    if (parseInstallation(installation).installationId !== expected) throw new Error("Pairing installation does not match the caller");
+    if (parseAdapterInstallationContext(installation).installationId !== expected) throw new Error("Pairing installation does not match the caller");
   }
 }
 
@@ -91,9 +91,3 @@ export default {
     if (sharedDiscordConfigured(env)) await env.DISCORD_APPLICATION.getByName(`application:${discordId(env.DISCORD_APPLICATION_ID ?? "")}`).ensureStarted();
   },
 } satisfies ExportedHandler<SharedDiscordEnv>;
-
-function parseInstallation(installation: AdapterInstallationContext): AdapterInstallationContext {
-  const parsed = parseAdapterInstallationContext(installation);
-  if (parsed.installationId === "singleton") throw new Error("Shared Discord cannot address singleton");
-  return parsed;
-}

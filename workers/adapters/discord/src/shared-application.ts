@@ -2,7 +2,8 @@ import type { InstallationDirectoryService } from "../../../../packages/gsv/src/
 import type { DiscordInstallation } from "./lifecycle";
 import type { AdapterResourceInspection } from "../../shared/src/peer-retirement";
 import type { AdapterAccountStatus } from "../../shared/src/types";
-import { DiscordGateway } from "./discord-gateway";
+import type { DiscordGateway } from "./discord-gateway";
+import { DiscordGatewayTransport } from "./discord-gateway-transport";
 import { discordGuildSchema, discordReadyPayloadSchema, type DiscordDispatchPayload, type DiscordMessagePayload } from "./discord-events";
 import { discordAccount, discordActor, discordId, discordPeerName } from "./shared-identity";
 import type { DiscordPeer } from "./shared-peer";
@@ -24,7 +25,7 @@ export interface SharedDiscordEnv {
 }
 
 /** One operator-owned provider connection. It never accepts an installation route or a human token. */
-export class DiscordApplication extends DiscordGateway {
+export class DiscordApplication extends DiscordGatewayTransport {
   constructor(ctx: DurableObjectState, private readonly applicationEnv: SharedDiscordEnv) { super(ctx, applicationEnv); }
 
   async inspectInstallationResource(_installationId: string): Promise<AdapterResourceInspection> {
@@ -45,8 +46,8 @@ export class DiscordApplication extends DiscordGateway {
     await this.startConnection(discordAccount(applicationId));
   }
 
-  override async start(): Promise<void> { throw new Error("Discord application credentials are operator-owned"); }
-  override async getBotToken(): Promise<null> { return null; }
+  async start(): Promise<void> { throw new Error("Discord application credentials are operator-owned"); }
+  async getBotToken(): Promise<null> { return null; }
   protected override connectionBotToken(): string | null { return this.applicationEnv.DISCORD_BOT_TOKEN?.trim() || null; }
   protected override connectionIntents(): number { return (1 << 0) | (1 << 9) | (1 << 12); }
   protected override async notifyGatewayStatus(_status: AdapterAccountStatus): Promise<void> {}

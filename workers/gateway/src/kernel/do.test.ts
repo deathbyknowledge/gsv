@@ -32,7 +32,7 @@ const bareKernel = (): any => {
 };
 
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
-const TEST_INSTALLATION_ID = "singleton";
+const TEST_INSTALLATION_ID = "inst_test";
 
 describe("Kernel responsibility wakes", () => {
   it("durably admits a ready batch to the existing Ship process", async () => {
@@ -585,7 +585,9 @@ describe("Kernel frame bodies", () => {
     const sends: Array<string | ArrayBuffer> = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
-    kernel.env = {};
+    kernel.env = { INSTALLATION_DIRECTORY: {
+      resolveInstallation: async (installationId: string) => ({ found: true, installationId, state: "active" }),
+    } };
     kernel.installationId = TEST_INSTALLATION_ID;
     kernel.transport.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };

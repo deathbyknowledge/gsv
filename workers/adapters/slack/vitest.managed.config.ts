@@ -67,7 +67,7 @@ export default defineConfig({
           {
             name: "managed-slack-api-test",
             modules: true,
-            script: slackApiWorkerScript("managed"),
+            script: slackApiWorkerScript(),
           },
         ],
       },

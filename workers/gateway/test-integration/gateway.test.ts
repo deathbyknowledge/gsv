@@ -36,13 +36,16 @@ describe("gateway integration", () => {
     expect(health.status).toBe(200);
     await expect(health.json()).resolves.toEqual({ status: "healthy" });
 
+    await new GSVClient().requestOnce(webSocketUrl(baseUrl), "sys.setup", {
+      onboardingToken: "integration-onboarding-default", username: USERNAME, password: PASSWORD,
+    });
     const metadata = await harness.fetch("/.well-known/oauth-client/gsv.json");
     expect(metadata.status).toBe(200);
     expect(metadata.headers.get("cache-control")).toBe("no-store");
     expect(metadata.headers.get("access-control-allow-origin")).toBe("*");
     await expect(metadata.json()).resolves.toMatchObject({
-      client_id: `${baseUrl.origin}/.well-known/oauth-client/gsv.json`,
-      redirect_uris: [`${baseUrl.origin}/oauth/callback`],
+      client_id: "http://localhost/.well-known/oauth-client/gsv.json",
+      redirect_uris: ["http://localhost/oauth/callback"],
       code_challenge_methods_supported: ["S256"],
     });
   });
@@ -74,12 +77,10 @@ describe("gateway integration", () => {
     const setupRequired = oneShot.requestOnce(wsUrl, "sys.connect", connectArgs);
     await expect(setupRequired).rejects.toBeInstanceOf(GsvClientError);
     await expect(setupRequired).rejects.toMatchObject({
-      code: 425,
-      message: "Setup required",
-      details: { setupMode: true, next: "sys.setup" },
+      code: 503,
     });
 
-    const setup = await oneShot.requestOnce(wsUrl, "sys.setup", {
+    const setup = await oneShot.requestOnce(wsUrl, "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: USERNAME,
       password: PASSWORD,
       agentName: "harness-agent",
@@ -101,12 +102,12 @@ describe("gateway integration", () => {
       code: 403,
       message: "Must call sys.connect first",
     });
-    await expect(oneShot.requestOnce(wsUrl, "sys.setup", {
+    await expect(oneShot.requestOnce(wsUrl, "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: "second-user",
       password: PASSWORD,
     })).rejects.toMatchObject({
-      code: 409,
-      message: "System already initialized",
+      code: 401,
+      message: "Installation setup link is invalid or expired",
     });
     await expect(oneShot.requestOnce(wsUrl, "sys.connect", {
       ...connectArgs,
@@ -135,16 +136,9 @@ describe("gateway integration", () => {
         preferredModelId: null,
         models: [
           {
-            id: "workers-ai-glm-5-3-flash",
-            provider: "workers-ai",
-            model: "@cf/zai-org/glm-5.3-flash",
-            source: "base",
-            hasCredential: false,
-          },
-          {
-            id: "workers-ai-kimi-k2-6",
-            provider: "workers-ai",
-            model: "@cf/moonshotai/kimi-k2.6",
+            id: "gsv-included",
+            provider: "gsv",
+            model: "default",
             source: "base",
             hasCredential: false,
           },

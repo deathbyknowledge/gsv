@@ -14,7 +14,6 @@ use worker::*;
 /// versions within a blob group. Worst-case reconstruction applies N-1 deltas.
 pub const KEYFRAME_INTERVAL: i64 = 50;
 const INSTALLATION_HEADER: &str = "X-GSV-Installation-ID";
-const LEGACY_STANDALONE_INSTALLATION_ID: &str = "singleton";
 
 struct Actor {
     display_name: String,
@@ -48,7 +47,7 @@ fn installation_id_from_request(req: &Request) -> std::result::Result<String, &'
         .headers()
         .get(INSTALLATION_HEADER)
         .map_err(|_| "Invalid installation routing header")?
-        .unwrap_or_else(|| LEGACY_STANDALONE_INSTALLATION_ID.to_string());
+        .ok_or("Missing installation routing header")?;
     if !is_valid_installation_id(&installation_id) {
         return Err("Invalid installation routing header");
     }
@@ -70,11 +69,7 @@ fn is_valid_installation_id(value: &str) -> bool {
 }
 
 fn repository_do_name(installation_id: &str, owner: &str, repo: &str) -> String {
-    if installation_id == LEGACY_STANDALONE_INSTALLATION_ID {
-        format!("{}/{}", owner, repo)
-    } else {
-        format!("{}/{}/{}", installation_id, owner, repo)
-    }
+    format!("{}/{}/{}", installation_id, owner, repo)
 }
 
 async fn forward_hyperspace_request(
@@ -511,10 +506,10 @@ mod installation_tests {
     use super::*;
 
     #[test]
-    fn preserves_standalone_repository_names() {
+    fn scopes_every_repository_name() {
         assert_eq!(
-            repository_do_name(LEGACY_STANDALONE_INSTALLATION_ID, "alice", "home"),
-            "alice/home"
+            repository_do_name("singleton", "alice", "home"),
+            "singleton/alice/home"
         );
     }
 

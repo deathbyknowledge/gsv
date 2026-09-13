@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { env } from "cloudflare:workers";
+import { describe, expect, it, vi } from "vitest";
 import {
   conversationDurableObjectName,
   parseConversationDurableObjectName,
@@ -10,9 +11,6 @@ import {
 describe("installation routing", () => {
 
   it("round-trips installation-scoped Process names", () => {
-    expect(processDurableObjectName("singleton", "proc:one")).toBe("proc:one");
-    expect(parseProcessDurableObjectName("proc:one"))
-      .toEqual({ installationId: "singleton", pid: "proc:one" });
     expect(processDurableObjectName("inst_first", "proc:one")).toBe(
       "process:inst_first:proc%3Aone",
     );
@@ -32,16 +30,11 @@ describe("installation routing", () => {
       .toThrow("name is invalid");
     expect(() => parseProcessDurableObjectName("process:inst_first:"))
       .toThrow("name is invalid");
-    expect(() => parseProcessDurableObjectName("process:singleton:proc%3Aone"))
+    expect(() => parseProcessDurableObjectName("proc:one"))
       .toThrow("name is invalid");
-    expect(() => processDurableObjectName("singleton", "process:inst:pid"))
-      .toThrow("conflicts with managed Process addressing");
   });
 
   it("round-trips installation-scoped Conversation names", () => {
-    expect(conversationDurableObjectName("singleton", "conv:home")).toBe("conv:home");
-    expect(parseConversationDurableObjectName("conv:home"))
-      .toEqual({ installationId: "singleton", conversationId: "conv:home" });
     expect(conversationDurableObjectName("inst_first", "conv:home")).toBe(
       "conversation:inst_first:conv%3Ahome",
     );
@@ -59,20 +52,22 @@ describe("installation routing", () => {
       .toThrow("name is invalid");
     expect(() => parseConversationDurableObjectName("conversation:inst_first:"))
       .toThrow("name is invalid");
-    expect(() => parseConversationDurableObjectName("conversation:singleton:conv%3Ahome"))
+    expect(() => parseConversationDurableObjectName("conv:home"))
       .toThrow("name is invalid");
-    expect(() => conversationDurableObjectName("singleton", "conversation:inst:conv"))
-      .toThrow("conflicts with managed Conversation addressing");
   });
 
-  it("routes standalone requests to the fixed compatibility identity", async () => {
-    await expect(
-      resolveInstallationRoute(new Request("http://localhost:8787/ws")),
-    ).resolves.toEqual({
-      identity: {
-        installationId: "singleton",
-        canonicalOrigin: "http://localhost:8787",
-      },
-    });
+  it("fails closed without a directory instead of deriving identity from the request", async () => {
+    const getByName = vi.spyOn(env.KERNEL, "getByName");
+    const previous = Object.getOwnPropertyDescriptor(env, "INSTALLATION_DIRECTORY");
+    Object.defineProperty(env, "INSTALLATION_DIRECTORY", { configurable: true, value: undefined });
+    try {
+      await expect(resolveInstallationRoute(new Request("http://localhost:8787/ws")))
+        .rejects.toThrow("Installation directory is not configured");
+      expect(getByName).not.toHaveBeenCalled();
+    } finally {
+      if (previous) Object.defineProperty(env, "INSTALLATION_DIRECTORY", previous);
+      else Reflect.deleteProperty(env, "INSTALLATION_DIRECTORY");
+      getByName.mockRestore();
+    }
   });
 });

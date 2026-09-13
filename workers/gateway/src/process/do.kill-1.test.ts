@@ -1,5 +1,5 @@
 import { processDurableObjectName } from "../installation/routing";
-import { installationStoragePrefix } from "../installation/storage";
+import { createInstallationStorage, installationStoragePrefix } from "../installation/storage";
 import { getProcessByPid } from "../shared/utils";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { evictDurableObject } from "cloudflare:test";
@@ -44,7 +44,7 @@ describe("proc.kill", () => {
     const pid = "mech-kill-archive-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const activeKey = `var/media/0/${pid}/proof.png`;
-    await env.STORAGE.put(activeKey, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(activeKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         uid: "0",
@@ -72,10 +72,10 @@ describe("proc.kill", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const archive = (killed.data as any).archives[0];
     expect(archive).toBeTruthy();
-    expect(await env.STORAGE.head(activeKey)).toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(activeKey)).toBeNull();
 
     const resumedPid = "mech-resume-archive-media";
-    const resumed = await getProcessByPid(resumedPid);
+    const resumed = await getProcessByPid(resumedPid, "inst_test");
     const initialized = await okProcessResponse(
       resumed,
       makeReq("proc.setidentity", {
@@ -102,16 +102,16 @@ describe("proc.kill", () => {
     });
     expect(media.path).toBe(`/${media.key}`);
 
-    const restored = await env.STORAGE.get(media.key);
+    const restored = await createInstallationStorage(env.STORAGE, "inst_test").get(media.key);
     expect(restored && [...new Uint8Array(await restored.arrayBuffer())]).toEqual([1, 2, 3]);
 
-    await env.STORAGE.delete([archive.path.replace(/^\//, ""), media.key]);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete([archive.path.replace(/^\//, ""), media.key]);
     await resumed.recvFrame(makeReq("proc.kill", { archive: false }));
   });
 
   it("can dispose an executor whose identity initialization never completed", async () => {
     const pid = "mech-kill-uninitialized";
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
 
     const killed = await stub.recvFrame(makeReq("proc.kill", { pid, archive: false }));
     expect(killed).toMatchObject({
@@ -245,7 +245,7 @@ describe("proc.kill", () => {
         await archiveMessageRecords(...args);
       });
       const activeMediaKey = `var/media/0/${pid}/stable.png`;
-      await process.env.STORAGE.put(activeMediaKey, new Uint8Array([4, 5, 6]), {
+      await process.storage.put(activeMediaKey, new Uint8Array([4, 5, 6]), {
         httpMetadata: { contentType: "image/png" },
         customMetadata: {
           uid: "0",
@@ -312,10 +312,10 @@ describe("proc.kill", () => {
       const response = await killing;
       const archivePath = response.data.archives[0].path;
       const archived = archiveSnapshots.at(-1)!;
-      const archivedMedia = await process.env.STORAGE.list({
+      const archivedMedia = await process.storage.list({
         prefix: "root/.gsv/media/archived-media:",
       });
-      await process.env.STORAGE.delete([
+      await process.storage.delete([
         archivePath.replace(/^\//, ""),
         ...archivedMedia.objects.map((object: any) => object.key),
       ]);
@@ -465,7 +465,7 @@ describe("proc.kill", () => {
     const runId = "run-kill-late-context-media";
     const key = `var/media/0/${pid}/context.png`;
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
     });
 
@@ -883,7 +883,7 @@ describe("proc.kill", () => {
       const epochKey = `${process.history.historyArchiveDir()}/epochs/${epochId}.json.gz`;
 
       const response = await process.recvFrame(makeReq("proc.kill", {}));
-      const archived = await process.env.STORAGE.get(epochKey);
+      const archived = await process.storage.get(epochKey);
       if (!archived) throw new Error("Expected killed context epoch archive");
       const manifest = await new Response(
         archived.body.pipeThrough(new DecompressionStream("gzip")),

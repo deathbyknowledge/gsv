@@ -10,7 +10,7 @@ import {
 import { z } from "zod";
 import type { GatewayEnv } from "../runtime-env";
 import { conversationDurableObjectName, parseConversationDurableObjectName, parseProcessDurableObjectName, processDurableObjectName } from "./routing";
-import { parseManagedInstallationId } from "./identity";
+import { parseInstallationId } from "./identity";
 import type { ResourceStorageInspection } from "./retirement";
 
 const ripgitInspectionSchema = z.strictObject({ empty: z.boolean(), name: z.string().optional() });
@@ -117,13 +117,12 @@ export function resourceInstallation(kind: InstallationResourceObservation["kind
   if (kind === "process") return parseProcessDurableObjectName(name).installationId;
   if (kind === "conversation") return parseConversationDurableObjectName(name).installationId;
   if (kind === "ripgit") {
-    if (name.startsWith("installation-index:")) return parseManagedInstallationId(name.slice("installation-index:".length));
+    if (name.startsWith("installation-index:")) return parseInstallationId(name.slice("installation-index:".length));
     const parts = name.split("/");
-    if (parts.length === 2) return "singleton";
     if (parts.length !== 3) throw new Error("Invalid repository resource name");
-    return parseManagedInstallationId(parts[0]);
+    return parseInstallationId(parts[0]);
   }
-  return parseManagedInstallationId(name);
+  return parseInstallationId(name);
 }
 
 function assertGatewayResource(kind: string): asserts kind is "kernel" | "process" | "conversation" | "ripgit" {

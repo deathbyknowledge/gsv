@@ -62,7 +62,7 @@ import { MAIL_SEND, syscallToolName } from "../syscalls/constants";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
 
 beforeEach(() => {
   generateMock.mockReset();
@@ -335,7 +335,6 @@ describe("handleAiConfig", () => {
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
       ripgit?: Fetcher;
-      managedInference?: boolean;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
@@ -343,10 +342,6 @@ describe("handleAiConfig", () => {
     const oauthAccounts = options.oauthAccounts ?? [];
     const env: Partial<KernelContext["env"]> = {};
     if (options.ripgit) env.RIPGIT = options.ripgit;
-    if (options.managedInference) {
-      // SAFETY: the base stack only checks that the managed inference binding exists.
-      env.MANAGED_INFERENCE = {} as never;
-    }
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
@@ -1429,29 +1424,28 @@ describe("handleAiConfig", () => {
         maxTokens: 32_768,
       }),
       expect.objectContaining({
-        modelId: "workers-ai-glm-5-3-flash",
-        provider: "workers-ai",
-        model: "@cf/zai-org/glm-5.3-flash",
-        apiKey: "",
-      }),
-      expect.objectContaining({
-        modelId: "workers-ai-kimi-k2-6",
-        provider: "workers-ai",
-        model: "@cf/moonshotai/kimi-k2.6",
+        modelId: "gsv-included",
+        provider: "gsv",
+        model: "default",
         apiKey: "",
       }),
     ]);
   });
 
   it("reorders an inherited-only deployment stack without creating personal models", async () => {
-    const order = ["workers-ai-kimi-k2-6", "workers-ai-glm-5-3-flash"];
-    const context = makeAiConfigContext({ "users/1000/ai/model_order": JSON.stringify(order) });
+    const order = ["gsv-included", "shared"];
+    const context = makeAiConfigContext({
+      "users/1000/ai/model_order": JSON.stringify(order),
+      "config/ai/models": JSON.stringify({ version: 1, models: [
+        { id: "shared", name: "Shared", provider: "workers-ai", model: "@cf/shared" },
+      ] }),
+    });
     const result = await handleAiConfig({}, context);
-    expect(result.model).toBe("@cf/moonshotai/kimi-k2.6");
-    expect(result.fallbacks?.map((model) => model.modelId)).toEqual(["workers-ai-glm-5-3-flash"]);
+    expect(result.model).toBe("default");
+    expect(result.fallbacks?.map((model) => model.modelId)).toEqual(["shared"]);
     expect(handleAiModels(context)).toMatchObject({
       modelOrder: order,
-      models: [{ id: order[1], source: "base" }, { id: order[0], source: "base" }],
+      models: [{ id: "shared", source: "system" }, { id: "gsv-included", source: "base" }],
     });
   });
 
@@ -1464,7 +1458,7 @@ describe("handleAiConfig", () => {
       "users/1000/ai/model_order": '["removed","gsv-included","shared","mine"]',
       "users/2000/ai/model_order": '["mine"]',
     };
-    const process = { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true };
+    const process = { uid: 2000, ownerUid: 1000, processId: "task-1" };
     const context = makeAiConfigContext(values, process);
     const result = await handleAiConfig({}, context);
     expect(result.model).toBe("default");
@@ -1507,8 +1501,7 @@ describe("handleAiConfig", () => {
         "claude-preferred",
         "gpt-primary",
         "@cf/last",
-        "@cf/zai-org/glm-5.3-flash",
-        "@cf/moonshotai/kimi-k2.6",
+        "default",
       ]);
   });
 
@@ -1541,22 +1534,16 @@ describe("handleAiConfig", () => {
         model: "@cf/fallback",
       }),
       expect.objectContaining({
-        modelId: "workers-ai-glm-5-3-flash",
-        provider: "workers-ai",
-        model: "@cf/zai-org/glm-5.3-flash",
-        apiKey: "",
-      }),
-      expect.objectContaining({
-        modelId: "workers-ai-kimi-k2-6",
-        provider: "workers-ai",
-        model: "@cf/moonshotai/kimi-k2.6",
+        modelId: "gsv-included",
+        provider: "gsv",
+        model: "default",
         apiKey: "",
       }),
     ]);
   });
 
-  it("supplies GSV Included as the managed base when nothing is configured", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({}, { managedInference: true }));
+  it("supplies GSV Included as the base when nothing is configured", async () => {
+    const result = await handleAiConfig({}, makeAiConfigContext({}));
 
     expect(result).toMatchObject({ provider: "gsv", model: "default", apiKey: "" });
     expect(result.fallbacks).toBeUndefined();
@@ -1569,7 +1556,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
       }),
       "users/1000/ai/models/mine/api_key": "sk-mine",
-    }, { managedInference: true }));
+    }));
 
     expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4", apiKey: "sk-mine" });
     expect(result.fallbacks).toEqual([
@@ -1584,7 +1571,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
       }),
       "users/1000/ai/preferred_model": "gsv-included",
-    }, { managedInference: true }));
+    }));
 
     expect(result).toMatchObject({ provider: "gsv", model: "default" });
     expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
@@ -1596,7 +1583,7 @@ describe("handleAiConfig", () => {
         version: 1,
         models: [{ id: "setup-primary", name: "GSV Included", provider: "gsv", model: "default" }],
       }),
-    }, { managedInference: true }));
+    }));
 
     expect(result).toMatchObject({ provider: "gsv", model: "default" });
     expect(result.fallbacks).toBeUndefined();
@@ -1613,7 +1600,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5" }],
       }),
       "config/ai/models/shared/api_key": "sk-shared",
-    }, { managedInference: true }));
+    }));
 
     expect(result.model).toBe("gpt-5.4");
     expect(result.fallbacks?.map((fallback) => [fallback.modelId, fallback.apiKey])).toEqual([
@@ -1656,7 +1643,7 @@ describe("handleAiConfig", () => {
         version: 1,
         models: [{ id: "shared-gpt", name: "Shared GPT", provider: "openai", model: "gpt-5.4" }],
       }),
-    }, { managedInference: true }));
+    }));
 
     // Both personal profiles survive; the shared copy of that connection is shadowed by them.
     expect(listing.models.map((model) => model.id)).toEqual(["fast", "long", "gsv-included"]);
@@ -1669,7 +1656,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
       }),
       "users/1000/ai/models/mine/api_key": "sk-mine",
-    }, { managedInference: true });
+    });
 
     expect(handleAiModels(ctx)).toEqual({
       preferredModelId: null,
@@ -1686,7 +1673,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
       }),
       "users/1000/ai/preferred_model": "gsv-included",
-    }, { managedInference: true }));
+    }));
     expect(preferred.preferredModelId).toBe("gsv-included");
     // The listing keeps layered order; generation is what moves the preference first.
     expect(preferred.models.map((model) => model.id)).toEqual(["mine", "gsv-included"]);
@@ -1762,7 +1749,7 @@ describe("handleAiConfig", () => {
         models: [{ id: "mine", name: "Mine", provider: "openai", model: "gpt-5.4" }],
       }),
       "users/1000/ai/preferred_model": "gsv-included",
-    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true }));
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" }));
 
     expect(result).toMatchObject({ provider: "gsv", model: "default" });
     expect(result.fallbacks?.map((fallback) => fallback.modelId)).toEqual(["mine"]);
@@ -1776,7 +1763,7 @@ describe("handleAiConfig", () => {
       }),
       "users/1000/ai/preferred_model": "gsv-included",
       "users/2000/ai/preferred_model": "",
-    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
 
     expect(await handleAiConfig({}, context)).toMatchObject({ provider: "gsv", model: "default" });
     expect(handleAiModels(context).preferredModelId).toBe("gsv-included");
@@ -1790,7 +1777,7 @@ describe("handleAiConfig", () => {
       }),
       "users/1000/ai/preferred_model": "gsv-included",
       "users/2000/ai/preferred_model": "deleted-model",
-    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
 
     expect(await handleAiConfig({}, context)).toMatchObject({ provider: "gsv", model: "default" });
     expect(handleAiModels(context).preferredModelId).toBe("gsv-included");
@@ -1804,7 +1791,7 @@ describe("handleAiConfig", () => {
       }),
       "users/1000/ai/preferred_model": "gsv-included",
       "users/2000/ai/preferred_model": "mine",
-    }, { uid: 2000, ownerUid: 1000, processId: "task-1", managedInference: true });
+    }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
 
     const result = await handleAiConfig({}, context);
     expect(result).toMatchObject({ provider: "openai", model: "gpt-5.4" });
@@ -1826,7 +1813,6 @@ describe("handleAiConfig", () => {
           models: [{ id: "shared-codex", name: "Shared Codex", provider: "openai-codex", model: "gpt-5.5" }],
         }),
       }, {
-        managedInference: true,
         oauthAccounts: [makeOAuthAccount({ uid: 0, metadata: {} })],
       }));
 

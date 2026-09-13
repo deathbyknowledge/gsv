@@ -19,7 +19,7 @@ describe("kernel process RPC exposure", () => {
     };
 
     await registerInKernel(pid, identity);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     const response = await runInDurableObject(kernel, (instance: Kernel) =>
       instance.recvFrame(pid, makeReq("ai.config", {})),
@@ -42,7 +42,7 @@ describe("kernel process RPC exposure", () => {
     };
 
     await registerInKernel(pid, identity);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
 

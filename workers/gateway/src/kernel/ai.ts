@@ -825,7 +825,7 @@ export function resolveEffectiveAiModelStack(
     personal: readConfiguredAiModelStack(ctx, personalKey),
     personalKey,
     system: readConfiguredAiModelStack(ctx, SYSTEM_AI_MODELS_CONFIG_KEY),
-    base: baseAiModelStack(ctx.env),
+    base: baseAiModelStack(),
   });
 }
 

@@ -1,27 +1,17 @@
 {
-  "version": 1,
+  "version": 2,
   "id": "slack",
   "displayName": "Slack",
   "description": "Slack adapter worker",
   "deployOrder": 4,
-  "wranglerConfig": "wrangler.jsonc",
+  "wranglerConfig": "wrangler.managed.jsonc",
   "devStateDirectories": [
-    "gsv-channel-slack-SlackAccount"
+    "gsv-managed-slack-ManagedSlackWorkspace",
+    "gsv-managed-slack-ManagedSlackPeer",
+    "gsv-managed-slack-ManagedSlackPairing",
+    "gsv-managed-slack-SlackInstallation"
   ],
-  "standalone": {
-    "main": "dist/cloudflare/channel-slack/worker/index.js",
-    "bundle": false,
-    "gatewayEntrypoint": "SlackChannel",
-    "adapterEntrypoint": "SlackChannel",
-    "durableObjects": [
-      {
-        "binding": "SLACK_ACCOUNT",
-        "className": "SlackAccount"
-      }
-    ],
-    "requiredSecrets": []
-  },
-  "managed": {
+  "deployment": {
     "main": "workers/adapters/slack/src/managed.ts",
     "bundle": true,
     "gatewayEntrypoint": "ManagedSlackChannel",

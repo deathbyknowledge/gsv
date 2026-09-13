@@ -15,7 +15,7 @@ import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
 function createCtx(overrides?: {
   setupMode?: boolean;
   ripgit?: Fetcher;
-  managedInference?: boolean;
+  inferenceExecution?: boolean;
 }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
@@ -152,7 +152,7 @@ function createCtx(overrides?: {
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const ctx = {
-    installationId: "singleton",
+    installationId: "inst_test",
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     auth: auth as KernelContext["auth"],
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -162,7 +162,7 @@ function createCtx(overrides?: {
     env: {
       STORAGE: storage,
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : undefined),
-      ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : undefined),
+      ...(overrides?.inferenceExecution ? { INFERENCE_EXECUTION: {} } : undefined),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext["env"],
     conversations: {
@@ -258,8 +258,8 @@ describe("handleSysSetup", () => {
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("leaves the managed base implicit when setup has no AI selection", async () => {
-    const { ctx, config } = createCtx({ managedInference: true });
+  it("leaves the base implicit when setup has no AI selection", async () => {
+    const { ctx, config } = createCtx({ inferenceExecution: true });
 
     const result = await handleSysSetup(
       {
@@ -273,7 +273,7 @@ describe("handleSysSetup", () => {
     expect(result.server.features).toEqual(["ai.provider.gsv"]);
   });
 
-  it("keeps standalone defaults implicit when setup has no AI selection", async () => {
+  it("does not persist model defaults when the inference service is unavailable", async () => {
     const { ctx, config } = createCtx();
 
     await handleSysSetup(
@@ -288,7 +288,7 @@ describe("handleSysSetup", () => {
   });
 
   it("writes nothing for an explicit GSV Included choice, which is the base", async () => {
-    const { ctx, config } = createCtx({ managedInference: true });
+    const { ctx, config } = createCtx({ inferenceExecution: true });
 
     await handleSysSetup(
       {
@@ -308,8 +308,8 @@ describe("handleSysSetup", () => {
     );
   });
 
-  it("preserves an explicit bring-your-own provider on managed setup", async () => {
-    const { ctx, config } = createCtx({ managedInference: true });
+  it("preserves an explicit bring-your-own provider during setup", async () => {
+    const { ctx, config } = createCtx({ inferenceExecution: true });
 
     await handleSysSetup(
       {

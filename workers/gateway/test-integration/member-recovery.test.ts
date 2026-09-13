@@ -14,7 +14,7 @@ describe("clean-space messenger member recovery", () => {
 
   it("delivers the code directly and recovers only the linked member after Kernel eviction", async () => {
     const oneShot = new GSVClient();
-    await oneShot.requestOnce(url, "sys.setup", { username: "person", password: "old-password", rootPassword: "root-password" });
+    await oneShot.requestOnce(url, "sys.setup", { onboardingToken: "integration-onboarding-default", username: "person", password: "old-password", rootPassword: "root-password" });
     const root = new GSVClient({ url, username: "root", password: "root-password", peer: { id: "recovery-root" } });
     const human = new GSVClient({ url, username: "person", password: "old-password", peer: { id: "recovery-member" } });
     clients.push(root, human); await root.connect(); await human.connect();
@@ -22,19 +22,19 @@ describe("clean-space messenger member recovery", () => {
     const processes = await root.proc.list({});
     // Direct human pairing authorization has separate boundary coverage. Seed the
     // resulting durable route, then use the real anonymous protocol and adapter service.
-    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "singleton" });
+    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "inst_integration_default" });
     await storage.exec(`INSERT INTO identity_links (adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json)
       VALUES ('telegram', 'recovery-account', 'recovery-person', 1000, ?, 1000, ?)`, Date.now(), JSON.stringify({ managed: true, surfaceKind: "dm", surfaceId: "recovery-dm", routeGeneration: "confirmed-generation" }));
     const attempt = { id: crypto.randomUUID(), username: "person", proof: createPairingSecret() };
     expect(await oneShot.requestOnce(url, "account.recovery.code.start", attempt)).toMatchObject({ accepted: true });
-    const response = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/outbound?installationId=singleton&accountId=recovery-account");
+    const response = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/outbound?installationId=inst_integration_default&accountId=recovery-account");
     // SAFETY: this fixture endpoint returns its declared outbound record contract.
     const outbound = await response.json() as RecordedOutboundMessage[];
     expect(outbound).toHaveLength(1);
     expect(outbound[0].message.surface).toEqual({ kind: "dm", id: "recovery-dm" });
     const code = outbound[0].message.text!.match(/code is ([A-F0-9]{4}-[A-F0-9]{4})/)![1];
     expect(await root.proc.list({})).toEqual(processes);
-    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "singleton", webSockets: "hibernate" });
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "inst_integration_default", webSockets: "hibernate" });
     const redemption = { id: attempt.id, proof: attempt.proof, code, password: "recovered-password" };
     expect(await oneShot.requestOnce(url, "account.recovery.code.redeem", redemption)).toEqual({ username: "person" });
     await expect(human.account.list({})).rejects.toThrow();

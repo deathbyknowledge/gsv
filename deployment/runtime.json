@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "runtime": {
     "gatewayBundle": "dist/cloudflare/gateway/worker/index.js",
     "webAssets": "dist/cloudflare/gateway/assets",

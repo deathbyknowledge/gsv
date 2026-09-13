@@ -1,6 +1,5 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SINGLETON_INSTALLATION_ID } from "./identity";
 import {
   createInstallationStorage,
   installationStoragePrefix,
@@ -23,10 +22,9 @@ afterEach(async () => {
 });
 
 describe("installation R2 storage", () => {
-  it("preserves the standalone keyspace", () => {
-    expect(installationStoragePrefix(SINGLETON_INSTALLATION_ID)).toBe("");
-    expect(createInstallationStorage(env.STORAGE, SINGLETON_INSTALLATION_ID))
-      .toBe(env.STORAGE);
+  it("scopes every valid identity rather than selecting an unscoped bucket", () => {
+    expect(installationStoragePrefix("singleton")).toBe("installations/singleton/");
+    expect(createInstallationStorage(env.STORAGE, "singleton")).not.toBe(env.STORAGE);
   });
 
   it("isolates identical logical keys between installations", async () => {

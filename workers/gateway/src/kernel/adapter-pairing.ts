@@ -24,9 +24,6 @@ import {
   recordAdapterStatusTransition,
 } from "./lifecycle-responsibilities";
 import {
-  SINGLETON_INSTALLATION_ID,
-} from "../installation/identity";
-import {
   adapterInstallationContext,
   adapterSupportsPairing,
   describeAdapterService,
@@ -120,7 +117,7 @@ export async function handleAdapterPairConfirm(
   const service = await requirePairingService(ctx, adapter);
   if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
   const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
-  if (!canonicalOrigin || ctx.installationId === SINGLETON_INSTALLATION_ID) {
+  if (!canonicalOrigin) {
     throw new Error("Managed adapter pairing is not available in this installation");
   }
   const operationId = await stableOpaqueId("adapter-pair", [
@@ -354,9 +351,6 @@ async function requirePairingService(
   adapter: string,
 ): Promise<AdapterPairingWorkerInterface> {
   if (!adapter) throw new Error("adapter is required");
-  if (ctx.installationId === SINGLETON_INSTALLATION_ID) {
-    throw new Error("Managed adapter pairing is not available in standalone GSV");
-  }
   const service = resolveAdapterService(ctx.env, adapter);
   if (!adapterSupportsPairing(service)) throw new Error(`Adapter does not support managed pairing: ${adapter}`);
   const descriptor = await describeAdapterService(adapter, service);

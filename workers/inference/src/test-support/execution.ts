@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as z from "zod/mini";
 import { InferenceExecutor as PublicExecutor, type InferenceServiceEnvironment } from "@humansandmachines/gsv-inference/executor";
-export { default, StandaloneInferenceDirectoryEntrypoint } from "../index";
+export { default } from "../index";
 
 let calls = 0;
 let textDispatch: { url: string; model: string } | null = null;
@@ -10,7 +10,7 @@ export class NativeCalls extends WorkerEntrypoint {
   async dispatch(): Promise<{ url: string; model: string } | null> { return textDispatch; }
 }
 
-/** Only native AI is synthetic; the executor and its self-bound admission are real. */
+/** Only native AI is synthetic; the service and executor admission paths are real. */
 export class InferenceExecutor extends PublicExecutor {
   constructor(ctx: DurableObjectState, env: InferenceServiceEnvironment) {
     super(ctx, { ...env, AI: {

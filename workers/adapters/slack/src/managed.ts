@@ -23,7 +23,6 @@ import { adapterTargetIdentitySchema } from "../../../../packages/gsv/src/servic
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
-  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
 import type {
@@ -164,7 +163,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     context: AdapterDeliveryContext,
     frame: GatewayRequestFrame,
   ): Promise<GatewayResponseFrame> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     const accountId = requireWorkspaceAccountId(context.accountId);
     const actorId = requireSlackId(context.actorId, "Slack actor");
     const peer = this.peer(accountId, actorId);
@@ -182,7 +181,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     accountId?: string,
   ): Promise<AdapterAccountStatus[]> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     if (!accountId || accountId === PAIRING_ACCOUNT_ID) return [];
     let normalized: string;
     try {
@@ -208,7 +207,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
   async adapterPairingInfo(
     installation: AdapterInstallationContext,
   ): Promise<AdapterPairingInfo> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     return {
       accountId: PAIRING_ACCOUNT_ID,
       configured: managedSlackConfigured(this.env),
@@ -220,7 +219,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     code: string,
   ): Promise<AdapterPairingCandidate> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     return await this.pairing(code).inspect();
   }
 
@@ -228,7 +227,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     input: AdapterPairingPrepareInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -239,7 +238,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.route.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -250,7 +249,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     input: AdapterPairingFinalizeInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.route.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -261,7 +260,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     input: AdapterPairingDisconnectInput,
   ): Promise<AdapterPairingDisconnectResult> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -274,7 +273,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
     installation: AdapterInstallationContext,
     identity: AdapterTargetIdentity,
   ): Promise<AdapterTargetDescriptor[]> {
-    const parsedInstallation = parseManagedInstallation(installation);
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     const parsedIdentity = parseTargetIdentity(identity);
     using targets = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).listTargets(
       parsedInstallation.installationId,
@@ -294,10 +293,10 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
       await cancelBinaryBody(frame.body, "Slack target request is invalid");
       return targetError(frame.id, targetId === SLACK_TARGET_ID ? 400 : 404);
     }
-    let parsedInstallation: ReturnType<typeof parseManagedInstallation>;
+    let parsedInstallation: ReturnType<typeof parseAdapterInstallationContext>;
     let parsedIdentity: ParsedTargetIdentity;
     try {
-      parsedInstallation = parseManagedInstallation(installation);
+      parsedInstallation = parseAdapterInstallationContext(installation);
       parsedIdentity = parseTargetIdentity(identity);
     } catch {
       return targetError(frame.id, 403);
@@ -322,7 +321,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
   ): Promise<AdapterTargetCancelResult> {
     if (targetId !== SLACK_TARGET_ID) return { cancelled: false };
     try {
-      const parsedInstallation = parseManagedInstallation(installation);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
       const parsedIdentity = parseTargetIdentity(identity);
       const normalizedRequestId = requireRequestId(requestId);
       using result = await this.peer(parsedIdentity.accountId, parsedIdentity.actorId).cancelTarget(
@@ -366,14 +365,6 @@ export default {
     return await handleManagedSlackRequest(request, env);
   },
 } satisfies ExportedHandler<Env>;
-
-function parseManagedInstallation(value: AdapterInstallationContext): AdapterInstallationContext {
-  const installation = parseAdapterInstallationContext(value);
-  if (installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID) {
-    throw new Error("Managed Slack cannot address singleton");
-  }
-  return installation;
-}
 
 function normalizePairingCode(value: string): string {
   const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "");

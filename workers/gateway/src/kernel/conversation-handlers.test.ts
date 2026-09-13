@@ -47,7 +47,7 @@ const PROCESS = {
 function context(ownerUid = 1000): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    installationId: "singleton",
+    installationId: "inst_test",
     peer: testPeer({ kind: "human", account: {
         uid: ownerUid,
         gid: ownerUid,
@@ -192,7 +192,7 @@ describe("conversation handlers", () => {
     }, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "singleton",
+      "inst_test",
       PROCESS.processId,
       expect.objectContaining({
         call: "proc.send",
@@ -237,7 +237,7 @@ describe("conversation handlers", () => {
 
     const retaining = retainConversationResources([resource], PROCESS.processId, ctx);
     await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "singleton",
+      "inst_test",
       PROCESS.processId,
       expect.objectContaining({ call: "proc.resources.retain" }),
     ));
@@ -252,7 +252,7 @@ describe("conversation handlers", () => {
 
     await expect(retaining).rejects.toThrow("Upload cancelled");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "singleton",
+      "inst_test",
       PROCESS.processId,
       {
         type: "sig",

@@ -1,3 +1,4 @@
+import * as deployedAdapter from "../src/shared";
 import type { DiscordLifecycleEntrypoint } from "../src/lifecycle";
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -269,4 +270,9 @@ describe("shared Discord provider → peer → Gateway", () => {
   });
 
 
+});
+
+it("does not export the retired per-account deployment entrypoints", async () => {
+  expect(deployedAdapter).not.toHaveProperty("DiscordChannel");
+  expect((await SELF.fetch("https://fixture/setup", { method: "POST", body: "{}" })).status).toBe(404);
 });

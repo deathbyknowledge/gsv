@@ -10,7 +10,7 @@ import { createPairingCredential, createPairingSecret } from "@humansandmachines
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
-import { SINGLETON_INSTALLATION_ID } from "../src/installation/identity";
+const INTEGRATION_INSTALLATION_ID = "inst_integration_default";
 
 const USERNAME = "auth-user";
 const PASSWORD = "integration-auth-password";
@@ -39,7 +39,8 @@ describe("gateway authentication integration", () => {
     await harness.close();
   });
 
-  it("rejects invalid handshakes before setup", async () => {
+  it("rejects invalid handshakes for an active installation", async () => {
+    await setup();
     await expect(connectOnce({
       protocol: 1,
       peer: peerInfo("old-protocol"),
@@ -148,7 +149,7 @@ describe("gateway authentication integration", () => {
     const redemption = { id: invitation.id, secret: invitation.secret, credential };
     const oneShot = new GSVClient();
     const receipt = await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", redemption);
-    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: SINGLETON_INSTALLATION_ID, webSockets: "hibernate" });
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: INTEGRATION_INSTALLATION_ID, webSockets: "hibernate" });
     expect(await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", redemption)).toEqual(receipt);
     await expect(oneShot.requestOnce(webSocketUrl(baseUrl), "sys.pair.redeem", { ...redemption, credential: createPairingCredential() })).rejects.toMatchObject({ details: { pairing: "used" } });
     expect((await user.sys.pair.cancel({ id: invitation.id })).pairing.state).toBe("paired");
@@ -312,7 +313,7 @@ describe("gateway authentication integration", () => {
     user.close();
     root.close();
     await harness.getWorker("gsv").evictDurableObject("KERNEL", {
-      name: SINGLETON_INSTALLATION_ID,
+      name: INTEGRATION_INSTALLATION_ID,
       webSockets: "close",
     });
 
@@ -359,7 +360,7 @@ describe("gateway authentication integration", () => {
     const before = await user.proc.list();
 
     await harness.getWorker("gsv").evictDurableObject("KERNEL", {
-      name: SINGLETON_INSTALLATION_ID,
+      name: INTEGRATION_INSTALLATION_ID,
       webSockets: "hibernate",
     });
 
@@ -390,7 +391,7 @@ describe("gateway authentication integration", () => {
 
   async function setup(overrides: Partial<SysSetupArgs> = {}): Promise<SysSetupResult> {
     const client = new GSVClient();
-    return await client.requestOnce(webSocketUrl(baseUrl), "sys.setup", {
+    return await client.requestOnce(webSocketUrl(baseUrl), "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: USERNAME,
       password: PASSWORD,
       rootPassword: ROOT_PASSWORD,

@@ -12,7 +12,7 @@ describe("clean-space owner root recovery", () => {
 
   it("revokes an existing root session and token while the ordinary human survives recovery and eviction", async () => {
     const oneShot = new GSVClient();
-    await oneShot.requestOnce(url, "sys.setup", { username: "person", password: "human-password", rootPassword: "old-root-password" });
+    await oneShot.requestOnce(url, "sys.setup", { onboardingToken: "integration-onboarding-default", username: "person", password: "human-password", rootPassword: "old-root-password" });
     const root = new GSVClient({ url, username: "root", password: "old-root-password", peer: { id: "recovery-root" } });
     const human = new GSVClient({ url, username: "person", password: "human-password", peer: { id: "recovery-human" } });
     clients.push(root, human);
@@ -25,7 +25,7 @@ describe("clean-space owner root recovery", () => {
     const attemptId = crypto.randomUUID();
     // The dedicated binding's authorization is covered separately. Seed its
     // persisted receipt without retaining a Node RPC reference that prevents eviction.
-    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "singleton" });
+    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "inst_integration_default" });
     await storage.exec(`INSERT INTO account_recovery_claims (id, purpose, secret_hash, credential_epoch, expires_at)
       VALUES (?, 'root-password-reset', ?, 0, ?)`, attemptId, secretHash, Date.now() + 300_000);
     const redemption = { id: attemptId, secret, proof, password: "recovered-root-password" };
@@ -37,7 +37,7 @@ describe("clean-space owner root recovery", () => {
     await expect(old.connect()).rejects.toMatchObject({ code: 401 });
     const recovered = new GSVClient({ url, username: "root", password: redemption.password, peer: { id: "recovered-root" } });
     clients.push(recovered); await recovered.connect();
-    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "singleton", webSockets: "hibernate" });
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "inst_integration_default", webSockets: "hibernate" });
     expect(await oneShot.requestOnce(url, "account.recovery.redeem", redemption)).toEqual({ username: "root" });
     expect((await recovered.account.list({})).accounts.length).toBeGreaterThan(1);
     const retained = new GSVClient({ url, username: "person", token: humanToken.token.token, peer: { id: "retained-human" } });

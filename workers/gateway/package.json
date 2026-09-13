@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "node ../../deployment/src/standalone-wrangler.ts deploy",
-    "dev": "node ../../deployment/src/standalone-wrangler.ts dev",
-    "start": "node ../../deployment/src/standalone-wrangler.ts dev",
+    "deploy": "npm --prefix ../.. run deployment:deploy",
+    "dev": "npm --prefix ../.. run dev",
+    "start": "npm --prefix ../.. run dev",
     "cf-typegen": "wrangler types",
     "test": "vitest --config vitest.config.ts",
     "test:unit": "npm --prefix ../.. run protocol:check && vitest run --config vitest.config.ts",

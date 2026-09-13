@@ -16,7 +16,6 @@ import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
-import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 import {
   conversationDurableObjectName,
   getKernelByInstallationId,
@@ -39,7 +38,7 @@ export type RequestProcessNetFetchOptions = {
 };
 
 export async function getKernelPtr(
-  installationId: string = SINGLETON_INSTALLATION_ID,
+  installationId: string,
 ): Promise<KernelPtr> {
   const stub: unknown = await getKernelByInstallationId(
     env.KERNEL,
@@ -52,7 +51,7 @@ export async function getKernelPtr(
 
 export async function getProcessByPid(
   pid: string,
-  installationId: string = SINGLETON_INSTALLATION_ID,
+  installationId: string,
 ): Promise<ProcessPtr> {
   const stub: unknown = env.PROCESS.getByName(
     processDurableObjectName(installationId, pid),

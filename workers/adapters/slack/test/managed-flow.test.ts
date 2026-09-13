@@ -1,3 +1,4 @@
+import * as deployedAdapter from "../src/managed";
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
@@ -1400,4 +1401,10 @@ describe("managed Slack clean-instance flow", () => {
     );
     expect(unavailableTargets).toEqual([]);
   });
+});
+
+it("does not export the retired per-account deployment entrypoints", async () => {
+  expect(deployedAdapter).not.toHaveProperty("SlackChannel");
+  expect(deployedAdapter).not.toHaveProperty("SlackAccount");
+  expect((await SELF.fetch("https://fixture/setup", { method: "POST", body: "{}" })).status).toBe(404);
 });

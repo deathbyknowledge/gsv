@@ -1,7 +1,7 @@
 import * as z from "zod/mini";
 import { installationResourceKindSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 
-export const GSV_DEPLOYMENT_MANIFEST_VERSION = 2;
+export const GSV_DEPLOYMENT_MANIFEST_VERSION = 3;
 
 const durableObjectSchema = z.strictObject({
   binding: z.string().check(z.minLength(1), z.maxLength(128)),
@@ -39,12 +39,11 @@ export const adapterDeploymentSchema = z.strictObject({
   ),
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   gatewayBinding: z.string().check(z.regex(/^CHANNEL_[A-Z0-9_]+$/)),
-  standalone: adapterWorkerDeploymentSchema,
-  managed: z.optional(adapterWorkerDeploymentSchema),
+  deployment: adapterWorkerDeploymentSchema,
 });
 
 export const adapterSourceManifestSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   id: z.string().check(
     z.minLength(1),
     z.maxLength(64),
@@ -55,8 +54,7 @@ export const adapterSourceManifestSchema = z.strictObject({
   deployOrder: z.number().check(z.int(), z.positive()),
   wranglerConfig: z.string().check(z.minLength(1)),
   devStateDirectories: z.array(z.string().check(z.minLength(1))),
-  standalone: adapterWorkerDeploymentSchema,
-  managed: z.optional(adapterWorkerDeploymentSchema),
+  deployment: adapterWorkerDeploymentSchema,
 });
 
 const runtimeDeploymentSchema = z.strictObject({
@@ -104,8 +102,7 @@ export const resolveAdapterDeploymentManifest = (
     id: adapter.id,
     displayName: adapter.displayName,
     gatewayBinding: `CHANNEL_${adapter.id.replaceAll("-", "_").toUpperCase()}`,
-    standalone: adapter.standalone,
+    deployment: adapter.deployment,
   };
-  if (adapter.managed) deployment.managed = adapter.managed;
   return deployment;
 };

@@ -58,7 +58,7 @@ function resource(path: string): ResourceBlock {
 
 describe("typed Process history storage", () => {
   it("upgrades genuine v13 rows and queue provenance without rewriting their contents", async () => {
-    const stub = await getProcessByPid("typed-history-v13");
+    const stub = await getProcessByPid("typed-history-v13", "inst_test");
     await runInDurableObject(stub, async (_process: Process, state) => {
       await state.storage.deleteAll();
       runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS.filter(({ id }) => id <= 13));
@@ -95,7 +95,7 @@ describe("typed Process history storage", () => {
   });
 
   it("keeps grouped calls invisible to legacy paging and reproduces exact provider context", async () => {
-    const stub = await getProcessByPid("typed-history-context");
+    const stub = await getProcessByPid("typed-history-context", "inst_test");
     await runInDurableObject(stub, (process: Process) => {
       const { store } = process;
       appendTranscript(store, true);
@@ -130,7 +130,7 @@ describe("typed Process history storage", () => {
   });
 
   it("retains late typed records attached to a preupgrade assistant turn", async () => {
-    const stub = await getProcessByPid("typed-history-promote");
+    const stub = await getProcessByPid("typed-history-promote", "inst_test");
     await runInDurableObject(stub, (process: Process) => {
       const { store } = process;
       const messageId = store.messages.appendMessage("assistant", "Old turn.", {
@@ -153,7 +153,7 @@ describe("typed Process history storage", () => {
   });
 
   it("synchronizes delayed media updates while ignoring a stale run", async () => {
-    const stub = await getProcessByPid("typed-history-media");
+    const stub = await getProcessByPid("typed-history-media", "inst_test");
     await runInDurableObject(stub, (process: Process) => {
       const { store } = process;
       const messageId = store.messages.appendMessage("user", "A voice message", { runId: "run:media" });
@@ -172,7 +172,7 @@ describe("typed Process history storage", () => {
   });
 
   it("retains mixed legacy and typed groups through archive restore and compaction", async () => {
-    const stub = await getProcessByPid("typed-history-archive");
+    const stub = await getProcessByPid("typed-history-archive", "inst_test");
     await runInDurableObject(stub, (process: Process) => {
       const { store } = process;
       store.messages.appendMessage("user", "Legacy input.", { legacy: true, createdAt: 100 });
@@ -210,7 +210,7 @@ describe("typed Process history storage", () => {
   });
 
   it("preserves legacy denied and interrupted outcomes through an archive roundtrip", async () => {
-    const stub = await getProcessByPid("typed-history-legacy-outcomes");
+    const stub = await getProcessByPid("typed-history-legacy-outcomes", "inst_test");
     await runInDurableObject(stub, (process: Process) => {
       const { store } = process;
       store.messages.appendMessage("toolResult", "Error: Tool execution denied by user", {

@@ -41,16 +41,16 @@ export default Alchemy.Stack("gsv", {
   const adapters: GsvAdapterBinding[] = [];
   for (const id of requested) {
     const adapter = manifest.adapters.find((candidate) => candidate.id === id);
-    if (!adapter?.managed) throw new Error(`No operator adapter deployment is available for ${id}`);
+    if (!adapter) throw new Error(`No operator adapter deployment is available for ${id}`);
     const adapterEnvironment: Cloudflare.Workers.WorkerBindingProps = { GSV_ACCOUNT_ORIGIN: adminOrigin };
-    for (const variable of adapter.managed.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.string(variable);
+    for (const variable of adapter.deployment.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.string(variable);
     const worker = yield* GsvAdapterWorker({ logicalId: `GsvAdapter-${id}`, workerName: `${prefix}-channel-${id}`,
-      adapter, deployment: adapter.managed,
+      adapter, deployment: adapter.deployment,
       env: adapterEnvironment,
-      secrets: Object.fromEntries(adapter.managed.requiredSecrets.map((secret) => [secret, { env: secret }])),
+      secrets: Object.fromEntries(adapter.deployment.requiredSecrets.map((secret) => [secret, { env: secret }])),
     });
-    adapters.push({ id, gatewayBinding: adapter.gatewayBinding, gatewayEntrypoint: adapter.managed.gatewayEntrypoint,
-      lifecycle: adapter.managed.lifecycle, worker });
+    adapters.push({ id, gatewayBinding: adapter.gatewayBinding, gatewayEntrypoint: adapter.deployment.gatewayEntrypoint,
+      lifecycle: adapter.deployment.lifecycle, worker });
   }
   const apiKey = Option.getOrUndefined(yield* Config.redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
   const catalogPath = Option.getOrUndefined(yield* Config.string("GSV_DELETION_CATALOG_FILE").pipe(Config.option));

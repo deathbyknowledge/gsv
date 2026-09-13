@@ -1,3 +1,4 @@
+import { createInstallationStorage } from "../installation/storage";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
@@ -26,7 +27,7 @@ describe("proc.kill", () => {
     } satisfies InternalRequestFrame<"proc.resource.write">);
     if (!uploaded.ok) throw new Error(uploaded.error.message);
     const resource = uploaded.data.resource;
-    await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([7, 8, 9]), {
       httpMetadata: { contentType: "image/png" },
     });
 
@@ -53,7 +54,7 @@ describe("proc.kill", () => {
       process.sendSignal = vi.fn(async (signal: string, payload: ProcessTestValue) => {
         if (signal === "proc.run.finished") {
           finishPayload = payload;
-          mediaPresentDuringFinish = (await process.env.STORAGE.head(key)) !== null;
+          mediaPresentDuringFinish = (await process.storage.head(key)) !== null;
           markFinishStarted();
           await finishBlocked;
         }
@@ -62,7 +63,7 @@ describe("proc.kill", () => {
       const first = process.recvFrame(makeReq("proc.kill", { archive: false }));
       await finishStarted;
       const second = process.recvFrame(makeReq("proc.kill", { archive: false }));
-      const mediaPresentDuringRetry = (await process.env.STORAGE.head(key)) !== null;
+      const mediaPresentDuringRetry = (await process.storage.head(key)) !== null;
       releaseFinish();
       const responses = await Promise.all([first, second]);
       return {
@@ -84,8 +85,8 @@ describe("proc.kill", () => {
         media: [{ type: "resource", ref: { path: resource.ref.path } }],
       },
     });
-    expect(await env.STORAGE.head(key)).toBeNull();
-    expect(await env.STORAGE.head(resource.ref.path.replace(/^\/+/, ""))).not.toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(key)).toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(resource.ref.path.replace(/^\/+/, ""))).not.toBeNull();
   });
 
   it("finishes the active run and leaves the executor empty and dead", async () => {

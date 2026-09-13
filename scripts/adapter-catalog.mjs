@@ -64,10 +64,10 @@ const validateAdapterManifest = new Ajv({ allErrors: true }).compile({
     "deployOrder",
     "wranglerConfig",
     "devStateDirectories",
-    "standalone",
+    "deployment",
   ],
   properties: {
-    version: { const: 1 },
+    version: { const: 2 },
     id: { type: "string", minLength: 1, maxLength: 64 },
     displayName: { type: "string", minLength: 1, pattern: "^[^\\t\\r\\n]+$" },
     description: { type: "string", minLength: 1, pattern: "^[^\\t\\r\\n]+$" },
@@ -77,8 +77,7 @@ const validateAdapterManifest = new Ajv({ allErrors: true }).compile({
       type: "array",
       items: { type: "string", minLength: 1 },
     },
-    standalone: workerDeployment,
-    managed: workerDeployment,
+    deployment: workerDeployment,
   },
 });
 
@@ -109,7 +108,7 @@ export async function loadAdapterCatalog(adaptersRoot = defaultAdaptersRoot) {
       defaultScript: `gsv-channel-${parsed.id}`,
       instanceSuffix: `channel-${parsed.id}`,
       gatewayBinding: `CHANNEL_${parsed.id.replaceAll("-", "_").toUpperCase()}`,
-      entrypoint: parsed.standalone.gatewayEntrypoint,
+      entrypoint: parsed.deployment.gatewayEntrypoint,
     };
     validateAdapter(adapter, entry.name);
     adapters.push(adapter);
@@ -126,7 +125,7 @@ export async function loadAdapterCatalog(adaptersRoot = defaultAdaptersRoot) {
     claimUnique(ids, adapter.id, "adapter id");
     claimUnique(orders, adapter.deployOrder, "adapter deployment order");
   }
-  return { version: 1, adapters };
+  return { version: 2, adapters };
 }
 
 function validateAdapter(adapter, directoryName) {
@@ -136,7 +135,7 @@ function validateAdapter(adapter, directoryName) {
   if (!SAFE_PATH.test(adapter.wranglerConfig)) {
     throw new Error(`Invalid adapter Wrangler path: ${adapter.id}`);
   }
-  for (const deployment of [adapter.standalone, adapter.managed].filter(Boolean)) {
+  for (const deployment of [adapter.deployment]) {
     if (deployment.lifecycle) {
       if (!SAFE_NAME.test(deployment.lifecycle.entrypoint)) throw new Error(`Invalid adapter lifecycle entrypoint: ${adapter.id}`);
       const declared = deployment.lifecycle.namespaces.map((namespace) => namespace.className).sort();

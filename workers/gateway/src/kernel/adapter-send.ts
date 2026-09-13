@@ -442,8 +442,6 @@ function authorizeAdapterSendDestination(
   }
   const link = matches[0];
   if (!link) {
-    // Privileged standalone sends can address provider surfaces without a local identity link.
-    if (privileged && !links.some((candidate) => candidate.metadata?.managed === true)) return { ok: true };
     return { ok: false, error: "Permission denied" };
   }
   if (ctx.auth.isAccountDisabled(link.uid)) return { ok: false, error: "Permission denied" };

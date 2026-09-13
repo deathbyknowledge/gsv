@@ -8,6 +8,7 @@ import type { Kernel } from "../kernel/do";
 import type { Process } from "../process/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
+import { processDurableObjectName } from "./routing";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -18,11 +19,12 @@ const ROOT_IDENTITY: ProcessIdentity = {
   cwd: "/root",
 };
 
-describe("standalone Process upgrade compatibility", () => {
-  it("routes current Kernel history reads to legacy raw-pid Process state", async () => {
-    const pid = `legacy-upgrade-${crypto.randomUUID()}`;
-    const legacyProcess = await getDurableObjectByName(env.PROCESS, pid);
-    const identityResponse = await legacyProcess.recvFrame({
+describe("installation-scoped Process history", () => {
+  it("routes Kernel history reads to the same scoped Process state", async () => {
+    const installationId = "inst_history";
+    const pid = `scoped-history-${crypto.randomUUID()}`;
+    const storedProcess = await getDurableObjectByName(env.PROCESS, processDurableObjectName(installationId, pid));
+    const identityResponse = await storedProcess.recvFrame({
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.setidentity",
@@ -30,15 +32,15 @@ describe("standalone Process upgrade compatibility", () => {
     } satisfies RequestFrame<"proc.setidentity">);
     expect(identityResponse).toMatchObject({ ok: true, data: { ok: true } });
 
-    await runInDurableObject(legacyProcess, (instance: Process, state) => {
-      expect(state.id.name).toBe(pid);
-      instance.store.messages.appendMessage("user", "history persisted before the upgrade");
+    await runInDurableObject(storedProcess, (instance: Process, state) => {
+      expect(state.id.name).toBe(processDurableObjectName(installationId, pid));
+      instance.store.messages.appendMessage("user", "persisted scoped history");
     });
 
-    const currentProcess = await getProcessByPid(pid);
-    expect(currentProcess.id.toString()).toBe(legacyProcess.id.toString());
+    const currentProcess = await getProcessByPid(pid, installationId);
+    expect(currentProcess.id.toString()).toBe(storedProcess.id.toString());
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr(installationId);
     await runInDurableObject(kernel, (instance: Kernel) => {
       const internals = fixtureInternals<{
         caps: { seed(): void };
@@ -68,7 +70,7 @@ describe("standalone Process upgrade compatibility", () => {
         ok: true,
         pid,
         messageCount: 1,
-        messages: [{ role: "user", content: "history persisted before the upgrade" }],
+        messages: [{ role: "user", content: "persisted scoped history" }],
       },
     });
   });
@@ -76,6 +78,6 @@ describe("standalone Process upgrade compatibility", () => {
 
 function fixtureInternals<T>(instance: Process | Kernel): T {
   // SAFETY: callers name the exact private fixture surface they use; this
-  // helper is confined to tests that seed pre-upgrade Durable Object state.
+  // helper is confined to tests that seed scoped Durable Object state.
   return instance as T;
 }

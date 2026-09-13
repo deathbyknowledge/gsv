@@ -62,23 +62,7 @@ async handleSysSetup(
     const ctx = this.host.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
-    if (this.managedOnboardingService()) {
-      await this.handleManagedSysSetup(connection, frame, ctx);
-      return;
-    }
-
-    if (!this.host.auth.isSetupMode()) {
-      this.host.transport.sendError(connection, frame.id, 409, "System already initialized");
-      return;
-    }
-
-    try {
-      const data = await handleKernelSetup(frame.args, ctx);
-      this.host.transport.sendOk(connection, frame.id, data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.host.transport.sendError(connection, frame.id, 400, message);
-    }
+    await this.handleManagedSysSetup(connection, frame, ctx);
   }
 
 async handleSysSetupAssist(
@@ -99,29 +83,25 @@ async handleSysSetupAssist(
     const ctx = this.host.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
-    let args = frame.args;
-    if (this.managedOnboardingService()) {
-      let authorization: InstallationOnboardingAuthorization;
-      try {
-        authorization = await this.authorizeManagedInstallationOnboarding(
-          frame.args.onboardingToken,
-        );
-      } catch {
-        this.host.transport.sendError(connection, frame.id, 503, "Installation setup is unavailable");
-        return;
-      }
-      if (!authorization.ok) {
-        this.host.transport.sendError(
-          connection,
-          frame.id,
-          401,
-          "Installation setup link is invalid or expired",
-        );
-        return;
-      }
-      const { onboardingToken: _onboardingToken, ...assistArgs } = frame.args;
-      args = assistArgs;
+    let authorization: InstallationOnboardingAuthorization;
+    try {
+      authorization = await this.authorizeManagedInstallationOnboarding(
+        frame.args.onboardingToken,
+      );
+    } catch {
+      this.host.transport.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+      return;
     }
+    if (!authorization.ok) {
+      this.host.transport.sendError(
+        connection,
+        frame.id,
+        401,
+        "Installation setup link is invalid or expired",
+      );
+      return;
+    }
+    const { onboardingToken: _onboardingToken, ...args } = frame.args;
 
     if (!this.host.auth.isSetupMode()) {
       this.host.transport.sendError(connection, frame.id, 409, "System already initialized");

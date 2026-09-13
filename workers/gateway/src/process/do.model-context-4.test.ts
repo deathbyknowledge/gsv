@@ -1,3 +1,4 @@
+import { createInstallationStorage } from "../installation/storage";
 import { bodyFromBytes, type ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { env } from "cloudflare:workers";
@@ -137,7 +138,7 @@ describe("model context", () => {
     const archivedKey = (result.history as any).messages
       .find((message: any) => message.role === "assistant")
       .content.media[0].path.replace(/^\/+/, "");
-    const archived = await env.STORAGE.get(archivedKey);
+    const archived = await createInstallationStorage(env.STORAGE, "inst_test").get(archivedKey);
     expect(archived && [...new Uint8Array(await archived.arrayBuffer())]).toEqual([1, 2, 3]);
   });
 
@@ -146,7 +147,7 @@ describe("model context", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const liveKey = `var/media/0/${pid}/reused`;
 
-    await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(liveKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
     });
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -156,7 +157,7 @@ describe("model context", () => {
       return rewrites.get(liveKey).key as string;
     });
 
-    await env.STORAGE.put(liveKey, new Uint8Array([9, 8, 7]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(liveKey, new Uint8Array([9, 8, 7]), {
       httpMetadata: { contentType: "image/png" },
     });
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -167,8 +168,8 @@ describe("model context", () => {
     });
 
     expect(secondKey).not.toBe(firstKey);
-    const first = await env.STORAGE.get(firstKey);
-    const second = await env.STORAGE.get(secondKey);
+    const first = await createInstallationStorage(env.STORAGE, "inst_test").get(firstKey);
+    const second = await createInstallationStorage(env.STORAGE, "inst_test").get(secondKey);
     expect(first && [...new Uint8Array(await first.arrayBuffer())]).toEqual([1, 2, 3]);
     expect(second && [...new Uint8Array(await second.arrayBuffer())]).toEqual([9, 8, 7]);
   });
@@ -177,7 +178,7 @@ describe("model context", () => {
     const pid = "mech-archive-media-ownership";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const liveKey = `var/media/0/${pid}/report`;
-    await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(liveKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "application/pdf" },
     });
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -186,9 +187,9 @@ describe("model context", () => {
       // SAFETY: test fixture is constructed with the asserted domain shape.
       return rewrites.get(liveKey).key as string;
     });
-    const source = await env.STORAGE.head(liveKey);
+    const source = await createInstallationStorage(env.STORAGE, "inst_test").head(liveKey);
     expect(source).not.toBeNull();
-    await env.STORAGE.put(archivedKey, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(archivedKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "application/pdf" },
       customMetadata: {
         purpose: "conversation-media",
@@ -207,7 +208,7 @@ describe("model context", () => {
     const pid = "mech-archive-media-read-metadata";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const key = `root/.gsv/media/archived-media:${"c".repeat(64)}`;
-    await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         uid: "0",
@@ -217,7 +218,7 @@ describe("model context", () => {
       },
     });
 
-    const object = await env.STORAGE.head(key);
+    const object = await createInstallationStorage(env.STORAGE, "inst_test").head(key);
     const valid = await runInProcess(stub, (process) => {
       return process.resources.isValidOwnedArchiveObject(key, object);
     });
@@ -264,7 +265,7 @@ describe("model context", () => {
       expect(abort).toMatchObject({ ok: true, aborted: true });
     });
 
-    expect(await env.STORAGE.head(key)).not.toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(key)).not.toBeNull();
   });
 
   it("retries reasoning-only model turns", async () => {

@@ -14,7 +14,7 @@ import {
   startOpenAiFixture,
   type OpenAiFixture,
 } from "./openai-fixture";
-import { SINGLETON_INSTALLATION_ID } from "../src/installation/identity";
+const INTEGRATION_INSTALLATION_ID = "inst_integration_default";
 
 const USERNAME = "runtime-user";
 const PASSWORD = "runtime-integration-password";
@@ -93,7 +93,7 @@ describe("gateway runtime integration", () => {
       ok: false,
       error: {
         code: 503,
-        message: "Service identity is not configured",
+        message: "Managed installation is unavailable",
       },
     });
 
@@ -674,7 +674,7 @@ describe("gateway runtime integration", () => {
 
   async function setupClient(): Promise<GSVClient> {
     const oneShot = new GSVClient();
-    await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.setup", {
+    await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: USERNAME,
       password: PASSWORD,
       agentName: "runtime-agent",
@@ -810,7 +810,7 @@ async function sendServiceFrame(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         installation: {
-          installationId: SINGLETON_INSTALLATION_ID,
+          installationId: INTEGRATION_INSTALLATION_ID,
         },
         frame,
       }),
@@ -837,7 +837,7 @@ async function listOutbound(
   accountId: string,
 ): Promise<RecordedOutboundMessage[]> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    `http://gsv-test-dependencies/__test/outbound?installationId=${encodeURIComponent(SINGLETON_INSTALLATION_ID)}&accountId=${encodeURIComponent(accountId)}`,
+    `http://gsv-test-dependencies/__test/outbound?installationId=${encodeURIComponent(INTEGRATION_INSTALLATION_ID)}&accountId=${encodeURIComponent(accountId)}`,
   );
   if (!response.ok) {
     throw new Error(`Test dependency outbound endpoint returned ${response.status}`);
@@ -876,7 +876,7 @@ async function expectArchive(
   });
 
   const env = await harness.getWorker<GatewayTestEnv>("gsv").getEnv();
-  const object = await env.STORAGE.head(path.replace(/^\//, ""));
+  const object = await env.STORAGE.head(`installations/${INTEGRATION_INSTALLATION_ID}/${path.replace(/^\//, "")}`);
   expect(object).toMatchObject({ size: expect.any(Number) });
 }
 

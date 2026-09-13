@@ -40,7 +40,7 @@ describe("CodeMode tool calls", () => {
   it("runs codemode from the native shell command", async () => {
     const pid = "mech-codemode-shell";
     await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
@@ -74,7 +74,7 @@ describe("CodeMode tool calls", () => {
   it("runs codemode script files from the native shell command", async () => {
     const pid = "mech-codemode-shell-file";
     await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
@@ -146,7 +146,7 @@ describe("CodeMode tool calls", () => {
   it("returns failed json for malformed codemode eval source", async () => {
     const pid = "mech-codemode-shell-syntax-error";
     await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
@@ -464,7 +464,7 @@ describe("CodeMode tool calls", () => {
       cwd: "/home/limited",
     };
     const stub = await initProcess(pid, identity);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     await runInDurableObject(kernel, (instance: Kernel) => {
       // SAFETY: test fixture is constructed with the asserted domain shape.

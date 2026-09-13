@@ -1,8 +1,7 @@
 import * as z from "zod/mini";
 import { installationDeletionRequestSchema, type InstallationDeletionReceipt, type InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
 import {
-  adapterAccountDurableObjectName, LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
-  resolveAdapterAccountDurableObjectIdentity, type AdapterAccountDurableObjectIdentity,
+  adapterAccountDurableObjectName, parseAdapterAccountDurableObjectName, type AdapterAccountDurableObjectIdentity,
 } from "../../shared/src/installation";
 import type { AdapterResourceInspection } from "../../shared/src/peer-retirement";
 
@@ -58,10 +57,13 @@ export class DiscordAccountRetirement {
       identity = parsed.data;
     } else if (state?.accountId?.trim()) {
       // Singleton is a supported reserved projection, never an inferred managed installation.
-      for (const installationId of new Set([targetInstallationId, ...candidates, LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID])) {
+      // This historical projection is retained only for cleanup attribution, never active routing.
+      for (const installationId of new Set([targetInstallationId, ...candidates, "singleton"])) {
         try {
-          const name = adapterAccountDurableObjectName({ installationId }, state.accountId);
-          const candidate = { ...resolveAdapterAccountDurableObjectIdentity(name, { installationId, accountId: state.accountId }), name };
+          const name = historicalAccountName(installationId, state.accountId);
+          const candidate = installationId === "singleton"
+            ? { installationId, accountId: state.accountId.trim(), name }
+            : { ...parseAdapterAccountDurableObjectName(name), name };
           if (this.matches(candidate)) { identity = candidate; break; }
         } catch { /* An invalid candidate cannot establish physical ownership. */ }
       }
@@ -144,7 +146,7 @@ export class DiscordAccountRetirement {
   }
   private matches(identity: AccountIdentity): boolean {
     try {
-      return adapterAccountDurableObjectName({ installationId: identity.installationId }, identity.accountId) === identity.name
+      return historicalAccountName(identity.installationId, identity.accountId) === identity.name
         && this.namespace?.idFromName(identity.name).toString() === this.objectId;
     } catch { return false; }
   }
@@ -180,4 +182,9 @@ function guardedMethods<T extends object>(object: T, check: () => void, methods:
       };
     },
   });
+}
+
+/** Historical raw names are only attribution evidence for this retained cleanup owner. */
+function historicalAccountName(installationId: string, accountId: string): string {
+  return installationId === "singleton" ? accountId.trim() : adapterAccountDurableObjectName({ installationId }, accountId);
 }

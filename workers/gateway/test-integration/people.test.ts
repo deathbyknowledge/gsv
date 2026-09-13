@@ -13,7 +13,7 @@ describe("clean-space human enrollment and removal", () => {
 
   it("enrolls a local member, recovers the same receipt after eviction, then fences removed credentials", async () => {
     const oneShot = new GSVClient();
-    await oneShot.requestOnce(url, "sys.setup", { username: "owner", password: "owner-password", rootPassword: "root-password" });
+    await oneShot.requestOnce(url, "sys.setup", { onboardingToken: "integration-onboarding-default", username: "owner", password: "owner-password", rootPassword: "root-password" });
     const root = new GSVClient({ url, username: "root", password: "root-password", peer: { id: "people-root" } });
     const owner = new GSVClient({ url, username: "owner", password: "owner-password", peer: { id: "people-owner" } });
     clients.push(root, owner);
@@ -32,7 +32,7 @@ describe("clean-space human enrollment and removal", () => {
     expect(accounts.some((account) => account.relation === "personal-agent")).toBe(true);
     expect(accounts.find((account) => account.relation === "self")?.uid).toBe(enrolled.uid);
     const token = await member.sys.token.create({ kind: "human", label: "member browser" });
-    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "singleton", webSockets: "hibernate" });
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "inst_integration_default", webSockets: "hibernate" });
     expect(await oneShot.requestOnce(url, "account.invite.redeem", request)).toEqual(enrolled);
     await expect(oneShot.requestOnce(url, "account.invite.redeem", { ...request, proof: createPairingSecret() })).rejects.toMatchObject({ code: 400 });
     await root.account.password.set({ uid: enrolled.uid, password: "reset-password" });

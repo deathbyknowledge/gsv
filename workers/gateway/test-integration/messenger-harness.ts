@@ -71,7 +71,7 @@ export function createMessengerHarness() {
   ];
   const providers = messengers.map((id): Unstable_RawConfig => {
     const main = join(temporary, `${id}.mjs`);
-    writeFileSync(main, controlledProvider(id === "discord" ? discordProviderFixture : id === "slack" ? slackApiWorkerScript("managed") : telegramFixture));
+    writeFileSync(main, controlledProvider(id === "discord" ? discordProviderFixture : id === "slack" ? slackApiWorkerScript() : telegramFixture));
     const config: Unstable_RawConfig = { name: providerWorkers[id], main, compatibility_date: "2026-09-01" };
     if (id === "discord") {
       config.durable_objects = { bindings: [{ name: "PROVIDER", class_name: "Provider" }] };

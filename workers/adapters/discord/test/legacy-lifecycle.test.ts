@@ -7,8 +7,8 @@ import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 
 // SAFETY: the shared Wrangler fixture retains the concrete legacy namespace and lifecycle entrypoint.
 const bindings = env as SharedDiscordEnv & { LIFECYCLE: Service<DiscordLifecycleEntrypoint> };
-async function legacyAccount(installationId: string, accountId = "default") {
-  const name = adapterAccountDurableObjectName({ installationId }, accountId);
+async function legacyAccount(installationId: string, accountId = "default", historicalRawName = false) {
+  const name = historicalRawName ? accountId : adapterAccountDurableObjectName({ installationId }, accountId);
   const namespace = bindings.DISCORD_GATEWAY!;
   const stub = namespace.getByName(name);
   await runInDurableObject(stub, async (_instance, state) => {
@@ -61,7 +61,7 @@ describe("legacy Discord account lifecycle composition", () => {
   it("preserves a standalone account whose old local name resembles a managed scoped name", async () => {
     const installationId = "retired-scoped-lookalike";
     const accountId = adapterAccountDurableObjectName({ installationId }, "default");
-    const standalone = await legacyAccount("singleton", accountId);
+    const standalone = await legacyAccount("singleton", accountId, true);
     const result = await bindings.LIFECYCLE.inspectInstallationDeletion({ installationId, resources: [{ kind: standalone.resource.kind, objectId: standalone.resource.objectId, namespaceId: standalone.resource.namespaceId }] });
     expect(result.observations).toEqual([{ ...standalone.resource, outcome: "unrelated" }]);
   });

@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
+    "dev": "wrangler dev --config wrangler.shared.jsonc",
+    "deploy": "wrangler deploy --config wrangler.shared.jsonc --minify",
     "deploy:shared": "wrangler deploy --config wrangler.shared.jsonc --minify",
     "test": "vitest run",
     "test:shared": "vitest run --config vitest.shared.config.ts",

@@ -6,9 +6,7 @@ import type {
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { Kernel } from "../kernel/do";
 import {
-  SINGLETON_INSTALLATION_ID,
   parseInstallationId,
-  parseManagedInstallationId,
 } from "./identity";
 import type { GatewayEnv } from "../runtime-env";
 
@@ -32,13 +30,6 @@ export function processDurableObjectName(
 ): string {
   const parsedInstallationId = parseInstallationId(installationId);
   const parsedPid = parseProcessId(pid);
-  if (parsedInstallationId === SINGLETON_INSTALLATION_ID) {
-    if (parsedPid.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) {
-      throw new Error("Standalone pid conflicts with managed Process addressing");
-    }
-    assertProcessDurableObjectNameLength(parsedPid);
-    return parsedPid;
-  }
   const name = `${PROCESS_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedPid)}`;
   assertProcessDurableObjectNameLength(name);
   return name;
@@ -51,9 +42,7 @@ export function parseProcessDurableObjectName(
     throw new Error("Process Durable Objects must be accessed by name");
 
   if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) {
-    const pid = parseProcessId(name);
-    assertProcessDurableObjectNameLength(name);
-    return { installationId: SINGLETON_INSTALLATION_ID, pid };
+    throw new Error("Process Durable Object name is invalid");
   }
 
   const separator = name.indexOf(":", PROCESS_DURABLE_OBJECT_PREFIX.length);
@@ -61,7 +50,7 @@ export function parseProcessDurableObjectName(
     throw new Error("Process Durable Object name is invalid");
 
   try {
-    const installationId = parseManagedInstallationId(decodeURIComponent(
+    const installationId = parseInstallationId(decodeURIComponent(
       name.slice(PROCESS_DURABLE_OBJECT_PREFIX.length, separator),
     ));
     const pid = parseProcessId(decodeURIComponent(name.slice(separator + 1)));
@@ -95,13 +84,6 @@ export function conversationDurableObjectName(
 ): string {
   const parsedInstallationId = parseInstallationId(installationId);
   const parsedConversationId = parseConversationId(conversationId);
-  if (parsedInstallationId === SINGLETON_INSTALLATION_ID) {
-    if (parsedConversationId.startsWith(CONVERSATION_DURABLE_OBJECT_PREFIX)) {
-      throw new Error("Standalone conversation id conflicts with managed Conversation addressing");
-    }
-    assertDurableObjectNameLength(parsedConversationId);
-    return parsedConversationId;
-  }
   const name = `${CONVERSATION_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedConversationId)}`;
   assertDurableObjectNameLength(name);
   return name;
@@ -114,16 +96,14 @@ export function parseConversationDurableObjectName(
     throw new Error("Conversation Durable Objects must be accessed by name");
   }
   if (!name.startsWith(CONVERSATION_DURABLE_OBJECT_PREFIX)) {
-    const conversationId = parseConversationId(name);
-    assertDurableObjectNameLength(name);
-    return { installationId: SINGLETON_INSTALLATION_ID, conversationId };
+    throw new Error("Conversation Durable Object name is invalid");
   }
   const separator = name.indexOf(":", CONVERSATION_DURABLE_OBJECT_PREFIX.length);
   if (separator === -1) {
     throw new Error("Conversation Durable Object name is invalid");
   }
   try {
-    const installationId = parseManagedInstallationId(decodeURIComponent(
+    const installationId = parseInstallationId(decodeURIComponent(
       name.slice(CONVERSATION_DURABLE_OBJECT_PREFIX.length, separator),
     ));
     const conversationId = parseConversationId(decodeURIComponent(name.slice(separator + 1)));
@@ -155,40 +135,15 @@ function assertDurableObjectNameLength(name: string): void {
   }
 }
 
-function getGatewayInstallationRoutingSource(
-  request: Request,
-) {
-  // SAFETY: the operator composition adds these routing bindings to the standalone-generated environment.
-  const bindings = env as Pick<GatewayEnv, "INSTALLATION_DIRECTORY" | "GSV_CANONICAL_ORIGIN">;
-  if (bindings.INSTALLATION_DIRECTORY) {
-    return {
-      kind: "multi" as const,
-      directory: bindings.INSTALLATION_DIRECTORY,
-    };
-  }
-
-  return {
-    kind: "single" as const,
-    identity: {
-      installationId: SINGLETON_INSTALLATION_ID,
-      canonicalOrigin: bindings.GSV_CANONICAL_ORIGIN ?? new URL(request.url).origin,
-    },
-  };
-}
-
 export async function resolveInstallationRoute(
   request: Request,
   options: { allowProvisioning?: boolean } = {},
 ) {
   const hostname = new URL(request.url).hostname;
-  const source = getGatewayInstallationRoutingSource(request);
-  if (source.kind === "single") {
-    return {
-      identity: source.identity,
-    };
-  }
-
-  const result = await source.directory.resolveHostname(hostname);
+  // SAFETY: Deployment binds the trusted directory RPC contract described by GatewayEnv.
+  const directory = (env as Env & GatewayEnv).INSTALLATION_DIRECTORY;
+  if (!directory) throw new Error("Installation directory is not configured");
+  const result = await directory.resolveHostname(hostname);
   if (!result.found || !isRoutableManagedInstallationState(
     result.state,
     options.allowProvisioning ?? false,
@@ -198,7 +153,7 @@ export async function resolveInstallationRoute(
 
   let installationId: string;
   try {
-    installationId = parseManagedInstallationId(result.installationId);
+    installationId = parseInstallationId(result.installationId);
   } catch {
     return null;
   }

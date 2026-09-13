@@ -100,21 +100,7 @@ export function integrationGatewayConfig(options: {
       },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
-      ...(options.managed
-        ? [
-            {
-              binding: "INSTALLATION_DIRECTORY",
-              service: options.managedServices?.accounts ?? DEPENDENCY_WORKER,
-            },
-            ...(options.managedServices
-              ? []
-              : [{
-                  binding: "MANAGED_INFERENCE",
-                  service: DEPENDENCY_WORKER,
-                  entrypoint: "ManagedInferenceFixture",
-                }]),
-          ]
-        : []),
+      { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };
 }

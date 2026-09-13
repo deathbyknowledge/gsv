@@ -216,7 +216,7 @@ describe("Process DO — mechanical", () => {
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
 

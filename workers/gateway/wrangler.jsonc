@@ -65,45 +65,19 @@
 			"bucket_name": "gsv-storage"
 		}
 	],
-	// Workers AI for audio transcription (free)
-	// Native execution now belongs to the standalone inference companion.
 	// Static Assets - serve UI from Gateway
 	"assets": {
 		"directory": "../../web/dist/",
 		"binding": "ASSETS",
     "not_found_handling": "single-page-application",
-		"run_worker_first": ["/health", "/ws", "/git/*", "/public/*", "/downloads/*", "/oauth/*", "/.well-known/*", "/_gsv/*"]
+		"run_worker_first": ["/*"]
 	},
-	// Channel service bindings (Gateway → Channel RPC)
+	// The common runtime resolves every request through Accounts.
 	"services": [
-		{
-			"binding": "INFERENCE_EXECUTION",
-			"service": "gsv-inference"
-		},
-		{
-			"binding": "CHANNEL_TELEGRAM",
-			"service": "gsv-channel-telegram",
-			"entrypoint": "TelegramChannel"
-		},
-		{
-			"binding": "CHANNEL_SLACK",
-			"service": "gsv-channel-slack",
-			"entrypoint": "SlackChannel"
-		},
-		{
-			"binding": "CHANNEL_DISCORD",
-			"service": "gsv-channel-discord",
-			"entrypoint": "DiscordChannel"
-		},
-		{
-			"binding": "CHANNEL_WHATSAPP",
-			"service": "gsv-channel-whatsapp",
-			"entrypoint": "WhatsAppChannelEntrypoint"
-		},
-		{
-			"binding": "RIPGIT",
-			"service": "ripgit"
-		}
+		{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
+		{ "binding": "INSTALLATION_OWNERSHIP", "service": "gsv-installations", "entrypoint": "InstallationOwnershipEntrypoint", "props": { "authority": "kernel-owner-link" } },
+		{ "binding": "INFERENCE_EXECUTION", "service": "gsv-inference" },
+		{ "binding": "RIPGIT", "service": "ripgit" }
 	],
 	// CodeMode requires Workers Paid. The CLI omits this binding for Free or
 	// unverified plans; direct Wrangler deployments retain full capabilities.

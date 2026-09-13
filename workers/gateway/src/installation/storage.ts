@@ -1,5 +1,4 @@
 import {
-  SINGLETON_INSTALLATION_ID,
   parseInstallationId,
 } from "./identity";
 
@@ -15,9 +14,7 @@ type R2PutValue =
 
 export function installationStoragePrefix(installationId: string): string {
   const parsed = parseInstallationId(installationId);
-  return parsed === SINGLETON_INSTALLATION_ID
-    ? ""
-    : `installations/${encodeURIComponent(parsed)}/`;
+  return `installations/${encodeURIComponent(parsed)}/`;
 }
 
 // creates an R2 bucket binding that prefixes paths based on installation ID
@@ -27,7 +24,7 @@ export function createInstallationStorage(
   retirement?: InstallationRetirement,
 ): R2Bucket {
   const prefix = installationStoragePrefix(installationId);
-  return prefix || retirement ? new InstallationR2Bucket(bucket, prefix, retirement) : bucket;
+  return new InstallationR2Bucket(bucket, prefix, retirement);
 }
 
 class InstallationR2Bucket implements R2Bucket {

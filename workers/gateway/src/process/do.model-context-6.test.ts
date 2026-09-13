@@ -51,7 +51,7 @@ describe("model context", () => {
           context: { systemPrompt: "", messages: [], tools: [] },
         },
         {
-          installationId: "singleton",
+          installationId: "inst_test",
           logicalRequestId: "inference:test-stream-rejected",
           actor: { localUid: 0, processId: pid, runId },
         },

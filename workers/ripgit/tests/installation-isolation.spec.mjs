@@ -36,12 +36,13 @@ describe("Repository installation isolation", () => {
     await expect(repositoryHeads("inst_second")).resolves.toEqual({});
   });
 
-  it("maps a missing header and singleton to the historical Repository object", async () => {
-    const legacyHead = await createRepository();
-
-    await expect(repositoryHeads("singleton")).resolves.toEqual({
-      main: legacyHead,
-    });
+  it("rejects a missing routing header before allocating a Repository", async () => {
+    for (const path of ["/alice/home/refs", "/hyperspace/repos/alice/home/refs"]) {
+      const response = await miniflare.dispatchFetch(`http://ripgit${path}`);
+      expect(response.status).toBe(400);
+      await expect(response.text()).resolves.toBe("Missing installation routing header");
+    }
+    await expect(repositoryHeads("inst_missing_header_control")).resolves.toEqual({});
   });
 
   it("rejects malformed installation routing metadata", async () => {

@@ -8,11 +8,11 @@ export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string;
 };
 
-export type GsvDeploymentProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
+export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
   domain: string;
   adminOrigin: string;
   access: GsvOperatorAccess;
-  services?: GsvRuntimeServices & {
+  services?: Partial<GsvRuntimeServices> & {
     /** Supplied execution owns its cleanup and physical namespaces, independently of its RPC entrypoint. */
     inferenceLifecycle?: {
       worker: Cloudflare.Workers.Worker;
@@ -165,7 +165,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain());
     inference = inferenceWorker;
   }
-  const runtime = yield* GsvRuntime({ ...props, mode: "managed", compatibility,
+  const runtime = yield* GsvRuntime({ ...props, compatibility,
     services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
   const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
     worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",

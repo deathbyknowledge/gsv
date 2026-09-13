@@ -10,7 +10,7 @@ import {
 } from "./telegram-inbound-media";
 
 describe("Telegram inbound media", () => {
-  it("shares standalone and managed voice normalization", () => {
+  it("normalizes shared Telegram voice messages", () => {
     expect(extractTelegramInboundContent({
       voice: {
         file_id: "voice_file_123",

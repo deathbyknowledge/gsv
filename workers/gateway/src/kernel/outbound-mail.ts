@@ -244,22 +244,20 @@ export async function recoverManagedOutboundEnqueue(
     await ctx.scheduleManagedOutboundEnqueue(current.outboundId, nextAt);
   }
   try {
-    if (ctx.env.INSTALLATION_DIRECTORY) {
-      const installation = await ctx.env.INSTALLATION_DIRECTORY.resolveInstallation(ctx.installationId);
-      if (installation.found && installation.installationId !== ctx.installationId) {
-        throw new Error("Directory returned a mismatched mail installation");
-      }
-      if (!installation.found || ["retained", "deleting", "deleted"].includes(installation.state)) {
-        const remaining = ctx.mailboxes.getOutbound(outboundId);
-        if (remaining?.state === "staging") ctx.mailboxes.markOutboundQueued(outboundId, remaining.fingerprint);
-        if (remaining?.state === "staging" || remaining?.state === "queued") {
-          ctx.mailboxes.completeOutbound({ version: 1, outboundId, fingerprint: remaining.fingerprint,
-            state: "failed", errorCode: "installation_inactive" });
-        }
-        return ctx.mailboxes.getOutbound(outboundId);
-      }
-      if (installation.state !== "active") return ctx.mailboxes.getOutbound(outboundId);
+    const installation = await ctx.env.INSTALLATION_DIRECTORY.resolveInstallation(ctx.installationId);
+    if (installation.found && installation.installationId !== ctx.installationId) {
+      throw new Error("Directory returned a mismatched mail installation");
     }
+    if (!installation.found || ["retained", "deleting", "deleted"].includes(installation.state)) {
+      const remaining = ctx.mailboxes.getOutbound(outboundId);
+      if (remaining?.state === "staging") ctx.mailboxes.markOutboundQueued(outboundId, remaining.fingerprint);
+      if (remaining?.state === "staging" || remaining?.state === "queued") {
+        ctx.mailboxes.completeOutbound({ version: 1, outboundId, fingerprint: remaining.fingerprint,
+          state: "failed", errorCode: "installation_inactive" });
+      }
+      return ctx.mailboxes.getOutbound(outboundId);
+    }
+    if (installation.state !== "active") return ctx.mailboxes.getOutbound(outboundId);
     const command = await prepareManagedOutboundEnqueue(current.outboundId, ctx);
     if (!command) return ctx.mailboxes.getOutbound(current.outboundId);
 

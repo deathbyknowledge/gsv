@@ -75,7 +75,7 @@ type MakeContextOptions = {
   request?: KernelContext["request"];
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
 
 function successfulAdapterFrame(adapter: string, messageId: string) {
   return vi.fn(async (
@@ -1462,6 +1462,7 @@ describe("adapter lifecycle handlers", () => {
       adapter: "whatsapp",
       accountId: "primary",
     }, ctx)).resolves.toMatchObject({ ok: true });
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     await expect(handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3633,6 +3634,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     const result = await handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3715,6 +3717,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3756,6 +3759,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     const result = await handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3820,6 +3824,7 @@ describe("adapter lifecycle handlers", () => {
       url: `https://example.com/${index + 1}.pdf`,
     }));
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3864,6 +3869,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3897,6 +3903,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3926,6 +3933,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     const result = await handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -4076,16 +4084,23 @@ describe("adapter lifecycle handlers", () => {
       expect(cancel).toHaveBeenCalledOnce();
     });
 
-    it.each(["human", "service"] as const)("preserves unlinked legacy sends for privileged %s peers", async (kind) => {
+    it.each(["human", "service"] as const)("allows privileged %s delivery through the current owned link", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([link("U-OWNER")], peer);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
+      expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: "U-OWNER", routeGeneration: "generation-U-OWNER" });
+    });
+
+    it.each(["human", "service"] as const)("refuses unlinked destinations for privileged %s peers", async (kind) => {
       const peer = userIdentity(0);
       peer.peer.principal.kind = kind;
       const { ctx, adapterFrame } = fixture([], peer);
-      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
-      expect(adapterFrame.mock.calls[0][1]).not.toHaveProperty("actorId");
-      expect(adapterFrame.mock.calls[0][1]).not.toHaveProperty("routeGeneration");
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: false, error: "Permission denied" });
+      expect(adapterFrame).not.toHaveBeenCalled();
     });
 
-    it.each(["human", "service"] as const)("does not use privileged %s legacy fallback on an unrelated managed surface", async (kind) => {
+    it.each(["human", "service"] as const)("refuses unrelated surfaces for privileged %s peers", async (kind) => {
       const peer = userIdentity(0);
       peer.peer.principal.kind = kind;
       const { ctx, adapterFrame } = fixture([link("U-OWNER")], peer);
@@ -4971,7 +4986,7 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("never exposes pairing to agents, background processes, root, or standalone", async () => {
+  it("never exposes pairing to background processes or root", async () => {
     const service = pairingService();
     const status = { upsert: vi.fn(), list: vi.fn(() => []) };
     const direct = makeContext(
@@ -4989,15 +5004,6 @@ describe("managed adapter pairing", () => {
       status,
       directUserOptions({ peer: userIdentity(0) }),
     );
-    const standalone = makeContext(
-      { CHANNEL_TELEGRAM: service },
-      status,
-      {
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        connection: {} as KernelContext["connection"],
-        peer: userIdentity(),
-      },
-    );
 
     await expect(handleAdapterPairInfo({ adapter: "telegram" }, direct)).resolves.toMatchObject({
       configured: true,
@@ -5007,9 +5013,6 @@ describe("managed adapter pairing", () => {
     );
     await expect(handleAdapterPairInfo({ adapter: "telegram" }, root)).rejects.toThrow(
       "active human account",
-    );
-    await expect(handleAdapterPairInfo({ adapter: "telegram" }, standalone)).rejects.toThrow(
-      "not available in standalone",
     );
   });
 
@@ -5084,3 +5087,12 @@ describe("managed adapter pairing", () => {
     }));
   });
 });
+
+function linkSendFixture(ctx: KernelContext, adapter: string, accountId: string, surfaceId: string): void {
+  const link: IdentityLinkRecord = {
+    adapter, accountId, actorId: "fixture-actor", uid: 1000, linkedByUid: 1000, createdAt: 1,
+    metadata: { surfaceKind: "dm", surfaceId },
+  };
+  vi.mocked(ctx.adapters.identityLinks.list).mockReturnValue([link]);
+  vi.mocked(ctx.adapters.identityLinks.get).mockReturnValue(link);
+}

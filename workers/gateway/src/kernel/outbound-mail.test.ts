@@ -20,7 +20,8 @@ import {
 
 describe("managed outbound mail", () => {
   it("converges interrupted current and successor tasks into one chain after Kernel eviction", async () => {
-    const stub = env.KERNEL.getByName(crypto.randomUUID());
+    const installationId = crypto.randomUUID();
+    const stub = env.KERNEL.getByName(installationId);
     const outboundId = "mail-outbound:interrupted-successor";
     const bytes = new TextEncoder().encode("Owned body");
     const fingerprint = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -30,6 +31,7 @@ describe("managed outbound mail", () => {
         bodyPath: "/home/fixture/.gsv/mail/outbox/interrupted.txt", textSize: bytes.byteLength, createdAt: 1 });
       await instance.bindings.STORAGE.put("home/fixture/.gsv/mail/outbox/interrupted.txt", bytes);
       instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
+      instance.mailboxes.beginOutboundEnqueue(outboundId, fingerprint, Date.now() + 7_200_000);
       instance.mailboxes.markOutboundEnqueued(outboundId, fingerprint);
       const current = await instance.schedule(new Date(Date.now() + 3_600_000), "onManagedOutboundEnqueue", outboundId);
       await instance.scheduleManagedOutboundEnqueue(outboundId, Date.now() + 7_200_000, current.id);
@@ -38,6 +40,7 @@ describe("managed outbound mail", () => {
     });
     await evictDurableObject(stub);
     await runInDurableObject(stub, async (instance: Kernel, state) => {
+      const attemptsBefore = instance.mailboxes.getOutbound(outboundId)!.enqueueAttempts;
       const previous = instance.env.MANAGED_MAIL_OUTBOUND;
       const send = vi.fn(async () => ({ metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } }));
       instance.env.MANAGED_MAIL_OUTBOUND = { send, sendBatch: vi.fn(async () => { throw new Error("Unexpected batch"); }), metrics: vi.fn(async () => ({ backlogCount: 0, backlogBytes: 0 })) };
@@ -49,11 +52,28 @@ describe("managed outbound mail", () => {
         expect(pending[0].id).not.toBe(currentId);
         state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE id = ?", pending[0].id);
         await instance.alarm();
-        expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toHaveLength(1);
-        expect(send).toHaveBeenCalledTimes(2);
-        expect(send.mock.calls[0]).toEqual(send.mock.calls[1]);
-        expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 2 });
+        expect(state.storage.sql.exec("SELECT payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray())
+          .toEqual([{ payload: JSON.stringify(outboundId) }]);
+        // Re-arming while the current row is due can deliver an automatic alarm during the directory RPC.
+        // Publication is at least once; the invariant is one durable chain carrying the same opaque reference.
+        expect(send.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "queued" });
+        expect(instance.mailboxes.getOutbound(outboundId)!.enqueueAttempts).toBeGreaterThanOrEqual(attemptsBefore + send.mock.calls.length);
+        for (const call of send.mock.calls) expect(call).toEqual([{ version: 2, installationId, outboundId }]);
+
+        await instance.completeManagedOutboundMail({ version: 1, outboundId, fingerprint, state: "accepted", providerMessageId: "interrupted-provider" });
+        const publicationsAtCompletion = send.mock.calls.length;
+        state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE callback = 'onManagedOutboundEnqueue'");
+        await instance.alarm();
+        expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toEqual([]);
+        expect(send).toHaveBeenCalledTimes(publicationsAtCompletion);
+        expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "accepted", enqueueNextAt: null, providerMessageId: "interrupted-provider" });
       } finally { instance.env.MANAGED_MAIL_OUTBOUND = previous; }
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (instance: Kernel, state) => {
+      expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toEqual([]);
+      expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "accepted", enqueueNextAt: null, providerMessageId: "interrupted-provider" });
     });
   });
 
@@ -183,6 +203,23 @@ describe("managed outbound mail", () => {
       expect(queue.send).toHaveBeenCalledTimes(2);
       expect(queue.send.mock.calls[1]).toEqual(queue.send.mock.calls[0]);
       expect(ctx.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 10 });
+    });
+  });
+
+  it("retains the outbox without publishing or reading its body when the directory binding is missing", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, storage, queue);
+      Reflect.deleteProperty(ctx.env, "INSTALLATION_DIRECTORY");
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "Directory unavailable", text: "Wait for directory recovery.", deliveryId: "missing-directory" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const read = vi.spyOn(storage, "get");
+      await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      expect(queue.send).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(ctx.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 2, enqueuedAt: null });
+      expect(ctx.scheduleManagedOutboundEnqueue).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -887,6 +924,12 @@ function outboundContext(
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     env: {
+      INSTALLATION_DIRECTORY: {
+        resolveHostname: async (): Promise<InstallationDirectoryResult> => ({ found: false }),
+        resolveInstallation: async (installationId: string): Promise<InstallationDirectoryResult> => ({
+          found: true, installationId, handle: "hank", canonicalOrigin: "https://hank.gsv.space", state: "active",
+        }),
+      },
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       STORAGE: storage as R2Bucket,
       ...(queue ? { MANAGED_MAIL_OUTBOUND: queue } : undefined),

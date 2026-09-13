@@ -23,7 +23,7 @@ describe("Process inference attempts across the execution service", () => {
       if (!sent.ok) throw new Error(sent.error);
       await runtime.ai.waitForRequests(1);
       const storage = await runtime.harness.getWorker("gsv-execution-test")
-        .getDurableObjectStorage("INFERENCE_EXECUTORS", { name: "singleton" });
+        .getDurableObjectStorage("INFERENCE_EXECUTORS", { name: "inst_integration_default" });
       const readRequests = async () => requestRows.parse(await storage.exec(
         "SELECT request_id, local_uid, state, reserved_tokens, output_tokens FROM executor_requests ORDER BY accepted_at, request_id",
       ));
@@ -46,9 +46,9 @@ describe("Process inference attempts across the execution service", () => {
 
       const { INFERENCE_EXECUTION } = await runtime.harness
         .getWorker<{ INFERENCE_EXECUTION: InferenceExecutionService }>("gsv").getEnv();
-      const executor = await INFERENCE_EXECUTION.getExecutor("singleton");
+      const executor = await INFERENCE_EXECUTION.getExecutor("inst_integration_default");
       const replay: InferenceExecutionRequest = {
-        version: 1, installationId: "singleton", logicalRequestId: firstId,
+        version: 1, installationId: "inst_integration_default", logicalRequestId: firstId,
         actor: { localUid: before[0]!.local_uid, processId: process.pid, runId: sent.runId },
         connection: { provider: "custom", model: "integration-model", apiKey: "fixture-only",
           baseUrl: runtime.ai.baseUrl, providerStyle: "openai-chat-completions", maxTokens: 128, contextWindowTokens: null },

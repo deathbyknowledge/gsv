@@ -13,12 +13,6 @@ function fixture(label: string) {
   const namespace = bindings.DISCORD_GATEWAY!;
   return { namespace, name, stub: namespace.getByName(name), input: { version: 1 as const, installationId, operationId: "retire-account" } };
 }
-function gate() {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => { release = resolve; });
-  return { promise, release };
-}
-
 describe("legacy Discord account retirement", () => {
   it("bounds erasure and retains its identity and fence across a real object eviction", async () => {
     const f = fixture("bounded");
@@ -49,64 +43,24 @@ describe("legacy Discord account retirement", () => {
     });
   });
 
-  it("cancels an accepted body when retirement happens during state loading", async () => {
-    const f = fixture("body");
+  it("never resumes historical transport or exposes credentials before cleanup", async () => {
+    const f = fixture("inert");
     await runInDurableObject(f.stub, async (instance, state) => {
-      state.storage.kv.put("state", { accountId: "default" });
-      const started = gate();
-      const release = gate();
-      const original = instance["loadState"].bind(instance);
-      instance["loadState"] = async () => { started.release(); await release.promise; await original(); };
+      const historical = { accountId: "default", botToken: "historical-private-token", sessionId: "saved-session" };
+      await state.storage.put("state", historical);
+      await state.storage.setAlarm(Date.now() + 120_000);
+      await expect(instance.start("replacement-token", "default")).rejects.toThrow("transport is retired");
+      expect(await instance.getBotToken()).toBeNull();
       let cancelled = false;
       const body = { stream: new ReadableStream({ type: "bytes", cancel() { cancelled = true; } }) };
-      const pending = instance.sendMessage({ deliveryId: "held-body", surface: { kind: "dm", id: "123" }, text: "message" }, body);
-      const rejected = expect(pending).rejects.toThrow("retired");
-      await started.promise;
-      expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "quiescing" });
-      release.release();
-      await rejected;
+      expect(await instance.sendMessage({ deliveryId: "blocked", surface: { kind: "dm", id: "123" }, text: "blocked" }, body))
+        .toMatchObject({ ok: false, error: "Legacy Discord account transport is retired" });
       expect(cancelled).toBe(true);
-      expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
-    });
-  });
-
-  it("waits for an admitted provider delivery and rejects its late ledger result", async () => {
-    const f = fixture("send");
-    await runInDurableObject(f.stub, async (instance, state) => {
-      state.storage.kv.put("state", { accountId: "default" });
-      const entered = gate();
-      const release = gate();
-      const signal = instance["retirement"].signal;
-      instance["providerFetch"] = () => async () => { entered.release(); await release.promise; return Response.json({ id: "late-provider-id" }); };
-      const pending = instance.sendMessage({ deliveryId: "held-send", surface: { kind: "dm", id: "123" }, text: "message" });
-      await entered.promise;
-      expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "quiescing" });
-      expect(signal.aborted).toBe(true);
-      release.release();
-      expect(await pending).toMatchObject({ ok: false, ambiguous: true });
-      expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
-      expect((await state.storage.list({ prefix: "outbound_delivery:v1:" })).size).toBe(0);
-      expect(await instance.sendMessage({ deliveryId: "another-send", surface: { kind: "dm", id: "123" }, text: "message" })).toMatchObject({ ok: false, error: "Discord account installation is retired" });
-    });
-  });
-
-  it("fences READY callbacks that finish after quiescence", async () => {
-    const f = fixture("ready");
-    await runInDurableObject(f.stub, async (instance, state) => {
-      state.storage.kv.put("state", { accountId: "default" });
-      const entered = gate();
-      const release = gate();
-      instance["notifyGatewayStatus"] = async () => { entered.release(); await release.promise; };
-      const pending = instance["handleDispatch"]("READY", { session_id: "late-session", resume_gateway_url: "wss://example.test", user: { id: "123", username: "fixture" } });
-      const rejected = expect(pending).rejects.toThrow("retired");
-      await entered.promise;
-      expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "quiescing" });
-      release.release();
-      await rejected;
+      await instance.alarm();
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect(await state.storage.get("state")).toEqual(historical);
       expect(await instance.eraseInstallation(f.input)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
       expect(await state.storage.get("state")).toBeUndefined();
-      expect(await state.storage.get("botUser")).toBeUndefined();
-      await expect(instance["handleDispatch"]("RESUMED", {})).rejects.toThrow("retired");
     });
   });
 

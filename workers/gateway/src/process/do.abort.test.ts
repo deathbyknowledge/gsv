@@ -341,7 +341,7 @@ describe("proc.abort", () => {
         kernel.testCancellationFinished = true;
         return 1;
       });
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     // SAFETY: test fixture is constructed with the asserted domain shape.
 

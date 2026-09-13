@@ -103,7 +103,6 @@ impl RetirementSql {
         if input.version != 1
             || !crate::is_valid_installation_id(&input.installation_id)
             || !crate::is_valid_installation_id(&input.operation_id)
-            || input.installation_id == "singleton"
         {
             return Err(Error::RustError("Invalid installation retirement".into()));
         }
@@ -302,9 +301,6 @@ async fn request_object(
 }
 
 pub async fn register(env: &Env, installation_id: &str, resource_name: &str) -> Result<()> {
-    if installation_id == "singleton" {
-        return Ok(());
-    }
     let body = Registration {
         installation_id: installation_id.into(),
         resource_name: resource_name.into(),
@@ -328,9 +324,7 @@ pub async fn forward_lifecycle(mut request: Request, env: &Env, action: &str) ->
         return Response::error("Not found", 404);
     }
     let input: RetirementRequest = request.json().await?;
-    if !crate::is_valid_installation_id(&input.installation_id)
-        || input.installation_id == "singleton"
-    {
+    if !crate::is_valid_installation_id(&input.installation_id) {
         return Response::error("Invalid installation", 400);
     }
     request_object(
@@ -363,10 +357,7 @@ pub async fn forward_discovery(mut request: Request, env: &Env, action: &str) ->
     }
     if action == "import" {
         let input: InventoryImport = request.json().await?;
-        if !crate::is_valid_installation_id(&input.installation_id)
-            || input.installation_id == "singleton"
-            || input.names.len() > 16
-        {
+        if !crate::is_valid_installation_id(&input.installation_id) || input.names.len() > 16 {
             return Response::error("Invalid inventory import", 400);
         }
         return request_object(

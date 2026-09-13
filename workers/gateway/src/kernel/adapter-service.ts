@@ -1,4 +1,3 @@
-import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 import { canLinkAdapter } from "./adapter-pairing-policy";
 import type {
   AdapterActivity,
@@ -189,7 +188,7 @@ export async function handleAdapterList(
     const entry = adapterListEntry(adapter, service, descriptor);
     if (entry.supportsPairing) {
       entry.enabled = false;
-      if (ctx.installationId !== SINGLETON_INSTALLATION_ID && adapterSupportsPairing(service)) {
+      if (adapterSupportsPairing(service)) {
         try {
           const info = await readAdapterPairingInfo(service, ctx);
           entry.enabled = info.configured;

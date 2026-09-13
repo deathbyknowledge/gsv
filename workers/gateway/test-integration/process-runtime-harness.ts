@@ -52,7 +52,7 @@ export async function startProcessRuntimeHarness(options: {
     const { url } = await harness.listen();
     gatewayUrl = webSocketUrl(url);
     const setupClient = new GSVClient();
-    await setupClient.requestOnce(webSocketUrl(url), "sys.setup", {
+    await setupClient.requestOnce(webSocketUrl(url), "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: USERNAME,
       password: PASSWORD,
       agentName: "process-runtime-agent",

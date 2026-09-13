@@ -31,7 +31,7 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -93,7 +93,7 @@ describe("proc.ipc.*", () => {
     await registerInKernel(sourcePid, sourceIdentity);
     await registerInKernel(targetPid, targetIdentity);
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -138,7 +138,7 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -225,7 +225,7 @@ describe("proc.ipc.*", () => {
       process.run.scheduleTick = vi.fn(async () => {});
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -299,7 +299,7 @@ describe("proc.ipc.*", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const sourceRunId = (firstSend.data as any).runId as string;
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const ipcResponse = (await runInDurableObject(
       kernel,
@@ -815,7 +815,7 @@ describe("proc.ipc.*", () => {
       return token;
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -884,7 +884,7 @@ describe("proc.ipc.*", () => {
       process.run.scheduleTick = async () => {};
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,

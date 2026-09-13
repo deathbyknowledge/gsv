@@ -820,7 +820,7 @@ describe("model context", () => {
     const runId = "run-chat-stream-transport";
     const eventCount = 256;
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     await kernel.recvFrame(pid, {
       type: "sig",

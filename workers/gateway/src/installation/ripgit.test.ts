@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { SINGLETON_INSTALLATION_ID } from "./identity";
 import {
   createInstallationRipgit,
   removeUntrustedRipgitInstallationHeader,
@@ -7,9 +6,9 @@ import {
 } from "./ripgit";
 
 describe("installation ripgit binding", () => {
-  it("preserves the historical standalone binding", () => {
-    const binding = { fetch: vi.fn() };
-    expect(createInstallationRipgit(binding, SINGLETON_INSTALLATION_ID)).toBe(binding);
+  it("requires validated installation metadata for every binding", () => {
+    expect(() => createInstallationRipgit({ fetch: vi.fn() }, ""))
+      .toThrow("installationId is invalid");
   });
 
   it("overwrites untrusted installation routing metadata", async () => {

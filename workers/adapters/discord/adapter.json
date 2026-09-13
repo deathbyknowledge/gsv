@@ -1,27 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "id": "discord",
   "displayName": "Discord",
   "description": "Discord adapter worker",
   "deployOrder": 2,
-  "wranglerConfig": "wrangler.jsonc",
+  "wranglerConfig": "wrangler.shared.jsonc",
   "devStateDirectories": [
-    "gsv-channel-discord-DiscordGateway"
+    "gsv-channel-discord-DiscordGateway",
+    "gsv-channel-discord-DiscordApplication",
+    "gsv-channel-discord-DiscordPeer",
+    "gsv-channel-discord-DiscordPairing",
+    "gsv-channel-discord-DiscordInstallation"
   ],
-  "standalone": {
-    "main": "dist/cloudflare/channel-discord/worker/index.js",
-    "bundle": false,
-    "gatewayEntrypoint": "DiscordChannel",
-    "adapterEntrypoint": "DiscordChannel",
-    "durableObjects": [
-      {
-        "binding": "DISCORD_GATEWAY",
-        "className": "DiscordGateway"
-      }
-    ],
-    "requiredSecrets": []
-  },
-  "managed": {
+  "deployment": {
     "main": "workers/adapters/discord/src/shared.ts",
     "bundle": true,
     "gatewayEntrypoint": "SharedDiscordChannel",

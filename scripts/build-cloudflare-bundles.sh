@@ -18,7 +18,7 @@ install_dir() {
 
 echo "==> Installing dependencies"
 (cd "${ROOT_DIR}" && npm ci --ignore-scripts)
-npm run build --workspace packages/gsv
+npm run build --workspace packages/gsv --prefix "$ROOT_DIR"
 install_dir "${ROOT_DIR}/workers/ripgit"
 
 ADAPTER_ROWS=()
@@ -68,6 +68,19 @@ for row in "${ADAPTER_ROWS[@]}"; do
     cd "${ROOT_DIR}/${source_dir}"
     npm exec --workspaces=false -- wrangler deploy --config "${wrangler_config}" --minify --dry-run --outdir "${DIST_DIR}/${component}/worker"
   )
+  node --input-type=module - "${DIST_DIR}/${component}/worker" "${ROOT_DIR}/${source_dir}/adapter.json" <<'NODE'
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+const [directory, manifestFile] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+const emitted = basename(manifest.deployment.main).replace(/\.[cm]?tsx?$/, ".js");
+if (emitted !== "index.js") {
+  const source = readFileSync(join(directory, emitted), "utf8");
+  renameSync(join(directory, emitted), join(directory, "index.js"));
+  writeFileSync(join(directory, "index.js"), source.replace(`sourceMappingURL=${emitted}.map`, "sourceMappingURL=index.js.map"));
+  renameSync(join(directory, `${emitted}.map`), join(directory, "index.js.map"));
+}
+NODE
 done
 
 echo "==> Assembling component metadata"

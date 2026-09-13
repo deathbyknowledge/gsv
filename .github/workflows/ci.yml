@@ -27,7 +27,6 @@ jobs:
       deployment: ${{ steps.filter.outputs.deployment }}
       deletion_stack: ${{ steps.filter.outputs.deletion_stack }}
       adapters: ${{ steps.filter.outputs.adapters }}
-      whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
       machine: ${{ steps.filter.outputs.machine }}
@@ -148,15 +147,6 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'workers/adapters/**'
-            whatsapp:
-              - '.github/workflows/ci.yml'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'packages/gsv/**'
-              - 'workers/adapters/shared/**'
-              - 'workers/adapters/whatsapp/**'
-              - 'scripts/build-cloudflare-bundles.sh'
-              - 'scripts/check-worker-bundle-size.mjs'
             ripgit:
               - '.github/workflows/ci.yml'
               - 'scripts/worker-build.sh'
@@ -496,48 +486,6 @@ jobs:
               npm --prefix "$directory" run "$test_script"
             fi
           done
-
-  whatsapp-test:
-    name: WhatsApp Adapter Tests
-    runs-on: ubuntu-latest
-    needs: [changes]
-    if: needs.changes.outputs.whatsapp == 'true'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            workers/adapters/whatsapp/package-lock.json
-
-      - name: Install workspace dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Install WhatsApp adapter dependencies
-        working-directory: workers/adapters/whatsapp
-        run: npm ci --no-audit --no-fund
-
-      - name: Type check WhatsApp adapter
-        working-directory: workers/adapters/whatsapp
-        run: npm exec -- tsc --noEmit
-
-      - name: Run shared adapter tests
-        run: npm exec -- vitest run workers/adapters/shared/test
-
-      - name: Run WhatsApp adapter tests
-        working-directory: workers/adapters/whatsapp
-        run: npm run test:run
-
-      - name: Bundle WhatsApp worker
-        working-directory: workers/adapters/whatsapp
-        run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
-
-      - name: Enforce Workers Free bundle budget
-        run: node scripts/check-worker-bundle-size.mjs workers/adapters/whatsapp/dist/worker/index.js 2800000
 
   cli-build:
     name: CLI Build (${{ matrix.os }})
