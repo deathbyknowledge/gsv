@@ -213,10 +213,9 @@ export async function prepareManagedOutboundEnqueue(
     outbound = ctx.mailboxes.markOutboundQueued(outbound.outboundId, outbound.fingerprint);
   }
   return {
-    version: 1,
+    version: 2,
     installationId: ctx.installationId,
     outboundId: outbound.outboundId,
-    fingerprint: outbound.fingerprint,
   };
 }
 

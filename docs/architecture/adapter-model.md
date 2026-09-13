@@ -279,6 +279,9 @@ This service exists only in the Humans & Machines managed graph. Standalone GSV
 does not deploy the email Worker, Queue, provider binding, or managed
 `mail.send` transport.
 
+Existing Mail deployments must follow the [two-stage queue upgrade](../../deployment/mail-queue-upgrade.md)
+before enabling version-2 producers.
+
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
 participant as well as the stanza id. Before link, command, routing, media, or

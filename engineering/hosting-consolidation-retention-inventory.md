@@ -23,7 +23,7 @@ database or exhausting platform Time Travel does not delete an export.
 | Store | Owning service and evidence | Current adoption checkpoint |
 | --- | --- | --- |
 | Historical unfinished R2 uploads | Gateway aborts tracked uploads. Operator inventory must enumerate and abort older untracked uploads, or verify an applicable expiration policy and its completion. | Staging lifecycle read succeeded with no custom rules. Cloudflare documents a default seven-day abort policy. No authenticated S3 multipart inventory/abort proof has been captured. This remains unresolved. |
-| Outbound mail queue and dead-letter queue | Mail fences delivery and settlement. The operator declares both queues and their retention; a message forwarded to the dead-letter queue may start another retention interval. | Authenticated staging settings on September 11 show 345,600 seconds for each queue. Payloads contain immutable delivery references, not mail bodies. Queue expiry is not yet represented by a verified per-space owner receipt. |
+| Outbound mail queue and dead-letter queue | Mail fences delivery and settlement. The operator declares both queues and their retention; a message forwarded to the dead-letter queue may start another retention interval. | Authenticated staging settings on September 11 show 345,600 seconds for each queue. Legacy v1 references include a content-derived fingerprint; v2 contains only the immutable space ID and opaque delivery ID. Neither carries mail bodies. Queue expiry is not yet represented by a verified per-space owner receipt. |
 | Workers logs | Operator records enabled producers, persistence, export destinations, retention and erasure verification. | Staging Gateway, Accounts and Inference report log persistence disabled; their telemetry tail remains enabled. Email and the telemetry Worker report persistent logs enabled. Disabled persistence today does not account for historical logs. |
 | Telemetry exports | The telemetry service owns the operational and product pseudonyms derived from the immutable installation ID, plus each destination's deletion/retention proof. | H&M exports allowlisted events to PostHog. The authenticated project metadata read on September 11 reports `event_retention_months: 12` and `events_retention_enforced: false`; it does not establish a Logs retention period. The retained destination records have not yet been verified or purged for the deletion fixture. Pseudonymization does not itself establish erasure. |
 | AI Gateway and upstream provider copies | The operator/provider declares request logging, response caching, retention and the evidence for deletion or expiry. | An authenticated Cloudflare connector read on September 11 reports `collect_logs: true`, `cache_ttl: 0`, `log_management: 10000000`, `log_management_strategy: DELETE_OLDEST`, and `logpush: false` for gateway `default`. Request headers control log and payload collection separately from these gateway settings. Capacity-based eviction does not establish finite log expiry, and no per-space or upstream-provider erasure proof has been captured. |
@@ -61,6 +61,31 @@ Historical untagged requests, including the original staging deletion fixture,
 cannot be attributed retroactively from these new tags. This change does not
 establish historical log absence, indexing completion, or upstream-provider
 erasure, and does not close those evidence gates.
+
+## Mail queue references
+
+The v2 producer removes the content-derived fingerprint from future queue
+entries. Mail resolves the immutable delivery record through the owning Gateway
+before delivery, retaining its existing validation and duplicate-send protection.
+The dual reader continues accepting v1 entries already in either queue. The
+[ordered upgrade](../deployment/mail-queue-upgrade.md) is required for existing
+Mail deployments; changing a producer does not rewrite previously queued data.
+
+The queue consumer acknowledges references for an exact retired or missing space
+before selecting a Mail object. It rechecks retirement after failed RPC replies;
+recoverable restrictions and unavailable services still retry. These guards
+prevent retired references from creating user data, but do not prove that every
+physical queue copy has disappeared.
+
+Cloudflare exposes [peek](https://developers.cloudflare.com/api/resources/queues/subresources/messages/methods/peek/)
+and [selective purge](https://developers.cloudflare.com/api/resources/queues/subresources/messages/methods/purge/)
+by opaque message reference. The documented peek request has a batch size but no
+cursor or space filter. A returned batch therefore does not establish a complete
+per-space inventory. Do not clear a shared queue, claim scoped emptiness from a
+sample, or infer final expiry by adding the two retention periods to application
+quiescence without bounding later retries and dead-letter transfers. Residual
+references remain unresolved retained metadata under the current deletion
+contract; this format change does not relax completion requirements.
 
 ## Admission and completion
 

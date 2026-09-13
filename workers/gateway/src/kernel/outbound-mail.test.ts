@@ -114,10 +114,9 @@ describe("managed outbound mail", () => {
       });
       if (!first.ok) throw new Error(first.error);
       expect(queue.send).toHaveBeenCalledWith({
-        version: 1,
+        version: 2,
         installationId: "installation-1",
         outboundId: first.outboundId,
-        fingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       });
 
       const claim = await claimManagedOutboundMail({
@@ -376,6 +375,7 @@ describe("managed outbound mail", () => {
         enqueuedAt: null,
       });
 
+      const reference = resolveOutboundMailReference({ outboundId: first.outboundId }, ctx);
       const restarted = outboundContext(sql, storage, queue);
       await recoverManagedOutboundEnqueue(first.outboundId, restarted, true);
       expect(restarted.mailboxes.getOutbound(first.outboundId)).toMatchObject({
@@ -389,7 +389,9 @@ describe("managed outbound mail", () => {
         state: "queued",
         replayed: true,
       });
-      expect(queue.send).toHaveBeenCalledTimes(2);
+      const command = { version: 2, installationId: ctx.installationId, outboundId: first.outboundId };
+      expect(queue.send.mock.calls).toEqual([[command], [command]]);
+      expect(resolveOutboundMailReference({ outboundId: first.outboundId }, restarted)).toEqual(reference);
     });
   });
 

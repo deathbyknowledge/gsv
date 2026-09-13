@@ -203,7 +203,7 @@ describe("installation resource retirement", () => {
         await instance.bindings.STORAGE.put("home/person/outbox/retry.txt", bytes);
         const retry = instance.onManagedOutboundEnqueue("retry");
         await accepted;
-        expect(send).toHaveBeenCalledWith({ version: 1, installationId: input.installationId, outboundId: "retry", fingerprint: digest });
+        expect(send).toHaveBeenCalledWith({ version: 2, installationId: input.installationId, outboundId: "retry" });
         let finished = false;
         const quiescence = instance.quiesceInstallation(input).then((receipt) => { finished = true; return receipt; });
         await new Promise((resolve) => setTimeout(resolve, 10));
