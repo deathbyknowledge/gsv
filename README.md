@@ -37,18 +37,28 @@ Under the hood, GSV is a distributed operating environment: agents are durable p
 
 **From the web (easiest, no terminal).** Go to [deploy.gsv.space](https://deploy.gsv.space/), connect your Cloudflare account, and GSV deploys itself into it.
 
-**Or deploy the open-source stack from the terminal:**
+**Or deploy the open-source operator stack from the terminal.** You need a
+domain in a Cloudflare DNS zone, Node.js and Rust for the source build:
 
 ```bash
 git clone https://github.com/deathbyknowledge/gsv.git
 cd gsv
 npm ci
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+export GSV_DOMAIN="example.com"
+export GSV_ZONE_ID="your-zone-id"
 npx alchemy login
 npx alchemy cloudflare bootstrap
+npm run deployment:plan
 npm run deployment:deploy
 ```
 
-Either way, open the deployed Gateway URL to finish onboarding in the web UI.
+The terminal flow deploys the `operator` stage with public Accounts and inference,
+and no messenger adapters enabled by default. Follow the
+[Alchemy guide](docs/how-to/deploy-with-alchemy.md#create-the-first-space) to issue
+the one-time bootstrap link and create your first space. Subsequent spaces use
+operator administration. Existing singleton deployments need an explicit
+migration before using these root deployment commands.
 
 Install the CLI, machine daemon, and Desktop separately where supported:
 
@@ -107,11 +117,11 @@ npm run dev                    # start the local multi-worker stack
 GSV_MANAGED_SERVICES_ROOT=/path/to/services npm run dev:managed
 ```
 
-The public repository does not ship a platform operator's Accounts or funded
-Inference implementation. Supplying compatible `accounts/` and `inference/`
-packages starts those services with the Gateway and ripgit on
-`http://localhost:8976`. See [service contracts](docs/architecture/services.md)
-for the required boundaries.
+`npm run dev` starts public Accounts, inference, Gateway and ripgit on
+`http://localhost:8976`; open `/admin` to create a local space. No private
+repository is required. The optional `dev:managed` command uses an operator's
+compatible `accounts/` and `inference/` packages, including its funding policy.
+See [service contracts](docs/architecture/services.md) for the boundaries.
 
 Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
 [npm](https://nodejs.org).
