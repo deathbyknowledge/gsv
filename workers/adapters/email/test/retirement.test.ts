@@ -137,6 +137,7 @@ describe("mail installation retirement", () => {
           acceptInboundMail: (...args) => mailEnv.GATEWAY.acceptInboundMail(...args),
           completeInboundMail: (...args) => mailEnv.GATEWAY.completeInboundMail(...args),
           claimOutboundMail: (...args) => mailEnv.GATEWAY.claimOutboundMail(...args),
+          resolveOutboundMailReference: (...args) => mailEnv.GATEWAY.resolveOutboundMailReference(...args),
           completeOutboundMail: async () => { completions++; },
         },
       });

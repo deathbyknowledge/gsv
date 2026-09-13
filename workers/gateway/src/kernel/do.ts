@@ -34,6 +34,7 @@ import type {
   ManagedInboundMailMetadata,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
+  ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
   UnlinkManagedAdapterIdentityInput,
   UnlinkManagedAdapterIdentityResult,
@@ -125,6 +126,7 @@ import {
   claimManagedOutboundMail as claimKernelManagedOutboundMail,
   completeManagedOutboundMail as completeKernelManagedOutboundMail,
   recoverManagedOutboundEnqueue,
+  resolveOutboundMailReference as resolveKernelOutboundMailReference,
 } from "./outbound-mail";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -1134,6 +1136,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
       completion,
       this.buildKernelContext({}),
     );
+  }
+
+  async resolveOutboundMailReference(
+    lookup: ManagedOutboundMailLookup,
+  ): Promise<ManagedOutboundMailReference | null> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) throw new Error(gate.message);
+    return resolveKernelOutboundMailReference(lookup, this.buildKernelContext({}));
   }
 
   async claimManagedOutboundMail(

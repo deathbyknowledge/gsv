@@ -1,18 +1,97 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:workers";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { testPeer } from "../test-support/peers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
+import type { Kernel } from "./do";
 import { MailboxStore } from "./mailbox-store";
 import {
   claimManagedOutboundMail,
   completeManagedOutboundMail,
   handleMailSend,
   recoverManagedOutboundEnqueue,
+  resolveOutboundMailReference,
 } from "./outbound-mail";
 
 describe("managed outbound mail", () => {
+  it("keeps real RPC lookup scoped to each Kernel across eviction and retirement", async () => {
+    const firstId = crypto.randomUUID();
+    const first = env.KERNEL.getByName(firstId);
+    const second = env.KERNEL.getByName(crypto.randomUUID());
+    const outboundId = "mail-outbound:same-id";
+    for (const [kernel, fingerprint] of [[first, `sha256:${"a".repeat(64)}`], [second, `sha256:${"b".repeat(64)}`]] as const) {
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        instance.mailboxes.ensureOutbound({
+          version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "same-id",
+          from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Owned fixture",
+          bodyDigest: fingerprint, bodyPath: "/home/fixture/.gsv/mail/outbox/fixture/message.txt",
+          textSize: 10, createdAt: 1,
+        });
+      });
+    }
+    expect(await first.resolveOutboundMailReference({ outboundId })).toEqual({ version: 1, outboundId, fingerprint: `sha256:${"a".repeat(64)}` });
+    expect(await second.resolveOutboundMailReference({ outboundId })).toEqual({ version: 1, outboundId, fingerprint: `sha256:${"b".repeat(64)}` });
+    await evictDurableObject(first);
+    expect(await first.resolveOutboundMailReference({ outboundId })).toEqual({ version: 1, outboundId, fingerprint: `sha256:${"a".repeat(64)}` });
+    expect(await first.resolveOutboundMailReference({ outboundId: "mail-outbound:missing" })).toBeNull();
+    await runInDurableObject(first, (instance: Kernel) => {
+      instance.retirement.begin({ version: 1, installationId: firstId, operationId: crypto.randomUUID() });
+    });
+    await evictDurableObject(first);
+    await runInDurableObject(first, async (instance: Kernel) => {
+      await expect(instance.resolveOutboundMailReference({ outboundId })).rejects.toThrow("retired");
+    });
+    expect(await second.resolveOutboundMailReference({ outboundId })).toEqual({ version: 1, outboundId, fingerprint: `sha256:${"b".repeat(64)}` });
+  });
+
+  it("resolves only the authoritative immutable reference without hydrating the body", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      const args = { to: "mike@example.com", subject: "Immutable", text: "Original body", deliveryId: "lookup-1" };
+      const sent = await handleMailSend(args, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const outbound = ctx.mailboxes.getOutbound(sent.outboundId)!;
+      const reference = { version: 1, outboundId: sent.outboundId, fingerprint: outbound.fingerprint };
+      const read = vi.spyOn(storage, "get");
+      read.mockRejectedValue(new Error("Body must not be hydrated"));
+
+      expect(resolveOutboundMailReference({ outboundId: sent.outboundId }, ctx)).toEqual(reference);
+      await expect(handleMailSend({ ...args, text: "Changed body" }, ctx)).resolves.toMatchObject({ ok: false, retryable: false });
+      expect(resolveOutboundMailReference({ outboundId: sent.outboundId }, ctx)).toEqual(reference);
+      expect(resolveOutboundMailReference({ outboundId: "mail-outbound:missing" }, ctx)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+
+      completeManagedOutboundMail({ ...reference, version: 1, state: "accepted", providerMessageId: "lookup-provider" }, ctx);
+      expect(resolveOutboundMailReference({ outboundId: sent.outboundId }, ctx)).toEqual(reference);
+      expect(read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not resolve a foreign outbox id or normalize an altered identity", async () => {
+    let foreignId = "";
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "First space", text: "Owned", deliveryId: "lookup-2" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      foreignId = sent.outboundId;
+    });
+    await runWithRealKernelSql((sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+      expect(resolveOutboundMailReference({ outboundId: foreignId }, ctx)).toBeNull();
+      const read = vi.spyOn(ctx.mailboxes, "getOutbound");
+      for (const outboundId of [` ${foreignId}`, `${foreignId} `, "", "\n", "x".repeat(257)]) {
+        expect(() => resolveOutboundMailReference({ outboundId }, ctx)).toThrow();
+      }
+      // SAFETY: Extra selectors deliberately exercise the untrusted RPC input boundary.
+      expect(() => resolveOutboundMailReference({ outboundId: foreignId, installationId: "installation-1" } as never, ctx)).toThrow();
+      expect(read).not.toHaveBeenCalled();
+    });
+  });
+
   it("stages one canonical body and settles exact replays", async () => {
     await runWithRealKernelSql(async (sql) => {
       const storage = new MemoryR2Bucket();

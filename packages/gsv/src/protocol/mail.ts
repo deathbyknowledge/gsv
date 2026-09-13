@@ -59,9 +59,13 @@ export type ManagedOutboundMailReference = {
   fingerprint: string;
 };
 
-export type ManagedOutboundMailCommand = ManagedOutboundMailReference & {
-  installationId: string;
+export type ManagedOutboundMailLookup = {
+  outboundId: string;
 };
+
+export type ManagedOutboundMailCommand =
+  | (ManagedOutboundMailReference & { installationId: string })
+  | (ManagedOutboundMailLookup & { version: 2; installationId: string });
 
 export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   from: string;

@@ -5,8 +5,10 @@ import type {
   ManagedOutboundMailCommand,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailDraft,
+  ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
@@ -24,6 +26,7 @@ const MAX_OUTBOUND_HEADER_BYTES = 998;
 const OUTBOUND_ENQUEUE_RETRY_BASE_MS = 5_000;
 const OUTBOUND_ENQUEUE_RETRY_MAX_MS = 60 * 60 * 1_000;
 const TEXT_ENCODER = new TextEncoder();
+const OUTBOUND_LOOKUP_SCHEMA = z.strictObject({ outboundId: z.string() });
 
 type NormalizedMailSend = {
   deliveryId: string;
@@ -257,6 +260,19 @@ export async function recoverManagedOutboundEnqueue(
   } catch {
     return ctx.mailboxes.getOutbound(current.outboundId);
   }
+}
+
+export function resolveOutboundMailReference(
+  lookup: ManagedOutboundMailLookup,
+  ctx: KernelContext,
+): ManagedOutboundMailReference | null {
+  const input = OUTBOUND_LOOKUP_SCHEMA.parse(lookup);
+  const outboundId = normalizeIdentifier(input.outboundId, "outboundId");
+  if (outboundId !== input.outboundId) throw new Error("Outbound mail lookup is invalid");
+  const outbound = ctx.mailboxes.getOutbound(outboundId);
+  return outbound
+    ? { version: 1, outboundId: outbound.outboundId, fingerprint: outbound.fingerprint }
+    : null;
 }
 
 export async function claimManagedOutboundMail(

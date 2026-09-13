@@ -134,6 +134,10 @@ export default defineConfig({
                     throw new Error("invalid completion");
                   }
                 }
+                async resolveOutboundMailReference(installation, lookup) {
+                  if (installation.installationId.length === 0) throw new Error("missing installation");
+                  return { version: 1, outboundId: lookup.outboundId, fingerprint: "sha256:" + "a".repeat(64) };
+                }
                 async claimOutboundMail(installation, reference) {
                   if (
                     installation.installationId.length === 0

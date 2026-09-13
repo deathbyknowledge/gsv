@@ -9,6 +9,7 @@ import type {
   ManagedMailIntakePage,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
+  ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
 } from "../protocol/mail";
 /** Mail transport contract implemented by a Gateway deployment. */
@@ -26,6 +27,10 @@ export interface MailGatewayService {
     installation: AdapterInstallationContext,
     reference: ManagedOutboundMailReference,
   ): Promise<ManagedOutboundMailClaimOutcome>;
+  resolveOutboundMailReference(
+    installation: AdapterInstallationContext,
+    lookup: ManagedOutboundMailLookup,
+  ): Promise<ManagedOutboundMailReference | null>;
   completeOutboundMail(
     installation: AdapterInstallationContext,
     completion: ManagedOutboundMailCompletion,
@@ -63,5 +68,6 @@ export type {
   ManagedMailIntakePage,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
+  ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
 } from "../protocol/mail";

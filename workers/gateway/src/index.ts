@@ -13,6 +13,7 @@ import type {
   ManagedTelegramGatewayService,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
+  ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
@@ -291,6 +292,19 @@ export class GatewayEntrypoint
     completion: ManagedInboundMailCompletion,
   ): Promise<void> {
     await this.completeManagedInboundMail(installation, completion);
+  }
+
+  async resolveOutboundMailReference(
+    installation: AdapterInstallationContext,
+    lookup: ManagedOutboundMailLookup,
+  ): Promise<ManagedOutboundMailReference | null> {
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    if (this.env.INSTALLATION_DIRECTORY) {
+      const gate = await managedInstallationWorkGate(this.env, installationId);
+      if (!gate.allowed) throw new Error(gate.message);
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.resolveOutboundMailReference(lookup);
   }
 
   async claimOutboundMail(

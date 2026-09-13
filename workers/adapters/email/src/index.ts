@@ -88,12 +88,46 @@ export async function handleOutboundCommand(
 ): Promise<void> {
   const command = parseOutboundCommand(value);
   if (!command) return;
+  const admission = await resolveOutboundAdmission(env, command.installationId);
+  if (admission === "retired") return;
+  if (admission !== "active") throw new Error("Mail installation is not active");
   const installation = Object.freeze({
     installationId: command.installationId,
   });
-  await env.MAIL_INSTALLATIONS.getByName(
-    installation.installationId,
-  ).deliverOutbound(installation, command);
+  try {
+    const reference = command.version === 1
+      ? command
+      : await env.GATEWAY.resolveOutboundMailReference(installation, {
+        outboundId: command.outboundId,
+      });
+    if (reference === null) return;
+    if (
+      reference.version !== 1
+      || reference.outboundId !== command.outboundId
+      || !validFingerprint(reference.fingerprint)
+    ) {
+      throw new Error("Gateway returned a mismatched mail reference");
+    }
+    await env.MAIL_INSTALLATIONS.getByName(
+      installation.installationId,
+    ).deliverOutbound(installation, reference);
+  } catch (error) {
+    // A lost RPC reply can arrive after retirement; only an exact terminal
+    // directory result makes that queued reference safe to acknowledge.
+    const after = await resolveOutboundAdmission(env, command.installationId).catch(() => "retry" as const);
+    if (after !== "retired") throw error;
+  }
+}
+
+async function resolveOutboundAdmission(
+  env: MailEnv,
+  installationId: string,
+): Promise<"active" | "retired" | "retry"> {
+  const result = await env.ACCOUNTS.resolveInstallation(installationId);
+  if (!result.found) return "retired";
+  if (result.installationId !== installationId) throw new Error("Accounts returned a mismatched mail installation");
+  if (["retained", "deleting", "deleted"].includes(result.state)) return "retired";
+  return result.state === "active" ? "active" : "retry";
 }
 
 export async function handleIncomingMail(
@@ -201,14 +235,21 @@ function parseOutboundCommand(value: ExternalValue): ManagedOutboundMailCommand 
   // SAFETY: The constructor guard establishes a plain command object.
   const command = value as Record<string, ExternalValue>;
   if (
-    command.version !== 1
-    || String(command.installationId) !== command.installationId
+    String(command.installationId) !== command.installationId
     || command.installationId === undefined
     || !boundedOutboundId(command.outboundId)
-    || !validFingerprint(command.fingerprint)
   ) {
     return null;
   }
+  const keys = Object.keys(command);
+  if (command.version === 2 && keys.length === 3) {
+    return {
+      version: 2,
+      installationId: command.installationId,
+      outboundId: command.outboundId,
+    };
+  }
+  if (command.version !== 1 || keys.length !== 4 || !validFingerprint(command.fingerprint)) return null;
   return {
     version: 1,
     installationId: command.installationId,

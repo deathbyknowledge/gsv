@@ -8,6 +8,8 @@ import type {
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
+import type { MailEnv } from "../src/env";
+import { handleOutboundCommand } from "../src/index";
 import type { MailInstallation } from "../src/mail-installation";
 
 type OutboundPayload = {
@@ -119,6 +121,30 @@ function deliveryRows(state: DurableObjectState): DeliveryRow[] {
 }
 
 describe("managed outbound mail delivery", () => {
+  it.each([[1, 2], [2, 1]] as const)("sends once when queue versions %i then %i reference the same immutable draft", async (first, second) => {
+    const installationId = `installation_outbound_versions_${first}_${second}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const outboundId = `outbound-versions-${first}-${second}`;
+    const calls = await withSend(stub, async () => {
+      // SAFETY: Wrangler test service bindings implement these Mail RPC contracts.
+      const queueEnv = env as typeof env & MailEnv;
+      for (const version of [first, second]) {
+        await handleOutboundCommand(version === 1
+          ? { ...reference(outboundId), installationId }
+          : { version: 2, installationId, outboundId }, queueEnv);
+      }
+    });
+
+    expect(calls).toHaveLength(1);
+    const rows = await runInDurableObject(stub, (_instance, state) => deliveryRows(state));
+    expect(rows).toEqual([expect.objectContaining({
+      outbound_id: outboundId,
+      state: "accepted",
+      provider_message_id: "provider_1",
+      callback_attempts: 1,
+    })]);
+  });
+
   it("uses the trusted draft and accepts a successful structured send once", async () => {
     const installationId = "installation_outbound_success";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
