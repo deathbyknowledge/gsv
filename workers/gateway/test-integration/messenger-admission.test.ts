@@ -42,7 +42,7 @@ async function rpc(socket: Socket, call: string, args: JsonObject): Promise<Resp
 }
 async function ok(socket: Socket, call: string, args: JsonObject): Promise<JsonValue | undefined> {
   const response = await rpc(socket, call, args);
-  expect(response, call).toMatchObject({ ok: true });
+  expect(response, `${call}: ${response.error?.message ?? "expected success"}`).toMatchObject({ ok: true });
   return response.data;
 }
 

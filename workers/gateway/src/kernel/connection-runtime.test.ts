@@ -119,6 +119,63 @@ describe("ConnectionRuntime contact notifications", () => {
   });
 });
 
+describe("ConnectionRuntime credential revocation notifications", () => {
+  it.each(["all", "except"] as const)("skips a superseded socket awaiting close cleanup in the %s UID broadcast", (mode) => {
+    const signal = mode === "all" ? "adapter.status" : "message.committed";
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" }, grant: { calls: ["*"], signals: [signal], implements: [] } };
+    const old = fakeSocket({ step: "connected", protocol: 4, peer, credentialEpoch: 0 });
+    const current = fakeSocket({ step: "connected", protocol: 4, peer });
+    old.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const { runtime, host } = runtimeWith([old, current]);
+    runtime.rehydrateConnections();
+    runtime.activateConnection(Array.from(host.connections.values())[1], { step: "connected", protocol: 4, peer, credentialEpoch: 1 });
+    host.auth.credentialEpoch.mockReturnValue(1);
+    runtime.invalidateAccountConnections(1000);
+    expect(old.close).toHaveBeenCalledWith(1008, "Credentials changed; sign in again");
+    expect(host.connections.size).toBe(2);
+    const broadcast = () => mode === "all"
+      ? runtime.broadcastToUserUid(1000, signal)
+      : runtime.broadcastToUserUidExcept(1000, "other-connection", signal);
+    expect(broadcast).not.toThrow();
+    expect(old.send).not.toHaveBeenCalled();
+    expect(current.close).not.toHaveBeenCalled();
+    expect(current.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: "sig", signal }));
+  });
+
+  it.each(["all", "except"] as const)("isolates a failed active recipient in the %s UID broadcast", (mode) => {
+    const signal = mode === "all" ? "adapter.status" : "message.committed";
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" }, grant: { calls: ["*"], signals: [signal], implements: [] } };
+    const failed = fakeSocket({ step: "connected", protocol: 4, peer });
+    const healthy = fakeSocket({ step: "connected", protocol: 4, peer });
+    failed.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const { runtime } = runtimeWith([failed, healthy]);
+    runtime.rehydrateConnections();
+    const broadcast = () => mode === "all"
+      ? runtime.broadcastToUserUid(1000, signal)
+      : runtime.broadcastToUserUidExcept(1000, "other-connection", signal);
+    expect(broadcast).not.toThrow();
+    expect(failed.close).toHaveBeenCalledWith(1011, "User feed interrupted");
+    expect(healthy.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: "sig", signal }));
+  });
+
+  it("skips a superseded socket when sending a targeted Process notification", () => {
+    const signal = "message.committed";
+    const peer: ConnectedPeer = { ...MACHINE_PEER, principal: { ...MACHINE_PEER.principal, kind: "human" }, grant: { calls: ["*"], signals: [signal], implements: [] } };
+    const old = fakeSocket({ step: "connected", protocol: 4, peer });
+    const current = fakeSocket({ step: "connected", protocol: 4, peer });
+    const { runtime, host } = runtimeWith([old, current]);
+    runtime.rehydrateConnections();
+    const [oldId, currentId] = Array.from(host.connections.keys());
+    runtime.activateConnection(host.connections.get(currentId), { step: "connected", protocol: 4, peer, credentialEpoch: 1 });
+    host.auth.credentialEpoch.mockReturnValue(1);
+    runtime.invalidateAccountConnections(1000);
+    runtime.sendSignalToConnection(oldId, signal);
+    runtime.sendSignalToConnection(currentId, signal);
+    expect(old.send).not.toHaveBeenCalled();
+    expect(current.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: "sig", signal }));
+  });
+});
+
 describe("ConnectionRuntime process notifications", () => {
   it.each(["proc.changed", "process.exit"])("delivers %s only to the owner and survives a failed connection", (signal) => {
     const socket = (uid = 1000, signals = [signal], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({

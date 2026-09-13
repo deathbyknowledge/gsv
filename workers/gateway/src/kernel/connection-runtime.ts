@@ -320,24 +320,22 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"
       : signal === "sched.changed" ? "sched.list" : null;
-    const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
+    const interruptedReason = contactRead ? "Contact feed interrupted"
+      : signal === "proc.changed" || signal === "process.exit" ? "Process feed interrupted"
+      : "User feed interrupted";
 
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
-      if (!peer || peer.principal.kind !== "human") continue;
+      if (state.step !== "connected" || !peer || peer.principal.kind !== "human") continue;
       if (!peer.grant.signals.includes(signal)) continue;
-      if (guardedFeed && state.step !== "connected") continue;
       // Contact notifications reveal private activity even without a payload.
       if (contactRead && !hasCapability(peer.grant.calls, contactRead)) continue;
       if (peer.principal.account.uid === uid) {
-        if (!guardedFeed) conn.send(json);
-        else {
-          try {
-            conn.send(json);
-          } catch {
-            conn.close(1011, contactRead ? "Contact feed interrupted" : "Process feed interrupted");
-          }
+        try {
+          conn.send(json);
+        } catch {
+          conn.close(1011, interruptedReason);
         }
       }
     }
@@ -373,11 +371,16 @@ broadcastToUserUidExcept(
       const state = connection.state;
       const peer = state?.peer;
       if (
-        peer?.principal.kind === "human"
+        state.step === "connected"
+        && peer?.principal.kind === "human"
         && peer.principal.account.uid === uid
         && peer.grant.signals.includes(signal)
       ) {
-        connection.send(json);
+        try {
+          connection.send(json);
+        } catch {
+          connection.close(1011, "User feed interrupted");
+        }
       }
     }
   }
@@ -388,7 +391,7 @@ sendSignalToConnection(
     payload?: JsonValue,
   ): void {
     const connection = this.host.connections.get(connectionId);
-    if (!connection?.state.peer?.grant.signals.includes(signal)) return;
+    if (connection?.state.step !== "connected" || !connection.state.peer?.grant.signals.includes(signal)) return;
     connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
   }
 

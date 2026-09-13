@@ -1230,10 +1230,10 @@ describe("Kernel device connection cleanup", () => {
 
 describe("Kernel user signal broadcasts", () => {
   it("does not send user signals to driver or service sockets", () => {
-    const user = { state: { peer: connectedPeer("human", "web", 1000) }, send: vi.fn() };
-    const otherUser = { state: { peer: connectedPeer("human", "web-other", 2000) }, send: vi.fn() };
-    const driver = { state: { peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
-    const service = { state: { peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
+    const user = { state: { step: "connected", peer: connectedPeer("human", "web", 1000) }, send: vi.fn() };
+    const otherUser = { state: { step: "connected", peer: connectedPeer("human", "web-other", 2000) }, send: vi.fn() };
+    const driver = { state: { step: "connected", peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
+    const service = { state: { step: "connected", peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.connections = new Map([
@@ -1424,11 +1424,11 @@ describe("Kernel canonical message commits", () => {
     };
     const kernel = buildCommitKernel(route);
     const origin = {
-      state: { peer: connectedPeer("human", "origin", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "origin", 1000) },
       send: vi.fn(),
     };
     const observer = {
-      state: { peer: connectedPeer("human", "observer", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "observer", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["origin", origin], ["observer", observer]]);
@@ -1496,7 +1496,7 @@ describe("Kernel canonical message commits", () => {
     const kernel = buildCommitKernel(null);
     kernel.adapterDelivery.materializePersonalAdapterFallback.mockReturnValue(route);
     const synced = {
-      state: { peer: connectedPeer("human", "web", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "web", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["web", synced]]);
