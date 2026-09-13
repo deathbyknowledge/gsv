@@ -3,15 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { GatewayLifecycleEntrypoint } from "./deletion-entrypoint";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 
-function fixture(authority: string | undefined = "installation-deletion", retiredState = "retained") {
+function fixture(authority: string | undefined = "installation-deletion", retiredState = "retained", retiredId = "inst_retired") {
   const ctx = createExecutionContext();
   Object.defineProperty(ctx, "props", { value: authority ? { authority } : {} });
   const inspectInstallationResource = vi.fn(async () => ({ name: "inst_other", empty: false }));
   const installationDeletionStatus = vi.fn(async (input: InstallationDeletionRequest) => ({ ...input, phase: "erased" as const }));
   const getByName = vi.fn(() => ({ inspectInstallationResource, installationDeletionStatus }));
   const resolveInstallation = vi.fn(async (installationId: string) => ({
-    found: installationId === "inst_retired" || installationId === "inst_other", installationId,
-    state: installationId === "inst_retired" ? retiredState : "active",
+    found: installationId === retiredId || installationId === "inst_other", installationId,
+    state: installationId === retiredId ? retiredState : "active",
   }));
   const idFromString = vi.fn((value: string) => value);
   const idFromName = vi.fn((name: string) => ({ equals: (value: string) => name === "inst_other" && value === "a".repeat(64) }));
@@ -66,6 +66,15 @@ describe("installation deletion discovery authority", () => {
       await expect(f.entrypoint.inspectInstallationDeletion({ installationId: request.installationId, resources: [resource] })).rejects.toThrow("retained before discovery");
       expect(f.getByName).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("keeps explicitly authorized historical Kernel cleanup separate from live admission", async () => {
+    const f = fixture("installation-deletion", "retained", "singleton");
+    const request = { version: 1 as const, installationId: "singleton", operationId: "erase_historical" };
+    await expect(f.entrypoint.installationDeletionStatus(request)).resolves.toEqual({ ...request, phase: "erased" });
+    expect(f.resolveInstallation).toHaveBeenCalledExactlyOnceWith("singleton");
+    expect(f.getByName).toHaveBeenCalledExactlyOnceWith("singleton");
+    expect(f.installationDeletionStatus).toHaveBeenCalledExactlyOnceWith(request);
   });
 
   it.each(["active", "restricted"])("does not allocate a Kernel for a lifecycle request against %s state", async (state) => {

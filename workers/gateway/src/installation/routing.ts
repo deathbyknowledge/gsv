@@ -154,6 +154,7 @@ export async function resolveInstallationRoute(
   let installationId: string;
   try {
     installationId = parseInstallationId(result.installationId);
+    assertLiveKernelAdmission(installationId);
   } catch {
     return null;
   }
@@ -178,7 +179,15 @@ export async function getKernelByInstallationId(
   namespace: DurableObjectNamespace<Kernel>,
   installationId: string,
 ): Promise<DurableObjectStub<Kernel>> {
-  return namespace.getByName(parseInstallationId(installationId));
+  const parsed = parseInstallationId(installationId);
+  assertLiveKernelAdmission(parsed);
+  return namespace.getByName(parsed);
+}
+
+function assertLiveKernelAdmission(installationId: string): void {
+  if (installationId === "singleton") {
+    throw new Error("Historical singleton Kernel is reserved for attribution and cleanup");
+  }
 }
 
 // TODO: this should move to wherever we put an actual implementation for it
