@@ -215,14 +215,15 @@ export class AccountsDeletionRuntime {
 
   async resumePending(): Promise<void> {
     // A verified registration authorizes the already-pending reset cleanup job.
-    const pending = await this.db.prepare(`SELECT r.previous_installation_id AS installation_id, i.sha256
+    const pending = await this.db.prepare(`SELECT r.previous_installation_id AS installation_id, i.sha256, a.operation_id
       FROM installation_reset_operations r JOIN installation_deletion_inventories i ON i.installation_id = r.previous_installation_id
+      LEFT JOIN installation_account_deletions a ON a.installation_id = r.previous_installation_id
       WHERE r.data_deletion_state IN ('pending', 'deleting', 'failed')
         AND NOT EXISTS (SELECT 1 FROM installation_deletions d WHERE d.installation_id = r.previous_installation_id)
         AND NOT EXISTS (SELECT 1 FROM installation_reset_participants p WHERE p.operation_id = r.operation_id AND p.state != 'prepared')
-      ORDER BY i.verified_at DESC LIMIT 10`).all<{ installation_id: string; sha256: string }>();
+      ORDER BY i.verified_at DESC LIMIT 10`).all<{ installation_id: string; sha256: string; operation_id: string | null }>();
     for (const record of pending.results) {
-      try { await this.begin(record.installation_id, { operationId: crypto.randomUUID(), inventorySha256: record.sha256 }); }
+      try { await this.begin(record.installation_id, { operationId: record.operation_id ?? crypto.randomUUID(), inventorySha256: record.sha256 }); }
       catch { /* Another job may have admitted the same immutable identity. */ }
     }
     await this.coordinator.resumePending();

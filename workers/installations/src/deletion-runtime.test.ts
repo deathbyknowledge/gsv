@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { JsonValue } from "./http";
 import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { AccountStore } from "./store";
+import { InstallationResetCoordinator } from "./reset-preparation";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
 import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
@@ -164,6 +165,61 @@ describe("Accounts deletion runtime", () => {
     await runtime.resumePending();
     expect((await runtime.status(state.old.installationId)).phase).toBe("erasing");
     expect(await state.accounts.resolveInstallation(reset.installationId)).toMatchObject({ state: "reserved" });
+  });
+
+  it("resumes a registered reset cleanup with its pinned retirement operation after restart", async () => {
+    const state = await fixture();
+    const reset = await new InstallationResetCoordinator(state.db, state.accounts, {
+      inference: { prepareInstallationReset: async (input) => ({ ...input, state: "prepared" }) },
+    }).reset({ installationId: state.old.installationId, operationId: `reset-${state.operationId}`, confirmHandle: state.old.handle });
+    const preserved = () => state.db.batch([
+      state.db.prepare("SELECT * FROM installations WHERE id IN (?, ?) ORDER BY id").bind(reset.installationId, state.second.installationId),
+      state.db.prepare("SELECT * FROM hostnames WHERE installation_id IN (?, ?) ORDER BY normalized_hostname").bind(reset.installationId, state.second.installationId),
+      state.db.prepare("SELECT * FROM memberships WHERE installation_id IN (?, ?) ORDER BY installation_id, principal_id")
+        .bind(reset.installationId, state.second.installationId),
+    ]).then((results) => results.map((result) => result.results));
+    const before = await preserved();
+    const discovery: InstallationDeletionDiscoveryService = {
+      inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn<InstallationDeletionDiscoveryService["importInstallationDeletionInventory"]>(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified", verifiedAt: state.manifest.capturedAt })),
+    };
+    const makeRuntime = () => new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20,
+      () => state.manifest.capturedAt, { gateway: discovery });
+    const resources: InstallationDeletionInventoryImport["resources"] = [
+      { kind: "kernel", objectId: "a".repeat(64), name: state.old.installationId },
+    ];
+    state.manifest.owners.find((owner) => owner.id === "gateway")!.resources = resources.map((resource) => ({
+      kind: "durable-object", namespace: resource.kind, resourceId: resource.objectId, name: resource.name,
+    }));
+    const runtime = makeRuntime();
+    const retired = await state.db.prepare("SELECT handle FROM installations WHERE id = ?")
+      .bind(state.old.installationId).first<{ handle: string }>();
+    if (!retired) throw new Error("Missing retired installation");
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: retired.handle });
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    await runtime.resumePending();
+    expect(await state.db.prepare("SELECT * FROM installation_deletions WHERE installation_id = ?")
+      .bind(state.old.installationId).first()).toBeNull();
+    expect(await runtime.importInventory(state.old.installationId, {
+      installationId: state.old.installationId, discoverySha256: registered.sha256, resources,
+    })).toMatchObject({ outcome: "verified" });
+
+    const restarted = makeRuntime();
+    await restarted.resumePending();
+    expect(await restarted.status(state.old.installationId)).toMatchObject({
+      operationId: state.operationId, installationId: state.old.installationId, phase: "erasing",
+    });
+    await restarted.resumePending();
+    const progress = await restarted.status(state.old.installationId);
+    expect(progress.operationId).toBe(state.operationId);
+    expect(progress.owners.filter((owner) => owner.id !== "accounts").every((owner) => owner.receipt?.phase === "erased")).toBe(true);
+    expect(progress.owners.every((owner) => owner.receipt?.operationId === state.operationId)).toBe(true);
+    expect((await state.db.prepare("SELECT operation_id, inventory_sha256 FROM installation_deletions WHERE installation_id = ?")
+      .bind(state.old.installationId).all()).results).toEqual([{ operation_id: state.operationId, inventory_sha256: registered.sha256 }]);
+    expect(await state.accounts.getResetByOperation(reset.operationId)).toMatchObject({ dataDeletionState: "deleting" });
+    expect(await preserved()).toEqual(before);
+    expect(await state.accounts.getPrincipal(state.principal.id)).not.toBeNull();
   });
 
   it("binds uploaded evidence bytes to immutable reviewed references", async () => {
