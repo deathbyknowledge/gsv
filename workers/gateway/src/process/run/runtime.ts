@@ -1942,8 +1942,11 @@ export class ProcessRun {
       return;
     }
 
-    run.tickGeneration = generation + 1;
-    this.host.runs.active = run;
+    const current = this.host.runs.active;
+    if (!current || current.runId !== runId || (current.tickGeneration ?? 0) !== generation) {
+      return;
+    }
+    this.host.runs.active = { ...current, tickGeneration: generation + 1 };
     if (this.host.activeTickRunIds.has(runId)) {
       this.host.deferredTickRunIds.add(runId);
       return;

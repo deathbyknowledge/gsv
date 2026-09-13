@@ -4,7 +4,7 @@ import type { Process } from "./do";
 import type { InferenceAttribution } from "../inference/provider";
 import { runStateSchema } from "./run/state";
 import {
-  assistantResponse, captureSignals, generationRun, initProcess, messageAction,
+  assistantResponse, captureSignals, deferred, generationRun, initProcess, messageAction,
   mockGeneration, processTestConfig, ROOT_IDENTITY, runInProcess, testUsage,
 } from "./do-test-harness";
 
@@ -72,6 +72,35 @@ describe("Process inference retry identity", () => {
       return first;
     });
     expect(restored).toEqual(before);
+  });
+
+  it.each([false, true])("preserves a retry admitted while tick waits for its gate, newer tick=%s", async (newerTick) => {
+    const pid = `inference-retry-held-tick-${newerTick}`;
+    const runId = `run-${pid}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      captureSignals(process);
+      const entered = deferred();
+      const release = deferred();
+      process.run.managedWorkGate = async () => {
+        entered.resolve();
+        await release.promise;
+        return { allowed: true };
+      };
+      process.runs.active = { runId, tickGeneration: 0 };
+      process.activeTickRunIds.add(runId);
+      const tick = process.run.tick({ runId, generation: 0 });
+      await entered.promise;
+      await process.run.beginGenerationRetry({ runId, attempt: 1, maxAttempts: 3, reason: "empty", cause: "empty" });
+      if (newerTick) process.mutateActiveRun(runId, (run) => ({ ...run, tickGeneration: 2 }));
+      const before = await process.run.buildInferenceAttribution({ provider: "test", model: "test" }, "run", runId);
+      release.resolve();
+      await tick;
+      expect(process.runs.active).toMatchObject({ runId, generationRetryRevision: 1, tickGeneration: newerTick ? 2 : 1 });
+      expect(process.deferredTickRunIds.has(runId)).toBe(!newerTick);
+      expect(await process.run.buildInferenceAttribution({ provider: "test", model: "test" }, "run", runId)).toEqual(before);
+      process.activeTickRunIds.delete(runId);
+    });
   });
 
   it("rotates same-model fallback attempts without mutating a stopped or replaced run", async () => {
