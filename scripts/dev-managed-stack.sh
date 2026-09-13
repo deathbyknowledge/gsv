@@ -32,6 +32,7 @@ npm run build --workspace web
 
 printf '\nManaged GSV is starting on http://localhost:8976\n'
 printf 'Open http://localhost:8976/admin to create an installation.\n'
+printf 'Listening on 127.0.0.1 only; administration uses the configured localhost origin.\n'
 printf 'Then open the one-time onboarding link issued by the registry.\n'
 printf 'State: %s\n\n' "$STATE_DIR"
 
@@ -44,7 +45,7 @@ exec env \
   --config "$INFERENCE_DIR/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/ripgit/wrangler.managed.dev.jsonc" \
   --config "$ROOT_DIR/workers/adapters/email/wrangler.dev.jsonc" \
-  --ip 0.0.0.0 \
+  --ip 127.0.0.1 \
   --port 8976 \
   --env-file "$MANAGED_ENV_FILE" \
   --local \

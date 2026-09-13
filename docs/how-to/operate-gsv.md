@@ -132,8 +132,9 @@ For local development, `npm run dev` builds the SDK and web assets, applies publ
 migrations to a separate local database and runs the four public Workers. Open
 `http://localhost:8976/admin`, create an installation and follow its setup link at
 `http://<handle>.localhost:8976`. No private repository is required. The local
-administration bypass admits only the configured localhost origin. The default
-state directory is `.wrangler/operator-dev-state`; set `GSV_DEV_STATE_DIR` to use
+administration bypass admits only the configured localhost origin; both local
+development scripts bind to `127.0.0.1` so this bypass is not exposed to the LAN.
+The default state directory is `.wrangler/operator-dev-state`; set `GSV_DEV_STATE_DIR` to use
 another disposable directory. Model calls still require an available provider.
 
 This composition and the migration tooling have local D1 and configuration tests.

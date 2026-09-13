@@ -18,7 +18,7 @@ npm run build --workspace web
 
 printf '\nGSV is starting on http://localhost:8976\n'
 printf 'Open http://localhost:8976/admin to create an installation.\n'
-printf 'The local administration bypass is limited to the configured localhost origin.\n'
+printf 'Listening on 127.0.0.1 only; administration uses the configured localhost origin.\n'
 printf 'State: %s\n\n' "$DEV_STATE_DIR"
 
 cd "$ROOT_DIR/workers/ripgit"
@@ -27,4 +27,4 @@ exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false npm exec --workspaces=false -- wra
   --config "$ROOT_DIR/workers/installations/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/inference/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/ripgit/wrangler.dev.jsonc" \
-  --ip 0.0.0.0 --port 8976 --local --persist-to "$DEV_STATE_DIR"
+  --ip 127.0.0.1 --port 8976 --local --persist-to "$DEV_STATE_DIR"
