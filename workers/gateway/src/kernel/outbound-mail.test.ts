@@ -7,6 +7,7 @@ import { testPeer } from "../test-support/peers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
+import type { InstallationDirectoryResult } from "@humansandmachines/gsv/services/directory";
 import { MailboxStore } from "./mailbox-store";
 import {
   claimManagedOutboundMail,
@@ -14,9 +15,196 @@ import {
   handleMailSend,
   recoverManagedOutboundEnqueue,
   resolveOutboundMailReference,
+  outboundEnqueueRetryDelay,
 } from "./outbound-mail";
 
 describe("managed outbound mail", () => {
+  it("converges interrupted current and successor tasks into one chain after Kernel eviction", async () => {
+    const stub = env.KERNEL.getByName(crypto.randomUUID());
+    const outboundId = "mail-outbound:interrupted-successor";
+    const bytes = new TextEncoder().encode("Owned body");
+    const fingerprint = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const currentId = await runInDurableObject(stub, async (instance: Kernel, state) => {
+      instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "interrupted-successor",
+        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Interrupted fixture", bodyDigest: fingerprint,
+        bodyPath: "/home/fixture/.gsv/mail/outbox/interrupted.txt", textSize: bytes.byteLength, createdAt: 1 });
+      await instance.bindings.STORAGE.put("home/fixture/.gsv/mail/outbox/interrupted.txt", bytes);
+      instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
+      instance.mailboxes.markOutboundEnqueued(outboundId, fingerprint);
+      const current = await instance.schedule(new Date(Date.now() + 3_600_000), "onManagedOutboundEnqueue", outboundId);
+      await instance.scheduleManagedOutboundEnqueue(outboundId, Date.now() + 7_200_000, current.id);
+      expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toHaveLength(2);
+      return current.id;
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance: Kernel, state) => {
+      const previous = instance.env.MANAGED_MAIL_OUTBOUND;
+      const send = vi.fn(async () => ({ metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } }));
+      instance.env.MANAGED_MAIL_OUTBOUND = { send, sendBatch: vi.fn(async () => { throw new Error("Unexpected batch"); }), metrics: vi.fn(async () => ({ backlogCount: 0, backlogBytes: 0 })) };
+      try {
+        state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE id = ?", currentId);
+        await instance.alarm();
+        const pending = state.storage.sql.exec<{ id: string }>("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray();
+        expect(pending).toHaveLength(1);
+        expect(pending[0].id).not.toBe(currentId);
+        state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE id = ?", pending[0].id);
+        await instance.alarm();
+        expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toHaveLength(1);
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send.mock.calls[0]).toEqual(send.mock.calls[1]);
+        expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 2 });
+      } finally { instance.env.MANAGED_MAIL_OUTBOUND = previous; }
+    });
+  });
+
+  it("restores an already-enqueued legacy intent with no task across Kernel eviction", async () => {
+    const installationId = crypto.randomUUID();
+    const stub = env.KERNEL.getByName(installationId);
+    const outboundId = "mail-outbound:legacy-pending";
+    const fingerprint = `sha256:${"a".repeat(64)}`;
+    await runInDurableObject(stub, (instance: Kernel) => {
+      instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "legacy-pending",
+        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Pending fixture", bodyDigest: fingerprint,
+        bodyPath: "/home/fixture/.gsv/mail/outbox/pending.txt", textSize: 10, createdAt: 1 });
+      instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
+      instance.mailboxes.markOutboundEnqueued(outboundId, fingerprint);
+    });
+    for (let restart = 0; restart < 2; restart += 1) {
+      await evictDurableObject(stub);
+      await runInDurableObject(stub, (instance: Kernel, state) => {
+        expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "queued", enqueuedAt: expect.any(Number) });
+        expect(state.storage.sql.exec<{ payload: string }>("SELECT payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray())
+          .toEqual([{ payload: JSON.stringify(outboundId) }]);
+      });
+    }
+    await runInDurableObject(stub, async (instance: Kernel, state) => {
+      await instance.completeManagedOutboundMail({ version: 1, outboundId, fingerprint, state: "accepted", providerMessageId: "legacy-provider" });
+      state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE callback = 'onManagedOutboundEnqueue'");
+      await instance.alarm();
+      expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toEqual([]);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (_instance: Kernel, state) => {
+      expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toEqual([]);
+    });
+  });
+
+  it("re-publishes dropped queue notifications from the durable outbox until exact completion", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      let ctx = outboundContext(sql, storage, queue);
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "Dropped notifications", text: "Keep this intent.", deliveryId: "dropped-queue" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const first = ctx.mailboxes.getOutbound(sent.outboundId)!;
+      for (let attempt = 2; attempt <= 8; attempt += 1) {
+        ctx = outboundContext(sql, storage, queue);
+        const before = Date.now();
+        await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+        const next = ctx.mailboxes.getOutbound(sent.outboundId)!;
+        expect(next).toMatchObject({ state: "queued", enqueuedAt: first.enqueuedAt, enqueueAttempts: attempt, fingerprint: first.fingerprint });
+        expect(next.enqueueNextAt).toBeGreaterThanOrEqual(before + outboundEnqueueRetryDelay(attempt));
+        expect(ctx.scheduleManagedOutboundEnqueue).toHaveBeenCalledExactlyOnceWith(sent.outboundId, next.enqueueNextAt);
+      }
+      const command = { version: 2, installationId: ctx.installationId, outboundId: sent.outboundId };
+      expect(queue.send.mock.calls).toEqual(Array.from({ length: 8 }, () => [command]));
+      completeManagedOutboundMail({ version: 1, outboundId: sent.outboundId, fingerprint: first.fingerprint, state: "accepted", providerMessageId: "provider-once" }, ctx);
+      const afterCompletion = outboundContext(sql, storage, queue);
+      await recoverManagedOutboundEnqueue(sent.outboundId, afterCompletion, true);
+      expect(queue.send).toHaveBeenCalledTimes(8);
+      expect(afterCompletion.scheduleManagedOutboundEnqueue).not.toHaveBeenCalled();
+      expect(afterCompletion.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "accepted", enqueueNextAt: null });
+    });
+  });
+
+  it.each([false, true])("preserves a delayed accepted completion with missing bytes and lost Queue reply=%s", async (lostReply) => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      if (lostReply) queue.send.mockRejectedValueOnce(new Error("Queue accepted but its reply was lost"));
+      const ctx = outboundContext(sql, storage, queue);
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "Delayed receipt", text: "Provider already accepted this.", deliveryId: "delayed-accepted" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const outbound = ctx.mailboxes.getOutbound(sent.outboundId)!;
+      expect(outbound.enqueuedAt).toEqual(lostReply ? null : expect.any(Number));
+      const reference = { version: 1 as const, outboundId: sent.outboundId, fingerprint: outbound.fingerprint };
+      const claimed = await claimManagedOutboundMail(reference, ctx);
+      expect(claimed.status).toBe("ready");
+      if (claimed.status !== "ready") throw new Error("Fixture claim was not ready");
+      expect(await new Response(claimed.body.stream).text()).toBe("Provider already accepted this.");
+      storage.delete(outbound.bodyPath.slice(1));
+      const read = vi.spyOn(storage, "get");
+      const restarted = outboundContext(sql, storage, queue);
+      await recoverManagedOutboundEnqueue(sent.outboundId, restarted, true);
+      expect(read).not.toHaveBeenCalled();
+      expect(queue.send).toHaveBeenCalledTimes(2);
+      expect(queue.send.mock.calls[1]).toEqual(queue.send.mock.calls[0]);
+      expect(restarted.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", fingerprint: reference.fingerprint });
+      completeManagedOutboundMail({ ...reference, state: "accepted", providerMessageId: "accepted-before-retry" }, restarted);
+      expect(restarted.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "accepted", providerMessageId: "accepted-before-retry" });
+    });
+  });
+
+  it("fails an incomplete staging intent before publication when its body is missing", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), queue);
+      const outboundId = "mail-outbound:staging-body-missing";
+      const fingerprint = `sha256:${"a".repeat(64)}`;
+      ctx.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "staging-body-missing",
+        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Incomplete staging", bodyDigest: fingerprint,
+        bodyPath: "/home/fixture/.gsv/mail/outbox/missing.txt", textSize: 10, createdAt: 1 });
+      await recoverManagedOutboundEnqueue(outboundId, ctx, true);
+      expect(queue.send).not.toHaveBeenCalled();
+      expect(ctx.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "failed", errorCode: "body_unavailable" });
+    });
+  });
+
+  it("keeps queue publication paused beyond transport retries and resumes after reactivation", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, storage, queue);
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "Paused intent", text: "Wait for reactivation.", deliveryId: "restricted-queue" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const identity = { found: true as const, installationId: ctx.installationId, handle: "hank", canonicalOrigin: "https://hank.gsv.space" };
+      const resolve = vi.fn<() => Promise<InstallationDirectoryResult>>(async () => ({ ...identity, state: "restricted" }));
+      ctx.env.INSTALLATION_DIRECTORY = { resolveHostname: resolve, resolveInstallation: resolve };
+      const read = vi.spyOn(storage, "get");
+      for (let attempt = 0; attempt < 7; attempt += 1) await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      resolve.mockRejectedValueOnce(new Error("Directory unavailable"));
+      await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      expect(queue.send).toHaveBeenCalledOnce();
+      expect(read).not.toHaveBeenCalled();
+      expect(ctx.scheduleManagedOutboundEnqueue).toHaveBeenCalledTimes(9);
+      expect(ctx.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 9 });
+      resolve.mockResolvedValue({ ...identity, state: "active" });
+      await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      expect(queue.send).toHaveBeenCalledTimes(2);
+      expect(queue.send.mock.calls[1]).toEqual(queue.send.mock.calls[0]);
+      expect(ctx.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", enqueueAttempts: 10 });
+    });
+  });
+
+  it.each([null, "retained", "deleting", "deleted"] as const)("stops durable publication when the installation becomes %s", async (terminal) => {
+    await runWithRealKernelSql(async (sql) => {
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), queue);
+      const sent = await handleMailSend({ to: "mike@example.com", subject: "Retired intent", text: "No new delivery.", deliveryId: "retired-queue" }, ctx);
+      if (!sent.ok) throw new Error(sent.error);
+      const resolve = async (): Promise<InstallationDirectoryResult> => terminal === null ? { found: false }
+        : { found: true, installationId: ctx.installationId, handle: "hank", canonicalOrigin: "https://hank.gsv.space", state: terminal };
+      ctx.env.INSTALLATION_DIRECTORY = { resolveHostname: resolve, resolveInstallation: resolve };
+      await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      expect(ctx.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "failed", errorCode: "installation_inactive", enqueueNextAt: null });
+      const scheduled = vi.mocked(ctx.scheduleManagedOutboundEnqueue).mock.calls.length;
+      await recoverManagedOutboundEnqueue(sent.outboundId, ctx, true);
+      expect(ctx.scheduleManagedOutboundEnqueue).toHaveBeenCalledTimes(scheduled);
+      expect(queue.send).toHaveBeenCalledOnce();
+      expect(ctx.mailboxes.pendingOutboundEnqueues()).toEqual([]);
+    });
+  });
+
   it("keeps real RPC lookup scoped to each Kernel across eviction and retirement", async () => {
     const firstId = crypto.randomUUID();
     const first = env.KERNEL.getByName(firstId);
@@ -423,7 +611,7 @@ describe("managed outbound mail", () => {
     });
   });
 
-  it("hands recovery to its successor when body verification fails", async () => {
+  it("hands queued reference recovery to its successor during a body-storage outage", async () => {
     await runWithRealKernelSql(async (sql) => {
       const storage = new MemoryR2Bucket();
       const queue = { send: vi.fn().mockRejectedValue(new Error("queue unavailable")) };
@@ -439,11 +627,14 @@ describe("managed outbound mail", () => {
         send: vi.fn(async () => undefined),
       });
       storage.failGet = true;
+      const read = vi.spyOn(storage, "get");
 
       await expect(
         recoverManagedOutboundEnqueue(sent.outboundId, restarted, true),
       ).resolves.toMatchObject({ outboundId: sent.outboundId });
       expect(restarted.scheduleManagedOutboundEnqueue).toHaveBeenCalledTimes(1);
+      expect(read).not.toHaveBeenCalled();
+      expect(restarted.mailboxes.getOutbound(sent.outboundId)).toMatchObject({ state: "queued", enqueuedAt: expect.any(Number) });
     });
   });
 

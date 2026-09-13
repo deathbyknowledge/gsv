@@ -8,6 +8,8 @@ export type DurableTaskRetry = {
 
 export type DurableTaskOptions = {
   idempotent?: boolean;
+  /** Ignore the currently running row when recovering or scheduling its successor. */
+  excludeTaskId?: string;
   retry?: DurableTaskRetry;
 };
 
@@ -80,7 +82,7 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
   ): Promise<DurableTask<Spec>> {
     const task = normalizeTaskInput(when, spec, options);
     if (options.idempotent) {
-      const existing = this.findIdempotentTask(task);
+      const existing = this.findIdempotentTask(task, options.excludeTaskId);
       if (existing) {
         await this.updateAlarm();
         return existing;
@@ -140,15 +142,18 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     await this.updateAlarm();
   }
 
-  private findIdempotentTask(task: DurableTask<Spec>): DurableTask<Spec> | null {
+  private findIdempotentTask(task: DurableTask<Spec>, excludeTaskId?: string): DurableTask<Spec> | null {
     const rows = this.storage.sql.exec<DurableTaskRow>(
       `SELECT id, callback, payload, type, time, delayInSeconds, retry_options
        FROM cf_agents_schedules
        WHERE type = ? AND callback = ? AND payload IS ? AND owner_path_key IS NULL
+         AND (? IS NULL OR id <> ?)
        LIMIT 1`,
       task.type,
       task.callback,
       JSON.stringify(task.payload),
+      excludeTaskId ?? null,
+      excludeTaskId ?? null,
     ).toArray();
     return rows[0] ? taskFromRow(rows[0], this.decode) : null;
   }

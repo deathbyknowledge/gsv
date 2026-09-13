@@ -192,11 +192,12 @@ export async function prepareManagedOutboundEnqueue(
   if (
     !outbound
     || (outbound.state !== "staging" && outbound.state !== "queued")
-    || outbound.enqueuedAt !== null
   ) {
     return null;
   }
-  if (!await outboundBodyMatches(outbound, ctx.env.STORAGE)) {
+  // A queued reference may already be claimed, even when the Queue reply was lost.
+  // Only staging owns pre-publication validation; Mail owns the queued outcome.
+  if (outbound.state === "staging" && !await outboundBodyMatches(outbound, ctx.env.STORAGE)) {
     if (outbound.state === "staging") {
       outbound = ctx.mailboxes.markOutboundQueued(outbound.outboundId, outbound.fingerprint);
     }
@@ -229,28 +230,43 @@ export async function recoverManagedOutboundEnqueue(
   if (
     !current
     || (current.state !== "staging" && current.state !== "queued")
-    || current.enqueuedAt !== null
+    || (!scheduleSuccessor && current.enqueuedAt !== null)
   ) {
     return current;
   }
 
   const nextAt = Date.now()
     + outboundEnqueueRetryDelay(current.enqueueAttempts + 1);
+  const attempted = ctx.mailboxes.beginOutboundEnqueue(current.outboundId, current.fingerprint, nextAt);
+  if (attempted.state !== "staging" && attempted.state !== "queued") return attempted;
   if (scheduleSuccessor) {
+    // Queue acceptance is not delivery: keep this durable intent live until completion.
     await ctx.scheduleManagedOutboundEnqueue(current.outboundId, nextAt);
   }
   try {
+    if (ctx.env.INSTALLATION_DIRECTORY) {
+      const installation = await ctx.env.INSTALLATION_DIRECTORY.resolveInstallation(ctx.installationId);
+      if (installation.found && installation.installationId !== ctx.installationId) {
+        throw new Error("Directory returned a mismatched mail installation");
+      }
+      if (!installation.found || ["retained", "deleting", "deleted"].includes(installation.state)) {
+        const remaining = ctx.mailboxes.getOutbound(outboundId);
+        if (remaining?.state === "staging") ctx.mailboxes.markOutboundQueued(outboundId, remaining.fingerprint);
+        if (remaining?.state === "staging" || remaining?.state === "queued") {
+          ctx.mailboxes.completeOutbound({ version: 1, outboundId, fingerprint: remaining.fingerprint,
+            state: "failed", errorCode: "installation_inactive" });
+        }
+        return ctx.mailboxes.getOutbound(outboundId);
+      }
+      if (installation.state !== "active") return ctx.mailboxes.getOutbound(outboundId);
+    }
     const command = await prepareManagedOutboundEnqueue(current.outboundId, ctx);
     if (!command) return ctx.mailboxes.getOutbound(current.outboundId);
 
     const queue = managedOutboundQueue(ctx);
     if (!queue) return ctx.mailboxes.getOutbound(current.outboundId);
-    const claimed = ctx.mailboxes.beginOutboundEnqueue(
-      current.outboundId,
-      current.fingerprint,
-      nextAt,
-    );
-    if (claimed.state !== "queued" || claimed.enqueuedAt !== null) return claimed;
+    const claimed = ctx.mailboxes.getOutbound(outboundId);
+    if (claimed?.state !== "queued") return claimed;
     await queue.send(command);
     return ctx.mailboxes.markOutboundEnqueued(
       current.outboundId,

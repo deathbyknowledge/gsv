@@ -125,6 +125,7 @@ import {
 import {
   claimManagedOutboundMail as claimKernelManagedOutboundMail,
   completeManagedOutboundMail as completeKernelManagedOutboundMail,
+  outboundEnqueueRetryDelay,
   recoverManagedOutboundEnqueue,
   resolveOutboundMailReference as resolveKernelOutboundMailReference,
 } from "./outbound-mail";
@@ -537,6 +538,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       );
     }));
     ctx.blockConcurrencyWhile(async () => {
+      for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
+        await this.scheduleManagedOutboundEnqueue(pending.outboundId, pending.nextAt ?? Date.now() + outboundEnqueueRetryDelay(1));
+      }
       for (const delivery of this.federation.recoverableOutbox(
         MAX_FEDERATION_RECOVERABLE_OUTBOX,
       )) {
@@ -809,7 +813,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.ipc.onIpcCallTimeout(task.payload, task);
         return;
       case "onManagedOutboundEnqueue":
-        await this.onManagedOutboundEnqueue(task.payload);
+        await this.onManagedOutboundEnqueue(task.payload, task.id);
         return;
       case "onFederationDelivery":
         await this.federationRuntime.onFederationDelivery(task.payload);
@@ -1747,13 +1751,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async scheduleManagedOutboundEnqueue(
     outboundId: string,
     dueAtMs: number,
+    runningTaskId?: string,
   ): Promise<void> {
+    const when = new Date(Math.max(Date.now() + 10, dueAtMs));
     await this.schedule(
-      new Date(Math.max(Date.now() + 10, dueAtMs)),
+      when,
       "onManagedOutboundEnqueue",
       outboundId,
       {
-        idempotent: false,
+        idempotent: true,
+        // Reuse a saved successor without mistaking the running row for it.
+        excludeTaskId: runningTaskId,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
     );
@@ -1788,10 +1796,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   }
 
-                                          async onManagedOutboundEnqueue(outboundId: string): Promise<void> {
+                                          async onManagedOutboundEnqueue(outboundId: string, runningTaskId?: string): Promise<void> {
+    const ctx = this.buildKernelContext({});
+    ctx.scheduleManagedOutboundEnqueue = (id, dueAtMs) => this.scheduleManagedOutboundEnqueue(id, dueAtMs, runningTaskId);
     await recoverManagedOutboundEnqueue(
       outboundId,
-      this.buildKernelContext({}),
+      ctx,
       true,
     );
   }

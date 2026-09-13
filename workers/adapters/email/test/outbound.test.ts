@@ -7,10 +7,11 @@ import type {
   AdapterInstallationContext,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
-import { describe, expect, it } from "vitest";
+import type { InstallationDirectoryResult, InstallationState } from "@humansandmachines/gsv/services/directory";
+import { describe, expect, it, vi } from "vitest";
 import type { MailEnv } from "../src/env";
 import { handleOutboundCommand } from "../src/index";
-import type { MailInstallation } from "../src/mail-installation";
+import { MailInstallation } from "../src/mail-installation";
 
 type OutboundPayload = {
   draft: {
@@ -118,6 +119,29 @@ function deliveryRows(state: DurableObjectState): DeliveryRow[] {
      FROM mail_outbound_deliveries
      ORDER BY outbound_id, fingerprint`,
   ).toArray();
+}
+
+function outboundAdmissionFixture(installationId: string, state: InstallationState) {
+  // SAFETY: Wrangler's test Workers implement the configured Mail service contracts.
+  const configured = env as typeof env & MailEnv;
+  const active = { found: true, installationId, handle: "hank", canonicalOrigin: "https://hank.gsv.space", state: "active" } satisfies InstallationDirectoryResult;
+  const resolveInstallation = vi.fn(async (): Promise<InstallationDirectoryResult> => ({ ...active, state }));
+  const send = vi.fn(async () => ({ messageId: "provider_resumed" }));
+  const claimOutboundMail = vi.fn<MailEnv["GATEWAY"]["claimOutboundMail"]>((...args) => configured.GATEWAY.claimOutboundMail(...args));
+  const completeOutboundMail = vi.fn<MailEnv["GATEWAY"]["completeOutboundMail"]>((...args) => configured.GATEWAY.completeOutboundMail(...args));
+  const bindings: MailEnv = {
+    ...configured,
+    ACCOUNTS: { resolveHostname: (...args) => configured.ACCOUNTS.resolveHostname(...args), resolveInstallation },
+    EMAIL: { send },
+    GATEWAY: {
+      acceptInboundMail: (...args) => configured.GATEWAY.acceptInboundMail(...args),
+      completeInboundMail: (...args) => configured.GATEWAY.completeInboundMail(...args),
+      resolveOutboundMailReference: (...args) => configured.GATEWAY.resolveOutboundMailReference(...args),
+      claimOutboundMail,
+      completeOutboundMail,
+    },
+  };
+  return { bindings, resolveInstallation, send, claimOutboundMail, completeOutboundMail, active };
 }
 
 describe("managed outbound mail delivery", () => {
@@ -646,23 +670,102 @@ describe("managed outbound mail delivery", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("settles a pending claim when Accounts restricts the installation", async () => {
-    const installationId = "installation_became-inactive";
+  it.each(["restricted", "reserved", "provisioning", "trialing", "past_due", "cancelled"] as const)("resumes a %s claim after repeated pauses and owner reconstruction", async (status) => {
+    const installationId = `installation_paused_${status}`;
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, status);
+    const value = reference(`outbound-paused-${status}`);
 
-    const calls = await withSend(stub, async (instance, state) => {
-      await instance.deliverOutbound(
-        context(installationId),
-        reference("outbound-became-inactive"),
-      );
+    await runInDurableObject(stub, async (_instance, state) => {
+      let instance = new MailInstallation(state, fixture.bindings);
+      await instance.deliverOutbound(context(installationId), value);
+      for (let attempt = 1; attempt <= 8; attempt++) {
+        expect(deliveryRows(state)).toEqual([expect.objectContaining({
+          state: "claiming", error_code: "claim_unavailable", expected_from: null,
+          claim_attempts: attempt, claim_next_attempt_at: expect.any(Number),
+          callback_attempts: 0, callback_completed_at: null,
+        })]);
+        expect(await state.storage.getAlarm()).not.toBeNull();
+        expect(fixture.claimOutboundMail).not.toHaveBeenCalled();
+        expect(fixture.completeOutboundMail).not.toHaveBeenCalled();
+        expect(fixture.send).not.toHaveBeenCalled();
+        expect(state.storage.sql.exec("SELECT * FROM mail_daily_usage").toArray()).toEqual([]);
+        state.storage.sql.exec("UPDATE mail_outbound_deliveries SET claim_next_attempt_at = ?", Date.now());
+        instance = new MailInstallation(state, fixture.bindings);
+        if (attempt < 8) await instance.alarm();
+      }
+      fixture.resolveInstallation.mockResolvedValue(fixture.active);
+      await instance.alarm();
+      await instance.deliverOutbound(context(installationId), value);
+      await instance.alarm();
       expect(deliveryRows(state)).toEqual([expect.objectContaining({
-        state: "failed",
-        error_code: "installation_inactive",
-        callback_completed_at: expect.any(Number),
+        state: "accepted", expected_from: "hank@gsv.space", claim_attempts: 9,
+        claim_next_attempt_at: null, callback_completed_at: expect.any(Number),
       })]);
     });
 
-    expect(calls).toHaveLength(0);
+    expect(fixture.claimOutboundMail).toHaveBeenCalledOnce();
+    expect(fixture.completeOutboundMail).toHaveBeenCalledOnce();
+    expect(fixture.send).toHaveBeenCalledOnce();
+  });
+
+  it.each(["retained", "deleting", "deleted"] as const)("settles a terminal %s installation without claiming or sending", async (status) => {
+    const installationId = `installation_terminal_${status}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, status);
+    const value = reference(`outbound-terminal-${status}`);
+    await runInDurableObject(stub, async (_instance, state) => {
+      const instance = new MailInstallation(state, fixture.bindings);
+      await instance.deliverOutbound(context(installationId), value);
+      await instance.deliverOutbound(context(installationId), value);
+      await instance.alarm();
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        state: "failed", error_code: "installation_inactive", callback_completed_at: expect.any(Number),
+      })]);
+    });
+    expect(fixture.claimOutboundMail).not.toHaveBeenCalled();
+    expect(fixture.send).not.toHaveBeenCalled();
+    expect(fixture.completeOutboundMail).toHaveBeenCalledOnce();
+  });
+
+  it("retries a mismatched terminal directory reply without settling another identity", async () => {
+    const installationId = "installation_mismatched_terminal";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.resolveInstallation.mockResolvedValue({ ...fixture.active, installationId: "another-installation", state: "deleted" });
+    await runInDurableObject(stub, async (_instance, state) => {
+      const instance = new MailInstallation(state, fixture.bindings);
+      await instance.deliverOutbound(context(installationId), reference("outbound-mismatched-terminal"));
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "claiming", error_code: "claim_unavailable" })]);
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+    expect(fixture.claimOutboundMail).not.toHaveBeenCalled();
+    expect(fixture.completeOutboundMail).not.toHaveBeenCalled();
+    expect(fixture.send).not.toHaveBeenCalled();
+  });
+
+  it("erases a paused claim and rejects its late replay after reconstruction", async () => {
+    const installationId = "installation_retired_paused_claim";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "restricted");
+    const value = reference("outbound-retired-paused");
+    const request = { version: 1 as const, installationId, operationId: "retire-paused-claim" };
+    await runInDurableObject(stub, async (_instance, state) => {
+      const instance = new MailInstallation(state, fixture.bindings);
+      await instance.deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)[0].state).toBe("claiming");
+      expect(await instance.quiesceInstallation(request)).toMatchObject({ phase: "quiesced" });
+      expect(await instance.eraseInstallation(request)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
+      const restored = new MailInstallation(state, fixture.bindings);
+      fixture.resolveInstallation.mockResolvedValue(fixture.active);
+      await restored.deliverOutbound(context(installationId), value);
+      await restored.alarm();
+      expect(deliveryRows(state)).toEqual([]);
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+    expect(fixture.claimOutboundMail).not.toHaveBeenCalled();
+    expect(fixture.completeOutboundMail).not.toHaveBeenCalled();
+    expect(fixture.send).not.toHaveBeenCalled();
   });
 
   it("settles a missing installation and continues to later due claims", async () => {

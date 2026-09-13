@@ -270,10 +270,13 @@ export class OutboundDeliveryCoordinator {
       if (installation.installationId !== this.installationId) {
         throw new Error("Accounts returned a mismatched mail installation");
       }
-      if (installation.state !== "active") {
+      if (["retained", "deleting", "deleted"].includes(installation.state)) {
         this.setTerminal(reference, "failed", "installation_inactive");
         await this.notify(this.requireByReference(reference));
         return;
+      }
+      if (installation.state !== "active") {
+        throw new Error("Mail installation is temporarily inactive");
       }
       expectedFrom = mailAddressForHandle(
         installation.handle,
