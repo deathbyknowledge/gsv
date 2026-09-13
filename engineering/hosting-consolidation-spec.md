@@ -1,6 +1,6 @@
 # Hosting consolidation: engineering specification
 
-Status: ready for implementation, revision 5, 2026-09-11. Companion to the
+Status: cutover in progress, revision 6, 2026-09-13. Companion to the
 [hosting consolidation brief](./hosting-consolidation-brief.md) and the
 [unified hosting and web release plan](./unified-hosting-and-web-release.md).
 The brief says what and why; this document says how, in what order, and
@@ -10,6 +10,15 @@ review corrections into the implementation sections. Revision 5 also makes the
 public inference executor a required component and adopts “your GSV” / “space”
 as product vocabulary. Earlier discussion is
 preserved in [the review history](./hosting-consolidation-review-history.md).
+
+Revision 6 records the operator's September 13 release decision: proceed with
+standalone removal, deploy the result to H&M staging, and run the real Telegram
+and user-supplied inference credential journey there. Passing that journey,
+the affected CI suites and automated review gates merge and production rollout.
+The earlier fresh-account messenger, historical H&M continuity/private-cleanup,
+and retained-copy investigations are deferred acceptance coverage, not cutover
+prerequisites. Existing results and unknowns remain recorded; this decision does
+not claim those checks passed or authorize erasing unrelated historical data.
 
 ## 1. Goal
 
@@ -656,7 +665,13 @@ Run W1's credential, ownership-proof, invitation, and recovery cases plus
 W2's fresh/adopted schema, reset-preparation, and deletion cases in their
 owning suites. Contract changes are tested on both caller and service sides.
 
-**Two real-cloud runs, as release gates**, because they fail differently:
+**Real-cloud coverage.** The original two-run coverage target remains below.
+Under the September 13 decision, completed public-account and old-version
+upgrade evidence is retained. The remaining live Telegram and user-supplied
+credential journey runs on H&M staging after W7, using its existing bot and
+controlled spaces. Historical sessions/links that never existed are not
+applicable; unavailable continuity evidence is an accepted compatibility risk.
+Unfinished private cleanup and retention evidence remains explicit follow-up.
 
 - **Fresh**: a new Cloudflare account, public package only, two installations
   with the same usernames and paths, Telegram linking on both, user-supplied
@@ -689,8 +704,10 @@ clearing live tables alone does not establish final erasure.
 
 ### W7. Remove the standalone hosting path
 
-One pull request, after a last verified standalone release is tagged and
-documented, and after W6's gates are green.
+One coordinated pull request after a final standalone baseline is verified,
+tagged and documented. The September 13 decision authorizes this removal before
+the remaining real-cloud checks. Deploy the cutover to staging and pass the
+revised W6 live journey, CI and review before merging and deploying production.
 
 Remove the executable legacy hosting paths: `SINGLETON_INSTALLATION_ID` and
 its guard in `installation/identity.ts`; the standalone branches in
@@ -727,13 +744,14 @@ no SSO beyond Access, no audit exports until a company asks and says which.
 4. W3 supplies the common deployment/bootstrap and the public-only fresh
    account flow. W5 aligns messengers, using Telegram/Slack as templates and
    moving Discord to actor-scoped links.
-5. W6's CI contracts and both real-cloud gates pass, including full deletion,
-   admission, upgrade compatibility, and private/reference service behavior.
-6. W4 moves H&M production to the public composition with its private
-   services and publishes the operator guide.
-7. Tag the last verified standalone release before the first incompatible
-   change, wherever that falls in the earlier slices. Announce the cutover;
-   W7 removes the legacy path only after W3 replaces it and W6 passes.
+5. Preserve completed W6 evidence and tag/document the verified final standalone
+   baseline before the incompatible cutover. W7 removes the executable legacy
+   paths and updates every deployment consumer while preserving resource names.
+6. Deploy W7 to H&M staging. Pass the real Telegram/user-supplied credential
+   journey, affected CI contracts and automated review on the final code.
+7. Merge the coordinated changes and move H&M production to the public
+   composition with its private services. Retain the accepted historical and
+   retention gaps as follow-up; no unverified erasure claim accompanies release.
 8. W8 may ship whenever its page is ready; it has no runtime dependency.
 
 CI contracts are added with the owning slice, rather than deferred until the

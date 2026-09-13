@@ -261,6 +261,13 @@ evidence index and qualified result remain in private operator evidence under
 
 ## Remaining release coverage
 
+On September 13 the operator accepted the remaining historical/private-cleanup
+and retention coverage gaps for this release and moved the real Telegram/BYO
+journey to H&M staging after standalone removal. That staging journey, CI and
+automated review are the revised release gates. The observations and limitations
+below remain evidence, not claims that deferred checks passed. See revision 6
+of the [specification](hosting-consolidation-spec.md).
+
 The live reset/cleanup result does not replace the other cases in
 [W6](hosting-consolidation-spec.md): real Telegram linking and delivery for two
 controlled actors, BYO model credentials, and populated private commercial
@@ -285,6 +292,7 @@ pending-reset cleanup evidence. It does not replace the specified H&M checks
 for historical credentials, messenger links, operator admission and an
 inherited pending deletion.
 
-W7's executable standalone removal remains gated on that coverage and a last
-verified standalone release. This report does not authorize a production
-deployment or change those gates.
+W7's executable standalone removal now precedes the remaining live journey,
+with a verified standalone baseline retained. Production rollout remains gated
+on the post-cutover staging journey, CI and review; historical data erasure and
+unverified retention remain separate from that release authorization.
