@@ -451,12 +451,12 @@ Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
 `device.workspace`, then the current directory. A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
-`gsv auth setup --device-id ...` or
+the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed before starting `gsvd`; use `gsv auth setup` when connecting
-to a new deployment.
+must be completed through the space's browser setup invitation before starting
+`gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
 crates but remain separate applications. The CLI owns operator commands and OS
@@ -471,9 +471,6 @@ checksum verification, and rollback contract.
 ## Auth Commands
 
 ```bash
-gsv auth setup [--username USER] [--new-password PASS] [--root-password PASS] \
-  [--ai-provider ID] [--ai-model MODEL] [--ai-api-key KEY] \
-  [--device-id ID] [--device-label LABEL] [--device-expires-at UNIX_MS]
 gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
 gsv auth logout
 gsv auth link [CODE]
@@ -482,31 +479,19 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-`setup` initializes a gateway in setup mode, optionally configures AI provider
-settings, and can issue a device token with `--device-id`, `--device-label`, and
-`--device-expires-at` (Unix milliseconds). Interactive setup prompts for missing
-values and saves `gateway.username`, `device.id`, and `device.token` when issued.
+Initialize a new space through its Accounts-issued browser setup invitation.
+The old `gsv auth setup` wizard and automatic setup probes are removed. Login
+and commands operate on a space whose authorized setup has completed.
 
 `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
 token.
 
-Link commands bind adapter identities, such as WhatsApp or Discord actors, to
-GSV users. Use a one-time `CODE` from an adapter flow or provide the adapter,
-account, and actor identifiers manually.
-
-WhatsApp setup has two separate links: QR pairing authenticates the adapter as
-a linked device, then a direct message identifies its sender. After the adapter
-reports authenticated, send a new direct message from the personal WhatsApp
-account to the number paired with GSV. Enter the one-time reply while logged in
-as the intended GSV user:
-
-```bash
-gsv auth link CODE
-```
-
-The code expires after ten minutes. The message that generated it is not sent
-to an agent, so send another message after the command succeeds.
+Generic link commands bind identities for adapters that support `sys.link`.
+The bundled Telegram, Slack and Discord adapters require their own signed-in
+pairing confirmation; `gsv auth link` does not replace that flow. Use
+**Settings → Messengers**, inspect the external identity and confirm it there.
+See [messenger setup](../how-to/messengers.md).
 
 ### Auth Tokens
 
@@ -551,7 +536,7 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `release.channel` must be `stable` or `dev`; `device.auto_update` must be
 `true` or `false`; token values are masked
 on local `get`. Adapter workers use Cloudflare service bindings rather than
-locally configured WhatsApp URLs or tokens.
+locally configured provider URLs or tokens.
 
 ## Adapter Commands
 
@@ -561,34 +546,14 @@ gsv adapter disconnect --adapter ID [--account-id ACCOUNT]
 gsv adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
-Adapters are long-lived external account bridges. `--account-id` defaults to
-`default` for connect/disconnect. A normal WhatsApp connect displays a private
-Linked Devices QR challenge in a supported terminal:
+These generic lifecycle commands apply only when an adapter advertises the
+corresponding operation. `--account-id` defaults to `default` for
+connect/disconnect; `--config-json` passes an object to the adapter.
 
-```bash
-gsv adapter connect --adapter whatsapp --account-id personal
-gsv adapter status --adapter whatsapp --account-id personal
-```
-
-Treat that QR like a password. If terminal rendering fails, the CLI hides the
-underlying payload. `--config-json` must be a JSON object and is passed to the
-adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
-recovery: it clears the existing linked-device authentication and starts a new
-QR pairing. Routine transport recovery does not use it.
-
-Cloudflare lets an active outbound connection prevent Durable Object eviction
-for at most 15 minutes. The account schedules an alarm every 30 seconds so an
-incoming event reaches the Durable Object before Cloudflare's minimum idle
-eviction window. Routine residency maintenance therefore keeps the same
-WhatsApp provider session; only an unhealthy transport reconnects.
-
-If the account is paired but a direct message gets no link-code reply, first
-confirm `gsv adapter status` reports connected and authenticated. Send a fresh
-DM from the sender account to the paired GSV number, not from the paired account
-itself or from a group. If it still gets no reply, verify that the Gateway and
-`channel-whatsapp` workers are deployed with both service bindings and inspect
-both workers' live logs. For an expired or already-used code, send a new DM and
-run `gsv auth link` with the new code.
+The bundled messenger applications are configured by the operator at deploy
+time. People link and unlink their own identities through the adapter pairing
+flow in **Settings → Messengers**. Per-person bot tokens, Slack Socket Mode
+and WhatsApp QR setup are not supported by the current deployment.
 
 ## Version
 
@@ -606,7 +571,8 @@ Prints build metadata for the installed CLI.
 | `gsv client` | `gsv chat` |
 | `gsv session` | `gsv proc` |
 | `gsv local-config` | `gsv config --local` |
-| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or Managed GSV. |
+| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or a hosting operator. |
+| `gsv auth setup` | Removed; use the Accounts-issued browser setup invitation. |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also
