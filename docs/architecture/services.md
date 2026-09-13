@@ -75,6 +75,16 @@ Failed-attempt telemetry may include `timeoutKind` (`first_output` or
 `generation`), elapsed `firstActivityMs` and `lastActivityMs` for nonempty response
 body chunks, and `outputExposed`. These fields contain timing and outcome data.
 
+`logicalRequestId` identifies an inference invocation for execution, cancellation
+and usage accounting; `actor.processId` and `actor.runId` group related attempts.
+A deliberate Process retry or model fallback advances a persisted run revision
+before announcing the retry. Reconstructing that run preserves the revision,
+while revision zero retains identities admitted before this field existed.
+Compaction is an awaited invocation with no durable operation to resume: each
+generation admission, retry, fallback or later manual attempt allocates a new
+persisted ordinal before dispatch. Repeating an unchanged compaction input does
+not reopen a completed invocation.
+
 ## Adapters
 
 Adapters are an extension system, not a closed list of messenger brands. An

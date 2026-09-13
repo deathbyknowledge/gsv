@@ -847,12 +847,22 @@ export class ProcessRun {
     sessionAffinityKey: string;
     signal?: AbortSignal;
   }): Promise<string> {
+    options.signal?.throwIfAborted();
+    if (this.host.killed || this.host.lifecyclePhase !== "ready") throw new Error("Process no longer exists");
+    // Compaction is an awaited invocation, not a resumable run. Each admission,
+    // retry or fallback owns a new attempt even when the history is unchanged.
+    const attempt = Number(this.host.store.state.getValue("compactionInferenceAttempt") ?? "0");
+    if (!Number.isSafeInteger(attempt) || attempt < 0 || attempt >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Compaction inference attempt exhausted or invalid");
+    }
+    this.host.store.state.setValue("compactionInferenceAttempt", String(attempt + 1));
     const executor = options.config.executor;
     const attribution = await this.buildInferenceAttribution(
       options.config,
       "compaction",
       this.host.runs.active?.runId,
       options.sessionAffinityKey,
+      attempt,
     );
     if (executor.kind !== "process" || executor.pid !== this.host.pid) {
       const result = await this.host.kernel.kernelRpc(
@@ -891,6 +901,7 @@ export class ProcessRun {
     purpose: "run" | "compaction",
     runId?: string,
     purposeKey?: string,
+    attemptRevision?: number,
   ): Promise<InferenceAttribution> {
     const { lastMessageId } = this.host.store.messages.messageStats();
     const actor: InferenceAttribution["actor"] = {
@@ -900,20 +911,26 @@ export class ProcessRun {
     if (runId) {
       actor.runId = runId;
     }
+    const parts: (string | number | null | undefined)[] = [
+      "process",
+      this.host.installationId,
+      this.host.pid,
+      purpose,
+      runId,
+      this.host.store.state.getHistoryGeneration(),
+      lastMessageId,
+      config.provider.trim().toLowerCase(),
+      config.model.trim().toLowerCase(),
+      purposeKey,
+    ];
+    const active = this.host.runs.active;
+    const revision = attemptRevision ?? (purpose === "run" && active && active.runId === runId
+      ? active.generationRetryRevision ?? 0 : 0);
+    // Revision zero retains the identity of work admitted before this field existed.
+    if (revision > 0) parts.push("retry", revision);
     return {
       installationId: this.host.installationId,
-      logicalRequestId: await inferenceLogicalRequestId([
-        "process",
-        this.host.installationId,
-        this.host.pid,
-        purpose,
-        runId,
-        this.host.store.state.getHistoryGeneration(),
-        lastMessageId,
-        config.provider.trim().toLowerCase(),
-        config.model.trim().toLowerCase(),
-        purposeKey,
-      ]),
+      logicalRequestId: await inferenceLogicalRequestId(parts),
       actor,
       workload:
         purpose === "compaction"
@@ -965,14 +982,20 @@ export class ProcessRun {
     runId: string,
     payload: Payload,
   ): Promise<boolean> {
-    if (this.host.handleRunStopped(runId)) return false;
+    if (this.host.handleRunStopped(runId) || this.runAbortSignal(runId).aborted) return false;
+    const next = this.host.mutateActiveRun(runId, (run) => {
+      const revision = (run.generationRetryRevision ?? 0) + 1;
+      if (!Number.isSafeInteger(revision)) throw new Error("Inference retry revision exhausted");
+      return { ...run, generationRetryRevision: revision };
+    });
+    if (!next) return false;
     await this.host.sendSignal("proc.run.retrying", {
       pid: this.host.pid,
       runId,
       ...payload,
       timestamp: Date.now(),
     });
-    return !this.host.handleRunStopped(runId);
+    return !this.host.handleRunStopped(runId) && !this.runAbortSignal(runId).aborted;
   }
 
   async beginGenerationRetry(options: {

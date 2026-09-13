@@ -135,6 +135,7 @@ export const runStateSchema = z.object({
   conversationId: z.string().optional(),
   inputMessageId: z.string().optional(),
   tickGeneration: z.number().optional(),
+  generationRetryRevision: z.number().int().nonnegative().safe().optional(),
   pendingMediaMessageId: z.number().optional(),
   pendingRuntimeEvents: z.number().optional(),
   responsibilityBatches: z.array(responsibilityBatchStateSchema).optional(),
