@@ -114,7 +114,7 @@ export class AuthStore {
     // A verified owner may recover locked root; locked member identities include agents.
     this.setShadow(makeShadowEntry(user.username, passwordHash));
     this.invalidateCredentials(uid, reason);
-    this.sql.exec("DELETE FROM identity_links WHERE uid = ?", uid);
+    this.sql.exec("UPDATE identity_links SET revoked_at = COALESCE(revoked_at, ?) WHERE uid = ?", Date.now(), uid);
   }
 
   getPersonalAgentUid(ownerUid: number): number | null {

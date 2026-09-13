@@ -16,6 +16,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import type { KernelContext } from "./context";
+import type { IdentityLinkRecord } from "./identity-links";
 import {
   stableOpaqueId,
 } from "../shared/stable-id";
@@ -149,6 +150,22 @@ export async function handleAdapterPairConfirm(
   if (existingLink && existingLink.uid !== uid) {
     throw new Error("This external identity is linked to another user in this GSV");
   }
+  const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
+  if (retainedLink && (!existingLink || (
+    retainedLink.metadata?.managed === true
+    && retainedLink.metadata.operationId !== operationId
+  ))) {
+    // Only a live, inspected external claim may release a revoked or superseded route for a successor.
+    if (existingCandidate.expiresAt <= Date.now()) throw new Error("Pairing code expired");
+    if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+      throw new Error("Account credentials changed during pairing; sign in again");
+    }
+    if (retainedLink.metadata?.managed === true) {
+      await disconnectManagedIdentityLink(retainedLink, ctx);
+    } else {
+      ctx.adapters.identityLinks.unlink(adapter, existingCandidate.accountId, existingCandidate.actorId);
+    }
+  }
 
   const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
     adapterInstallationContext(ctx),
@@ -215,6 +232,13 @@ export async function handleAdapterPairConfirm(
     route: activated.route,
     canonicalOrigin,
   });
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
+  const finalizedLink = ctx.adapters.identityLinks.get(adapter, activated.candidate.accountId, activated.candidate.actorId);
+  if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
+    throw new Error("Adapter pairing changed during finalization");
+  }
   const previousStatus = ctx.adapters.status.get(
     adapter,
     activated.candidate.accountId,
@@ -259,9 +283,18 @@ export async function handleAdapterPairDisconnect(
   const accountId = args.accountId.trim();
   const actorId = args.actorId.trim();
   if (!accountId || !actorId) throw new Error("Adapter pairing identity is required");
-  const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+  const link = ctx.adapters.identityLinks.getForCleanup(adapter, accountId, actorId);
   if (!link) return { disconnected: false, adapter, accountId, actorId };
   if (link.uid !== uid) throw new Error("Permission denied");
+  return await disconnectManagedIdentityLink(link, ctx);
+}
+
+/** The caller owns authorization; the saved link owns the exact remote route and retry identity. */
+export async function disconnectManagedIdentityLink(
+  link: IdentityLinkRecord,
+  ctx: KernelContext,
+): Promise<AdapterPairDisconnectResult> {
+  const { adapter, accountId, actorId, uid } = link;
   const metadata = managedIdentityLinkMetadataSchema.safeParse(link.metadata);
   if (!metadata.success) {
     throw new Error("This identity is not managed by adapter pairing");
@@ -287,7 +320,7 @@ export async function handleAdapterPairDisconnect(
       localUid: uid,
       generation,
     });
-    const current = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+    const current = ctx.adapters.identityLinks.getForCleanup(adapter, accountId, actorId);
     if (
       current?.uid === uid
       && current.metadata?.routeGeneration === generation

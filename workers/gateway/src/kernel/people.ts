@@ -4,6 +4,7 @@ import { hashPassword, hashToken, isLocked } from "../auth/shadow";
 import type { AuthStore } from "./auth-store";
 import { accountIdentity, ACCOUNT_USERNAME_RE, commitAccount, isUsernameAvailable, prepareAccount, prepareAccountHome } from "./accounts";
 import { principalOf, type KernelContext } from "./context";
+import { disconnectManagedIdentityLink } from "./adapter-pairing";
 
 const inviteCreateSchema = z.strictObject({ id: z.uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/), username: z.string().regex(ACCOUNT_USERNAME_RE) });
 const inviteRedeemSchema = z.strictObject({ id: z.uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/), proof: z.string().regex(/^[a-f0-9]{64}$/), password: z.string().min(8).max(1024) });
@@ -114,7 +115,7 @@ export class PeopleStore {
     return { updated: true };
   }
 
-  remove(uid: number, ctx: KernelContext): ResultOf<"account.remove"> {
+  async remove(uid: number, ctx: KernelContext): Promise<ResultOf<"account.remove">> {
     requireRootHuman(ctx);
     z.number().int().min(1000).parse(uid);
     const member = this.member(uid, true);
@@ -122,9 +123,16 @@ export class PeopleStore {
       if (this.auth.isAccountDisabled(member.uid)) return;
       this.auth.invalidateCredentials(member.uid, "account removed");
       this.storage.sql.exec("UPDATE account_access SET disabled_at = ? WHERE uid = ?", Date.now(), member.uid);
-      this.storage.sql.exec("DELETE FROM identity_links WHERE uid = ?", member.uid);
     });
     ctx.invalidateAccountConnections(member.uid);
+    // Disabled accounts retain unfinished links as durable retry state until the adapter acknowledges cleanup.
+    for (const link of ctx.adapters.identityLinks.listForCleanup(member.uid)) {
+      if (link.metadata?.managed === true) {
+        await disconnectManagedIdentityLink(link, ctx);
+      } else if (ctx.adapters.identityLinks.getForCleanup(link.adapter, link.accountId, link.actorId)?.uid === member.uid) {
+        ctx.adapters.identityLinks.unlink(link.adapter, link.accountId, link.actorId);
+      }
+    }
     return { removed: true };
   }
 

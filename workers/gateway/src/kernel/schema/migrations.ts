@@ -87,6 +87,7 @@ import { KERNEL_V047_ADD_MEMBER_RECOVERY } from "./v047_add_member_recovery";
 
 import { KERNEL_V048_INSTALLATION_RESOURCES } from "./v048_installation_resources";
 import { KERNEL_V049_REMOVE_ACCOUNT_PASSKEYS } from "./v049_remove_account_passkeys";
+import { KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS } from "./v050_retain_revoked_identity_links";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -141,6 +142,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V047_ADD_MEMBER_RECOVERY,
   KERNEL_V048_INSTALLATION_RESOURCES,
   KERNEL_V049_REMOVE_ACCOUNT_PASSKEYS,
+  KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

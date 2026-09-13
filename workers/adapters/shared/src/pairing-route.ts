@@ -52,14 +52,20 @@ export function finalizeAdapterPairing<State extends AdapterPeerLink>(state: Sta
 
 export function disconnectAdapterPeer<State extends AdapterPeerLink>(state: State, input: { operationId: string; route: AdapterPairingRoute }, adapter: string) {
   const active = state.activeRoute;
-  if (!active) {
+  const prepared = state.pairing?.preparedRoute;
+  const matchingActive = active && sameAdapterRoute(active, input.route);
+  const matchingPrepared = prepared && sameAdapterRoute(prepared, input.route);
+  const cancelled = matchingActive ? active : matchingPrepared ? prepared : undefined;
+  if (!cancelled) {
     const replay = state.lastDisconnect;
-    return { state, disconnected: Boolean(replay?.operationId === input.operationId && sameAdapterRoute(replay.route, input.route)) };
+    const disconnected = Boolean(replay?.operationId === input.operationId && sameAdapterRoute(replay.route, input.route));
+    if (active && !disconnected) throw new Error(`${adapter} route changed before disconnect`);
+    return { state, disconnected };
   }
-  if (!sameAdapterRoute(active, input.route)) throw new Error(`${adapter} route changed before disconnect`);
-  const next = { ...state, lastDisconnect: { operationId: input.operationId, route: active } };
-  delete next.activeRoute;
-  delete next.pairing;
+  const next = { ...state, lastDisconnect: { operationId: input.operationId, route: cancelled } };
+  if (matchingActive) delete next.activeRoute;
+  // A delayed disconnect cannot cancel a separately prepared successor or a fresh unprepared claim.
+  if (matchingPrepared) delete next.pairing;
   return { state: next, disconnected: true };
 }
 

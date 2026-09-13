@@ -6,6 +6,8 @@ import { testPeer } from "../test-support/peers";
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { IdentityLinkStore } from "./identity-links";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
@@ -312,6 +314,30 @@ describe("Kernel service peer identity", () => {
 });
 
 describe("Kernel managed adapter unlink", () => {
+  it("cleans the exact revoked generation after a peer moves without deleting a successor", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const links = new IdentityLinkStore(sql);
+      links.link("slack", "workspace", "actor", 1000, 1000, { managed: true, surfaceId: "dm", routeGeneration: "old" });
+      sql.exec("UPDATE identity_links SET revoked_at = 1");
+      const kernel = bareKernel();
+      kernel.adapters = {
+        identityLinks: links,
+        status: { get: () => null, setOwner: vi.fn(), upsert: () => ({ ownerUid: null }) },
+      };
+      kernel.buildKernelContext = () => ({});
+      kernel.connectionRuntime.broadcastToUserUid = vi.fn();
+      const request = { operationId: "move", accountId: "workspace", actorId: "actor", surfaceId: "dm", expectedLocalUid: 1000, expectedGeneration: "old" };
+      expect(links.get("slack", "workspace", "actor")).toBeNull();
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", { ...request, expectedGeneration: "wrong" })).toEqual({ removed: false });
+      expect(links.listForCleanup(1000)).toHaveLength(1);
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", request)).toEqual({ removed: true });
+      expect(links.listForCleanup(1000)).toEqual([]);
+      links.link("slack", "workspace", "actor", 1001, 1001, { managed: true, surfaceId: "dm", routeGeneration: "new" });
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", request)).toEqual({ removed: false });
+      expect(links.get("slack", "workspace", "actor")).toMatchObject({ uid: 1001, metadata: { routeGeneration: "new" } });
+    });
+  });
+
   it("deauthenticates and notifies the old owner after its last peer moves", async () => {
     const link = {
       adapter: "slack",
@@ -347,7 +373,7 @@ describe("Kernel managed adapter unlink", () => {
     const kernel = bareKernel();
     kernel.adapters = {
       identityLinks: {
-        get: vi.fn(() => link),
+        getForCleanup: vi.fn(() => link),
         unlink: vi.fn(() => true),
         listByAccount: vi.fn(() => []),
       },

@@ -60,6 +60,7 @@ describe("member recovery through a confirmed messenger", () => {
       expect(await ctx.auth.authenticateToken("member", token.token)).toMatchObject({ ok: false });
       expect(await ctx.auth.authenticateToken("root", rootToken.token)).toMatchObject({ ok: true });
       expect(ctx.adapters.identityLinks.list(1000)).toHaveLength(0);
+      expect(ctx.adapters.identityLinks.listForCleanup(1000)).toMatchObject([{ uid: 1000, metadata: { routeGeneration: "generation-1" } }]);
       expect(ctx.invalidateAccountConnections).toHaveBeenCalledWith(1000);
       ctx.auth.setShadow(makeShadowEntry("member", await hashPassword("later-password")));
       expect(await store.redeem(args, ctx)).toEqual({ username: "member" });

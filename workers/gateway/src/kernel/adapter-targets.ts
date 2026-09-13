@@ -185,6 +185,11 @@ export async function requestAdapterTarget(
   if (route.kind !== "adapter") {
     return errorFrame(frame.id, 500, "Target provider route is invalid");
   }
+  const link = ctx.adapters.identityLinks.get(route.adapter, route.accountId, route.actorId);
+  if (!link || link.uid !== target.ownerUid || link.metadata?.routeGeneration !== route.routeGeneration) {
+    await cancelBinaryBody("body" in frame ? frame.body : undefined, "Adapter target link was revoked or changed");
+    return errorFrame(frame.id, 403, "Adapter target link was revoked or changed");
+  }
   const service = resolveAdapterService(ctx.env, route.adapter);
   if (!service?.adapterTargetExecute || !service.adapterTargetCancel) {
     return errorFrame(frame.id, 503, `Target provider unavailable: ${target.targetId}`);

@@ -71,7 +71,7 @@ describe("retiring passkey storage", () => {
   it("starts a fresh Kernel without passkey tables", async () => {
     await runWithRealKernelSql((sql) => {
       expect(sql.exec("SELECT name FROM sqlite_master WHERE name LIKE 'account_passkey%'").toArray()).toEqual([]);
-      expect(listAppliedSqlMigrations(sql, KERNEL_SCHEMA_COMPONENT).at(-1)).toMatchObject({ id: 49, name: "remove_account_passkeys" });
+      expect(listAppliedSqlMigrations(sql, KERNEL_SCHEMA_COMPONENT)).toContainEqual(expect.objectContaining({ id: 49, name: "remove_account_passkeys" }));
     });
   });
 });

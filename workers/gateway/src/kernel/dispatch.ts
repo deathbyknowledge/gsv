@@ -645,7 +645,7 @@ async function dispatchKernel(
         data = await ctx.people.setPassword(frame.args, ctx);
         break;
       case "account.remove":
-        data = ctx.people.remove(frame.args.uid, ctx);
+        data = await ctx.people.remove(frame.args.uid, ctx);
         break;
 
       // --- sched.* ---

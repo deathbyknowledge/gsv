@@ -46,6 +46,7 @@ import type {
 } from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
+import { IdentityLinkStore } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
 
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
@@ -520,6 +521,7 @@ function makeContext(
       identityLinks: {
         resolveUid: vi.fn(() => 1000),
         get: vi.fn(configuredIdentityLinkGet),
+        getForCleanup: vi.fn(configuredIdentityLinkGet),
         bindSurfaceIfMissing: vi.fn((adapter, accountId, actorId, surface) => {
           const existing = configuredIdentityLinkGet(adapter, accountId, actorId);
           if (!existing) return null;
@@ -3473,6 +3475,27 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("drops ingress for a removed member while its managed link awaits disconnect", async () => {
+    const link: IdentityLinkRecord = {
+      adapter: "telegram", accountId: "managed", actorId: "12345", uid: 1000, createdAt: 1, linkedByUid: 1000,
+      metadata: { managed: true, surfaceKind: "dm", surfaceId: "12345", routeGeneration: "generation-current" },
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, { identityLinks: { get: () => link } });
+    await runWithRealKernelSql(async (sql) => {
+      ctx.adapters.identityLinks = new IdentityLinkStore(sql);
+      ctx.adapters.identityLinks.link(link.adapter, link.accountId, link.actorId, link.uid, link.linkedByUid, link.metadata ?? undefined);
+      sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", link.uid, Date.now());
+      await expect(handleAdapterInbound({
+        adapter: "telegram", accountId: "managed", routeGeneration: "generation-current",
+        message: { messageId: "removed-member", surface: { kind: "dm", id: "12345" }, actor: { id: "12345" }, text: "Late delivery" },
+      }, ctx)).resolves.toEqual({ ok: true, droppedReason: "stale_route_generation" });
+      expect(ctx.adapters.identityLinks.listForCleanup(link.uid)).toHaveLength(1);
+    });
+    expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("admits an addressed shared surface through an actor-scoped managed route", async () => {
     const link = {
       adapter: "slack",
@@ -4901,7 +4924,12 @@ describe("managed adapter pairing", () => {
       linked: false,
     };
     const service = pairingService(slackCandidate, route, "slack");
-    const link = vi.fn();
+    let currentLink: IdentityLinkRecord | null = null;
+    const link = vi.fn((...args: Parameters<IdentityLinkStore["link"]>) => {
+      const [adapter, accountId, actorId, uid, linkedByUid, metadata] = args;
+      currentLink = { adapter, accountId, actorId, uid, linkedByUid, metadata: metadata ?? null, createdAt: 1 };
+      return currentLink;
+    });
     const ctx = makeContext(
       { CHANNEL_SLACK: service },
       {
@@ -4912,7 +4940,7 @@ describe("managed adapter pairing", () => {
       },
       directUserOptions({
         identityLinks: {
-          get: vi.fn(() => null),
+          get: vi.fn(() => currentLink),
           link,
           list: vi.fn(() => []),
           listByAccount: vi.fn(() => []),

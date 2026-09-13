@@ -1185,7 +1185,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       throw new Error("Managed adapter identity is invalid");
     }
     const parsed = managedAdapterUnlinkSchema.parse(input);
-    const link = this.adapters.identityLinks.get(
+    const link = this.adapters.identityLinks.getForCleanup(
       normalizedAdapter,
       parsed.accountId,
       parsed.actorId,
