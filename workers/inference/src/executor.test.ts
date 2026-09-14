@@ -186,14 +186,36 @@ describe("public inference executor RPC", () => {
   });
 
   it("expires a provider that never responds and fences a late completion", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 100)); return completion(); }));
+    const dispatched = Promise.withResolvers<void>();
+    const provider = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const data = new TextEncoder().encode(await completion().text());
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      dispatched.resolve();
+      await provider.promise;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(data); },
+        cancel() { cancelled.resolve(); },
+      }), { headers: { "content-type": "text/event-stream" } });
+    }));
     const executor = await service.getExecutor("space_timeout");
     const input = request("space_timeout");
-    input.deadlineAt = Date.now() + 80;
-    const result = await executor.generate(input);
-    expect(result).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect((await rows(input.installationId)).requests[0]).toMatchObject({ state: "timeout", output_tokens: 32, reserved_tokens: 0 });
+    const pending = Promise.resolve(executor.generate(input));
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      await dispatched.promise;
+      clock = vi.spyOn(Date, "now").mockReturnValue(input.deadlineAt + 1);
+      await runDurableObjectAlarm(env.INFERENCE_EXECUTORS.getByName(input.installationId));
+      expect(await pending).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
+      provider.resolve();
+      await cancelled.promise;
+      expect((await rows(input.installationId)).requests[0]).toMatchObject({ state: "timeout", output_tokens: 32, reserved_tokens: 0 });
+    } finally {
+      clock?.mockRestore();
+      provider.resolve();
+      await env.INFERENCE_EXECUTORS.getByName(input.installationId).abort(input.logicalRequestId);
+      await pending;
+    }
   });
 
   it("cancels native response bodies that arrive after the deadline", async () => {
