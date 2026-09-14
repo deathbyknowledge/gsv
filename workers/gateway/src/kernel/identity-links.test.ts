@@ -7,6 +7,25 @@ import { IdentityLinkStore } from "./identity-links";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("IdentityLinkStore", () => {
+  it("keeps a disabled owner's routes only in explicit cleanup lookups", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new IdentityLinkStore(sql);
+      const removed = store.link("telegram", "managed", "removed", 1000, 1000, { managed: true, routeGeneration: "old" });
+      const other = store.link("telegram", "managed", "other", 1001, 1001, { managed: true, routeGeneration: "current" });
+      sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, 1)");
+      expect(store.get("telegram", "managed", "removed")).toBeNull();
+      expect(store.resolveUid("telegram", "managed", "removed")).toBeNull();
+      expect(store.list(1000)).toEqual([]);
+      expect(store.list()).toEqual([other]);
+      expect(store.listByAccount("telegram", "managed")).toEqual([other]);
+      expect(store.getForCleanup("telegram", "managed", "removed")).toEqual(removed);
+      expect(store.listForCleanup(1000)).toEqual([removed]);
+      expect(store.unlink("telegram", "managed", "removed")).toBe(true);
+      expect(store.listForCleanup(1000)).toEqual([]);
+      expect(store.get("telegram", "managed", "other")).toEqual(other);
+    });
+  });
+
   it("binds a metadata-less manual link to its first authenticated private surface", async () => {
     await runWithRealKernelSql((sql) => {
       const store = new IdentityLinkStore(sql);

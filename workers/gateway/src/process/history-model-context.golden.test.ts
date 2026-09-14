@@ -1,6 +1,7 @@
-import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import type { JsonValue, ProcHistoryRecordData, ProcToolResultOutcome } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:workers";
+import { createInstallationStorage } from "../installation/storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Process } from "./do";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
@@ -126,7 +127,7 @@ function appendMixedTranscript(process: Process): void {
 
 async function putImage(pid: string, filename: string, bytes: Uint8Array, mimeType = "image/png"): Promise<StoredProcessMedia> {
   const key = `var/media/0/${pid}/${filename}`;
-  await env.STORAGE.put(key, bytes, {
+  await createInstallationStorage(env.STORAGE, "inst_test").put(key, bytes, {
     httpMetadata: { contentType: mimeType }, customMetadata: { uid: "0", gid: "0", mode: "400", processId: pid },
   });
   return { type: "image", mimeType, key, filename, size: bytes.byteLength };

@@ -15,7 +15,8 @@ import {
   handleFsTransferStat,
   handleFsWrite,
 } from "./fs";
-import * as inferenceService from "../../inference/service";
+import * as inferenceService from "../../inference/execution-client";
+import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { TargetRecord } from "../../kernel/target-registry";
@@ -70,19 +71,6 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
-
-type ShellAiInput = {
-  task?: string;
-  audio?: string;
-  text?: string;
-  prompt?: string;
-};
-type ShellAiResult =
-  | { caption: string }
-  | { text: string }
-  | { image: string }
-  | ReadableStream<Uint8Array>
-  | null;
 
 function focusedFixture<T extends object>(value: Partial<T>): T {
   // SAFETY: Shell tests use focused doubles whose supplied members are checked
@@ -219,7 +207,7 @@ function makeContext(options?: {
   processRunId?: string;
   processId?: string | null;
   identity?: ProcessIdentity;
-  aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
+  media?: InferenceExecutor["media"];
   ripgit?: Fetcher;
   requestSignal?: AbortSignal;
 }): KernelContext {
@@ -259,8 +247,9 @@ function makeContext(options?: {
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
-  if (options?.aiRun) {
-    testEnv.AI = { run: vi.fn(options.aiRun) };
+  if (options?.media) {
+    const executor = focusedFixture<InferenceExecutor>({ media: options.media, abort: async () => {} });
+    testEnv.INFERENCE_EXECUTION = { getExecutor: async () => executor, resolveModel: async (provider, model) => ({ provider, model, contextWindowTokens: null }) };
   }
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
@@ -1469,26 +1458,15 @@ describe("media native commands", () => {
           "ai.transcription.create",
           "ai.speech.create",
         ],
-        aiRun: vi.fn(async (_model, input) => {
-          if (input.task === "caption") {
-            return { caption: "terminal screenshot" };
+        media: async (request, body) => {
+          await body?.cancel();
+          switch (request.kind) {
+            case "image-read": return { kind: request.kind, result: { text: "terminal screenshot", mode: "caption", provider: "workers-ai", model: "test-image-reader" } };
+            case "transcription": return { kind: request.kind, result: { text: "hello audio", provider: request.input.provider, model: request.input.model } };
+            case "speech": return { kind: request.kind, result: { mimeType: "audio/mpeg", size: 3, provider: request.input.provider, model: request.input.model, voice: request.input.voice, encoding: "mp3" }, body: new Response(new Uint8Array([4, 5, 6])).body! };
+            case "image-generate": return { kind: request.kind, result: { mimeType: "image/jpeg", size: 3, provider: request.input.provider, model: request.input.model }, body: new Response(new Uint8Array([1, 2, 3])).body! };
           }
-          if (input.audio !== undefined) {
-            return { text: "hello audio" };
-          }
-          if (input.text !== undefined) {
-            return new ReadableStream({
-              start(controller) {
-                controller.enqueue(new Uint8Array([4, 5, 6]));
-                controller.close();
-              },
-            });
-          }
-          if (input.prompt !== undefined) {
-            return { image: "AQID" };
-          }
-          return null;
-        }),
+        },
       }),
     );
 
@@ -1505,7 +1483,8 @@ describe("media native commands", () => {
 
   it("preserves generated image MIME through a subsequent read", async () => {
     const key = "home/sam/generated-jpeg.jpg";
-    let imageReadInput: ShellAiInput | undefined;
+    let imageReadInput: InferenceMediaRequest | undefined;
+    let imageReadBytes: Uint8Array | undefined;
     await env.STORAGE.delete(key);
 
     const result = await handleShellExec(
@@ -1514,16 +1493,18 @@ describe("media native commands", () => {
       },
       makeContext({
         capabilities: ["ai.image.read", "ai.image.generate"],
-        aiRun: vi.fn(async (_model, input) => {
-          if (input.task === "caption") {
-            imageReadInput = input;
-            return { caption: "a green square" };
+        media: async (request, body) => {
+          if (request.kind === "image-read") {
+            imageReadInput = request;
+            imageReadBytes = new Uint8Array(await new Response(body).arrayBuffer());
+            return { kind: request.kind, result: { text: "a green square", mode: "caption", provider: "workers-ai", model: "test-image-reader" } };
           }
-          if (input.prompt !== undefined) {
-            return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };
+          if (request.kind === "image-generate") {
+            const bytes = Uint8Array.from(atob("/9j/4AAQSkZJRgABAQAAAQABAAD/2Q=="), (character) => character.charCodeAt(0));
+            return { kind: request.kind, result: { mimeType: "image/jpeg", size: bytes.length, provider: request.input.provider, model: request.input.model }, body: new Response(bytes).body! };
           }
-          return null;
-        }),
+          throw new Error("Unexpected media operation");
+        },
       }),
     );
 
@@ -1533,7 +1514,8 @@ describe("media native commands", () => {
     expect(stored?.httpMetadata?.contentType).toBe("image/jpeg");
     expect([...new Uint8Array(await stored!.arrayBuffer()).subarray(0, 4)])
       .toEqual([0xff, 0xd8, 0xff, 0xe0]);
-    expect(JSON.stringify(imageReadInput)).toContain("data:image/jpeg;base64,");
+    expect(imageReadInput).toMatchObject({ kind: "image-read", input: { mimeType: "image/jpeg" } });
+    expect([...imageReadBytes!.subarray(0, 4)]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
   });
 });
 

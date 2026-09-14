@@ -15,6 +15,7 @@ export default defineConfig({
               import { WorkerEntrypoint } from "cloudflare:workers";
               const calls = [];
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
+                async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
                   const mediaBody = frame.body
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
@@ -53,8 +54,8 @@ export default defineConfig({
                     },
                   };
                 }
-                async unlinkManagedAdapterIdentity(installation, input) {
-                  calls.push({ call: "unlinkManagedAdapterIdentity", installation, input });
+                async unlinkAdapterIdentity(installation, input) {
+                  calls.push({ call: "unlinkAdapterIdentity", installation, input });
                   return { removed: true };
                 }
                 async fetch() {
@@ -66,13 +67,13 @@ export default defineConfig({
           {
             name: "managed-slack-api-test",
             modules: true,
-            script: slackApiWorkerScript("managed"),
+            script: slackApiWorkerScript(),
           },
         ],
       },
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts"],
+    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts","test/managed-flow.test.ts"],
   },
 });

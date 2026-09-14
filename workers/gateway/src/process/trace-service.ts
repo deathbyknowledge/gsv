@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent } from "@humansandmachines/gsv/services/inference-context";
 import type {
   JsonObject, ProcTraceArgs, ProcTraceResult, ProcTraceSpanKind, ProcTraceSpanReference, ProcTraceSpanStatus,
 } from "@humansandmachines/gsv/protocol";

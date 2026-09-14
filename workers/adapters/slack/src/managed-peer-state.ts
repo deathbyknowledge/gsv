@@ -1,3 +1,7 @@
+import {
+  activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing,
+  type AdapterPeerPairing, type AdapterPeerRoute, type AdapterPairingTransition,
+} from "../../shared/src/pairing-route";
 import type {
   AdapterPairingCandidate,
   AdapterPairingPreparation,
@@ -6,20 +10,8 @@ import type {
 } from "./types";
 import type { SlackInbound } from "./slack-events";
 
-export type ManagedSlackPeerRoute = AdapterPairingRoute & {
-  canonicalOrigin: string;
-  linkedAt: number;
-};
-
-export type ManagedSlackPairingState = {
-  claimId: string;
-  code: string;
-  expiresAt: number;
-  status: "pending" | "prepared" | "active" | "finalized";
-  operationId?: string;
-  preparedRoute?: ManagedSlackPeerRoute;
-  previousRoute?: ManagedSlackPeerRoute;
-};
+export type ManagedSlackPeerRoute = AdapterPeerRoute;
+export type ManagedSlackPairingState = AdapterPeerPairing;
 
 export type ManagedSlackObservedSurface = AdapterSurface & {
   observedAt: number;
@@ -125,107 +117,26 @@ export function managedSlackPairingCandidate(
   };
 }
 
-export function prepareManagedSlackPairing(
-  state: ManagedSlackPeerState,
-  input: {
-    claimId: string;
-    expiresAt: number;
-    operationId: string;
-    route: ManagedSlackPeerRoute;
-    now: number;
-  },
-): PairingTransition {
-  const pairing = requirePairing(state, input.claimId, input.expiresAt);
-  if (pairing.status !== "pending") {
-    assertOperationReplay(pairing, input.operationId, input.route);
-    return { state, preparation: preparation(state, pairing) };
-  }
-  if (pairing.expiresAt <= input.now) throw new Error("Pairing code expired");
-  if (
-    state.activeRoute?.installationId === input.route.installationId
-    && state.activeRoute.localUid !== input.route.localUid
-  ) {
-    throw new Error("Disconnect this Slack identity before linking it to another user here");
-  }
-  const prepared: ManagedSlackPairingState = {
-    ...pairing,
-    status: "prepared",
-    operationId: input.operationId,
-    preparedRoute: input.route,
-    previousRoute: state.activeRoute,
-  };
-  const next = { ...state, pairing: prepared };
-  return { state: next, preparation: preparation(next, prepared) };
+export function prepareManagedSlackPairing(state: ManagedSlackPeerState, input: AdapterPairingTransition & { now: number }): PairingTransition {
+  const next = prepareAdapterPairing(state, input, "Slack");
+  return { state: next.state, preparation: preparation(next.state, next.pairing) };
 }
 
-export function activateManagedSlackPairing(
-  state: ManagedSlackPeerState,
-  input: {
-    claimId: string;
-    expiresAt: number;
-    operationId: string;
-    route: ManagedSlackPeerRoute;
-  },
-): PairingTransition {
-  const pairing = requirePairing(state, input.claimId, input.expiresAt);
-  assertOperationReplay(pairing, input.operationId, input.route);
-  if (pairing.status === "pending") throw new Error("Pairing code was not prepared");
-  if (pairing.status === "active" || pairing.status === "finalized") {
-    return { state, preparation: preparation(state, pairing) };
-  }
-  const active = { ...pairing, status: "active" as const };
-  const next = { ...state, activeRoute: input.route, pairing: active };
-  return { state: next, preparation: preparation(next, active) };
+export function activateManagedSlackPairing(state: ManagedSlackPeerState, input: AdapterPairingTransition): PairingTransition {
+  const next = activateAdapterPairing(state, input);
+  return { state: next.state, preparation: preparation(next.state, next.pairing) };
 }
 
-export function finalizeManagedSlackPairing(
-  state: ManagedSlackPeerState,
-  input: {
-    claimId: string;
-    expiresAt: number;
-    operationId: string;
-    route: ManagedSlackPeerRoute;
-  },
-): FinalizeResult {
-  const pairing = requirePairing(state, input.claimId, input.expiresAt);
-  assertOperationReplay(pairing, input.operationId, input.route);
-  if (pairing.status !== "active" && pairing.status !== "finalized") {
-    throw new Error("Pairing code is not active");
-  }
-  if (pairing.status === "finalized") {
-    return { state, preparation: preparation(state, pairing), changed: false };
-  }
-  const finalized = { ...pairing, status: "finalized" as const };
-  const next = { ...state, pairing: finalized };
-  return { state: next, preparation: preparation(next, finalized), changed: true };
+export function finalizeManagedSlackPairing(state: ManagedSlackPeerState, input: AdapterPairingTransition): FinalizeResult {
+  const next = finalizeAdapterPairing(state, input);
+  return { state: next.state, preparation: preparation(next.state, next.pairing), changed: next.changed };
 }
 
-export function disconnectManagedSlackPeer(
-  state: ManagedSlackPeerState,
-  input: { operationId: string; route: AdapterPairingRoute },
-): ManagedSlackDisconnectResult {
-  const active = state.activeRoute;
-  if (!active) {
-    const replay = state.lastDisconnect;
-    if (replay?.operationId === input.operationId && sameRoute(replay.route, input.route)) {
-      return { state, disconnected: true };
-    }
-    return { state, disconnected: false };
-  }
-  if (!sameRoute(active, input.route)) throw new Error("Managed Slack route changed before disconnect");
-  const next: ManagedSlackPeerState = {
-    ...state,
-    activeRoute: undefined,
-    pairing: undefined,
-    lastDisconnect: { operationId: input.operationId, route: active },
-  };
-  return { state: next, disconnected: true };
+export function disconnectManagedSlackPeer(state: ManagedSlackPeerState, input: { operationId: string; route: AdapterPairingRoute }): ManagedSlackDisconnectResult {
+  return disconnectAdapterPeer(state, input, "Managed Slack");
 }
 
-export type ManagedSlackDisconnectResult = {
-  state: ManagedSlackPeerState;
-  disconnected: boolean;
-};
+export type ManagedSlackDisconnectResult = { state: ManagedSlackPeerState; disconnected: boolean };
 
 export function managedSlackPeerAllowsSurface(
   state: ManagedSlackPeerState,
@@ -263,36 +174,4 @@ function preparation(
     route: pairing.preparedRoute,
     previousRoute: pairing.previousRoute,
   };
-}
-
-function requirePairing(
-  state: ManagedSlackPeerState,
-  claimId: string,
-  expiresAt: number,
-): ManagedSlackPairingState {
-  const pairing = state.pairing;
-  if (!pairing || pairing.claimId !== claimId || pairing.expiresAt !== expiresAt) {
-    throw new Error("Pairing code is invalid");
-  }
-  return pairing;
-}
-
-function assertOperationReplay(
-  pairing: ManagedSlackPairingState,
-  operationId: string,
-  route: AdapterPairingRoute,
-): void {
-  if (
-    pairing.operationId !== operationId
-    || !pairing.preparedRoute
-    || !sameRoute(pairing.preparedRoute, route)
-  ) {
-    throw new Error("Pairing code is owned by another operation");
-  }
-}
-
-function sameRoute(left: AdapterPairingRoute, right: AdapterPairingRoute): boolean {
-  return left.installationId === right.installationId
-    && left.localUid === right.localUid
-    && left.generation === right.generation;
 }

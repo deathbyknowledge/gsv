@@ -4,7 +4,7 @@ import type { AiConfigResult, AiContextResult } from "@humansandmachines/gsv/pro
 import {
   MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES, RUN_CONTROL_INSTRUCTION,
 } from "../internal/lifecycle";
-import type { Tool } from "@earendil-works/pi-ai";
+import type { Tool } from "@humansandmachines/gsv/services/inference-context";
 import { RUN_CONTROL_SHELL_TOOL, SEND_TOOL, conversationProvenanceSchema } from "../internal/schemas";
 import type { RunControlResult } from "../internal/contracts";
 import type { RunState } from "./state";

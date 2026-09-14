@@ -6,10 +6,13 @@ import { testPeer } from "../test-support/peers";
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { IdentityLinkStore } from "./identity-links";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
 import { AdapterDelivery } from "./adapter-delivery";
+import type { KernelConnectionState } from "./connection";
 import type { ProcessRecord } from "./processes";
 import {
   BINARY_FRAME_CANCEL,
@@ -23,12 +26,13 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.retirement = { assertActive: vi.fn(), state: undefined };
   Object.assign(kernel, kernelRuntimes(kernel));
   return kernel;
 };
 
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
-const TEST_INSTALLATION_ID = "singleton";
+const TEST_INSTALLATION_ID = "inst_test";
 
 describe("Kernel responsibility wakes", () => {
   it("durably admits a ready batch to the existing Ship process", async () => {
@@ -56,6 +60,7 @@ describe("Kernel responsibility wakes", () => {
     // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
     const kernel = bareKernel();
     kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.auth = { isAccountDisabled: vi.fn(() => false) };
     kernel.responsibilities = {
       wakeState: vi.fn(() => ({
         ownerUid: 1000,
@@ -64,6 +69,7 @@ describe("Kernel responsibility wakes", () => {
         scheduledAtMs: 1,
       })),
       createReadyBatch: vi.fn(() => batch),
+      pendingBatch: vi.fn(() => null),
       markBatchDelivered: vi.fn(),
       markBatchFailed: vi.fn(),
     };
@@ -311,6 +317,30 @@ describe("Kernel service peer identity", () => {
 });
 
 describe("Kernel managed adapter unlink", () => {
+  it("cleans the exact revoked generation after a peer moves without deleting a successor", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const links = new IdentityLinkStore(sql);
+      links.link("slack", "workspace", "actor", 1000, 1000, { managed: true, surfaceId: "dm", routeGeneration: "old" });
+      sql.exec("UPDATE identity_links SET revoked_at = 1");
+      const kernel = bareKernel();
+      kernel.adapters = {
+        identityLinks: links,
+        status: { get: () => null, setOwner: vi.fn(), upsert: () => ({ ownerUid: null }) },
+      };
+      kernel.buildKernelContext = () => ({});
+      kernel.connectionRuntime.broadcastToUserUid = vi.fn();
+      const request = { operationId: "move", accountId: "workspace", actorId: "actor", surfaceId: "dm", expectedLocalUid: 1000, expectedGeneration: "old" };
+      expect(links.get("slack", "workspace", "actor")).toBeNull();
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", { ...request, expectedGeneration: "wrong" })).toEqual({ removed: false });
+      expect(links.listForCleanup(1000)).toHaveLength(1);
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", request)).toEqual({ removed: true });
+      expect(links.listForCleanup(1000)).toEqual([]);
+      links.link("slack", "workspace", "actor", 1001, 1001, { managed: true, surfaceId: "dm", routeGeneration: "new" });
+      expect(await kernel.unlinkManagedAdapterIdentity("slack", request)).toEqual({ removed: false });
+      expect(links.get("slack", "workspace", "actor")).toMatchObject({ uid: 1001, metadata: { routeGeneration: "new" } });
+    });
+  });
+
   it("deauthenticates and notifies the old owner after its last peer moves", async () => {
     const link = {
       adapter: "slack",
@@ -346,7 +376,7 @@ describe("Kernel managed adapter unlink", () => {
     const kernel = bareKernel();
     kernel.adapters = {
       identityLinks: {
-        get: vi.fn(() => link),
+        getForCleanup: vi.fn(() => link),
         unlink: vi.fn(() => true),
         listByAccount: vi.fn(() => []),
       },
@@ -555,7 +585,9 @@ describe("Kernel frame bodies", () => {
     const sends: Array<string | ArrayBuffer> = [];
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
-    kernel.env = {};
+    kernel.env = { INSTALLATION_DIRECTORY: {
+      resolveInstallation: async (installationId: string) => ({ found: true, installationId, state: "active" }),
+    } };
     kernel.installationId = TEST_INSTALLATION_ID;
     kernel.transport.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };
@@ -1203,10 +1235,10 @@ describe("Kernel device connection cleanup", () => {
 
 describe("Kernel user signal broadcasts", () => {
   it("does not send user signals to driver or service sockets", () => {
-    const user = { state: { peer: connectedPeer("human", "web", 1000) }, send: vi.fn() };
-    const otherUser = { state: { peer: connectedPeer("human", "web-other", 2000) }, send: vi.fn() };
-    const driver = { state: { peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
-    const service = { state: { peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
+    const user = { state: { step: "connected", peer: connectedPeer("human", "web", 1000) }, send: vi.fn() };
+    const otherUser = { state: { step: "connected", peer: connectedPeer("human", "web-other", 2000) }, send: vi.fn() };
+    const driver = { state: { step: "connected", peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
+    const service = { state: { step: "connected", peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.connections = new Map([
@@ -1230,22 +1262,24 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends raw Process activity only to its routed or observing connections", () => {
     const routed = {
-      state: { peer: connectedPeer("human", "routed", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const observing = {
       state: {
+        step: "connected",
         peer: connectedPeer("human", "observing", 1000),
         observedProcessIds: ["proc-1"],
       },
       send: vi.fn(),
     };
     const idle = {
-      state: { peer: connectedPeer("human", "idle", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     const other = {
       state: {
+        step: "connected",
         peer: connectedPeer("human", "other", 2000),
         observedProcessIds: ["proc-1"],
       },
@@ -1279,11 +1313,11 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends only a content-free Process invalidation to idle owner connections", () => {
     const routed = {
-      state: { peer: connectedPeer("human", "routed", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const idle = {
-      state: { peer: connectedPeer("human", "idle", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -1325,6 +1359,95 @@ describe("Kernel user signal broadcasts", () => {
         historyResetRevision: 8,
       },
     });
+  });
+
+  function processReader(id: string, input: {
+    uid?: number;
+    credentialEpoch?: number;
+    observing?: boolean;
+    step?: KernelConnectionState["step"];
+    signals?: string[];
+    kind?: "human" | "machine" | "service";
+  } = {}) {
+    const peer = connectedPeer(input.kind ?? "human", id, input.uid ?? 1000);
+    if (input.signals) peer.grant.signals = input.signals;
+    let state: KernelConnectionState = {
+      step: input.step ?? "connected", peer,
+      credentialEpoch: input.credentialEpoch ?? 0,
+      observedProcessIds: input.observing ? ["proc-1"] : [],
+    };
+    return {
+      get state() { return state; },
+      setState(next: KernelConnectionState) { state = next; },
+      send: vi.fn(),
+      close: vi.fn(),
+    };
+  }
+
+  it.each(["routed", "observing", "ambient"] as const)("skips a revoked %s Process reader while its close callback is pending", (mode) => {
+    const signal = mode === "ambient" ? "proc.changed" : "proc.run.stream";
+    const old = processReader("old", { observing: mode === "observing" });
+    const healthy = processReader("healthy", { observing: mode !== "ambient", credentialEpoch: 1 });
+    old.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const kernel = bareKernel();
+    kernel.connections = new Map([["old", old], ["healthy", healthy]]);
+    kernel.auth = { credentialEpoch: () => 1, isAccountDisabled: () => false };
+    kernel.connectionRuntime.invalidateAccountConnections(1000);
+    const frame = { type: "sig", signal, payload: { pid: "proc-1", runId: "run-1", changes: ["messages"], content: "private activity" } };
+    const route = mode === "routed" ? { kind: "connection", connectionId: "old" } : null;
+
+    expect(() => kernel.processOutput.broadcastProcessSignal(1000, "proc-1", route, frame)).not.toThrow();
+
+    expect(kernel.connections.size).toBe(2);
+    expect(old.state.step).toBe("superseded");
+    expect(old.close).toHaveBeenCalledWith(1008, "Credentials changed; sign in again");
+    expect(old.send).not.toHaveBeenCalled();
+    expect(healthy.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === "ambient"
+      ? { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"] } }
+      : frame));
+  });
+
+  it.each(["routed", "observing", "ambient"] as const)("isolates a failed active %s Process recipient", (mode) => {
+    const signal = mode === "ambient" ? "proc.changed" : "proc.run.stream";
+    const failed = processReader("failed", { observing: mode === "observing" });
+    const healthy = processReader("healthy", { observing: mode !== "ambient" });
+    failed.send.mockImplementation(() => { throw new Error("Socket already closed"); });
+    const kernel = bareKernel();
+    kernel.connections = new Map([["failed", failed], ["healthy", healthy]]);
+    const frame = { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"], content: "private activity" } };
+    const route = mode === "routed" ? { kind: "connection", connectionId: "failed" } : null;
+
+    expect(() => kernel.processOutput.broadcastProcessSignal(1000, "proc-1", route, frame)).not.toThrow();
+
+    expect(failed.close).toHaveBeenCalledWith(1011, "Process feed interrupted");
+    expect(healthy.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === "ambient"
+      ? { type: "sig", signal, payload: { pid: "proc-1", changes: ["messages"] } }
+      : frame));
+  });
+
+  it("preserves owner, signal, observation and connected-state gates for Process activity", () => {
+    const allowed = processReader("allowed", { observing: true });
+    const rejected = [
+      processReader("other", { uid: 2000, observing: true }),
+      processReader("root", { uid: 0, observing: true }),
+      processReader("ungranted", { observing: true, signals: [] }),
+      processReader("pending", { observing: true, step: "pending" }),
+      processReader("idle"),
+      processReader("machine", { kind: "machine", observing: true, signals: ["proc.run.stream", "proc.changed"] }),
+      processReader("service", { kind: "service", observing: true, signals: ["proc.run.stream", "proc.changed"] }),
+    ];
+    const kernel = bareKernel();
+    kernel.connections = new Map([["allowed", allowed], ...rejected.map((connection, i) => [`rejected-${i}`, connection])]);
+    const frame = { type: "sig", signal: "proc.run.stream", payload: { pid: "proc-1", content: "private activity" } };
+
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", null, frame);
+
+    expect(allowed.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify(frame));
+    for (const connection of rejected) expect(connection.send).not.toHaveBeenCalled();
+    kernel.processOutput.broadcastProcessSignal(1000, "proc-1", null, { ...frame, signal: "proc.changed" });
+    for (const connection of rejected.filter((connection) => connection.state.peer?.id !== "idle")) {
+      expect(connection.send).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -1397,11 +1520,11 @@ describe("Kernel canonical message commits", () => {
     };
     const kernel = buildCommitKernel(route);
     const origin = {
-      state: { peer: connectedPeer("human", "origin", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "origin", 1000) },
       send: vi.fn(),
     };
     const observer = {
-      state: { peer: connectedPeer("human", "observer", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "observer", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["origin", origin], ["observer", observer]]);
@@ -1469,7 +1592,7 @@ describe("Kernel canonical message commits", () => {
     const kernel = buildCommitKernel(null);
     kernel.adapterDelivery.materializePersonalAdapterFallback.mockReturnValue(route);
     const synced = {
-      state: { peer: connectedPeer("human", "web", 1000) },
+      state: { step: "connected", peer: connectedPeer("human", "web", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["web", synced]]);

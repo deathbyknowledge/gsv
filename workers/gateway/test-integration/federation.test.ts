@@ -39,6 +39,13 @@ describe("cross-GSV federation integration", () => {
     firstOrigin = loopbackOrigin(firstListener.url);
     secondOrigin = loopbackOrigin(secondListener.url);
 
+    for (const [harness, origin] of [[firstHarness, firstOrigin], [secondHarness, secondOrigin]] as const) {
+      const response = await harness.getWorker("gsv-test-dependencies").fetch(
+        "http://gsv-test-dependencies/__test/default-origin", { method: "POST", body: origin.origin },
+      );
+      expect(response.status).toBe(204);
+    }
+
     await Promise.all([
       setup(firstOrigin, FIRST_USER, "first_ship"),
       setup(secondOrigin, SECOND_USER, "second_ship"),
@@ -402,7 +409,7 @@ function loopbackOrigin(value: URL): URL {
 
 async function setup(origin: URL, username: string, agentName: string): Promise<void> {
   const client = new GSVClient();
-  await client.requestOnce(webSocketUrl(origin), "sys.setup", {
+  await client.requestOnce(webSocketUrl(origin), "sys.setup", { onboardingToken: "integration-onboarding-default",
     username,
     password: PASSWORD,
     agentName,

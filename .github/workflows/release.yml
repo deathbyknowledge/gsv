@@ -247,7 +247,6 @@ jobs:
             workers/gateway/package-lock.json
             web/package-lock.json
             workers/ripgit/package-lock.json
-            workers/adapters/whatsapp/package-lock.json
             workers/adapters/discord/package-lock.json
             workers/adapters/telegram/package-lock.json
 

@@ -1,3 +1,4 @@
+import { createInstallationStorage } from "../installation/storage";
 import { evictDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -96,7 +97,7 @@ describe("typed history archive wire", () => {
     ];
     const bytes = await new Response(new Blob([rows.map((row) => JSON.stringify(row)).join("\n")])
       .stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
-    await env.STORAGE.put(key, bytes);
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, bytes);
     await runInProcess(stub, (process: Process) => process.store.history.recordHistorySegment({
       id: "segment:old", generation: 9, kind: "compaction", fromMessageId: 1, toMessageId: 4, archivePath: `/${key}`,
     }));

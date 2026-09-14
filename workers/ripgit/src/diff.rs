@@ -3,6 +3,7 @@
 //! Provides recursive tree diffing (which files changed between two commits)
 //! and line-level unified diffs via the `similar` crate.
 
+use crate::retirement::RetirementSql as SqlStorage;
 use crate::store;
 use serde::Serialize;
 use std::collections::HashMap;

@@ -2,7 +2,7 @@ import type {
   InstallationDirectoryResult,
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
-import { parseManagedInstallationId } from "./identity";
+import { parseInstallationId } from "./identity";
 
 export const MANAGED_LIFECYCLE_RECHECK_MS = 60_000;
 
@@ -22,11 +22,11 @@ export type ManagedInstallationLifecycleBindings = {
 export async function resolveManagedInstallationById(
   bindings: ManagedInstallationLifecycleBindings,
   installationIdValue: string,
-): Promise<ResolvedManagedInstallation | null> {
+): Promise<ResolvedManagedInstallation> {
   const directory = bindings.INSTALLATION_DIRECTORY;
-  if (!directory) return null;
+  if (!directory) throw new Error("Installation directory is not configured");
 
-  const installationId = parseManagedInstallationId(installationIdValue);
+  const installationId = parseInstallationId(installationIdValue);
   const result = await directory.resolveInstallation(installationId);
   if (!result.found || result.installationId !== installationId) {
     throw new Error("Managed installation is unavailable");
@@ -43,7 +43,7 @@ export async function managedInstallationWorkGate(
       bindings,
       installationId,
     );
-    if (!result || result.state === "active") {
+    if (result.state === "active") {
       return { allowed: true };
     }
     return result.state === "restricted"

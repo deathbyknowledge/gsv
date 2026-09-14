@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-inference-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "enable_nodejs_os_module"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "INFERENCE_DEFAULT_PROVIDER": "workers-ai",
+    "INFERENCE_DEFAULT_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "INFERENCE_MONTHLY_REQUESTS": 3,
+    "INFERENCE_MONTHLY_OUTPUT_TOKENS": 100,
+    "INFERENCE_MAX_OUTPUT_TOKENS": 64,
+    "INFERENCE_MAX_DURATION_MS": 180000
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "InferenceExecutor"
+      ]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "INFERENCE_EXECUTORS",
+        "class_name": "InferenceExecutor"
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

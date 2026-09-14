@@ -102,6 +102,31 @@ describe("managed installation routing integration", () => {
     }
   });
 
+  it("requires an onboarding capability for setup and setup assistance", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    for (const [call, args] of [
+      ["sys.setup", { username: "first-owner", password: "first-owner-password" }],
+      ["sys.setup.assist", {
+        lane: "quick", messages: [], draft: {
+          lane: "quick", mode: "manual", stage: "details", detailStep: "account",
+          account: { username: "first-owner", agentName: "agent", password: "", passwordConfirm: "" },
+          admin: { mode: "same", password: "", passwordConfirm: "" },
+          system: { timezone: "UTC" }, ai: { enabled: false, provider: "", model: "", apiKey: "" },
+          device: { enabled: false, deviceId: "", label: "", expiryDays: "" },
+        },
+      }],
+    ] satisfies [string, JsonObject][]) {
+      expect(await managedRpc(socket, `unauthorized-${call}`, call, args)).toMatchObject({
+        ok: false, error: { code: 401, message: "Installation setup link is invalid or expired" },
+      });
+    }
+    await expectManagedRpcOk(socket, "authorized-setup", "sys.setup", {
+      username: "first-owner", password: "first-owner-password", onboardingToken: "integration-onboarding-first",
+    });
+    socket.close(1000, "test complete");
+  });
+
   it("retries accounts activation after setup completes locally", async () => {
     await beginProvisioning(harness, "first");
     await failNextOnboardingCompletion(harness, "first", "before-activation");
@@ -202,14 +227,14 @@ describe("managed installation routing integration", () => {
       data: {
         message: {
           stopReason: "error",
-          errorMessage: "Model generation timed out after 200ms",
+          errorMessage: expect.stringMatching(/timed out after 200ms|Inference deadline exceeded/),
         },
       },
     });
     const { INTEGRATION_STATE } = await harness.getWorker<{
       INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
     }>("gsv-test-dependencies").getEnv();
-    const state = INTEGRATION_STATE.getByName("singleton");
+    const state = INTEGRATION_STATE.getByName("integration-recorder");
     await waitForManagedInferenceCancellation(state, "inst_integration_first");
     expect(await state.managedInferenceAbortReason("inst_integration_first")).toBe("timeout");
     socket.close(1000, "test complete");
@@ -300,7 +325,7 @@ describe("managed installation routing integration", () => {
     }>("gsv-test-dependencies");
     const { INTEGRATION_STATE } = await dependencies.getEnv();
     const state = INTEGRATION_STATE.get(
-      INTEGRATION_STATE.idFromName("singleton"),
+      INTEGRATION_STATE.idFromName("integration-recorder"),
     );
     await waitForManagedInferenceCancellation(state, "inst_integration_first");
   });
@@ -409,15 +434,15 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
-  it("rejects the standalone compatibility identity on the managed entrypoint", async () => {
-    const response = await sendAdapterServiceFrame(harness, "singleton", {
+  it("rejects an unknown installation on the adapter entrypoint", async () => {
+    const response = await sendAdapterServiceFrame(harness, "inst_unknown", {
       type: "req",
-      id: "managed-adapter-singleton",
+      id: "unknown-adapter-installation",
       call: "adapter.state.update",
       args: {},
     });
 
-    expect(response).toBeNull();
+    expect(response).toMatchObject({ ok: false, error: { code: 503 } });
   });
 
   it("carries installation identity through outbound adapter RPC", async () => {
@@ -454,6 +479,13 @@ describe("managed installation routing integration", () => {
         },
         auth: { username: "root", password: rootPassword },
       });
+      // This routing fixture owns the exact link; real human pairing is covered by messenger-admission.
+      const storage = await worker.getDurableObjectStorage("KERNEL", { name: `inst_integration_${handle}` });
+      await storage.exec(
+        "INSERT INTO identity_links (adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "telegram", "shared-account", "same-provider-peer", 1000, Date.now(), 1000,
+        JSON.stringify({ surfaceKind: "dm", surfaceId: "same-provider-peer" }),
+      );
       await expectManagedRpcOk(socket, `send-${handle}`, "adapter.send", {
         adapter: "telegram",
         accountId: "shared-account",

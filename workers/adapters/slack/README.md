@@ -1,19 +1,16 @@
 # GSV Slack Adapter
 
-The Slack adapter supports two deliberately separate deployments:
-
-- Managed GSV uses one official, platform-owned Slack app that can be installed
-  in many workspaces. Each Slack author confirms a short-lived code from a
-  signed-in GSV session before their messages can reach an installation.
-- Standalone GSV uses a Slack app owned by that deployment. It connects through
-  Socket Mode, so the standalone adapter does not need a public Slack webhook.
+The Slack adapter uses one operator-owned app that can be installed in many
+workspaces. Each Slack author confirms a short-lived code from a signed-in GSV
+session before their messages can reach a space. The sole Worker entrypoint is
+`src/managed.ts`, configured by `wrangler.managed.jsonc`.
 
 Slack supports text and files in direct messages, channels, and threads.
 Files attached to a direct message or an explicit `@GSV` message are retained
 once as immutable GSV resources. GSV resource attachments are uploaded as
 native Slack files into the originating channel or thread.
 
-## Managed app setup
+## Operator app setup
 
 Create a distributable Slack app for the managed environment. You can start
 from `slack-app.managed.example.yaml` (replace `SLACK_ORIGIN`), or configure it
@@ -48,7 +45,7 @@ The deployment binds its externally reachable Worker origin as
 `SLACK_PUBLIC_BASE_URL`. Staging and production should use separate Slack apps
 and credentials.
 
-### Managed user flow
+### Human pairing
 
 1. Open **GSV → Messengers → Slack** and authorize the official GSV app in the
    intended Slack workspace. Slack reuses an existing workspace installation,
@@ -80,7 +77,7 @@ window before a workspace or peer Durable Object is addressed. Relinking an
 author rotates their route generation; delayed ingress and output recheck that
 generation and cannot cross to the old or new installation accidentally.
 
-### Managed Slack target
+### Slack target
 
 After personal OAuth authorization and pairing, GSV projects that Slack
 workspace as an online target. Discover its opaque target id with `targets list`,
@@ -164,49 +161,7 @@ resource path fails without changing Slack. The target advertises `fs.read`,
 The target is distinct from messaging. `message destinations` discovers
 authorized conversation delivery surfaces and `message send` commits a
 user-visible GSV Message. A `slack messages send` command is inspectable external
-tool activity performed by the GSV Slack app. The standalone shared bot remains
-transport-only until it has an explicit policy for granting bot-wide authority.
-
-## Standalone app setup
-
-1. Create an app at [Slack API Apps](https://api.slack.com/apps), optionally
-   using `slack-app.standalone.example.yaml` as its manifest.
-2. Add the same bot scopes used above: `app_mentions:read`, `chat:write`,
-   `files:read`, `files:write`, `im:history`, and `im:write`.
-3. Under **App Home**, enable the Messages tab and allow users to send messages.
-4. Under **Event Subscriptions**, subscribe the bot to `app_mention`,
-   `message.im`, and `app_uninstalled`.
-5. Under **Interactivity & Shortcuts**, enable Interactivity. Socket Mode carries
-   the interaction payload, so no public Request URL is needed.
-6. Enable **Socket Mode**.
-7. Create an app-level token with the `connections:write` scope. This is the
-   `xapp-…` token.
-8. Install the app in the workspace and copy its `xoxb-…` bot token.
-9. In **GSV → Messengers → Slack**, enter both tokens.
-10. Direct-message the app once and enter the one-time authorization code in
-   GSV. After linking, direct messages and public `@GSV` mentions reach the
-   standalone installation.
-
-The console uses the stable local account ID `default`. Advanced deployments
-can configure another account ID through the CLI. To keep tokens out of shell
-history, set `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` as secrets on the adapter
-Worker, then connect it without inline configuration:
-
-```bash
-gsv adapter connect --adapter slack --account-id default
-gsv adapter status --adapter slack --account-id default
-```
-
-Disconnecting closes Socket Mode and clears both persisted tokens:
-
-```bash
-gsv adapter disconnect --adapter slack --account-id default
-```
-
-The Slack account Durable Object durably queues an event before acknowledging
-its Socket Mode envelope. It retries the Gateway handoff with the event's stable
-Slack identity. Outbound delivery uses an account-local idempotency ledger and
-does not retry an ambiguous provider outcome.
+tool activity performed by the GSV Slack app. Pairing alone never grants the linked space the bot’s workspace-wide visibility.
 
 ## Files and attachments
 
@@ -230,9 +185,7 @@ sharing requires the GSV app to be a member of the destination conversation.
 
 Existing managed workspace installations must use the install link again to
 approve the file and app-owned target scopes. Every managed user who wants the
-target must authorize its read scopes once. Existing standalone apps must add
-`files:read` and `files:write`, reinstall the app in the workspace, and reconnect
-the adapter so Slack issues a token with those permissions.
+target must authorize its read scopes once.
 
 ## Approval buttons
 
@@ -251,10 +204,7 @@ makes repeated provider callbacks idempotent and keeps the first selection.
 
 ## Endpoints
 
-The standalone Worker exposes only health responses; Slack traffic enters over
-its outbound Socket Mode connection.
-
-The managed Worker exposes:
+The Worker exposes:
 
 ```text
 GET  /slack/install

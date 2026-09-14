@@ -145,7 +145,12 @@ function TelegramPanel({ onConnected, onCollapse }: { onConnected: () => void; o
   );
 }
 
-export function FirstDay() {
+export function FirstDay({ onConversation, onMeet, meetDisabled, hasDraft }: {
+  onConversation?: () => void;
+  onMeet: () => void;
+  meetDisabled: boolean;
+  hasDraft: boolean;
+}) {
   const { client, connected } = useGateway();
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected });
   const identityLinks = useConsoleIdentityLinks();
@@ -219,6 +224,11 @@ export function FirstDay() {
                 </div>
               );
             })}
+          </div>
+          <div class="fd-actions">
+            <button type="button" class="ibtn" disabled={meetDisabled} onClick={onMeet}
+              title={hasDraft ? "Send or clear your draft first" : undefined}>Meet your Ship</button>
+            {onConversation ? <button type="button" class="ibtn" onClick={onConversation}>open conversation</button> : null}
           </div>
         </div>
       </div>

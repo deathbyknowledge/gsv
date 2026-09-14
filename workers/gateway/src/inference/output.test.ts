@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 import {
   isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,

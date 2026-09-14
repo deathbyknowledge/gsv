@@ -43,7 +43,7 @@ function cursor(result: ProcHistoryRecordsResult): string {
 
 describe("typed Process history synchronization", () => {
   it("migrates v14 without rewriting legacy or typed rows and seeds a durable revision", async () => {
-    const stub = await getProcessByPid("history-sync-migration");
+    const stub = await getProcessByPid("history-sync-migration", "inst_test");
     await runInDurableObject(stub, async (_process: Process, state) => {
       await state.storage.deleteAll();
       runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS.filter(({ id }) => id <= 14));

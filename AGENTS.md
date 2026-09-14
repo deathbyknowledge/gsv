@@ -21,15 +21,16 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Treat installation identity as the outer security boundary
 
-- Managed HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
+- HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
 - The Kernel Durable Object name is the immutable `installationId`; handles and canonical origins are routing metadata, not security identities.
 - Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
 - A platform-owned shared adapter may bind an external identity only through a direct, signed-in human confirmation. Its public webhook and pairing code never choose an installation or local uid; the adapter owns one generation-fenced peer route and rechecks that generation before delayed ingress or delivery.
-- Accounts owns managed installation state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
+- Accounts owns space lifecycle state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
+- Accounts owns global owner credentials and My spaces sessions separately from Kernel accounts and operator administration. Native email and external identity credentials never merge by matching email. Ownership linking requires current Kernel root authorization plus fresh owner verification; root recovery requires a fresh verification bound to the current owner and exact recovery attempt. An ordinary owner session cannot authorize a root reset. Accounts delivers verification mail independently of the space being recovered.
 - An operator reset never clears a Kernel in place or reuses its installation ID. Accounts atomically moves the handle to a fresh installation, retains the old identity behind inactive routing, and records its data as pending deletion until every owning service confirms cleanup.
-- Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
+- Process, R2, ripgit, and installation-owned adapter physical addresses must include installation scope. Shared application and peer objects retain adapter-owned identities and generation-fenced space links.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
-- Preserve the explicit `singleton` projection for supported standalone upgrades until a deliberate standalone migration replaces it end to end.
+- Every deployment uses the trusted directory and scoped resource addresses. There is no singleton projection or runtime deployment mode. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
 
 ### Treat syscalls and protocol frames as the primitive boundary
 
@@ -84,13 +85,15 @@ Process history uses typed message, note, call, result, and event records. Stora
 
 ## System ownership
 
-- `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
+- `packages/gsv/src/services/`: public Worker RPC contracts for Accounts, inference execution, lifecycle, optional commercial services, mail, and adapters. Operators compose public implementations with their own optional services.
 - `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
+- `workers/installations/`: required public Accounts directory, ownership, onboarding, operator administration, recovery authorization, reset preparation and durable deletion coordination. Commercial policy and usage remain owned by the optional operator service.
 - `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
 - `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
 - `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
-- `workers/gateway/src/inference/`: provider integration and model transport.
+- `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
+- `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
@@ -221,16 +224,15 @@ Validate only the surfaces affected by the change:
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
-- WhatsApp: `cd workers/adapters/whatsapp && npx tsc --noEmit`
 - Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
 ## Deployment model
 
-- Gateway code: `cd workers/gateway && npm run deploy`
-- Web code: build `web`, then deploy the gateway that serves the resulting assets.
-- Adapter code: deploy the affected adapter worker.
+- Operator stack: build and inspect `npm run deployment:plan`, then apply `npm run deployment:deploy` with the existing operator configuration and Alchemy state.
+- Web code: build `web`, then deploy the Gateway that serves those assets through the same operator composition.
+- Adapter code: update the affected adapter Worker through the operator composition, preserving its resource identities and application credentials.
 - ripgit code: deploy that worker separately.
 - CLI or extension code: build and publish through their release path; a gateway deploy does not update them.
 

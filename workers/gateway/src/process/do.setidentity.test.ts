@@ -41,7 +41,7 @@ describe("proc.setidentity", () => {
   it("stores the process's initial task title", async () => {
     const pid = "mech-setid-title";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
 
     await stub.recvFrame(
       makeReq("proc.setidentity", {

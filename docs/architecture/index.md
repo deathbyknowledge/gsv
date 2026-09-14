@@ -165,8 +165,8 @@ imports.
 Repository slugs are installation-local. The Gateway binds internal Ripgit
 requests to the resolved installation, and Ripgit includes that identity in
 the physical Repository Durable Object name. Public Git paths remain
-`/git/{owner}/{repo}.git`; standalone deployments retain the historical
-`{owner}/{repo}` object names.
+`/git/{owner}/{repo}.git`. Every repository object is scoped to the immutable
+installation identity; historical unscoped names are not a runtime fallback.
 
 GSV uses repositories for more than source control:
 

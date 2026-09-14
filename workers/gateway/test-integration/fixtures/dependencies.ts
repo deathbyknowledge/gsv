@@ -36,7 +36,8 @@ import type {
   InferenceService as ManagedInferenceService,
   InferenceTarget as ManagedInferenceTargetContract,
 } from "@humansandmachines/gsv/services/inference";
-import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
+const INTEGRATION_INSTALLATION_ID = "inst_integration_default";
+const RECORDER_NAME = "integration-recorder";
 import { handleAdapterFrame } from "../../../adapters/shared/src/adapter-frame";
 
 type ImportRequest = {
@@ -101,6 +102,14 @@ export class IntegrationState extends DurableObject<Env> {
     ));
   }
 
+  async setDefaultOrigin(origin: string): Promise<void> {
+    await this.ctx.storage.put("default-origin", origin);
+  }
+
+  async getDefaultOrigin(): Promise<string> {
+    return await this.ctx.storage.get<string>("default-origin") ?? "http://localhost";
+  }
+
   async setInstallationState(
     handle: string,
     state: ManagedInstallationState,
@@ -111,7 +120,7 @@ export class IntegrationState extends DurableObject<Env> {
   async getInstallationState(handle: string): Promise<ManagedInstallationState> {
     return await this.ctx.storage.get<ManagedInstallationState>(
       `installation:${handle}:state`,
-    ) ?? "active";
+    ) ?? (handle === "default" ? "provisioning" : "active");
   }
 
   async setOnboardingCompletionFailure(
@@ -202,7 +211,7 @@ class ManagedInferenceTarget
     ));
     if (waitsForCancellation) {
       const id = this.#env.INTEGRATION_STATE.idFromName(
-        SINGLETON_INSTALLATION_ID,
+        RECORDER_NAME,
       );
       const state = this.#env.INTEGRATION_STATE.get(id);
       while (!await state.wasManagedInferenceCancelled(input.installationId)) {
@@ -304,7 +313,7 @@ class ManagedInferenceTarget
 
   async abort(_logicalRequestId: string, reason: ManagedInferenceAbortReason = "cancelled"): Promise<void> {
     const id = this.#env.INTEGRATION_STATE.idFromName(
-      SINGLETON_INSTALLATION_ID,
+      RECORDER_NAME,
     );
     await this.#env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
       this.#installationId,
@@ -366,6 +375,9 @@ export default class TestDependencies
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return { found: true, installationId: INTEGRATION_INSTALLATION_ID, handle: "default", canonicalOrigin: await this.integrationState().getDefaultOrigin(), state: await this.integrationState().getInstallationState("default") };
+    }
     const handle = hostname.endsWith(".gsv.space")
       ? hostname.slice(0, -".gsv.space".length)
       : "";
@@ -386,6 +398,9 @@ export default class TestDependencies
   async resolveInstallation(
     installationId: string,
   ): Promise<InstallationDirectoryResult> {
+    if (installationId === INTEGRATION_INSTALLATION_ID) {
+      return await this.resolveHostname("localhost");
+    }
     const handle = installationHandle(installationId);
     return handle
       ? await this.resolveHostname(`${handle}.gsv.space`)
@@ -403,11 +418,9 @@ export default class TestDependencies
     ) {
       return { ok: false };
     }
-    return {
-      ok: true,
-      claimId: `integration-claim-${handle}`,
-      installation: installationIdentity(handle),
-    };
+    const installation = installationIdentity(handle);
+    if (handle === "default") installation.canonicalOrigin = await this.integrationState().getDefaultOrigin();
+    return { ok: true, claimId: `integration-claim-${handle}`, installation };
   }
 
   async completeInstallationOnboarding(
@@ -483,6 +496,16 @@ export default class TestDependencies
       return Response.json(
         await this.integrationState().listWorkersAiRequests(),
       );
+    }
+
+    if (url.pathname === "/__test/default-origin" && request.method === "POST") {
+      const origin = new URL(await request.text());
+      if (origin.protocol !== "http:" || origin.hostname !== "localhost" || origin.origin !== origin.href.slice(0, -1)
+        || await this.integrationState().getInstallationState("default") !== "provisioning") {
+        return new Response("invalid default origin", { status: 400 });
+      }
+      await this.integrationState().setDefaultOrigin(origin.origin);
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname === "/__test/provisioning" && request.method === "POST") {
@@ -671,7 +694,7 @@ export default class TestDependencies
   }
 
   private integrationState(): DurableObjectStub<IntegrationState> {
-    const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
+    const id = this.env.INTEGRATION_STATE.idFromName(RECORDER_NAME);
     return this.env.INTEGRATION_STATE.get(id);
   }
 }
@@ -713,7 +736,7 @@ class WorkersAiGatewayFixture extends RpcTarget {
       "x-api-key",
     ]);
     const id = this.#env.INTEGRATION_STATE.idFromName(
-      SINGLETON_INSTALLATION_ID,
+      RECORDER_NAME,
     );
     await this.#env.INTEGRATION_STATE.get(id).recordWorkersAiRequest({
       provider: request.provider,
@@ -764,7 +787,8 @@ function workersAiCompletion(
   });
 }
 
-function installationHandle(installationId: string): "first" | "second" | null {
+function installationHandle(installationId: string): "first" | "second" | "default" | null {
+  if (installationId === INTEGRATION_INSTALLATION_ID) return "default";
   if (installationId === "inst_integration_first") return "first";
   if (installationId === "inst_integration_second") return "second";
   return null;
@@ -774,10 +798,10 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function installationIdentity(handle: "first" | "second") {
+function installationIdentity(handle: "first" | "second" | "default") {
   return {
     installationId: `inst_integration_${handle}`,
     handle,
-    canonicalOrigin: `https://${handle}.gsv.space`,
+    canonicalOrigin: handle === "default" ? "http://localhost" : `https://${handle}.gsv.space`,
   };
 }

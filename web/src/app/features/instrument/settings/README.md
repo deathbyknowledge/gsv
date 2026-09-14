@@ -17,3 +17,17 @@ Custom MCP headers are an optional disclosure in the add-server form. Values rem
 The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations and cross-Ship request management belong to Fleet. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
 
 Settings includes a quiet sign-out action beside the current username. Unsaved settings require confirmation before leaving; signing out uses the shared session service to clear the stored credential, revoke the current UI token and return to login.
+
+Root has a People section for local human access: create and cancel a private,
+expiring invitation; see active and removed accounts; set a member's password;
+or remove their access after an inline confirmation. These local enrollments are
+distinct from Fleet's cross-space contact invitations. People never asks root to
+choose the invitee's initial password. The invitee opens `/join` on the space's
+own hostname, chooses a password, and retains the same recipient proof across a
+lost-reply retry. Password reset and removal explain credential and messenger
+revocation; removal preserves data and already-running work. People drafts use
+the same navigation guard as the other Settings sections.
+
+Root's Sign-in section holds the verified-owner linking control. Local accounts
+sign in with their password through the existing session service and token
+rotation. No credential material is kept in UI drafts.

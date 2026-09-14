@@ -1,4 +1,4 @@
-import type { Context, Message, Usage } from "@earendil-works/pi-ai";
+import type { Context, Message, Usage } from "@humansandmachines/gsv/services/inference-context";
 import type {
   ProcContextPressureLevel, ProcContextState, ProcContextUsageSource, ProcUsageState,
 } from "@humansandmachines/gsv/protocol";

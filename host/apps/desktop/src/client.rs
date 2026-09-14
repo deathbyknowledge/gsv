@@ -2475,7 +2475,7 @@ fn classify_connect_failure(url: &str, error: Box<dyn std::error::Error>) -> Est
         if error.is_setup_required() {
             return EstablishFailure {
                 kind: EstablishFailureKind::SetupRequired,
-                message: "This GSV still needs first-time setup. Finish setup in the web app or with `gsv auth setup`, then try again."
+                message: "This space still needs first-time setup. Open its setup link in your browser, then sign in here."
                     .to_string(),
             };
         }

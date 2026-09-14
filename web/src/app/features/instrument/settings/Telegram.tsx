@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import type { ConnectFlowShellProps } from "../../../components/connect-flow/ConnectFlowShell";
 import { useConsoleAdapterPairingInfo, useInspectConsoleAdapterPairing, useConfirmConsoleAdapterPairing } from "../../../services/system/useConsoleData";
-import { ManagedSlackOnboardingFlow, ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "./messengers/ManagedTelegramOnboardingFlow";
+import { SharedDiscordOnboardingFlow, ManagedSlackOnboardingFlow, ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "./messengers/ManagedTelegramOnboardingFlow";
 
 /** Renders one step of a console connect flow inside our panel, without the console's page chrome. */
 function CompactFlowShell({ flow, current, onStep }: ConnectFlowShellProps): ComponentChildren {
@@ -33,10 +33,10 @@ const compactTelegramDependencies: ManagedTelegramDependencies = {
 };
 
 export function MessengerPairing({ adapter, onClose, onConnected }: {
-  adapter: "telegram" | "slack";
+  adapter: "telegram" | "slack" | "discord";
   onClose: () => void;
   onConnected: () => void;
 }) {
-  const Flow = adapter === "telegram" ? ManagedTelegramOnboardingFlow : ManagedSlackOnboardingFlow;
+  const Flow = adapter === "telegram" ? ManagedTelegramOnboardingFlow : adapter === "slack" ? ManagedSlackOnboardingFlow : SharedDiscordOnboardingFlow;
   return <Flow dependencies={compactTelegramDependencies} onBack={onClose} onConnected={onConnected} />;
 }

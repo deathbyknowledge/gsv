@@ -95,7 +95,7 @@
       "service": "gsv-accounts-dev"
     },
     {
-      "binding": "MANAGED_INFERENCE",
+      "binding": "INFERENCE_EXECUTION",
       "service": "gsv-inference-dev",
       "entrypoint": "InferenceService"
     },

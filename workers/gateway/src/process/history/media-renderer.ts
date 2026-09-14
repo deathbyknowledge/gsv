@@ -1,6 +1,6 @@
 /** Model-facing attachment descriptions and content blocks. */
 
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent } from "@humansandmachines/gsv/services/inference-context";
 import { processMediaPath } from "../../shared/process-media-path";
 import type { StoredProcessMedia } from "../media";
 

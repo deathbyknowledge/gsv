@@ -15,10 +15,10 @@ function directory(
 }
 
 describe("managed installation lifecycle", () => {
-  it("does not add a lifecycle dependency to standalone deployments", async () => {
+  it("fails closed without an installation directory", async () => {
     await expect(
-      managedInstallationWorkGate({}, "singleton"),
-    ).resolves.toEqual({ allowed: true });
+      managedInstallationWorkGate({}, "inst_missing_directory"),
+    ).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
   });
 
   it("allows active installations and rejects suspended installations", async () => {

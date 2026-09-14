@@ -1,0 +1,504 @@
+import {
+  createAssistantMessageEventStream,
+  createProvider,
+  type AssistantMessage,
+  type AssistantMessageEvent,
+  type AssistantMessageEventStream,
+  type Context,
+  type Model,
+  type ProviderStreams,
+  type SimpleStreamOptions,
+  type StreamOptions,
+} from "@earendil-works/pi-ai";
+import {
+  decodeManagedInferenceStream,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type ManagedInferenceRequest,
+  type ManagedInferenceResult,
+  type ManagedInferenceStreamEvent,
+} from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTarget,
+} from "@humansandmachines/gsv/services/inference";
+import type {
+  InferenceAttribution,
+  InferenceProviderFactory,
+} from "./provider";
+import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
+import { createGenerationAbort, TimeoutError } from "../shared/timeout";
+import { raceWithAbort } from "../shared/abort";
+
+const GSV_INFERENCE_API = "gsv-inference";
+
+export const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
+  id: GSV_INFERENCE_MODEL,
+  name: "GSV included",
+  api: GSV_INFERENCE_API,
+  provider: GSV_INFERENCE_PROVIDER,
+  baseUrl: "",
+  reasoning: true,
+  input: ["text"],
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  },
+  contextWindow: 1_048_576,
+  maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
+};
+
+type ManagedInferenceAccess = { kind: "service"; service: ManagedInferenceService };
+
+type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
+  [Symbol.dispose]?(): void;
+};
+
+type DisposableManagedInferenceAcquisition = Promise<ManagedInferenceTarget> & {
+  [Symbol.dispose]?(): void;
+};
+
+type AppliedManagedInferenceEvent = {
+  event: AssistantMessageEvent;
+  partial: AssistantMessage | undefined;
+  terminal: boolean;
+};
+
+export function createGsvInferenceProviderFactory(
+  service: ManagedInferenceService,
+): InferenceProviderFactory {
+  return createGsvInferenceProviderFactoryForAccess({ kind: "service", service });
+}
+
+function createGsvInferenceProviderFactoryForAccess(
+  access: ManagedInferenceAccess,
+): InferenceProviderFactory {
+  return {
+    id: GSV_INFERENCE_PROVIDER,
+    create: (attribution, options) => createProvider({
+      id: GSV_INFERENCE_PROVIDER,
+      name: "GSV",
+      auth: {
+        apiKey: {
+          name: "GSV included inference",
+          resolve: async () => ({
+            auth: {},
+            source: "operator funded inference",
+          }),
+        },
+      },
+      models: [GSV_INFERENCE_MODEL_METADATA],
+      api: gsvInferenceStreams(access, attribution, options?.deadlineAt),
+    }),
+  };
+}
+
+function gsvInferenceStreams(
+  access: ManagedInferenceAccess,
+  attribution: InferenceAttribution,
+  deadlineAt?: number,
+): ProviderStreams {
+  return {
+    stream: (_model, context, options) => streamGsvInference(
+      access,
+      attribution,
+      context,
+      options,
+      deadlineAt,
+    ),
+    streamSimple: (_model, context, options) => streamGsvInference(
+      access,
+      attribution,
+      context,
+      options,
+      deadlineAt,
+    ),
+  };
+}
+
+function streamGsvInference(
+  access: ManagedInferenceAccess,
+  attribution: InferenceAttribution,
+  context: Context,
+  options?: StreamOptions | SimpleStreamOptions,
+  deadlineAt?: number,
+): AssistantMessageEventStream {
+  if (options?.fetch) {
+    throw new Error("GSV inference cannot originate model requests from a connected machine.");
+  }
+  const stream = createAssistantMessageEventStream();
+  const abort = createGenerationAbort(options?.signal, options?.timeoutMs ?? 180_000, deadlineAt);
+  void pumpGsvInference(
+    access,
+    buildManagedInferenceRequest(attribution, context, abort.deadlineAt, options),
+    stream,
+    abort.signal,
+  ).finally(abort.clear);
+  return stream;
+}
+
+function buildManagedInferenceRequest(
+  attribution: InferenceAttribution,
+  context: Context,
+  deadlineAt: number,
+  options?: StreamOptions | SimpleStreamOptions,
+): ManagedInferenceRequest {
+  const reasoning = options && "reasoning" in options
+    ? options.reasoning
+    : undefined;
+  // SAFETY: Context messages use the same JSON message contract as managed inference.
+  const messages = context.messages as ManagedInferenceRequest["messages"];
+  const request: ManagedInferenceRequest = {
+    version: 1,
+    installationId: attribution.installationId,
+    logicalRequestId: attribution.logicalRequestId,
+    actor: attribution.actor,
+    model: GSV_INFERENCE_PRODUCT_MODEL,
+    messages,
+    maxOutputTokens: options?.maxTokens ?? GSV_INFERENCE_MODEL_METADATA.maxTokens,
+    timeoutMs: options?.timeoutMs ?? 180_000,
+    deadlineAt,
+  };
+  if (attribution.workload) request.workload = attribution.workload;
+  if (context.systemPrompt) request.systemPrompt = context.systemPrompt;
+  if (context.tools && context.tools.length > 0) {
+    // SAFETY: pi-ai tools and the managed protocol share the same JSON Schema contract.
+    request.tools = context.tools as ManagedInferenceRequest["tools"];
+  }
+  if (reasoning) request.reasoning = reasoning;
+  return request;
+}
+
+async function pumpGsvInference(
+  access: ManagedInferenceAccess,
+  request: ManagedInferenceRequest,
+  stream: AssistantMessageEventStream,
+  signal?: AbortSignal,
+): Promise<void> {
+  let target: ManagedInferenceTarget | undefined;
+  let acquisitionDisposesLateTarget = false;
+  let generationStarted = false;
+  let generationAbort: Promise<void> | undefined;
+  const abortGeneration = () => {
+    if (target && generationStarted && !generationAbort) {
+      generationAbort = (async () => {
+        try {
+          if (signal?.reason instanceof TimeoutError) {
+            await target.abort(request.logicalRequestId, "timeout");
+          } else {
+            await target.abort(request.logicalRequestId);
+          }
+        } catch {}
+      })();
+    }
+  };
+  signal?.addEventListener("abort", abortGeneration, { once: true });
+
+  try {
+    if (signal?.aborted) {
+      stream.push(gsvInferenceErrorEvent(true, signal));
+      return;
+    }
+    {
+      const acquisition = access.service.getInstallation(request.installationId);
+      target = await raceWithAbort(acquisition, signal, {
+        onAbort: () => {
+          acquisitionDisposesLateTarget = disposeManagedInferenceAcquisition(
+            acquisition,
+          );
+        },
+        onLateResolve: (lateTarget) => {
+          if (!acquisitionDisposesLateTarget) {
+            disposeManagedInferenceTarget(lateTarget);
+          }
+        },
+      });
+    }
+    if (signal?.aborted) {
+      stream.push(gsvInferenceErrorEvent(true, signal));
+      return;
+    }
+    const bodyPromise = target.generateStream(request);
+    generationStarted = true;
+    if (signal?.aborted) abortGeneration();
+    const body = await raceWithAbort(bodyPromise, signal, {
+      onAbort: () => {
+        // SAFETY: Workers RPC promises expose a disposer; local promises may omit it.
+        const disposable = bodyPromise as typeof bodyPromise & { [Symbol.dispose]?(): void };
+        disposable[Symbol.dispose]?.();
+      },
+      onLateResolve: (lateBody) => {
+        void lateBody.cancel(signal?.reason).catch(() => {});
+      },
+    });
+    let partial: AssistantMessage | undefined;
+    let terminal = false;
+    for await (const raw of decodeManagedInferenceStream(body, signal)) {
+      if (signal?.aborted) break;
+      const applied = applyManagedInferenceEvent(raw, partial);
+      partial = applied.partial;
+      terminal = applied.terminal;
+      stream.push(applied.event);
+      if (terminal) break;
+    }
+    if (signal?.aborted) {
+      stream.push(gsvInferenceErrorEvent(true, signal));
+      return;
+    }
+    if (!terminal) throw new Error("Managed inference stream ended early");
+  } catch {
+    abortGeneration();
+    stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal));
+  } finally {
+    signal?.removeEventListener("abort", abortGeneration);
+    disposeManagedInferenceTarget(target);
+  }
+}
+
+function disposeManagedInferenceAcquisition(
+  acquisition: Promise<ManagedInferenceTarget>,
+): boolean {
+  // SAFETY: Workers RPC promises implement Symbol.dispose. Disposing a pending
+  // promise also disposes an RpcTarget result if it arrives later.
+  const disposable = acquisition as DisposableManagedInferenceAcquisition;
+  const dispose = disposable[Symbol.dispose];
+  if (!dispose) return false;
+  dispose.call(disposable);
+  return true;
+}
+
+function disposeManagedInferenceTarget(
+  target: ManagedInferenceTarget | undefined,
+): void {
+  // SAFETY: Workers RPC stubs implement Symbol.dispose; local test targets may omit it.
+  const disposable = target as DisposableManagedInferenceTarget | undefined;
+  disposable?.[Symbol.dispose]?.();
+}
+
+function toAssistantMessage(
+  message: ManagedInferenceResult | Extract<ManagedInferenceStreamEvent, { type: "start" }>["partial"],
+): AssistantMessage {
+  return message;
+}
+
+function applyManagedInferenceEvent(
+  event: ManagedInferenceStreamEvent,
+  current: AssistantMessage | undefined,
+): AppliedManagedInferenceEvent {
+  switch (event.type) {
+    case "start": {
+      if (current) throw new Error("Managed inference stream started twice");
+      const partial = toAssistantMessage(event.partial);
+      return { event: { type: "start", partial }, partial, terminal: false };
+    }
+    case "text_start": {
+      const partial = appendContent(current, event.contentIndex, event.content);
+      return {
+        event: { type: "text_start", contentIndex: event.contentIndex, partial },
+        partial,
+        terminal: false,
+      };
+    }
+    case "text_delta": {
+      const partial = requirePartial(current);
+      const block = requireContent(partial, event.contentIndex, "text");
+      block.text += event.delta;
+      return {
+        event: { ...event, partial },
+        partial,
+        terminal: false,
+      };
+    }
+    case "text_end": {
+      const partial = replaceContent(current, event.contentIndex, event.content);
+      return {
+        event: {
+          type: "text_end",
+          contentIndex: event.contentIndex,
+          content: event.content.text,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "thinking_start": {
+      const partial = appendContent(current, event.contentIndex, event.content);
+      return {
+        event: {
+          type: "thinking_start",
+          contentIndex: event.contentIndex,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "thinking_delta": {
+      const partial = requirePartial(current);
+      const block = requireContent(partial, event.contentIndex, "thinking");
+      block.thinking += event.delta;
+      return {
+        event: { ...event, partial },
+        partial,
+        terminal: false,
+      };
+    }
+    case "thinking_end": {
+      const partial = replaceContent(current, event.contentIndex, event.content);
+      return {
+        event: {
+          type: "thinking_end",
+          contentIndex: event.contentIndex,
+          content: event.content.thinking,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "toolcall_start": {
+      const partial = appendContent(current, event.contentIndex, event.toolCall);
+      return {
+        event: {
+          type: "toolcall_start",
+          contentIndex: event.contentIndex,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "toolcall_delta": {
+      const partial = replaceContent(current, event.contentIndex, event.toolCall);
+      return {
+        event: {
+          type: "toolcall_delta",
+          contentIndex: event.contentIndex,
+          delta: event.delta,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "toolcall_end": {
+      const partial = replaceContent(current, event.contentIndex, event.toolCall);
+      return {
+        event: {
+          type: "toolcall_end",
+          contentIndex: event.contentIndex,
+          toolCall: event.toolCall,
+          partial,
+        },
+        partial,
+        terminal: false,
+      };
+    }
+    case "done":
+      return {
+        event: {
+          type: "done",
+          reason: event.reason,
+          message: toAssistantMessage(event.message),
+        },
+        partial: current,
+        terminal: true,
+      };
+    case "error":
+      return {
+        event: {
+          type: "error",
+          reason: event.reason,
+          error: toAssistantMessage(event.error),
+        },
+        partial: current,
+        terminal: true,
+      };
+  }
+}
+
+function appendContent(
+  current: AssistantMessage | undefined,
+  contentIndex: number,
+  content: AssistantMessage["content"][number],
+): AssistantMessage {
+  const partial = requirePartial(current);
+  if (contentIndex !== partial.content.length) {
+    throw new Error("Managed inference content index is invalid");
+  }
+  partial.content.push(content);
+  return partial;
+}
+
+function replaceContent(
+  current: AssistantMessage | undefined,
+  contentIndex: number,
+  content: AssistantMessage["content"][number],
+): AssistantMessage {
+  const partial = requirePartial(current);
+  if (!partial.content[contentIndex]) {
+    throw new Error("Managed inference content index is invalid");
+  }
+  partial.content[contentIndex] = content;
+  return partial;
+}
+
+function requireContent<T extends "text" | "thinking">(
+  partial: AssistantMessage,
+  contentIndex: number,
+  type: T,
+): Extract<AssistantMessage["content"][number], { type: T }> {
+  const content = partial.content[contentIndex];
+  if (!content || content.type !== type) {
+    throw new Error("Managed inference content sequence is invalid");
+  }
+  // SAFETY: The runtime type discriminator above matches the requested generic type.
+  return content as Extract<AssistantMessage["content"][number], { type: T }>;
+}
+
+function requirePartial(
+  partial: AssistantMessage | undefined,
+): AssistantMessage {
+  if (!partial) throw new Error("Managed inference stream has not started");
+  return partial;
+}
+
+
+function gsvInferenceErrorEvent(
+  aborted: boolean,
+  abortSignal?: AbortSignal,
+): Extract<AssistantMessageEvent, { type: "error" }> {
+  const timedOut = aborted && abortSignal?.reason instanceof TimeoutError;
+  const cancelled = aborted && !timedOut;
+  const abortMessage = abortSignal?.reason instanceof Error
+    ? abortSignal.reason.message.trim()
+    : "";
+  return {
+    type: "error",
+    reason: cancelled ? "aborted" : "error",
+    error: {
+      role: "assistant",
+      content: [],
+      api: GSV_INFERENCE_API,
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: cancelled ? "aborted" : "error",
+      errorMessage: aborted
+        ? abortMessage || "GSV inference cancelled"
+        : "GSV inference is unavailable",
+      timestamp: Date.now(),
+    },
+  };
+}

@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
+import { createInstallationStorage } from "../installation/storage";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
 import { getConversationById } from "../shared/utils";
 
 function conversation(name: string) {
-  return getConversationById("singleton", `conv:test:${name}:${crypto.randomUUID()}`);
+  return getConversationById("inst_test", `conv:test:${name}:${crypto.randomUUID()}`);
 }
 
 function message(sequence: number) {
@@ -46,9 +47,11 @@ describe("Conversation Durable Object", () => {
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
-    for (let index = 1; index <= 1_001; index += 1) {
-      await stub.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
-    }
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let index = 1; index <= 1_001; index += 1) {
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
+      }
+    });
     await stub.compact();
 
     const latest = await stub.history({ limit: 2 });
@@ -69,7 +72,7 @@ describe("Conversation Durable Object", () => {
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const appended = await stub.append(message(1));
     const key = `conversations/${encodeURIComponent(appended.message.conversationId)}/media/legacy/0`;
-    await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         purpose: "conversation-media",
@@ -81,7 +84,7 @@ describe("Conversation Durable Object", () => {
     expect(stored.mimeType).toBe("image/png");
     expect(stored.size).toBe(3);
     expect([...new Uint8Array(await new Response(stored.stream).arrayBuffer())]).toEqual([1, 2, 3]);
-    await env.STORAGE.delete(key);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(key);
   });
 
   it("stores one immutable resource reference without copying its bytes", async () => {
@@ -89,7 +92,7 @@ describe("Conversation Durable Object", () => {
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const suffix = crypto.randomUUID().replaceAll("-", "").repeat(2);
     const key = `home/agent/.gsv/media/archived-media:${suffix}`;
-    await env.STORAGE.put(key, new Uint8Array([4, 5, 6]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([4, 5, 6]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         purpose: "resource",
@@ -100,7 +103,7 @@ describe("Conversation Durable Object", () => {
         sourceContentType: "image/png",
       },
     });
-    const object = await env.STORAGE.head(key);
+    const object = await createInstallationStorage(env.STORAGE, "inst_test").head(key);
     if (!object) throw new Error("resource fixture was not stored");
     const resource = {
       type: "resource" as const,
@@ -123,13 +126,13 @@ describe("Conversation Durable Object", () => {
     });
 
     expect(appended.message.media).toEqual([resource]);
-    const copies = await env.STORAGE.list({
+    const copies = await createInstallationStorage(env.STORAGE, "inst_test").list({
       prefix: `conversations/${encodeURIComponent(appended.message.conversationId)}/media/`,
     });
     expect(copies.objects).toHaveLength(0);
-    const retained = await env.STORAGE.get(key);
+    const retained = await createInstallationStorage(env.STORAGE, "inst_test").get(key);
     expect(retained && [...new Uint8Array(await retained.arrayBuffer())]).toEqual([4, 5, 6]);
-    await env.STORAGE.delete(key);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(key);
   });
 
   it("cannot read a different conversation's media", async () => {

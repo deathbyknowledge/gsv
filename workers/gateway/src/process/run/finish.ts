@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { runOutputMediaSchema } from "./state";

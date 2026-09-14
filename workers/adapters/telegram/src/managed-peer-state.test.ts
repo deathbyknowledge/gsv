@@ -123,7 +123,7 @@ describe("managed Telegram peer state", () => {
     });
     expect(disconnected.disconnected).toBe(true);
     expect(disconnected.state.activeRoute).toBeUndefined();
-    expect(disconnected.state.pairing).toBeUndefined();
+    expect(disconnected.state.pairing).toEqual(state.pairing);
     expect(disconnectManagedTelegramPeer(disconnected.state, {
       operationId: "disconnect-1",
       route: nextRoute,

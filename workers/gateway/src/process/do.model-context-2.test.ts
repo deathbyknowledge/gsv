@@ -476,7 +476,7 @@ describe("model context", () => {
     const runId = "run-message-commit-abort";
     const actionId = "message-before-abort";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     let originalCommitProcessMessage: any;
     const { promise: commitBlocked, resolve: releaseCommit } = deferred();
     const { promise: commitStarted, resolve: markCommitStarted } = deferred();

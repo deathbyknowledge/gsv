@@ -1,3 +1,4 @@
+import type { AdapterDataScope } from "../../shared/src/retirement";
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
@@ -35,6 +36,7 @@ export async function deliverDiscordMessage(
   botToken: string | null,
   message: AdapterOutboundMessage,
   binaryBody?: BinaryBody,
+  options: { providerFetch?: typeof fetch; isCurrent?: () => Promise<boolean>; owner?: AdapterDataScope; signal?: AbortSignal } = {},
 ): Promise<AdapterSendResult> {
   if (!botToken) {
     await cancelBinaryBody(binaryBody, "No Discord bot token configured");
@@ -75,6 +77,7 @@ export async function deliverDiscordMessage(
   let mediaBytes: Array<Uint8Array | undefined>;
   try {
     mediaBytes = await readAdapterMediaBody(media, binaryBody, {
+      signal: options.signal,
       maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
       maxPartBytes: MAX_MEDIA_BODY_BYTES,
     });
@@ -97,9 +100,13 @@ export async function deliverDiscordMessage(
     };
   }
 
+  if (options.isCurrent && !await options.isCurrent()) {
+    return { ok: false, error: "Discord route changed before delivery" };
+  }
+
   let claim;
   try {
-    claim = await deliveries.claim(message.deliveryId, requestFingerprint);
+    claim = await deliveries.claim(message.deliveryId, requestFingerprint, options.owner);
   } catch (error) {
     return {
       ok: false,
@@ -165,6 +172,7 @@ export async function deliverDiscordMessage(
           index,
           mediaBytes[index],
           MAX_MEDIA_TOTAL_BODY_BYTES - uploadBytes,
+          options.providerFetch ?? fetch,
         );
         form.append(`files[${index}]`, file.blob, file.filename);
         attachments.push({ id: index, filename: file.filename });
@@ -184,13 +192,17 @@ export async function deliverDiscordMessage(
     return await fail(kind, toErrorMessage(error));
   }
 
+  if (options.isCurrent && !await options.isCurrent()) {
+    return await fail("permanent", "Discord route changed before delivery");
+  }
+
   let response: Response;
   try {
     response = await discordFetch(`/channels/${channelId}/messages`, {
       method: "POST",
       botToken,
       body: requestBody,
-    });
+    }, options.providerFetch ?? fetch);
   } catch (error) {
     return await fail(
       "ambiguous",
@@ -236,6 +248,7 @@ export async function deliverDiscordMessage(
 async function discordFetch(
   path: string,
   init: RequestInit & { botToken: string },
+  providerFetch: typeof fetch,
 ): Promise<Response> {
   const headers = new Headers(init.headers || {});
   headers.set("Authorization", `Bot ${init.botToken}`);
@@ -244,7 +257,7 @@ async function discordFetch(
     headers.set("Content-Type", "application/json; charset=utf-8");
   }
 
-  return await fetch(`${DISCORD_API}${path}`, { ...init, headers });
+  return await providerFetch(`${DISCORD_API}${path}`, { ...init, headers });
 }
 
 async function prepareUploadFile(
@@ -252,6 +265,7 @@ async function prepareUploadFile(
   index: number,
   bytes?: Uint8Array,
   remainingBytes = MAX_MEDIA_TOTAL_BODY_BYTES,
+  providerFetch: typeof fetch = fetch,
 ): Promise<{ blob: Blob; filename: string }> {
   const filename =
     media.filename
@@ -275,7 +289,7 @@ async function prepareUploadFile(
   if (media.url) {
     let response: Response;
     try {
-      response = await fetch(media.url);
+      response = await providerFetch(media.url);
     } catch (error) {
       throw new DiscordPreparationError(
         `Could not download Discord media: ${toErrorMessage(error)}`,

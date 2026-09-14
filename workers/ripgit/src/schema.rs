@@ -142,7 +142,17 @@ const V001_INITIAL_SCHEMA: SqlMigration = SqlMigration {
     statements: V001_INITIAL_STATEMENTS,
 };
 
-const MIGRATIONS: &[SqlMigration] = &[V001_INITIAL_SCHEMA];
+const V002_INSTALLATION_RETIREMENT: SqlMigration = SqlMigration {
+    id: 2,
+    name: "installation_retirement",
+    statements: &[
+        "CREATE TABLE resource_identity (id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL, installation_id TEXT NOT NULL)",
+        "CREATE TABLE installation_resources (name TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'live')",
+        "CREATE TABLE installation_retirement (id INTEGER PRIMARY KEY CHECK(id = 1), installation_id TEXT NOT NULL, operation_id TEXT NOT NULL, state TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+    ],
+};
+
+const MIGRATIONS: &[SqlMigration] = &[V001_INITIAL_SCHEMA, V002_INSTALLATION_RETIREMENT];
 
 /// Initialize the current repository schema by applying unapplied migrations.
 pub fn init(sql: &SqlStorage) -> Result<()> {

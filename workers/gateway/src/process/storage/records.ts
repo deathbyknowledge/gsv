@@ -5,7 +5,7 @@ import type {
   ProcTraceSpanKind, ProcTraceSpanStatus, ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../../syscalls";
-import type { ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type { ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 
 export const DEFAULT_MESSAGE_READ_LIMIT = 200;
 

@@ -1,6 +1,7 @@
+import { createInstallationStorage } from "../installation/storage";
 import type { ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { buildProcContextState, estimateContextInputTokens } from "./context-pressure";
-import type { Context } from "@earendil-works/pi-ai";
+import type { Context } from "@humansandmachines/gsv/services/inference-context";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -77,7 +78,7 @@ describe("process history", () => {
       ]);
     });
 
-    await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(exported.archivePaths[0].replace(/^\/+/, ""));
   });
 
   it("resolves a canonical conversation run to its process input boundary", async () => {
@@ -139,7 +140,7 @@ describe("process history", () => {
       ]);
     });
 
-    await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(exported.archivePaths[0].replace(/^\/+/, ""));
   });
 
   it("admits new work while writing a fork archive snapshot", async () => {
@@ -220,7 +221,7 @@ describe("process history", () => {
     );
 
     const archiveKey = data.archivedTo.replace(/^\//, "");
-    expect(await env.STORAGE.get(archiveKey)).not.toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").get(archiveKey)).not.toBeNull();
 
     await runInProcess(stub, (process) => {
       const store = process.store;
@@ -405,7 +406,7 @@ describe("process history", () => {
     });
 
     const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
-    const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix })).objects.map(
+    const archivesBefore = (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.map(
       (object) => object.key,
     );
     const response = await okProcessResponse(
@@ -418,7 +419,7 @@ describe("process history", () => {
     );
     expect(response.data).toEqual({ ok: false, error: "History changed during compaction" });
     expect(
-      (await env.STORAGE.list({ prefix: archivePrefix })).objects.map((object) => object.key),
+      (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.map((object) => object.key),
     ).toEqual(archivesBefore);
     await runInProcess(stub, (process) => {
       expect(process.store.history.listHistorySegments()).toHaveLength(0);
@@ -430,7 +431,7 @@ describe("process history", () => {
     const pid = "mech-conversation-compact-concurrent";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
-    const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix })).objects.map(
+    const archivesBefore = (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.map(
       (object) => object.key,
     );
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -488,7 +489,7 @@ describe("process history", () => {
     expect(result.messages[0].content).toContain("Second summary.");
     expect(result.segments).toHaveLength(1);
     expect(
-      (await env.STORAGE.list({ prefix: archivePrefix })).objects.filter(
+      (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.filter(
         (object) => !archivesBefore.includes(object.key),
       ),
     ).toHaveLength(1);
@@ -508,7 +509,7 @@ describe("process history", () => {
     });
 
     const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
-    const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix })).objects.map(
+    const archivesBefore = (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.map(
       (object) => object.key,
     );
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -524,7 +525,7 @@ describe("process history", () => {
       error: { message: "segment insert failed" },
     });
     expect(
-      (await env.STORAGE.list({ prefix: archivePrefix })).objects.map((object) => object.key),
+      (await createInstallationStorage(env.STORAGE, "inst_test").list({ prefix: archivePrefix })).objects.map((object) => object.key),
     ).toEqual(archivesBefore);
     await runInProcess(stub, (process) => {
       expect(process.store.messages.getMessages()).toEqual(
@@ -643,7 +644,7 @@ describe("process history", () => {
     const pid = "mech-conversation-segment-assistant-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const activeKey = `var/media/0/${pid}/result.png`;
-    await env.STORAGE.put(activeKey, new Uint8Array([7, 8, 9]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(activeKey, new Uint8Array([7, 8, 9]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         uid: "0",
@@ -710,9 +711,9 @@ describe("process history", () => {
       key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
     });
     expect(media.path).toBe(`/${media.key}`);
-    expect(await env.STORAGE.head(activeKey)).toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(activeKey)).toBeNull();
 
-    const archived = await env.STORAGE.get(media.key);
+    const archived = await createInstallationStorage(env.STORAGE, "inst_test").get(media.key);
     expect(archived && [...new Uint8Array(await archived.arrayBuffer())]).toEqual([7, 8, 9]);
   });
 

@@ -1,44 +1,36 @@
 # Deploy, update, and remove
 
-## Managed GSV
+## Hosted GSV
 
-Managed GSV provisions and operates the Cloudflare resources for you. Finish
+The hosting operator provisions and operates the Cloudflare resources for you. Finish
 onboarding in the web application; you do not need Cloudflare credentials or a
 local deployment tool.
 
-## Standalone GSV
+## Run your own operator
 
-The public Alchemy stack deploys a user-owned GSV into your Cloudflare account.
-It discovers the adapter implementations bundled in the checkout from their
-`adapter.json` files and defaults to installing all of them.
+The public stack serves one or many isolated spaces in your Cloudflare account.
+It includes Accounts, Gateway, inference, storage and ripgit; no private H&M
+service is required. Messenger adapters are disabled by default. Their
+application credentials are operator configuration, and people link their own
+identities after deployment.
 
-You need Node.js 22 or newer, npm, and a Cloudflare account:
+Follow [Deploy GSV with Alchemy](./deploy-with-alchemy.md) for the complete flow:
 
-```bash
-git clone https://github.com/deathbyknowledge/gsv.git
-cd gsv
-npm ci
-npx alchemy login
-npx alchemy cloudflare bootstrap
-npm run deployment:plan
-npm run deployment:deploy
-```
+1. Authenticate Alchemy and configure your Cloudflare account, `GSV_DOMAIN` and
+   `GSV_ZONE_ID`.
+2. Build, inspect the plan and deploy the `operator` stage.
+3. Issue the one-time bootstrap link and create the first space through its
+   setup invitation. Create further spaces explicitly in administration.
 
-Open the Gateway URL printed by Alchemy to finish onboarding. Select a subset
-of adapters without changing source:
-
-```bash
-GSV_ADAPTERS=telegram,discord npm run deployment:plan
-GSV_ADAPTERS=telegram,discord npm run deployment:deploy
-```
-
-Adapter credentials are configured in GSV after deployment. They are not
-stored in the public stack source.
+Existing standalone deployments must remain on their preserved release or source
+until an explicit migration is prepared. This revision has no singleton route
+or standalone Wrangler wrapper and does not adopt unscoped data. See the
+[standalone retirement guide](./standalone-retirement.md).
 
 ### Update
 
 Pull the desired GSV revision, install its exact dependencies, inspect the
-plan, and deploy the same `standalone` stage:
+plan, and deploy the same `operator` stage with the same deployment inputs:
 
 ```bash
 git pull --ff-only
@@ -48,33 +40,36 @@ npm run deployment:deploy
 ```
 
 Alchemy retains the stage state needed to update the existing resources rather
-than creating a second GSV.
+than creating a second operator environment. Existing Mail queues require the
+[reader-before-writer upgrade](../../deployment/mail-queue-upgrade.md), and
+adoption of a legacy combined Accounts database requires the one-time
+[migration ownership handoff](../../deployment/installation-migration-adoption.md).
+Routine updates of an already adopted public database use its migration ledger.
 
 ### Remove
 
-The public stack currently marks deployed resources for retention so an
-accidental stack-state operation cannot erase user data. For now, perform full
-teardown from the Cloudflare dashboard after reviewing the Workers, Durable
-Objects, and R2 bucket owned by the `standalone` stage. Do not delete R2 or
-Durable Object state until confirming it is no longer needed. Guided standalone
-teardown will move into the web deployer after the new deployment path has been
-dogfooded.
+Remove a space through the operator's deletion lifecycle, with its complete
+resource inventory and owner receipts. The
+[cleanup guide](./operate-gsv.md#connect-services-and-verify-cleanup) explains
+configuration, retries and the separate reporting of live erasure and retained
+copies. Deleting one space preserves other spaces in the deployment.
+
+The Alchemy composition retains its physical resources. Full operator teardown
+also requires accounting for shared Workers, databases, buckets, routes and
+provider configuration after space cleanup; removing Alchemy state alone does
+not erase them.
 
 ## Runtime notes
 
-The standalone baseline uses Workers, R2, and SQLite-backed Durable Objects. It
-does not require Cloudflare Containers. Workers Paid adds more capacity and
-enables features that depend on paid bindings.
-
-WhatsApp maintains an outbound provider connection. A continuously resident
-account can consume most of the current Workers Free Durable Object duration
-allowance, so treat one account as the Free-plan baseline and review current
-[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)
-before operating several always-connected accounts.
+The operator stack uses Workers, D1, R2 and SQLite-backed Durable Objects. It
+does not require Cloudflare Containers. Its default inference route uses the
+operator's Workers AI account; spaces can also supply their own model
+credentials. Provider execution runs in the inference Worker.
 
 ## See also
 
-- [Standalone Alchemy details](./deploy-with-alchemy.md)
+- [Alchemy deployment details](./deploy-with-alchemy.md)
+- [Operator configuration](./operate-gsv.md)
 - [Get Started](/get-started/)
 - [Connect Devices](./connect-devices.md)
 - [Connect a messenger](./messengers.md)

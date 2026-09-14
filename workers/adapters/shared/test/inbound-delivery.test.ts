@@ -41,6 +41,8 @@ class MemoryTransaction {
     this.alarm.value = value;
   }
 
+  async deleteAlarm(): Promise<void> { this.alarm.value = null; }
+
   async list<T>(options?: {
     prefix?: string;
     limit?: number;
@@ -141,6 +143,23 @@ function retainedLedger(
 }
 
 describe("InboundDeliveryLedger", () => {
+  it("keeps duplicate ingress bound to its original space and preserves another space's alarm", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    const first = { installationId: "retired-space", generation: "first-generation" };
+    const second = { installationId: "other-space", generation: "second-generation" };
+    await pending.enqueueAndArm("provider-duplicate", { providerMessageId: "original" }, Date.now() + 60_000, first);
+    await pending.enqueueAndArm("provider-duplicate", { providerMessageId: "repeated-after-relink" }, Date.now() + 30_000, second);
+    expect(await pending.inspectOwnership(first.installationId)).toMatchObject({ ownedCount: 1 });
+    expect(await pending.inspectOwnership(second.installationId)).toMatchObject({ ownedCount: 0 });
+    await pending.enqueueAndArm("provider-new", { providerMessageId: "new" }, Date.now() + 60_000, second);
+    expect(await pending.eraseInstallation(first.installationId)).toBe(0);
+    expect(await pending.pendingIds()).toEqual(["provider-new"]);
+    expect(storage.alarm.value).not.toBeNull();
+    expect(await pending.eraseInstallation(second.installationId)).toBe(0);
+    expect(storage.alarm.value).toBeNull();
+  });
+
   it("commits a provider payload with its earliest wake-up", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);

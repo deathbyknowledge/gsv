@@ -18,7 +18,6 @@ import type {
 import { handleAdapterFrame } from "../../shared/src/adapter-frame";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
-  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
 import type {
@@ -42,10 +41,9 @@ import { handleManagedTelegramRequest } from "./managed-http";
 
 export { ManagedTelegramPairing } from "./managed-pairing";
 export { ManagedTelegramPeer } from "./managed-peer";
+export { TelegramInstallation, TelegramLifecycleEntrypoint } from "./lifecycle";
 
 interface Env extends ManagedTelegramPeerEnv {
-  MANAGED_TELEGRAM_PEER: DurableObjectNamespace;
-  MANAGED_TELEGRAM_PAIRING: DurableObjectNamespace;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
@@ -105,7 +103,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     context: AdapterDeliveryContext,
     frame: GatewayRequestFrame,
   ): Promise<GatewayResponseFrame> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (
       context.accountId !== MANAGED_TELEGRAM_ACCOUNT_ID
       || context.surface.kind !== "dm"
@@ -129,7 +127,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     accountId?: string,
   ): Promise<AdapterAccountStatus[]> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     if (accountId && accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) return [];
     const configured = this.isConfigured();
     return [{
@@ -151,7 +149,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      const parsed = parseManagedInstallation(installation);
+      const parsed = parseAdapterInstallationContext(installation);
       if (accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) {
         throw new Error("Managed Telegram account ID is invalid");
       }
@@ -180,7 +178,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
   async adapterPairingInfo(
     installation: AdapterInstallationContext,
   ): Promise<AdapterPairingInfo> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     return {
       accountId: MANAGED_TELEGRAM_ACCOUNT_ID,
       configured: this.isConfigured(),
@@ -194,7 +192,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     code: string,
   ): Promise<AdapterPairingCandidate> {
-    parseManagedInstallation(installation);
+    parseAdapterInstallationContext(installation);
     return await this.pairing(code).inspect();
   }
 
@@ -202,7 +200,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     input: AdapterPairingPrepareInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -213,7 +211,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.route.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -224,7 +222,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     input: AdapterPairingFinalizeInput,
   ): Promise<AdapterPairingPreparation> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.route.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -235,7 +233,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
     installation: AdapterInstallationContext,
     input: AdapterPairingDisconnectInput,
   ): Promise<AdapterPairingDisconnectResult> {
-    const parsed = parseManagedInstallation(installation);
+    const parsed = parseAdapterInstallationContext(installation);
     if (input.installationId !== parsed.installationId) {
       throw new Error("Pairing installation does not match the caller");
     }
@@ -269,14 +267,6 @@ export default {
     return await handleManagedTelegramRequest(request, env);
   },
 } satisfies ExportedHandler<Env>;
-
-function parseManagedInstallation(value: AdapterInstallationContext): AdapterInstallationContext {
-  const installation = parseAdapterInstallationContext(value);
-  if (installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID) {
-    throw new Error("Managed Telegram cannot address singleton");
-  }
-  return installation;
-}
 
 function normalizePairingCode(value: string): string {
   const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "");

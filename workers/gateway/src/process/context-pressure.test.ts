@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Context, Usage } from "@earendil-works/pi-ai";
+import type { Context, Usage } from "@humansandmachines/gsv/services/inference-context";
 import {
   buildProcContextState,
   estimateContextInputTokens,

@@ -155,6 +155,10 @@ export type AdapterListArgs = Record<string, never>;
 export type AdapterListEntry = {
   adapter: string;
   available: boolean;
+  /** The deployed adapter is ready for its advertised setup flow. */
+  enabled: boolean;
+  /** This direct human may complete the shared application's identity-link flow. */
+  canLink: boolean;
   descriptor?: AdapterServiceDescriptor;
   supportsConnect: boolean;
   supportsDisconnect: boolean;

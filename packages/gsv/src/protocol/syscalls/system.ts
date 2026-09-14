@@ -124,6 +124,16 @@ export type AccountListResult = {
   accounts: AccountSummary[];
 };
 
+export type HumanInvitation = {
+  id: string;
+  username: string;
+  createdAt: number;
+  expiresAt: number;
+  status: "pending" | "redeemed" | "cancelled" | "expired";
+};
+
+export type LocalPerson = { uid: number; username: string; displayName: string; disabled: boolean };
+
 export type SysSetupArgs = {
   username: string;
   password: string;

@@ -2,6 +2,7 @@
 //! with xpatch delta compression for blobs.
 
 use crate::pack;
+use crate::retirement::RetirementSql as SqlStorage;
 use std::collections::{HashMap, HashSet, VecDeque};
 use worker::*;
 

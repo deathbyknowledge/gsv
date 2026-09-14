@@ -61,6 +61,8 @@ export function availableConsoleAdapter(
     supportsStatus: true,
     supportsActivity: true,
     supportsPairing: false,
+    enabled: true,
+    canLink: false,
     accounts,
   };
 }

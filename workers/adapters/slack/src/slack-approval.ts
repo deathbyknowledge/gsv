@@ -1,3 +1,4 @@
+import type { AdapterDataScope } from "../../shared/src/retirement";
 import type { ProcHilRequest } from "../../../../packages/gsv/src/protocol/syscalls/proc.js";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -43,6 +44,7 @@ export async function prepareSlackApproval(
   teamId: string,
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
+  owner?: AdapterDataScope,
 ): Promise<SlackApprovalControls | null> {
   const presentation = createAdapterHilPresentation(context, request);
   const text = renderAdapterHilPrompt(presentation, "native");
@@ -54,6 +56,7 @@ export async function prepareSlackApproval(
     context,
     request,
     presentation,
+    owner,
   );
   if (!token) return null;
   const blocks = buildSlackApprovalBlocks(text, token);

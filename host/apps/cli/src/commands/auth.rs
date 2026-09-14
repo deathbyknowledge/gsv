@@ -29,9 +29,6 @@ pub(crate) async fn run_auth(
         AuthAction::Logout => {
             return Err("auth logout is handled directly by the CLI entrypoint".into());
         }
-        AuthAction::Setup { .. } => {
-            return Err("auth setup does not use an authenticated kernel session".into());
-        }
         AuthAction::Link {
             code,
             adapter,

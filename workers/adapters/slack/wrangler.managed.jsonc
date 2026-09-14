@@ -3,7 +3,9 @@
   "name": "gsv-managed-slack",
   "main": "src/managed.ts",
   "compatibility_date": "2026-07-29",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "observability": {
     "enabled": true
   },
@@ -20,6 +22,10 @@
       {
         "name": "MANAGED_SLACK_PAIRING",
         "class_name": "ManagedSlackPairing"
+      },
+      {
+        "name": "SLACK_INSTALLATIONS",
+        "class_name": "SlackInstallation"
       }
     ]
   },
@@ -31,6 +37,12 @@
         "ManagedSlackPeer",
         "ManagedSlackPairing"
       ]
+    },
+    {
+      "tag": "v2-installation-retirement",
+      "new_sqlite_classes": [
+        "SlackInstallation"
+      ]
     }
   ],
   "services": [
@@ -40,8 +52,15 @@
       "entrypoint": "AdapterGatewayEntrypoint",
       "props": {
         "id": "slack",
-        "calls": ["adapter.inbound", "adapter.state.update"]
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
       }
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "gsv-installations"
     }
   ]
 }

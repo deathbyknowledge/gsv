@@ -32,6 +32,7 @@ import * as personalController from "./personal-controller";
 import {
   bodyFromBytes,
   bodyToBytes,
+  adapterSendArgsSchema,
   type AdapterInboundArgs,
   type BinaryBody,
   type ConversationSummary,
@@ -45,6 +46,7 @@ import type {
 } from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
+import { IdentityLinkStore } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
 
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
@@ -73,7 +75,7 @@ type MakeContextOptions = {
   request?: KernelContext["request"];
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
 
 function successfulAdapterFrame(adapter: string, messageId: string) {
   return vi.fn(async (
@@ -453,6 +455,8 @@ function makeContext(
     connection: options.connection,
     installationIdentity: options.installationIdentity,
     auth: {
+      credentialEpoch: vi.fn(() => 0),
+      isAccountDisabled: vi.fn(() => false),
       getPasswdByUid: vi.fn((uid: number) => {
         if (uid === human.uid) return human;
         if (uid === personalAgent.uid) return personalAgent;
@@ -517,6 +521,7 @@ function makeContext(
       identityLinks: {
         resolveUid: vi.fn(() => 1000),
         get: vi.fn(configuredIdentityLinkGet),
+        getForCleanup: vi.fn(configuredIdentityLinkGet),
         bindSurfaceIfMissing: vi.fn((adapter, accountId, actorId, surface) => {
           const existing = configuredIdentityLinkGet(adapter, accountId, actorId);
           if (!existing) return null;
@@ -892,6 +897,8 @@ describe("adapter lifecycle handlers", () => {
     expect((await handleAdapterList({}, ctx)).adapters).toEqual([{
       adapter: "matrix",
       available: true,
+      enabled: true,
+      canLink: false,
       descriptor,
       supportsConnect: true,
       supportsDisconnect: true,
@@ -1455,6 +1462,7 @@ describe("adapter lifecycle handlers", () => {
       adapter: "whatsapp",
       accountId: "primary",
     }, ctx)).resolves.toMatchObject({ ok: true });
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     await expect(handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3468,6 +3476,27 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("drops ingress for a removed member while its managed link awaits disconnect", async () => {
+    const link: IdentityLinkRecord = {
+      adapter: "telegram", accountId: "managed", actorId: "12345", uid: 1000, createdAt: 1, linkedByUid: 1000,
+      metadata: { managed: true, surfaceKind: "dm", surfaceId: "12345", routeGeneration: "generation-current" },
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, { identityLinks: { get: () => link } });
+    await runWithRealKernelSql(async (sql) => {
+      ctx.adapters.identityLinks = new IdentityLinkStore(sql);
+      ctx.adapters.identityLinks.link(link.adapter, link.accountId, link.actorId, link.uid, link.linkedByUid, link.metadata ?? undefined);
+      sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", link.uid, Date.now());
+      await expect(handleAdapterInbound({
+        adapter: "telegram", accountId: "managed", routeGeneration: "generation-current",
+        message: { messageId: "removed-member", surface: { kind: "dm", id: "12345" }, actor: { id: "12345" }, text: "Late delivery" },
+      }, ctx)).resolves.toEqual({ ok: true, droppedReason: "stale_route_generation" });
+      expect(ctx.adapters.identityLinks.listForCleanup(link.uid)).toHaveLength(1);
+    });
+    expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("admits an addressed shared surface through an actor-scoped managed route", async () => {
     const link = {
       adapter: "slack",
@@ -3605,6 +3634,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     const result = await handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3687,6 +3717,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3728,6 +3759,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
     const result = await handleAdapterSend({
       adapter: "whatsapp",
       accountId: "primary",
@@ -3792,6 +3824,7 @@ describe("adapter lifecycle handlers", () => {
       url: `https://example.com/${index + 1}.pdf`,
     }));
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3836,6 +3869,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3869,6 +3903,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     await expect(handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3898,6 +3933,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_TELEGRAM: { adapterFrame },
     }, { upsert: vi.fn() });
 
+    linkSendFixture(ctx, "telegram", "bot", "chat-42");
     const result = await handleAdapterSend({
       adapter: "telegram",
       accountId: "bot",
@@ -3975,6 +4011,131 @@ describe("adapter lifecycle handlers", () => {
     });
     expect(adapterFrame).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  describe("explicit adapter.send ownership", () => {
+    const surface = { kind: "dm" as const, id: "D-OWNER" };
+    const send = { adapter: "slack", accountId: "workspace:T1", surface, text: "Owned delivery" };
+    function link(actorId: string, uid = 1000): IdentityLinkRecord {
+      return { adapter: send.adapter, accountId: send.accountId, actorId, uid, linkedByUid: uid, createdAt: 1,
+        metadata: { managed: true, routeScope: "actor", routeGeneration: `generation-${actorId}`, surfaceKind: "dm", surfaceId: surface.id } };
+    }
+    function fixture(links: IdentityLinkRecord[], peer = userIdentity()) {
+      const adapterFrame = successfulAdapterFrame("slack", "explicit-owned");
+      const ctx = makeContext({ CHANNEL_SLACK: { adapterFrame } }, { upsert: vi.fn() }, { peer });
+      vi.mocked(ctx.adapters.identityLinks.list).mockImplementation((uid) => links.filter((entry) => uid === undefined || entry.uid === uid));
+      vi.mocked(ctx.adapters.identityLinks.get).mockImplementation((adapter, accountId, actorId) => links.find((entry) =>
+        entry.adapter === adapter && entry.accountId === accountId && entry.actorId === actorId) ?? null);
+      return { ctx, adapterFrame };
+    }
+
+    it("derives the current actor and generation from the caller's linked DM without adding public authority fields", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([link("U-OTHER", 2000), owned]);
+      expect(adapterSendArgsSchema.safeParse({ ...send, actorId: "U-OTHER" }).success).toBe(false);
+      expect(adapterSendArgsSchema.safeParse({ ...send, routeGeneration: "caller-chosen" }).success).toBe(false);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
+      expect(ctx.adapters.identityLinks.list).toHaveBeenCalledWith(1000);
+      expect(adapterFrame).toHaveBeenCalledWith({ installationId: TEST_INSTALLATION_ID },
+        expect.objectContaining({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER", surface }),
+        expect.objectContaining({ args: expect.objectContaining(send) }));
+      const sent = adapterFrame.mock.calls[0][2];
+      if (sent.type !== "req") throw new Error("Expected a request frame");
+      expect(sent.args).not.toHaveProperty("actorId");
+      expect(sent.args).not.toHaveProperty("routeGeneration");
+    });
+
+    it("selects only the actor whose observed shared surface belongs to the caller", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([link("U-OTHER", 2000), link("U-SECOND"), owned]);
+      vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => key.actorId === owned.actorId && key.surfaceId === "C-SHARED"
+        ? { ...key, uid: 1000, pid: "pid-1", mode: "surface", updatedAt: 1, updatedByUid: 1000 } : null);
+      expect(await handleAdapterSend({ ...send, surface: { kind: "channel", id: "C-SHARED" } }, ctx)).toMatchObject({ ok: true });
+      expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER",
+        surface: { kind: "channel", id: "C-SHARED" } });
+    });
+
+    it.each(["other owner", "disabled owner", "wrong route owner", "missing route", "missing generation"] as const)(
+      "refuses %s before dispatch and cancels the accepted body", async (reason) => {
+        const owned = link("U-OWNER", reason === "other owner" ? 2000 : 1000);
+        if (reason === "missing generation") delete owned.metadata!.routeGeneration;
+        const { ctx, adapterFrame } = fixture([owned]);
+        if (reason === "disabled owner") vi.mocked(ctx.auth.isAccountDisabled).mockReturnValue(true);
+        if (reason === "wrong route owner") {
+          vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => ({ ...key, uid: 2000, pid: "other-pid", mode: "surface", updatedAt: 1, updatedByUid: 2000 }));
+        }
+        const cancel = vi.fn();
+        const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel }) };
+        const target = reason === "wrong route owner" || reason === "missing route" ? { kind: "channel" as const, id: "C-SHARED" } : surface;
+        expect(await handleAdapterSend({ ...send, surface: target }, ctx, body)).toMatchObject({ ok: false, retryable: false });
+        expect(adapterFrame).not.toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalledOnce();
+      },
+    );
+
+    it("refuses ambiguous actors on the same shared surface and cancels its body", async () => {
+      const { ctx, adapterFrame } = fixture([link("U-FIRST"), link("U-SECOND")]);
+      vi.mocked(ctx.adapters.surfaceRoutes.get).mockImplementation((key) => ({ ...key, uid: 1000, pid: "pid-1", mode: "surface", updatedAt: 1, updatedByUid: 1000 }));
+      const cancel = vi.fn();
+      const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel }) };
+      expect(await handleAdapterSend({ ...send, surface: { kind: "channel", id: "C-SHARED" } }, ctx, body))
+        .toMatchObject({ ok: false, retryable: false, error: expect.stringContaining("more than one") });
+      expect(adapterFrame).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+
+    it.each(["human", "service"] as const)("allows privileged %s delivery through the current owned link", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([link("U-OWNER")], peer);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: true });
+      expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: "U-OWNER", routeGeneration: "generation-U-OWNER" });
+    });
+
+    it.each(["human", "service"] as const)("refuses unlinked destinations for privileged %s peers", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([], peer);
+      expect(await handleAdapterSend(send, ctx)).toMatchObject({ ok: false, error: "Permission denied" });
+      expect(adapterFrame).not.toHaveBeenCalled();
+    });
+
+    it.each(["human", "service"] as const)("refuses unrelated surfaces for privileged %s peers", async (kind) => {
+      const peer = userIdentity(0);
+      peer.peer.principal.kind = kind;
+      const { ctx, adapterFrame } = fixture([link("U-OWNER")], peer);
+      expect(await handleAdapterSend({ ...send, surface: { kind: "dm", id: "D-UNLINKED" } }, ctx)).toMatchObject({ ok: false });
+      expect(adapterFrame).not.toHaveBeenCalled();
+    });
+
+    it("keeps the generation captured before awaited delivery and cleans up both owned bodies", async () => {
+      const owned = link("U-OWNER");
+      const { ctx, adapterFrame } = fixture([owned]);
+      const reply = adapterFrame.getMockImplementation()!;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let entered!: () => void;
+      const accepted = new Promise<void>((resolve) => { entered = resolve; });
+      const cancelRequest = vi.fn();
+      const cancelResponse = vi.fn();
+      const body: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel: cancelRequest }) };
+      const responseBody: BinaryBody = { length: 1, stream: new ReadableStream<Uint8Array>({ cancel: cancelResponse }) };
+      adapterFrame.mockImplementationOnce(async (...args) => {
+        entered();
+        await held;
+        return { ...await reply(...args), body: responseBody };
+      });
+      const pending = handleAdapterSend({ ...send, media: [{ type: "document", mimeType: "application/octet-stream", body: { offset: 0, length: 1 } }] }, ctx, body);
+      await accepted;
+      try {
+        owned.metadata!.routeGeneration = "replacement-generation";
+        expect(adapterFrame.mock.calls[0][1]).toMatchObject({ actorId: owned.actorId, routeGeneration: "generation-U-OWNER" });
+        expect(adapterFrame.mock.calls[0][2].body).toBe(body);
+      } finally { release(); }
+      expect(await pending).toMatchObject({ ok: true });
+      expect(cancelRequest).toHaveBeenCalledOnce();
+      expect(cancelResponse).toHaveBeenCalledOnce();
+    });
   });
 
   it("denies adapter.send for non-root users without a linked account", async () => {
@@ -4466,8 +4627,13 @@ describe("managed adapter pairing", () => {
   function pairingService(
     pairingCandidate = candidate,
     pairingRoute = route,
+    adapter = "telegram",
   ) {
     return {
+      adapterDescribe: vi.fn(async () => ({ version: 1 as const, id: adapter, displayName: adapter, capabilities: {
+        connect: false, disconnect: false, send: true, status: true, activity: true, pairing: true,
+        surfaces: ["dm"], media: { inbound: [], outbound: [] },
+      } })),
       adapterPairingInfo: vi.fn(async () => ({
         accountId: "managed",
         configured: true,
@@ -4490,6 +4656,39 @@ describe("managed adapter pairing", () => {
     };
   }
 
+  it("reports configured operator apps and the current human's actual linking authority", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ available: true, enabled: true, supportsPairing: true, canLink: true });
+    ctx.peer!.peer.grant.calls = ["adapter.list", "adapter.pair.confirm"];
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("cannot complete");
+    expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
+    ctx.peer = userIdentity();
+    ctx.peer.provenance = { kind: "process-registry", processId: "agent" };
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).rejects.toThrow("direct signed-in");
+    ctx.peer = userIdentity();
+    vi.mocked(ctx.auth.isAccountDisabled).mockReturnValue(true);
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: true, canLink: false });
+  });
+
+  it("refuses new pairing when the operator app is unconfigured or does not advertise pairing", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    service.adapterPairingInfo.mockResolvedValue({ accountId: "managed", configured: false, botUsername: "official_gsv_bot" });
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ available: true, enabled: false, canLink: false });
+    expect(await handleAdapterPairInfo({ adapter: "telegram" }, ctx)).toMatchObject({ configured: false });
+    await expect(handleAdapterPairInspect({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("not enabled");
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("not enabled");
+    expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
+    service.adapterPairingInfo.mockRejectedValueOnce(new Error("worker failed"));
+    expect((await handleAdapterList({}, ctx)).adapters[0]).toMatchObject({ enabled: false, canLink: false });
+    const descriptor = await service.adapterDescribe();
+    service.adapterDescribe.mockResolvedValue({ ...descriptor, capabilities: { ...descriptor.capabilities, pairing: false } });
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).rejects.toThrow("does not advertise");
+  });
+
   it("invokes pairing methods through their RPC receiver", async () => {
     const service = pairingService();
     Object.defineProperty(service.adapterPairingInfo, "bind", {
@@ -4509,6 +4708,21 @@ describe("managed adapter pairing", () => {
       configured: true,
       botUsername: "official_gsv_bot",
     });
+  });
+
+  it("refuses a link prepared before account revocation without activating its adapter route", async () => {
+    const service = pairingService();
+    const ctx = makeContext({ CHANNEL_TELEGRAM: service }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+    let epoch = 0;
+    vi.mocked(ctx.auth.credentialEpoch).mockImplementation(() => epoch);
+    service.adapterPairingPrepare.mockImplementationOnce(async () => {
+      epoch += 1;
+      return { candidate, route };
+    });
+    await expect(handleAdapterPairConfirm({ adapter: "telegram", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("credentials changed");
+    expect(ctx.adapters.identityLinks.get("telegram", "managed", "12345")).toBeNull();
+    expect(service.adapterPairingActivate).not.toHaveBeenCalled();
+    expect(service.adapterPairingFinalize).not.toHaveBeenCalled();
   });
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
@@ -4724,8 +4938,13 @@ describe("managed adapter pairing", () => {
       expiresAt: Date.now() + 60_000,
       linked: false,
     };
-    const service = pairingService(slackCandidate);
-    const link = vi.fn();
+    const service = pairingService(slackCandidate, route, "slack");
+    let currentLink: IdentityLinkRecord | null = null;
+    const link = vi.fn((...args: Parameters<IdentityLinkStore["link"]>) => {
+      const [adapter, accountId, actorId, uid, linkedByUid, metadata] = args;
+      currentLink = { adapter, accountId, actorId, uid, linkedByUid, metadata: metadata ?? null, createdAt: 1 };
+      return currentLink;
+    });
     const ctx = makeContext(
       { CHANNEL_SLACK: service },
       {
@@ -4736,7 +4955,7 @@ describe("managed adapter pairing", () => {
       },
       directUserOptions({
         identityLinks: {
-          get: vi.fn(() => null),
+          get: vi.fn(() => currentLink),
           link,
           list: vi.fn(() => []),
           listByAccount: vi.fn(() => []),
@@ -4767,7 +4986,7 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("never exposes pairing to agents, background processes, root, or standalone", async () => {
+  it("never exposes pairing to background processes or root", async () => {
     const service = pairingService();
     const status = { upsert: vi.fn(), list: vi.fn(() => []) };
     const direct = makeContext(
@@ -4785,15 +5004,6 @@ describe("managed adapter pairing", () => {
       status,
       directUserOptions({ peer: userIdentity(0) }),
     );
-    const standalone = makeContext(
-      { CHANNEL_TELEGRAM: service },
-      status,
-      {
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        connection: {} as KernelContext["connection"],
-        peer: userIdentity(),
-      },
-    );
 
     await expect(handleAdapterPairInfo({ adapter: "telegram" }, direct)).resolves.toMatchObject({
       configured: true,
@@ -4803,9 +5013,6 @@ describe("managed adapter pairing", () => {
     );
     await expect(handleAdapterPairInfo({ adapter: "telegram" }, root)).rejects.toThrow(
       "active human account",
-    );
-    await expect(handleAdapterPairInfo({ adapter: "telegram" }, standalone)).rejects.toThrow(
-      "not available in standalone",
     );
   });
 
@@ -4880,3 +5087,12 @@ describe("managed adapter pairing", () => {
     }));
   });
 });
+
+function linkSendFixture(ctx: KernelContext, adapter: string, accountId: string, surfaceId: string): void {
+  const link: IdentityLinkRecord = {
+    adapter, accountId, actorId: "fixture-actor", uid: 1000, linkedByUid: 1000, createdAt: 1,
+    metadata: { surfaceKind: "dm", surfaceId },
+  };
+  vi.mocked(ctx.adapters.identityLinks.list).mockReturnValue([link]);
+  vi.mocked(ctx.adapters.identityLinks.get).mockReturnValue(link);
+}

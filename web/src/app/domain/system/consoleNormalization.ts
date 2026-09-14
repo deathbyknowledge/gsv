@@ -297,6 +297,8 @@ function normalizeAdapterEntry(value: ConsoleWireValue, adapterFallback: string)
   return {
     adapter,
     available: record.available === true,
+    enabled: record.enabled === true,
+    canLink: record.canLink === true,
     supportsConnect: record.supportsConnect === true,
     supportsDisconnect: record.supportsDisconnect === true,
     supportsSend: record.supportsSend === true,

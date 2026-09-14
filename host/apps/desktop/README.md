@@ -54,13 +54,13 @@ npm run build --workspace web
 npm run dev
 ```
 
-For a clean development state, initialize it once with the CLI (or complete setup in the web UI):
+For a clean development state, open `http://localhost:8976/admin`, create a space,
+and complete its Accounts-issued browser setup invitation. Then log in to that
+space, replacing `YOUR-HANDLE` below with the handle you created:
 
 ```bash
 cargo run --manifest-path host/apps/cli/Cargo.toml -- \
-  --url ws://localhost:8787/ws auth setup
-cargo run --manifest-path host/apps/cli/Cargo.toml -- \
-  --url ws://localhost:8787/ws auth login
+  --url ws://YOUR-HANDLE.localhost:8976/ws auth login
 ```
 
 Then start Desktop in a second terminal:

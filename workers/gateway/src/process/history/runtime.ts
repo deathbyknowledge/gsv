@@ -45,7 +45,7 @@ import { nextAiConfigFallback } from "../run-tick-policy";
 import type {
   AssistantMessage,
   Context,
-} from "@earendil-works/pi-ai";
+} from "@humansandmachines/gsv/services/inference-context";
 import {
   buildProcContextState, estimateContextInputTokens, estimateContextMessagesTokens, measureContextInputTokens,
 } from "../context-pressure";

@@ -440,7 +440,7 @@ export async function stubGeneration(
  * Must be called before the Process DO can communicate with the kernel.
  */
 export async function registerInKernel(pid: string, identity: ProcessIdentity) {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr("inst_test");
   // SAFETY: test fixture is constructed with the asserted domain shape.
   const stub: DurableObjectStub<Kernel> = kernel as any;
   await runInDurableObject(stub, (instance: Kernel) => {
@@ -533,7 +533,7 @@ export async function initProcess(
   if (opts?.register !== false) {
     await registerInKernel(pid, identity);
   }
-  const stub = await getProcessByPid(pid);
+  const stub = await getProcessByPid(pid, "inst_test");
   const res = await stub.recvFrame(makeReq("proc.setidentity", { identity }));
   // SAFETY: test fixture is constructed with the asserted domain shape.
   expect((res as ResponseFrame).ok).toBe(true);

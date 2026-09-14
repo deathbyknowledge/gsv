@@ -1,5 +1,4 @@
 import {
-  SINGLETON_INSTALLATION_ID,
   parseInstallationId,
 } from "./identity";
 import type { Fetcher } from "@cloudflare/workers-types";
@@ -10,9 +9,6 @@ export function createInstallationRipgit<T extends Fetcher>(
   installationId: string,
 ): T {
   const parsed = parseInstallationId(installationId);
-  if (parsed === SINGLETON_INSTALLATION_ID) {
-    return binding;
-  }
 
   const fetch: Fetcher["fetch"] = (input, init) => {
     const headers = new Headers(

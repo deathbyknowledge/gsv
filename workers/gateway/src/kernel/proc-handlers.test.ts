@@ -20,7 +20,7 @@ const IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
 
 const PERSONAL_AGENT_ACCOUNT = {
   username: "sam-agent",
@@ -135,7 +135,7 @@ describe("proc handlers", () => {
     } as ResponseFrame));
   });
 
-  it.each(["personal", "shared", "workers-ai-kimi-k2-6"])("initializes the owner's %s model before admitting a spawn prompt", async (modelId) => {
+  it.each(["personal", "shared", "gsv-included"])("initializes the owner's %s model before admitting a spawn prompt", async (modelId) => {
     const entries = new Map([
       ["users/1000/ai/models", JSON.stringify({ version: 1, models: [{ id: "personal", name: "Personal", provider: "openai", model: "gpt-4.1" }] })],
       ["config/ai/models", JSON.stringify({ version: 1, models: [{ id: "shared", name: "Shared", provider: "openai", model: "gpt-4.1-mini" }] })],
@@ -640,8 +640,8 @@ describe("proc handlers", () => {
 
     const cases: Array<[Map<string, string>, string]> = [
       [configEntries, "shared"],
-      [configEntries, "WORKERS-AI-GLM-5-3-FLASH"],
-      [new Map<string, string>(), "workers-ai-kimi-k2-6"],
+      [configEntries, "GSV-INCLUDED"],
+      [new Map<string, string>(), "gsv-included"],
     ];
     for (const [entries, modelId] of cases) {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -656,8 +656,8 @@ describe("proc handlers", () => {
 
     expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.args.modelId)).toEqual([
       "shared",
-      "workers-ai-glm-5-3-flash",
-      "workers-ai-kimi-k2-6",
+      "gsv-included",
+      "gsv-included",
     ]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await expect(forwardToProcess({

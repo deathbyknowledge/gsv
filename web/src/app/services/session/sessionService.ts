@@ -594,7 +594,7 @@ export function createSessionService(client: SessionClient): SessionService {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
     const username = input.username.trim();
-    const password = input.password?.trim() ?? "";
+    const password = input.password ?? "";
     const token = input.token?.trim() ?? "";
 
     setSnapshot({

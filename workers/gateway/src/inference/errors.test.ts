@@ -8,7 +8,7 @@ import {
   isProviderContextOverflowErrorMessage,
   NON_STANDARD_PROVIDER_ERROR,
 } from "./errors";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 
 describe("formatProviderErrorDiagnostic", () => {
   it("preserves diagnostics through the 4096-character limit", () => {

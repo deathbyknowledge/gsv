@@ -16,7 +16,7 @@ conversation. Users can inspect the referenced Process while it exists or read i
 The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
-  Telegram, WhatsApp, and other private surfaces all contribute to the same Ship message stream.
+  Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
   The current personal Process is replaceable; the Ship conversation is not.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.

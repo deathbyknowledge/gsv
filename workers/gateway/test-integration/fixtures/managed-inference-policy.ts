@@ -5,7 +5,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 
 export default class ManagedInferencePolicyFixture extends WorkerEntrypoint {
-  async getManagedInferencePolicy(
+  async getInferencePolicy(
     installationId: string,
   ): Promise<ManagedInferencePolicy> {
     return {
@@ -31,7 +31,7 @@ export default class ManagedInferencePolicyFixture extends WorkerEntrypoint {
     };
   }
 
-  async recordManagedInferenceUsage(
+  async recordInferenceUsage(
     _events: ManagedInferenceUsageEvent[],
   ): Promise<void> {}
 }

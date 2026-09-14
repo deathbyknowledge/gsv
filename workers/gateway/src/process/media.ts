@@ -1,13 +1,10 @@
 import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
-import { DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES, type AudioTranscriptionBinding } from "../inference/transcription";
-import { transcribeAudio } from "../inference/capabilities";
 import {
-  DEFAULT_IMAGE_READING_MAX_TOKENS, DEFAULT_IMAGE_READING_TIMEOUT_MS, DEFAULT_MAX_IMAGE_READING_BYTES, readImage,
-  type ImageReadingBinding,
-} from "../inference/image-reading";
+  DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES, DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
+  DEFAULT_IMAGE_READING_MAX_TOKENS, DEFAULT_IMAGE_READING_TIMEOUT_MS, DEFAULT_MAX_IMAGE_READING_BYTES,
+} from "../inference/media-defaults";
+import type { MediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
-import { isWorkersAiProvider } from "../inference/workers-ai";
-import { encodeBase64Bytes } from "../shared/base64";
 import { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
 import { z } from "zod";
 
@@ -15,13 +12,11 @@ export { processMediaPath, processMediaPrefix } from "../shared/process-media-pa
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
-  type AudioTranscriptionBinding,
-} from "../inference/transcription";
+} from "../inference/media-defaults";
 
 export {
   DEFAULT_IMAGE_READING_MODEL,
-  type ImageReadingBinding,
-} from "../inference/image-reading";
+} from "../inference/media-defaults";
 
 const ARCHIVED_PROCESS_MEDIA_KEY =
   /^(?:root|home\/(?!\.{1,2}\/)[^/\\]+)\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/;
@@ -45,7 +40,7 @@ function archivedProcessMediaPath(key: string): string | null {
 }
 
 export type StoreIncomingProcessMediaOptions = {
-  ai?: AudioTranscriptionBinding & ImageReadingBinding;
+  execute?: MediaExecutor;
   signal?: AbortSignal;
   audioTranscriptionProvider?: string;
   audioTranscriptionModel?: string;
@@ -128,7 +123,7 @@ export async function storeIncomingProcessMedia(
     const bytes = await resolveIncomingMediaSource(bucket, prefix, item, next, options);
 
     if (shouldTranscribeAudio(item, next, bytes, options)) {
-      const result = await transcribeIncomingAudio(options.ai, encodeBase64Bytes(bytes!), {
+      const result = await transcribeIncomingAudio(options.execute, bytes!, {
         provider: options.audioTranscriptionProvider!,
         apiKey: options.audioTranscriptionApiKey,
         model: options.audioTranscriptionModel!,
@@ -146,8 +141,8 @@ export async function storeIncomingProcessMedia(
 
     if (shouldReadImage(item, next, bytes, options)) {
       const result = await describeIncomingImage(
-        options.ai,
-        encodeBase64Bytes(bytes!),
+        options.execute,
+        bytes!,
         item.mimeType,
         {
           maxTokens: options.imageReadingMaxTokens,
@@ -256,7 +251,7 @@ function shouldTranscribeAudio(
   if (!provider || !options.audioTranscriptionModel?.trim()) {
     return false;
   }
-  if (isWorkersAiProvider(provider) && !options.ai) {
+  if (!options.execute) {
     return false;
   }
   if (!bytes || bytes.byteLength === 0) {
@@ -281,7 +276,7 @@ function shouldReadImage(
   if (stored.description && stored.description.trim().length > 0) {
     return false;
   }
-  if (!options.ai) {
+  if (!options.execute) {
     return false;
   }
   if (!bytes || bytes.byteLength === 0) {
@@ -292,8 +287,8 @@ function shouldReadImage(
 }
 
 async function transcribeIncomingAudio(
-  ai: AudioTranscriptionBinding | undefined,
-  base64: string,
+  execute: MediaExecutor | undefined,
+  bytes: Uint8Array,
   options: {
     provider: string;
     apiKey?: string;
@@ -304,21 +299,15 @@ async function transcribeIncomingAudio(
   },
 ): Promise<{ text: string; duration?: number } | null> {
   try {
-    return await transcribeAudio(
-      { workersAi: ai },
-      {
-        data: base64,
-        provider: options.provider,
-        apiKey: options.apiKey,
-        model: options.model,
-        mimeType: options.mimeType,
-        filename: options.filename,
-        signal: options.signal,
-        mode: "transcribe",
-        vadFilter: true,
-        conditionOnPreviousText: false,
-      },
-    );
+    if (!execute) return null;
+    const response = await execute({ kind: "transcription", input: {
+      provider: options.provider, apiKey: options.apiKey, model: options.model,
+      mimeType: options.mimeType, filename: options.filename,
+      mode: "transcribe", vadFilter: true, conditionOnPreviousText: false,
+      maxInputBytes: bytes.byteLength,
+    } }, mediaBody(bytes), DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS, options.signal);
+    if (response.kind !== "transcription") throw new Error("Invalid transcription response");
+    return response.result;
   } catch (error) {
     if (options.signal?.aborted) {
       throw options.signal.reason ?? error;
@@ -329,8 +318,8 @@ async function transcribeIncomingAudio(
 }
 
 async function describeIncomingImage(
-  ai: ImageReadingBinding | undefined,
-  base64: string,
+  execute: MediaExecutor | undefined,
+  bytes: Uint8Array,
   mimeType: string,
   options: {
     maxTokens?: number;
@@ -339,18 +328,15 @@ async function describeIncomingImage(
   },
 ): Promise<string | null> {
   try {
-    const response = await readImage(ai, {
-      data: base64,
-      mimeType,
-      mode: "caption",
-      captionLength: "normal",
+    if (!execute) return null;
+    const response = await execute({ kind: "image-read", input: {
+      mimeType, mode: "caption", captionLength: "normal",
       maxTokens: options.maxTokens ?? DEFAULT_IMAGE_READING_MAX_TOKENS,
-      timeoutMs: options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS,
-      signal: options.signal,
-    });
-    return response?.result.mode === "caption" && "text" in response.result
-      ? response.result.text
-      : null;
+      maxInputBytes: bytes.byteLength,
+    } }, mediaBody(bytes), options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS, options.signal);
+    if (response.kind !== "image-read") throw new Error("Invalid image reading response");
+    if (response.body) await response.body.cancel();
+    return response.result.mode === "caption" && "text" in response.result ? response.result.text : null;
   } catch (error) {
     if (options.signal?.aborted) {
       throw options.signal.reason ?? error;
@@ -358,4 +344,8 @@ async function describeIncomingImage(
     console.warn("[ProcessMedia] image reading failed:", error);
     return null;
   }
+}
+
+function mediaBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
 }

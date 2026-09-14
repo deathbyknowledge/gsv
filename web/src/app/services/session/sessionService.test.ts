@@ -28,6 +28,17 @@ afterEach(() => {
 });
 
 describe("session lock", () => {
+  it("preserves exact password bytes for invitation and recovery credentials", async () => {
+    installWindow();
+    const connect = vi.fn().mockRejectedValue(new Error("test transport ended"));
+    const client = { connect, disconnect: vi.fn(), isConnected: () => false, requestOnce: vi.fn(), onStatus: () => () => undefined,
+      sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
+    } satisfies SessionClient;
+    const service = createSessionService(client);
+    await expect(service.login({ username: " person ", password: " password with spaces " })).rejects.toThrow("test transport ended");
+    expect(connect).toHaveBeenCalledWith({ url: "wss://example.test/ws", username: "person", password: " password with spaces " });
+  });
+
   it("publishes the locked identity boundary synchronously", () => {
     installWindow();
     let onStatus: StatusListener | null = null;

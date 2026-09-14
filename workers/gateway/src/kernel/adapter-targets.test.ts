@@ -10,6 +10,8 @@ import {
   requestAdapterTarget,
 } from "./adapter-targets";
 import { discoverVisibleTargets, listAllVisibleTargets, resolveVisibleTarget } from "./targets";
+import { IdentityLinkStore } from "./identity-links";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 function rpcResult<T extends object>(value: T): T & Disposable {
   Object.defineProperty(value, Symbol.dispose, { value: vi.fn() });
@@ -85,7 +87,7 @@ function makeContext(
     callerOwnerUid: 1000,
     procs: { getOwnerUid: vi.fn(() => 1000) },
     adapters: {
-      identityLinks: { list: vi.fn(() => [link]) },
+      identityLinks: { list: vi.fn(() => [link]), get: vi.fn(() => link) },
       status: {
         get: vi.fn(() => ({
           accountId: link.accountId,
@@ -111,6 +113,26 @@ function makeContext(
 }
 
 describe("adapter-backed targets", () => {
+  it.each(["revoked", "disabled"])("does not discover or execute retained links for a %s owner", async (state) => {
+    const service = makeService();
+    const ctx = makeContext(service);
+    await runWithRealKernelSql(async (sql) => {
+      const link = ctx.adapters.identityLinks.list()[0];
+      ctx.adapters.identityLinks = new IdentityLinkStore(sql);
+      ctx.adapters.identityLinks.link(link.adapter, link.accountId, link.actorId, link.uid, link.linkedByUid, link.metadata ?? undefined);
+      const { targets } = await discoverVisibleAdapterTargets(ctx);
+      expect(targets).toHaveLength(1);
+      vi.mocked(service.adapterTargetList!).mockClear();
+      if (state === "revoked") sql.exec("UPDATE identity_links SET revoked_at = ?", Date.now());
+      else sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", link.uid, Date.now());
+      expect(await discoverVisibleAdapterTargets(ctx)).toEqual({ targets: [], complete: true });
+      expect(service.adapterTargetList).not.toHaveBeenCalled();
+      expect(await requestAdapterTarget({ type: "req", id: "removed-owner", call: "shell.exec", args: { command: "slack list" } }, targets[0], Date.now() + 1_000, ctx)).toMatchObject({ ok: false, error: { code: 403 } });
+      expect(service.adapterTargetExecute).not.toHaveBeenCalled();
+      expect(ctx.adapters.identityLinks.listForCleanup(link.uid)).toHaveLength(1);
+    });
+  });
+
   it("projects a linked adapter actor as an opaque owner target", async () => {
     const service = makeService();
     const ctx = makeContext(service);

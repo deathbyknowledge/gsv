@@ -16,6 +16,9 @@ import { mailLimits, type MailEnv, type MailLimits } from "./env";
 import { parseMail } from "./mime";
 import { OutboundDeliveryCoordinator } from "./outbound";
 import { runMailSqlMigrations } from "./schema/migrations";
+import { MailRetirement, MAIL_OWNED_TABLES } from "./retirement";
+import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
@@ -98,6 +101,7 @@ type UsageRow = {
 
 export class MailInstallation extends DurableObject<MailEnv> {
   private readonly installationId: string;
+  private readonly retirement: MailRetirement;
   private readonly limits: MailLimits;
   private readonly activeIntakes = new Map<string, Promise<MailIntakeResult>>();
   private readonly outbound: OutboundDeliveryCoordinator;
@@ -111,16 +115,23 @@ export class MailInstallation extends DurableObject<MailEnv> {
     this.installationId = name;
     this.limits = mailLimits(env);
     runMailSqlMigrations(ctx.storage);
-    this.ensureIdentity();
+    this.retirement = new MailRetirement(ctx.storage, this.installationId);
+    if (!this.retirement.retired) this.ensureIdentity();
     this.outbound = new OutboundDeliveryCoordinator(
       ctx,
       env,
       this.installationId,
       this.limits,
+      this.retirement,
     );
   }
 
-  async intake(
+  async intake(installation: AdapterInstallationContext, envelope: MailEnvelope, body: BinaryBody): Promise<MailIntakeResult> {
+    try { return await this.retirement.run(() => this.acceptIntake(installation, envelope, body)); }
+    catch (error) { await cancelBody(body, error instanceof Error ? error.message : String(error)); throw error; }
+  }
+
+  private async acceptIntake(
     installation: AdapterInstallationContext,
     envelopeValue: MailEnvelope,
     body: BinaryBody,
@@ -132,7 +143,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         await cancelBody(body, "Mail body length does not match its envelope");
         return { status: "rejected", reason: "invalid" };
       }
-      const raw = await bodyToBytes(body, this.limits.maxMessageBytes);
+      const raw = await bodyToBytes(body, this.limits.maxMessageBytes, this.retirement.cancellation.signal);
       const digest = await messageDigest(raw);
       const active = this.activeIntakes.get(digest);
       if (active) {
@@ -235,16 +246,39 @@ export class MailInstallation extends DurableObject<MailEnv> {
     referenceValue: ManagedOutboundMailReference,
   ): Promise<void> {
     this.requireOwnedInstallation(installation);
-    await this.outbound.deliver(referenceValue);
+    if (this.retirement.retired) return;
+    await this.retirement.run(() => this.outbound.deliver(referenceValue));
   }
 
   async alarm(): Promise<void> {
+    if (this.retirement.retired) { await this.ctx.storage.deleteAlarm(); return; }
+    await this.retirement.run(() => this.processAlarm());
+  }
+
+  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.retirement.quiesce(input); }
+  async eraseInstallation(input: InstallationDeletionRequest) {
+    const inspected = await this.inspectInstallationResource();
+    if (!inspected.understood) return { ...await this.retirement.quiesce(input), outcome: "missing-inventory" as const };
+    return await this.retirement.erase(input);
+  }
+  async installationDeletionStatus(input: InstallationDeletionRequest) { return this.retirement.status(input); }
+
+  async inspectInstallationResource(): Promise<{ installationId: string; empty: boolean; understood: boolean }> {
+    const tables = this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_' AND substr(name, 1, 5) != '__cf_' AND name != '_cf_METADATA'").toArray();
+    // Wrangler's local runtime stores only the Durable Object name in this exact metadata table.
+    const known: readonly string[] = [...MAIL_OWNED_TABLES, "mail_retirement", "_gsv_schema_migrations", "__miniflare_do_name"];
+    const understood = tables.every((table) => known.includes(table.name)) && [...this.ctx.storage.kv.list()].length === 0;
+    return { installationId: this.installationId, empty: MAIL_OWNED_TABLES.every((table) => !this.ctx.storage.sql.exec<{ present: number }>(`SELECT EXISTS(SELECT 1 FROM ${table} LIMIT 1) AS present`).one().present), understood };
+  }
+
+  private async processAlarm(): Promise<void> {
     const now = Date.now();
     try {
       this.cleanupExpiredUploads(now);
       this.recoverExpiredSummaryReservations(now);
       this.outbound.recoverExpiredAttempts(now);
       for (let processed = 0; processed < ALARM_BATCH_SIZE; processed += 1) {
+        if (this.retirement.retired) return;
         if (await this.outbound.processNextCallback(Date.now())) continue;
         if (await this.outbound.processNextClaim(Date.now())) continue;
         const storage = this.nextStorageIntake(Date.now());
@@ -269,6 +303,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
     raw: Uint8Array,
     digest: string,
   ): Promise<MailIntakeResult> {
+    this.retirement.requireLive();
     const existing = this.intakeByDigest(digest);
     if (existing) {
       await this.scheduleNextAlarm();
@@ -298,6 +333,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       } catch {
         return { status: "rejected", reason: "invalid" };
       }
+      this.retirement.requireLive();
       const reserved = this.reserveUpload({
         intakeId,
         digest,
@@ -311,6 +347,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
     }
 
     await this.scheduleNextAlarm();
+    this.retirement.requireLive();
     this.storeRawMessage(upload.intake_id, raw);
     const result = this.finalizeUpload(upload.intake_id, digest);
     await this.scheduleNextAlarm();
@@ -546,6 +583,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async deliverStorage(row: IntakeRow): Promise<void> {
+    this.retirement.requireLive();
     let body: BinaryBody | undefined;
     const now = Date.now();
     try {
@@ -555,11 +593,12 @@ export class MailInstallation extends DurableObject<MailEnv> {
       // SAFETY: Durable storage contains metadata written by this adapter's serializer.
       const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
       body = this.rawMessageBody(row);
-      const result = await this.env.GATEWAY.acceptManagedInboundMail(
+      const result = await this.env.GATEWAY.acceptInboundMail(
         { installationId: this.installationId },
         metadata,
         body,
       );
+      if (this.retirement.retired) return;
       const messageId = parseBoundedId(
         result?.messageId,
         "messageId",
@@ -585,6 +624,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         );
       });
     } catch (error) {
+      if (this.retirement.retired) return;
       const attempts = row.storage_attempts + 1;
       this.ctx.storage.sql.exec(
         `UPDATE mail_intakes
@@ -710,6 +750,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async processSummary(row: IntakeRow): Promise<void> {
+    this.retirement.requireLive();
     if (row.summary_state === "notifying") {
       await this.notifySummary(row);
       return;
@@ -743,8 +784,10 @@ export class MailInstallation extends DurableObject<MailEnv> {
     try {
       summary = validateSummary(await this.env.INFERENCE.summarizeMail(request));
     } catch (error) {
+      if (this.retirement.retired) return;
       try {
         const status = await this.env.INFERENCE.getMailSummaryStatus(request);
+        if (this.retirement.retired) return;
         if (status.state === "completed") {
           summary = validateSummary(status.summary);
         } else {
@@ -757,6 +800,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
           return;
         }
       } catch (statusError) {
+        if (this.retirement.retired) return;
         this.deferSummaryFailure(
           row.intake_id,
           row.summary_attempts + 1,
@@ -766,6 +810,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         return;
       }
     }
+    if (this.retirement.retired) return;
     const completedAt = Date.now();
     this.ctx.storage.sql.exec(
       `UPDATE mail_intakes
@@ -853,13 +898,14 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async notifySummary(row: IntakeRow): Promise<void> {
+    this.retirement.requireLive();
     const now = Date.now();
     try {
       if (!row.message_id || !row.summary_json) {
         throw new Error("Completed mail summary is missing durable state");
       }
       const summary = validateSummary(JSON.parse(row.summary_json));
-      await this.env.GATEWAY.completeManagedInboundMail(
+      await this.env.GATEWAY.completeInboundMail(
         { installationId: this.installationId },
         {
           version: 1,
@@ -880,6 +926,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         row.intake_id,
       );
     } catch (error) {
+      if (this.retirement.retired) return;
       const attempts = row.completion_attempts + 1;
       this.ctx.storage.sql.exec(
         `UPDATE mail_intakes
@@ -971,6 +1018,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async scheduleNextAlarm(): Promise<void> {
+    if (this.retirement.retired) { await this.ctx.storage.deleteAlarm(); return; }
     const inboundNext = this.ctx.storage.sql.exec<{
       next_attempt_at: number | null;
     }>(
@@ -997,7 +1045,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         ? inboundNext
         : Math.min(inboundNext, outboundNext);
     if (next === null) return;
-    await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 100));
+    if (!this.retirement.retired) await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 100));
   }
 }
 

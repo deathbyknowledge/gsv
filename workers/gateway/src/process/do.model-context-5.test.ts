@@ -1,6 +1,6 @@
 import { Kernel } from "../kernel/do";
 import { getKernelPtr } from "../shared/utils";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@humansandmachines/gsv/services/inference-context";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -820,7 +820,7 @@ describe("model context", () => {
     const runId = "run-chat-stream-transport";
     const eventCount = 256;
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
 
     await kernel.recvFrame(pid, {
       type: "sig",

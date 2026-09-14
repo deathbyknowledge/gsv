@@ -174,7 +174,7 @@ describe("callAdapterGateway", () => {
     expect(request.cancelled()).toBeUndefined();
   });
 
-  it("passes explicit singleton context for standalone", async () => {
+  it("passes explicit installation context without a hostname fallback", async () => {
     const serviceFrame = vi.fn(async (
       _installation: AdapterInstallationContext,
       frame: GatewayFrame,
@@ -188,13 +188,13 @@ describe("callAdapterGateway", () => {
 
     await expect(callAdapterGateway(
       gateway,
-      { installationId: "singleton" },
+      { installationId: "inst_rpc" },
       "adapter.inbound",
       INBOUND_ARGS,
     )).resolves.toEqual({ ok: true });
     expect(serviceFrame).toHaveBeenCalledOnce();
     expect(serviceFrame).toHaveBeenCalledWith(
-      { installationId: "singleton" },
+      { installationId: "inst_rpc" },
       expect.objectContaining({ type: "req", call: "adapter.inbound" }),
     );
   });

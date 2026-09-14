@@ -1,6 +1,6 @@
 /** Provider, context, and usage metadata normalization. */
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 import type {
   JsonValue, ProcContextState, ProcMessageModelMetadata, ProcUsageCost, ProcUsageState,
 } from "@humansandmachines/gsv/protocol";

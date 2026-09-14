@@ -6,23 +6,17 @@ The installation route also scopes Ripgit. The Gateway overwrites Ripgit's
 internal installation metadata after resolving the request hostname and strips
 caller-provided values from public Git requests. Ripgit maps logical
 `{owner}/{repo}` slugs to installation-specific Repository Durable Objects.
-The standalone `singleton` route retains the historical `{owner}/{repo}` name.
+All deployments use scoped repository names.
 
-Managed adapter service-binding RPC carries the same trusted installation
-identity in both directions. Gateway-to-adapter calls derive it from the Kernel
-context; adapter-to-Gateway calls normally recover it from the owning account
-Durable Object's immutable name. Every call carries the context explicitly;
-standalone uses `{installationId: "singleton"}`. Managed adapter account objects
-use a collision-free internal name derived from `{installationId, accountId}`.
-`singleton` retains the historical account object name for standalone upgrades.
-Public webhook payloads and adapter frame arguments cannot choose this identity.
-Standalone Telegram retains its
-historical per-installation account objects and webhook paths. The managed
-platform bot instead reaches a peer object chosen only from the authenticated
-Telegram private actor. That object owns the active installation, local uid,
-and route generation; public payloads cannot select any of them.
+Adapter service-binding RPC carries trusted installation identity in both
+directions. Gateway-to-adapter calls derive it from the Kernel context;
+adapter-to-Gateway calls recover it from the adapter-owned durable peer link.
+Public webhook payloads and adapter frame arguments cannot select a space or
+local account. The Telegram application, for example, addresses a peer from the
+authenticated private actor. That peer owns its active installation, local uid
+and route generation. Delayed ingress and delivery recheck the generation.
 
-Managed lifecycle routing uses two directory lookups with different trust
+Lifecycle routing uses two directory lookups with different trust
 inputs. Public HTTP resolves an accepted hostname, while durable adapter,
 Kernel, Process, and scheduler paths resolve their already-owned immutable
 `installationId`. Only `active` installations admit ordinary work.
@@ -104,15 +98,14 @@ Each durable agent task is a process identified by a PID. `proc.spawn` creates a
 new process, and `proc.fork` creates a new process initialized from committed
 history in another process. Each human owner has exactly one interactive,
 top-level process marked as the personal controller. That process is the
-default personal-intelligence destination across Web, CLI, Telegram, WhatsApp,
+default personal-intelligence destination across Web, CLI, Telegram, Slack,
 and other linked private surfaces. Explicit task and shared-surface processes
 remain ordinary, separate processes; there is no second process-local
 conversation identifier.
 
 PIDs are installation-local. Process Durable Object lookups combine the
-trusted installation ID with the PID in one canonical Durable Object name for
-managed installations. The standalone `singleton` installation retains the
-historical raw PID as its Durable Object name. Each Process derives both
+trusted installation ID with the PID in one canonical Durable Object name.
+Historical raw PIDs are not an admission fallback. Each Process derives both
 immutable identifiers from that name; routing identity is not persisted
 separately or repeated in delivered frames.
 

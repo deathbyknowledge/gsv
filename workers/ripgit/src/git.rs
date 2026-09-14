@@ -1,5 +1,6 @@
 //! Git smart HTTP protocol handlers for receive-pack and upload-pack.
 
+use crate::retirement::RetirementSql as SqlStorage;
 use crate::{api, pack, store, KEYFRAME_INTERVAL};
 use js_sys::Uint8Array;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -170,7 +171,11 @@ pub fn handle_receive_pack(sql: &SqlStorage, body: &[u8]) -> Result<Response> {
 /// the pack bytes (which stay in memory as the request body), delta chains are
 /// resolved iteratively, and the result is stored in permanent tables then
 /// dropped. Only one resolved object exists in memory at a time.
-pub(crate) fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -> Result<()> {
+pub(crate) fn process_pack_streaming(
+    sql: &SqlStorage,
+    pack_data: &[u8],
+    bulk_mode: bool,
+) -> Result<()> {
     // --- Build lightweight index ---
     let (index, offset_to_idx) = pack::build_index(pack_data).map_err(|e| Error::RustError(e.0))?;
 
@@ -687,7 +692,10 @@ async fn fetch_advertised_refs(remote_base: &str) -> Result<AdvertisedRefs> {
 
 fn build_remote_upload_pack_request(want_hash: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    pkt_line_bytes(&mut body, format!("want {} ofs-delta\n", want_hash).as_bytes());
+    pkt_line_bytes(
+        &mut body,
+        format!("want {} ofs-delta\n", want_hash).as_bytes(),
+    );
     body.extend_from_slice(b"0000");
     pkt_line_bytes(&mut body, b"done\n");
     body

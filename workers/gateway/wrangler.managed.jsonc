@@ -79,9 +79,6 @@
       }
     ]
   },
-  "ai": {
-    "binding": "AI"
-  },
   "assets": {
     "directory": "../../web/dist/",
     "binding": "ASSETS",
@@ -94,7 +91,7 @@
       "service": "gsv-accounts"
     },
     {
-      "binding": "MANAGED_INFERENCE",
+      "binding": "INFERENCE_EXECUTION",
       "service": "gsv-inference",
       "entrypoint": "InferenceService"
     },

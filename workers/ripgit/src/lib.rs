@@ -3,16 +3,17 @@ mod diff;
 mod git;
 mod hyperspace;
 mod pack;
+mod retirement;
 mod schema;
 mod store;
 
+use retirement::RetirementSql;
 use worker::*;
 
 /// Delta compression keyframe interval. A full keyframe is stored every N
 /// versions within a blob group. Worst-case reconstruction applies N-1 deltas.
 pub const KEYFRAME_INTERVAL: i64 = 50;
 const INSTALLATION_HEADER: &str = "X-GSV-Installation-ID";
-const LEGACY_STANDALONE_INSTALLATION_ID: &str = "singleton";
 
 struct Actor {
     display_name: String,
@@ -46,7 +47,7 @@ fn installation_id_from_request(req: &Request) -> std::result::Result<String, &'
         .headers()
         .get(INSTALLATION_HEADER)
         .map_err(|_| "Invalid installation routing header")?
-        .unwrap_or_else(|| LEGACY_STANDALONE_INSTALLATION_ID.to_string());
+        .ok_or("Missing installation routing header")?;
     if !is_valid_installation_id(&installation_id) {
         return Err("Invalid installation routing header");
     }
@@ -68,11 +69,7 @@ fn is_valid_installation_id(value: &str) -> bool {
 }
 
 fn repository_do_name(installation_id: &str, owner: &str, repo: &str) -> String {
-    if installation_id == LEGACY_STANDALONE_INSTALLATION_ID {
-        format!("{}/{}", owner, repo)
-    } else {
-        format!("{}/{}/{}", installation_id, owner, repo)
-    }
+    format!("{}/{}/{}", installation_id, owner, repo)
 }
 
 async fn forward_hyperspace_request(
@@ -85,6 +82,7 @@ async fn forward_hyperspace_request(
     let owner = parts[2];
     let repo = parts[3];
     let do_name = repository_do_name(installation_id, owner, repo);
+    retirement::register(env, installation_id, &do_name).await?;
     let namespace = env.durable_object("REPOSITORY")?;
     let id = namespace.id_from_name(&do_name)?;
     let stub = id.get_stub()?;
@@ -102,6 +100,7 @@ async fn forward_hyperspace_request(
     let target_url = format!("{}{}", url.origin().ascii_serialization(), target_path);
     let method = req.method();
     let headers = req.headers().clone();
+    headers.set(retirement::RESOURCE_HEADER, &do_name)?;
     let mut init = RequestInit::new();
     init.with_method(method.clone());
     init.with_headers(headers);
@@ -119,6 +118,17 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let url = req.url()?;
     let path = url.path();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if path.starts_with("/.gsv/discovery/") {
+        let action = path.rsplit('/').next().unwrap_or("");
+        return retirement::forward_discovery(req, &env, action).await;
+    }
+    if path.starts_with("/.gsv/installation/") {
+        let action = path.rsplit('/').next().unwrap_or("");
+        return retirement::forward_lifecycle(req, &env, action).await;
+    }
+    if path.starts_with("/.gsv/") {
+        return Response::error("Not found", 404);
+    }
     let installation_id = match installation_id_from_request(&req) {
         Ok(installation_id) => installation_id,
         Err(message) => return Response::error(message, 400),
@@ -135,6 +145,10 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
         let do_name = repository_do_name(&installation_id, parts[0], parts[1]);
+        retirement::register(&env, &installation_id, &do_name).await?;
+        let mut req = req.clone_mut()?;
+        req.headers_mut()?
+            .set(retirement::RESOURCE_HEADER, &do_name)?;
         let namespace = env.durable_object("REPOSITORY")?;
         let id = namespace.id_from_name(&do_name)?;
         let stub = id.get_stub()?;
@@ -151,7 +165,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 #[durable_object]
 pub struct Repository {
     state: State,
-    sql: SqlStorage,
+    sql: RetirementSql,
     #[allow(dead_code)]
     env: Env,
 }
@@ -161,11 +175,30 @@ impl DurableObject for Repository {
         let state = state;
         let sql = state.storage().sql();
         schema::init(&sql).expect("initialize repository schema");
-        Self { sql, env, state }
+        Self {
+            sql: RetirementSql::new(sql).expect("load repository retirement"),
+            env,
+            state,
+        }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
+        if req.url()?.path() == "/.gsv/resource/inspect" {
+            return self.sql.inspect();
+        }
+        let installation_id = installation_id_from_request(&req)
+            .map_err(|message| Error::RustError(message.into()))?;
+        let name = req
+            .headers()
+            .get(retirement::RESOURCE_HEADER)?
+            .ok_or_else(|| Error::RustError("Trusted repository address is required".into()))?;
+        self.sql
+            .identify(&self.state, &self.env, &name, &installation_id)?;
         let url = req.url()?;
+        if url.path().starts_with("/.gsv/") {
+            return retirement::handle(&self.sql, &self.state, &self.env, req).await;
+        }
+        self.sql.assert_active()?;
         let path = url.path();
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
@@ -238,7 +271,7 @@ impl DurableObject for Repository {
                 if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
                 }
-                self.state.storage().delete_all().await?;
+                self.sql.clear_repository()?;
                 Response::ok("deleted")
             }
             (Method::Get, "refs") => api::handle_refs(&self.sql),
@@ -473,10 +506,10 @@ mod installation_tests {
     use super::*;
 
     #[test]
-    fn preserves_standalone_repository_names() {
+    fn scopes_every_repository_name() {
         assert_eq!(
-            repository_do_name(LEGACY_STANDALONE_INSTALLATION_ID, "alice", "home"),
-            "alice/home"
+            repository_do_name("singleton", "alice", "home"),
+            "singleton/alice/home"
         );
     }
 

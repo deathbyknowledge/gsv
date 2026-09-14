@@ -13,12 +13,13 @@
  * DurableTaskScheduler.
  */
 
+import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+import { InstallationRetirement, durableResourceName, stateWithRetirementStorage, RESOURCE_IDENTITY_KEY, inspectResourceStorage, attachDurableResourceIdentity } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
 import type { SignalFrame } from "../protocol/frames";
 import type { ProcessIdentity, ProcKillResult, ProcResetResult } from "@humansandmachines/gsv/protocol";
 import type { ProcessInboundFrame } from "../protocol/process-frames";
-import { createGenerationService } from "../inference/service";
-import { gsvInferenceProviderFactoryFromEnv } from "../inference/gsv-provider";
+import { createGenerationService } from "../inference/execution-client";
 import { ProcessStore } from "./store";
 import { sendFrameToKernel } from "../shared/utils";
 import { RipgitClient } from "../fs/ripgit/client";
@@ -48,22 +49,35 @@ import { ProcessTools } from "./tools/runtime";
 import { recoverProcess } from "./bootstrap";
 import { errorMessageFromUnknown } from "../inference/errors";
 
+type ProcessInstallationRuntime = {
+  retirement: InstallationRetirement;
+  installationId: string;
+  pid: string;
+  store: ProcessStore;
+  runs: ProcessRunRepository;
+  storage: R2Bucket;
+  ripgit: RipgitClient | null;
+  tasks: DurableTaskScheduler<ProcessTask>;
+};
+
 export class Process extends DurableObject<GatewayEnv> {
+  get retirement(): InstallationRetirement { return this.namedRuntime().retirement; }
+  private readonly installationRuntime: ProcessInstallationRuntime | null;
   readonly ctx: DurableObjectState<{}>;
   readonly env: GatewayEnv;
-  readonly installationId: string;
-  readonly pid: string;
-  readonly store: ProcessStore;
-  readonly runs: ProcessRunRepository;
+  get installationId(): string { return this.namedRuntime().installationId; }
+  get pid(): string { return this.namedRuntime().pid; }
+  get store(): ProcessStore { return this.namedRuntime().store; }
+  get runs(): ProcessRunRepository { return this.namedRuntime().runs; }
   readonly signals = new ProcessSignalService(this);
   readonly settings = new ProcessSettingsService(this);
   readonly trace = new ProcessTraceService(this);
   readonly streams = new ProcessMessageStreamService(this);
   readonly finishDelivery = new ProcessFinishDeliveryService(this);
-  readonly storage: R2Bucket;
+  get storage(): R2Bucket { return this.namedRuntime().storage; }
   readonly generation: ReturnType<typeof createGenerationService>;
-  readonly ripgit: RipgitClient | null;
-  readonly tasks: DurableTaskScheduler<ProcessTask>;
+  get ripgit(): RipgitClient | null { return this.namedRuntime().ripgit; }
+  get tasks(): DurableTaskScheduler<ProcessTask> { return this.namedRuntime().tasks; }
   readonly controller = new ProcessController(this);
   readonly history = new ProcessHistory(this);
   readonly kernel = new ProcessKernelClient(this);
@@ -90,42 +104,74 @@ export class Process extends DurableObject<GatewayEnv> {
   killTransition: Promise<ProcKillResult> | null = null;
   killedCleanupTransition: Promise<Extract<ProcKillResult, { ok: true }>> | null = null;
 
-  constructor(ctx: DurableObjectState<{}>, env: GatewayEnv) {
-    super(ctx, env);
-    this.ctx = ctx;
+  constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
+    super(state, env);
+    this.ctx = state;
     this.env = env;
-    const gsvInference = gsvInferenceProviderFactoryFromEnv(env);
-    this.generation = createGenerationService(gsvInference ? { providers: [gsvInference] } : {});
-    const processIdentity = parseProcessDurableObjectName(ctx.id.name);
-    this.installationId = processIdentity.installationId;
-    this.pid = processIdentity.pid;
-    this.storage = createInstallationStorage(env.STORAGE, this.installationId);
-    const killedTombstone = ctx.storage.kv.get<ProcessKilledTombstone | true>(
-      PROCESS_KILLED_TOMBSTONE_KEY,
-    );
-    this.killedTombstone = killedTombstone && killedTombstone !== true ? killedTombstone : null;
-    this.killed = killedTombstone === true || this.killedTombstone !== null;
-    if (!this.killed) {
-      runProcessSqlMigrations(ctx.storage);
+    this.generation = createGenerationService(env);
+    // A nameless historical object exposes only content-free inspection. It must not run migrations or recover work.
+    if (!state.id.name && !state.storage.kv.get(RESOURCE_IDENTITY_KEY)) {
+      this.installationRuntime = null;
+      this.startup = Promise.resolve();
+      return;
     }
-    this.tasks = new DurableTaskScheduler(
-      ctx.storage,
-      decodeProcessTask,
-      this.run.runScheduledTask.bind(this.run),
-    );
-    this.store = new ProcessStore(ctx.storage.sql);
-    this.runs = new ProcessRunRepository(this.store);
-    this.ripgit = env.RIPGIT
-      ? new RipgitClient(createInstallationRipgit(env.RIPGIT, this.installationId))
-      : null;
-    this.startup = recoverProcess(this).catch((error) => {
+    const processIdentity = parseProcessDurableObjectName(durableResourceName(state, env.PROCESS));
+    const retirement = new InstallationRetirement(state.storage, processIdentity.installationId);
+    const ctx = stateWithRetirementStorage(state, retirement);
+    this.ctx = ctx;
+    const killedTombstone = ctx.storage.kv.get<ProcessKilledTombstone | true>(PROCESS_KILLED_TOMBSTONE_KEY);
+    this.killedTombstone = killedTombstone && killedTombstone !== true ? killedTombstone : null;
+    this.killed = killedTombstone === true || this.killedTombstone !== null || (retirement.state !== undefined && retirement.state.phase !== "quiescing");
+    if (!this.killed && !retirement.state) runProcessSqlMigrations(ctx.storage);
+    const store = new ProcessStore(ctx.storage.sql);
+    this.installationRuntime = {
+      ...processIdentity, retirement, store,
+      runs: new ProcessRunRepository(store),
+      storage: createInstallationStorage(env.STORAGE, processIdentity.installationId, retirement),
+      tasks: new DurableTaskScheduler(ctx.storage, decodeProcessTask, this.run.runScheduledTask.bind(this.run)),
+      ripgit: env.RIPGIT ? new RipgitClient(createInstallationRipgit(env.RIPGIT, processIdentity.installationId)) : null,
+    };
+    this.startup = (retirement.state ? Promise.resolve() : recoverProcess(this)).catch((error) => {
       console.warn("[Process] Recovery failed:", error);
     });
   }
 
+  async attachInstallationResourceIdentity(name: string): Promise<void> {
+    parseProcessDurableObjectName(name);
+    await attachDurableResourceIdentity(this.ctx, this.env.PROCESS, name);
+  }
+
+  inspectInstallationResource() {
+    const tombstone = this.ctx.storage.kv.get<ProcessKilledTombstone | true>(PROCESS_KILLED_TOMBSTONE_KEY);
+    return inspectResourceStorage(this.installationRuntime?.retirement.raw ?? this.ctx.storage,
+      tombstone && tombstone !== true ? tombstone.pid : undefined, tombstone === true ? [PROCESS_KILLED_TOMBSTONE_KEY] : []);
+  }
+
+  private namedRuntime(): ProcessInstallationRuntime {
+    if (!this.installationRuntime) throw new Error("Historical resource identity requires operator discovery");
+    return this.installationRuntime;
+  }
+
   async alarm(): Promise<void> {
+    if (!this.installationRuntime || this.retirement.state) return;
     await this.startup;
     await this.run.alarm();
+  }
+
+  async quiesceInstallationResource(input: InstallationDeletionRequest) {
+    const record = this.retirement.begin(input);
+    if (record.phase !== "quiescing") return record;
+    await this.startup;
+    if (!this.killed || this.killedTombstone) await this.controller.handleProcKill({ archive: false });
+    await this.retirement.drain();
+    if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
+    return this.retirement.quiesced();
+  }
+
+  async eraseInstallationResource(input: InstallationDeletionRequest) {
+    const record = this.retirement.begin(input);
+    if (record.phase === "quiescing") throw new Error("Process must be quiesced before erasure");
+    return this.retirement.erase();
   }
 
   mutateActiveRun(runId: string, mutation: (run: RunState) => RunState): RunState | null {
@@ -161,7 +207,15 @@ export class Process extends DurableObject<GatewayEnv> {
    * Single entry point — called by the Kernel to deliver frames.
    */
   async recvFrame(frame: ProcessInboundFrame) {
-    await this.startup;
+    try {
+      this.retirement.assertActive();
+      await this.startup;
+      this.retirement.assertActive();
+    } catch (error) {
+      const body = "body" in frame ? frame.body : undefined;
+      if (body && !body.stream.locked) await body.stream.cancel("Process admission is closed").catch(() => {});
+      throw error;
+    }
     return await this.controller.recvFrame(frame);
   }
 

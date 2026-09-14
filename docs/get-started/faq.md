@@ -20,37 +20,32 @@ Today, GSV is for people who run more than one machine and want an AI that spans
 
 ### What does it cost?
 
-GSV can run within Cloudflare's Workers Free plan, plus whatever your chosen
-model provider charges. There is no GSV subscription today. Workers Paid is
-optional for paid-only capabilities such as Worker Loaders/CodeMode and for
-usage beyond the Free limits.
-
-One continuously connected WhatsApp account is the intended Free-plan baseline.
-Its outbound WebSocket keeps one 128 MB Durable Object resident for much of the
-day, using about 11,060 GB-s of the current 13,000 GB-s daily allowance. That is
-an estimate rather than a capacity guarantee because other active Durable
-Objects count too. Several always-connected accounts can exceed the duration
-allowance even when request counts remain low. Cloudflare publishes the current numbers in its
-[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+Hosted spaces use their operator's pricing. Self-hosting uses your own
+Cloudflare account and model-provider billing. The public operator composition
+includes CodeMode's Worker Loader and requires
+[Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/).
+Usage beyond the plan's allowances and model inference are billed separately.
 
 ### Do I need a paid Cloudflare plan?
 
-No. GSV uses SQLite-backed Durable Objects, which Cloudflare supports on Workers
-Free. Containers are not part of the supported deployment. Choose Workers Paid
-when you want CodeMode or need more runtime capacity; the deployer automatically
-omits the paid-only Worker Loader binding on Free accounts.
+Yes, for the current public composition with CodeMode. It does not silently
+omit the Worker Loader on Free accounts. Containers are not required.
 
 ### What do I need to run it?
 
-A Cloudflare account and at least one device to connect. The Free plan is enough
-for the baseline deployment. If you do not want to use Cloudflare Workers AI,
-you can bring your own model-provider keys.
+A Cloudflare account, a domain in one of its DNS zones, and Node.js and Rust
+for the source build. Follow the [deployment guide](/how-to/deploy-with-alchemy).
+If an operator hosts your space, you only need its setup invitation. Connect
+machines when you want GSV to work on them.
 
 ## Open, private, yours
 
 ### Is it really open source?
 
-Yes. GSV is MIT-licensed and the full source is public at [github.com/deathbyknowledge/gsv](https://github.com/deathbyknowledge/gsv). Don't take our word for any of this. Read every line.
+Yes. The GSV runtime, Accounts, inference execution and deployment components
+are MIT-licensed and public at [github.com/deathbyknowledge/gsv](https://github.com/deathbyknowledge/gsv).
+Operators may keep commercial services private; those services are not required
+to run your own deployment.
 
 ### Can I self-host it off Cloudflare?
 
@@ -58,7 +53,9 @@ Not yet, to be exact: GSV is open source today (MIT, all the code is there) and 
 
 ### Where does my data go?
 
-Into your own Cloudflare account. Your keys, your data, never routed through us. We don't host your instance and we're not in the path of your data.
+Your space's state lives in its operator's Cloudflare account. With self-hosting,
+that is your account. Model providers and connected messengers receive the data
+routed to them. The public stack works without routing through H&M services.
 
 ### Is anything exposed to the internet?
 
@@ -86,17 +83,14 @@ Bring your own. You can connect your own model provider with your own API key, o
 
 See [Bring Your Own Model](/how-to/bring-your-own-model) for setup instructions.
 
-### Can I use it from WhatsApp, Telegram, Discord, or Slack?
+### Can I use it from Telegram, Discord, or Slack?
 
-GSV is designed to be reachable from the messengers you already use, so you can talk to it from wherever you are.
+Yes, when your operator enables the adapter and supplies its application
+credentials. Link your own identity from Settings → Messengers. One external
+identity has one active space for each private-message adapter route.
 
-WhatsApp needs a second number, but not necessarily a second phone: current
-WhatsApp versions support two accounts on one compatible Android or iOS phone.
-Pairing uses a private Linked Devices QR code. The adapter is built on the
-unofficial Baileys client, so WhatsApp protocol changes can occasionally require
-a GSV update or fresh link.
-
-See [Messengers](/how-to/messengers) for how to connect each one.
+The previous WhatsApp linked-device adapter is removed. WhatsApp Business is
+planned separately. See [Messengers](/how-to/messengers) for the supported flows.
 
 ### What can it actually do today?
 

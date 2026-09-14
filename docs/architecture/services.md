@@ -1,10 +1,11 @@
 # Service contracts
 
-GSV separates its public runtime from optional services supplied by a deployment
-operator. The stable Worker RPC contracts live under
-`packages/gsv/src/services/`. Implementations live with their deployment
-operator. The public repository contains contracts, consumers, and contract
-fixtures rather than one platform's account, billing, or funded-provider code.
+GSV includes public Accounts and inference Workers alongside its Gateway.
+Their stable Worker RPC contracts live under `packages/gsv/src/services/`.
+Accounts implementation lives in `workers/installations/`; provider execution
+lives in `packages/inference/`, hosted by `workers/inference/`. An operator may
+keep commercial policy, accounting and funded-provider credentials private
+while consuming these public components.
 
 The current contracts are:
 
@@ -15,31 +16,35 @@ The current contracts are:
 - `mail`: Gateway mail transport and operational mail inspection
 - `adapters`: external messaging transport discovery and operations
 
+[Installation directory and onboarding](./installation-directory.md)
+specifies installation identity, state gates, ownership, setup claims, and
+the current reset/deletion boundary for directory implementers and callers.
+
 Service bindings are capabilities. A deployment must bind only the interface a
 Worker needs; Cloudflare Access identity does not implicitly propagate through a
 service binding. Implementations validate arguments at their public boundary and
 derive installation identity from trusted routing or durable state rather than a
 user-controlled field.
 
-## Deployment shapes
+## One deployment model
 
-A standalone deployment omits the directory, onboarding, entitlements, and
-platform-funded inference bindings. It runs one `singleton` installation and can
-use user-configured model providers and any adapter Workers selected by its
-operator.
+Every deployment supplies directory, onboarding and inference execution bindings.
+The public deployment package composes these services for one or many isolated
+spaces. A missing or unavailable directory fails closed; it never selects a
+singleton Kernel. The model stack starts with `gsv/default`, which the operator's
+inference service resolves. User-configured providers use that same execution
+boundary, including transport through a connected machine.
 
-A managed deployment supplies implementations of the applicable contracts and
-binds them to the public Gateway. An operator may keep its account directory,
-billing policy, provider credentials, funded-inference economics, and
-managed-service policy private. Those implementations are not required to build
-or develop the public runtime.
+Operators may add entitlements, funded inference, mail and other services. H&M's
+private overlay is one consumer; its pricing, payment and commercial credential
+policy need not become public. The public reference deployment works without
+those services, using the operator's Workers AI account or a person's model
+credentials.
 
-Local managed development composes the public repository with development
-implementations of these interfaces. A different operator can provide its own
-services without forking the Kernel contract. Set
-`GSV_MANAGED_SERVICES_ROOT` to a directory containing `accounts/` and
-`inference/` implementations when using the included managed development and
-validation composition scripts.
+Local development uses the same public composition. Separate integration
+fixtures exercise private service contracts; they do not define another runtime
+mode. Preserve existing operator resource identities when adopting the public
+components, as described in the [deployment guide](../how-to/deploy-with-alchemy.md).
 
 ## Entitlements
 
@@ -71,6 +76,16 @@ Failed-attempt telemetry may include `timeoutKind` (`first_output` or
 `generation`), elapsed `firstActivityMs` and `lastActivityMs` for nonempty response
 body chunks, and `outputExposed`. These fields contain timing and outcome data.
 
+`logicalRequestId` identifies an inference invocation for execution, cancellation
+and usage accounting; `actor.processId` and `actor.runId` group related attempts.
+A deliberate Process retry or model fallback advances a persisted run revision
+before announcing the retry. Reconstructing that run preserves the revision,
+while revision zero retains identities admitted before this field existed.
+Compaction is an awaited invocation with no durable operation to resume: each
+generation admission, retry, fallback or later manual attempt allocates a new
+persisted ordinal before dispatch. Repeating an unchanged compaction input does
+not reopen a completed invocation.
+
 ## Adapters
 
 Adapters are an extension system, not a closed list of messenger brands. An
@@ -80,7 +95,7 @@ operations, surface kinds, and media directions. The Gateway discovers adapter
 bindings by their `CHANNEL_*` deployment identity and verifies that the returned
 descriptor agrees with that trusted identity.
 
-Telegram, WhatsApp, Discord, and Slack are bundled implementations. Matrix,
+Telegram, Discord, and Slack are bundled implementations. Matrix,
 Signal, IRC, a game chat, or a future transport can implement the same contract
 without adding a Kernel-specific RPC.
 
@@ -92,5 +107,4 @@ Worker deployment per account.
 A future third-party marketplace can place an adapter dispatcher behind one
 trusted binding and run uploaded implementations in Workers for Platforms. That
 dispatcher must enforce code provenance, secret grants, resource limits, and the
-same `AdapterService` semantics. The public Gateway and standalone deployment do
-not depend on that hosting product.
+same `AdapterService` semantics. The public deployment does not depend on that hosting product.

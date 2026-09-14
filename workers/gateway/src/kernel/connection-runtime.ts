@@ -50,6 +50,17 @@ export class ConnectionRuntime {
 
   private readonly pendingTargetEvents = new Map<string, Promise<void>>();
 
+  invalidateAccountConnections(uid: number): void {
+    const epoch = this.host.auth.credentialEpoch(uid);
+    for (const connection of this.host.connections.values()) {
+      const state = connection.state;
+      if (state.step !== "connected" || state.peer?.principal.account.uid !== uid) continue;
+      if ((state.credentialEpoch ?? 0) >= epoch && !this.host.auth.isAccountDisabled(uid)) continue;
+      connection.setState({ ...state, step: "superseded" });
+      connection.close(1008, "Credentials changed; sign in again");
+    }
+  }
+
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
@@ -103,6 +114,12 @@ onClose(connection: KernelConnection<ConnectionState>): void {
       }
       this.host.connections.set(connection.id, connection);
       if (!state || state.step !== "connected" || !state.peer) continue;
+      if ((state.credentialEpoch ?? 0) !== this.host.auth.credentialEpoch(state.peer.principal.account.uid)
+        || this.host.auth.isAccountDisabled(state.peer.principal.account.uid)) {
+        connection.setState({ ...state, step: "superseded" });
+        connection.close(1008, "Credentials changed; sign in again");
+        continue;
+      }
       if (peerProvidesOperations(state.peer)) {
         onlineTargets.add(state.peer.id);
         this.host.targets.setOnline(state.peer.id, true);
@@ -156,6 +173,9 @@ async handleSysConnect(
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.host.buildContext(connection);
+    const username = frame.args.auth?.username;
+    const existingAccount = username ? ctx.auth.getPasswdByUsername(username) : null;
+    const credentialEpoch = existingAccount ? ctx.auth.credentialEpoch(existingAccount.uid) : 0;
 
     const outcome = await handleConnect(frame.args, ctx);
 
@@ -190,6 +210,7 @@ async handleSysConnect(
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
       credentialMethod: frame.args.auth?.token ? "token" : "password",
+      credentialEpoch,
     } satisfies ConnectionState & { step: "connected" };
 
     if (
@@ -206,6 +227,11 @@ async handleSysConnect(
       });
     }
 
+    if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch
+      || ctx.auth.isAccountDisabled(outcome.peer.principal.account.uid)) {
+      this.host.transport.sendError(connection, frame.id, 401, "Credentials changed; sign in again");
+      return;
+    }
     this.activateConnection(connection, newState);
 
     if (peerProvidesOperations(outcome.peer)) {
@@ -294,24 +320,22 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"
       : signal === "sched.changed" ? "sched.list" : null;
-    const guardedFeed = contactRead !== null || signal === "proc.changed" || signal === "process.exit";
+    const interruptedReason = contactRead ? "Contact feed interrupted"
+      : signal === "proc.changed" || signal === "process.exit" ? "Process feed interrupted"
+      : "User feed interrupted";
 
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
-      if (!peer || peer.principal.kind !== "human") continue;
+      if (state.step !== "connected" || !peer || peer.principal.kind !== "human") continue;
       if (!peer.grant.signals.includes(signal)) continue;
-      if (guardedFeed && state.step !== "connected") continue;
       // Contact notifications reveal private activity even without a payload.
       if (contactRead && !hasCapability(peer.grant.calls, contactRead)) continue;
       if (peer.principal.account.uid === uid) {
-        if (!guardedFeed) conn.send(json);
-        else {
-          try {
-            conn.send(json);
-          } catch {
-            conn.close(1011, contactRead ? "Contact feed interrupted" : "Process feed interrupted");
-          }
+        try {
+          conn.send(json);
+        } catch {
+          conn.close(1011, interruptedReason);
         }
       }
     }
@@ -347,11 +371,16 @@ broadcastToUserUidExcept(
       const state = connection.state;
       const peer = state?.peer;
       if (
-        peer?.principal.kind === "human"
+        state.step === "connected"
+        && peer?.principal.kind === "human"
         && peer.principal.account.uid === uid
         && peer.grant.signals.includes(signal)
       ) {
-        connection.send(json);
+        try {
+          connection.send(json);
+        } catch {
+          connection.close(1011, "User feed interrupted");
+        }
       }
     }
   }
@@ -362,7 +391,7 @@ sendSignalToConnection(
     payload?: JsonValue,
   ): void {
     const connection = this.host.connections.get(connectionId);
-    if (!connection?.state.peer?.grant.signals.includes(signal)) return;
+    if (connection?.state.step !== "connected" || !connection.state.peer?.grant.signals.includes(signal)) return;
     connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
   }
 
@@ -418,7 +447,7 @@ broadcastTargetStatus(
     for (const [, conn] of this.host.connections) {
       const state = conn.state;
       const peer = state?.peer;
-      if (!peer?.grant.signals.includes("target.status")) continue;
+      if (state?.step !== "connected" || !peer?.grant.signals.includes("target.status")) continue;
       if (peer.principal.kind === "service") continue;
 
       if (peer.principal.kind === "human") {
@@ -432,7 +461,11 @@ broadcastTargetStatus(
         }
       }
 
-      conn.send(json);
+      try {
+        conn.send(json);
+      } catch {
+        conn.close(1011, "Target feed interrupted");
+      }
     }
   }
 }

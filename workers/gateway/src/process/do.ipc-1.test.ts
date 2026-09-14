@@ -31,7 +31,7 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -93,7 +93,7 @@ describe("proc.ipc.*", () => {
     await registerInKernel(sourcePid, sourceIdentity);
     await registerInKernel(targetPid, targetIdentity);
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -130,7 +130,7 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, identity);
     const target = await initProcess(targetPid, identity);
     await runInProcess(source, (process) => {
-      process.scheduleTick = async () => {};
+      process.run.scheduleTick = async () => {};
     });
     await runInProcess(target, (process) => {
       process.runs.active = {
@@ -138,7 +138,7 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -222,10 +222,10 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, ROOT_IDENTITY);
     await initProcess(targetPid, ROOT_IDENTITY);
     await runInProcess(source, (process) => {
-      process.scheduleTick = vi.fn(async () => {});
+      process.run.scheduleTick = vi.fn(async () => {});
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -282,7 +282,7 @@ describe("proc.ipc.*", () => {
     const target = await initProcess(targetPid, ROOT_IDENTITY);
 
     await runInProcess(source, (process) => {
-      process.scheduleTick = vi.fn(async () => {});
+      process.run.scheduleTick = vi.fn(async () => {});
     });
     await runInProcess(target, (process) => {
       process.runs.active = { runId: "target-busy-run" };
@@ -299,7 +299,7 @@ describe("proc.ipc.*", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const sourceRunId = (firstSend.data as any).runId as string;
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const ipcResponse = (await runInDurableObject(
       kernel,
@@ -815,7 +815,7 @@ describe("proc.ipc.*", () => {
       return token;
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,
@@ -881,10 +881,10 @@ describe("proc.ipc.*", () => {
     const source = await initProcess(sourcePid, ROOT_IDENTITY);
     await initProcess(targetPid, ROOT_IDENTITY);
     await runInProcess(source, (process) => {
-      process.scheduleTick = async () => {};
+      process.run.scheduleTick = async () => {};
     });
 
-    const kernel = await getKernelPtr();
+    const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const response = (await runInDurableObject(
       kernel,

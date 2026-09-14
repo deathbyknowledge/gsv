@@ -159,7 +159,7 @@ fn resolve_settings(args: &Args) -> Result<Settings, Box<dyn std::error::Error>>
     auth.validate()?;
     if auth.username.is_some() && auth.token.is_none() {
         return Err(
-            "Missing non-interactive device credential. Run `gsv auth setup` or set `device.token` in local configuration."
+            "Missing non-interactive device credential. Create a machine invitation in your space's Fleet, then run `gsv pair CODE` on this computer."
                 .into(),
         );
     }

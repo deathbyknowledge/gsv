@@ -1,0 +1,48 @@
+{
+  "name": "@humansandmachines/gsv-installations",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./administration": "./src/administration.ts",
+    "./admin/access": "./src/admin/access.ts",
+    "./admin/service": "./src/admin/service.ts",
+    "./admin/api": "./src/admin/api.ts",
+    "./admin/http": "./src/admin/http.ts",
+    "./admin/page": "./src/admin/page.ts",
+    "./admin/installations-page": "./src/admin/installations-page.ts",
+    "./http": "./src/http.ts",
+    "./store": "./src/store.ts",
+    "./domain": "./src/domain.ts",
+    "./tokens": "./src/tokens.ts",
+    "./onboarding": "./src/onboarding.ts",
+    "./reset-preparation": "./src/reset-preparation.ts",
+    "./deletion": "./src/deletion.ts",
+    "./deletion-verifier": "./src/deletion-verifier.ts",
+    "./operator-resources": "./src/operator-resources.ts",
+    "./operator-resource-contracts": "./src/operator-resource-contracts.ts",
+    "./owner-store": "./src/owner-store.ts",
+    "./owner-identity": "./src/owner-identity.ts",
+    "./owner-http": "./src/owner-http.ts",
+    "./owner-service": "./src/owner-service.ts",
+    "./owner-front-door": "./src/owner-front-door.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "cf-typegen": "wrangler types --include-runtime=false"
+  },
+  "dependencies": {
+    "@humansandmachines/gsv": "0.0.6",
+    "jose": "^6.1.0",
+    "oauth4webapi": "^3.8.8",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/workers-types": "5.20260901.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "wrangler": "4.127.1"
+  }
+}

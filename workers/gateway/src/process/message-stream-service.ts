@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent } from "@humansandmachines/gsv/services/inference-context";
 import type { SignalFrame } from "../protocol/frames";
 import type { ProcessMessageStreamSignal } from "../protocol/process-frames";
 import { encodeProcessRunStreamFrame } from "../protocol/process-run-stream";

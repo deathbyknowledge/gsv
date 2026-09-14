@@ -71,7 +71,7 @@ GSV currently projects these environments:
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system
   machine.
-- Managed Slack projects a personally authorized workspace as a service-backed
+- Slack projects a personally authorized workspace as a service-backed
   target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
   filesystem exposes conversations, exact messages, bounded history and thread
   pages, and users. The same resources back its ephemeral just-bash environment,
@@ -91,9 +91,8 @@ device-registry record. The Kernel selects it through the same `target`
 boundary, while external providers additionally require routing, liveness, and
 transport ownership.
 
-Telegram, WhatsApp, Discord, standalone Slack, and other adapter deployments
-remain transport-only until each has truthful account authority and coherent
-environment semantics. Adapter target support is optional and advertised by the
+Telegram and Discord currently remain transport-only. A future adapter target
+needs truthful account authority and coherent environment semantics. Adapter target support is optional and advertised by the
 service descriptor; transport support alone never creates one.
 
 ## Adapter-backed targets
@@ -116,7 +115,7 @@ The Kernel owns the caller's GSV capability check, target visibility, generic
 routing, cancellation, and body ownership. Provider identifiers must not become
 bearer capabilities merely because the provider also offers a target.
 
-Managed shared credentials require special care. Pairing a human proves the
+Operator-owned shared credentials require special care. Pairing a human proves the
 right to enter GSV from the paired identity and observed surfaces; it does not
 automatically grant that person's GSV every workspace resource visible to a
 shared bot token. A rich service target needs authority that actually matches

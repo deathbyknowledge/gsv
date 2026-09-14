@@ -6,6 +6,9 @@ const surfaceMetadataSchema = z.object({
   surfaceKind: z.string().optional(),
   surfaceId: z.string().optional(),
 }).passthrough();
+const activeIdentityLink = `revoked_at IS NULL AND NOT EXISTS (
+  SELECT 1 FROM account_access WHERE account_access.uid = identity_links.uid AND disabled_at IS NOT NULL
+)`;
 
 export type IdentityLinkRecord = {
   adapter: string;
@@ -28,8 +31,13 @@ export class IdentityLinkStore {
     linkedByUid: number,
     metadata?: IdentityLinkMetadata,
   ): IdentityLinkRecord {
+    const removed = this.sql.exec<{ disabled_at: number | null }>("SELECT disabled_at FROM account_access WHERE uid = ?", uid).toArray()[0];
+    if (removed?.disabled_at != null) throw new Error("Removed accounts cannot link a messenger");
     const now = Date.now();
     const existing = this.get(adapter, accountId, actorId);
+    if (!existing && this.getForCleanup(adapter, accountId, actorId)?.metadata?.managed === true) {
+      throw new Error("Disconnect the revoked messenger identity before replacing its link");
+    }
     const createdAt = existing?.createdAt ?? now;
 
     this.sql.exec(
@@ -57,7 +65,7 @@ export class IdentityLinkStore {
   }
 
   unlink(adapter: string, accountId: string, actorId: string): boolean {
-    const before = this.get(adapter, accountId, actorId);
+    const before = this.getForCleanup(adapter, accountId, actorId);
     if (!before) return false;
     this.sql.exec(
       `DELETE FROM identity_links WHERE adapter = ? AND account_id = ? AND actor_id = ?`,
@@ -71,7 +79,7 @@ export class IdentityLinkStore {
   resolveUid(adapter: string, accountId: string, actorId: string): number | null {
     const rows = this.sql.exec<{ uid: number }>(
       `SELECT uid FROM identity_links
-       WHERE adapter = ? AND account_id = ? AND actor_id = ?
+       WHERE adapter = ? AND account_id = ? AND actor_id = ? AND ${activeIdentityLink}
        LIMIT 1`,
       adapter,
       accountId,
@@ -112,10 +120,19 @@ export class IdentityLinkStore {
   }
 
   get(adapter: string, accountId: string, actorId: string): IdentityLinkRecord | null {
+    return this.read(adapter, accountId, actorId, true);
+  }
+
+  /** Revoked and disabled links retain remote route identity, never admission authority. */
+  getForCleanup(adapter: string, accountId: string, actorId: string): IdentityLinkRecord | null {
+    return this.read(adapter, accountId, actorId, false);
+  }
+
+  private read(adapter: string, accountId: string, actorId: string, activeOnly: boolean): IdentityLinkRecord | null {
     const rows = this.sql.exec<IdentityLinkRow>(
       `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
        FROM identity_links
-       WHERE adapter = ? AND account_id = ? AND actor_id = ?
+       WHERE adapter = ? AND account_id = ? AND actor_id = ? ${activeOnly ? `AND ${activeIdentityLink}` : ""}
        LIMIT 1`,
       adapter,
       accountId,
@@ -129,7 +146,7 @@ export class IdentityLinkStore {
     return this.sql.exec<IdentityLinkRow>(
       `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
        FROM identity_links
-       WHERE adapter = ? AND account_id = ?
+       WHERE adapter = ? AND account_id = ? AND ${activeIdentityLink}
        ORDER BY created_at DESC`,
       adapter,
       accountId,
@@ -141,7 +158,7 @@ export class IdentityLinkStore {
       return this.sql.exec<IdentityLinkRow>(
         `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
          FROM identity_links
-         WHERE uid = ?
+         WHERE uid = ? AND ${activeIdentityLink}
          ORDER BY created_at DESC`,
         uid,
       ).toArray().map(toRecord);
@@ -150,7 +167,16 @@ export class IdentityLinkStore {
     return this.sql.exec<IdentityLinkRow>(
       `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
        FROM identity_links
+       WHERE ${activeIdentityLink}
        ORDER BY created_at DESC`,
+    ).toArray().map(toRecord);
+  }
+
+  listForCleanup(uid: number): IdentityLinkRecord[] {
+    return this.sql.exec<IdentityLinkRow>(
+      `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
+       FROM identity_links WHERE uid = ? ORDER BY created_at DESC`,
+      uid,
     ).toArray().map(toRecord);
   }
 }

@@ -276,6 +276,40 @@ async handleReq(
         return;
       }
 
+      if (frame.call === "account.recovery.redeem") {
+        try {
+          const data = await this.host.redeemAccountRecovery(frame.args);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch {
+          this.sendError(connection, frame.id, 400, "Root recovery failed. Check the link and password, or start a new recovery attempt.");
+        }
+        return;
+      }
+
+      if (frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = frame.call === "account.recovery.code.start"
+            ? await ctx.memberRecovery.start(frame.args, ctx)
+            : await ctx.memberRecovery.redeem(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch {
+          this.sendError(connection, frame.id, 400, "Member recovery failed. Check the code and password, or request a new code.");
+        }
+        return;
+      }
+
+      if (frame.call === "account.invite.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = await ctx.people.redeem(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch (error) {
+          this.sendError(connection, frame.id, 400, error instanceof Error ? error.message : "Human invitation failed");
+        }
+        return;
+      }
+
       if (!state || state.step !== "connected" || !state.peer) {
         if (this.host.auth.isSetupMode()) {
           if (this.host.onboarding.managedOnboardingService()) {
@@ -300,6 +334,13 @@ async handleReq(
         return;
       }
 
+      const uid = state.peer.principal.account.uid;
+      if ((state.credentialEpoch ?? 0) !== this.host.auth.credentialEpoch(uid) || this.host.auth.isAccountDisabled(uid)) {
+        connection.setState({ ...state, step: "superseded" });
+        this.sendError(connection, frame.id, 401, "Credentials changed; sign in again");
+        connection.close(1008, "Credentials changed; sign in again");
+        return;
+      }
       const response = await this.host.dispatchPeerRequest(
         frame,
         { type: "connection", id: connection.id },

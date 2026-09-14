@@ -1,3 +1,4 @@
+import * as deployedAdapter from "../src/managed";
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
@@ -440,7 +441,7 @@ describe("managed Telegram clean-instance flow", () => {
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation_test" },
-        call: "unlinkManagedAdapterIdentity",
+        call: "unlinkAdapterIdentity",
         input: expect.objectContaining({
           accountId: "managed",
           actorId: "12345",
@@ -524,4 +525,10 @@ describe("managed Telegram clean-instance flow", () => {
       (message) => message.method === "sendAudio",
     )).toHaveLength(sentAudioCount);
   });
+});
+
+it("does not export the retired per-account deployment entrypoints", async () => {
+  expect(deployedAdapter).not.toHaveProperty("TelegramChannel");
+  expect(deployedAdapter).not.toHaveProperty("TelegramAccount");
+  expect((await SELF.fetch("https://fixture/webhook/default", { method: "POST", body: "{}" })).status).toBe(404);
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 import {
   classifyAssistantTurn,
   nextAiConfigFallback,

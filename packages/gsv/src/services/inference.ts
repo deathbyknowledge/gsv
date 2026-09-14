@@ -7,6 +7,7 @@ import type {
   AiTextTool,
   AiToolCall,
 } from "../protocol/syscalls/ai";
+import type { ManagedInferencePolicy, ManagedInferenceUsageEvent } from "../protocol/managed";
 
 export const GSV_INFERENCE_PROVIDER = "gsv";
 export const GSV_INFERENCE_MODEL = "default";
@@ -122,3 +123,12 @@ export interface InferenceService {
 
 /** @deprecated Import `InferenceService` from `@humansandmachines/gsv/services/inference`. */
 export type ManagedInferenceService = InferenceService;
+
+/** Funded-inference policy and accounting remain implemented by the deployment operator. */
+export interface InferencePolicyService {
+  getInferencePolicy(installationId: string): Promise<ManagedInferencePolicy>;
+}
+
+export interface InferenceUsageService {
+  recordInferenceUsage(events: ManagedInferenceUsageEvent[]): Promise<void>;
+}

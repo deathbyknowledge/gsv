@@ -1,3 +1,8 @@
+import { AdapterRetirement, type AdapterDataScope } from "../../shared/src/retirement";
+import { AdapterPeerRetirement } from "../../shared/src/peer-retirement";
+import type { InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
+import type { InstallationDirectoryService } from "../../../../packages/gsv/src/services/directory.js";
+import type { ManagedTelegramPairing } from "./managed-pairing";
 import { DurableObject } from "cloudflare:workers";
 import {
   MANAGED_TELEGRAM_ACCOUNT_ID,
@@ -77,7 +82,8 @@ import {
 
 export interface ManagedTelegramPeerEnv extends ManagedTelegramPairingEnv {
   GATEWAY: Fetcher & AdapterGatewayBinding & ManagedTelegramPairingEnv["GATEWAY"];
-  MANAGED_TELEGRAM_PAIRING: DurableObjectNamespace;
+  MANAGED_TELEGRAM_PAIRING: DurableObjectNamespace<ManagedTelegramPairing>;
+  ACCOUNTS: InstallationDirectoryService;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_API?: Fetcher;
 }
@@ -118,6 +124,8 @@ const MEDIA_UNAVAILABLE_TEXT =
   "GSV Telegram could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
+  private readonly retirement = new AdapterRetirement(this.ctx.storage);
+  private readonly lifecycle: AdapterPeerRetirement<ManagedTelegramPeerState>;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
   private drainPromise?: Promise<void>;
@@ -125,27 +133,40 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   constructor(ctx: DurableObjectState, env: ManagedTelegramPeerEnv) {
     super(ctx, env);
     runAdapterHilSqlMigrations(ctx.storage);
-    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.deliveries = new DeliveryLedger(this.ctx.storage, { retirement: this.retirement });
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_PREFIX,
       {
+        retirement: this.retirement,
         completedRetentionMs: INBOUND_RETENTION_MS,
         maxRecords: INBOUND_MAX_RECORDS,
         pendingOrder: "key",
       },
     );
+    this.lifecycle = new AdapterPeerRetirement(ctx.storage, this.retirement, {
+      stateKey: STATE_KEY, inboundPrefix: INBOUND_PREFIX, inbound: this.inboundDeliveries,
+      outbound: this.deliveries, hil: true,
+      identity: (state) => ({ name: `managed:${state.surfaceId}`, understood: state.version === 1 && Boolean(state.actorId && state.surfaceId) }),
+    });
   }
 
+  async inspectInstallationResource(installationId: string) { return await this.lifecycle.inspect(installationId); }
+  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.quiesce(input); }
+  async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
+  async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
+
   async handleWebhook(event: ManagedTelegramPeerEvent): Promise<{ ok: true }> {
-    const routeGeneration = event.kind === "message"
+    const route = event.kind === "message"
       ? await this.ctx.storage.transaction(async (txn) => {
           const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
           const next = bindManagedTelegramPeerIdentity(state, event.inbound);
           await txn.put(STATE_KEY, next);
-          return next.activeRoute?.generation;
+          return next.activeRoute;
         })
-      : (await this.requireState()).activeRoute?.generation;
+      : (await this.requireState()).activeRoute;
+    if (this.retirement.retired(route)) return { ok: true };
+    const routeGeneration = route?.generation;
     const deliveryId = event.kind === "message"
       ? event.inbound.deliveryId
       : `callback:${event.callback.callbackQueryId}`;
@@ -155,6 +176,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         ? { kind: "message", inbound: event.inbound, routeGeneration }
         : { kind: "approval", callback: event.callback, routeGeneration },
       Date.now() + INBOUND_WAKE_DELAY_MS,
+      route ?? null,
     );
     if (event.kind === "message" && isManagedTelegramPairCommand(event.inbound.text)) {
       await this.attemptInbound(deliveryId);
@@ -186,19 +208,22 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       await cancelBinaryBody(body, "Telegram route changed before delivery");
       return { ok: false, error: "Telegram route changed before delivery" };
     }
-    const controls = context?.hil
-      ? await prepareTelegramApproval(this.ctx.storage, context, context.hil)
-      : null;
-    const renderedMessage = controls ? { ...message, text: controls.text } : message;
-    const result = await this.deliverMessage(renderedMessage, {
-      kind: "installation",
-      installationId,
-      generation: message.routeGeneration,
-    }, body, controls ? { replyMarkup: controls.replyMarkup } : {});
-    if (result.ok && controls) {
-      await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
-    }
-    return result;
+    try {
+      this.retirement.requireLive(route);
+      const controls = context?.hil
+        ? await prepareTelegramApproval(this.ctx.storage, context, context.hil, route)
+        : null;
+      const renderedMessage = controls ? { ...message, text: controls.text } : message;
+      const result = await this.deliverMessage(renderedMessage, {
+        kind: "installation",
+        installationId,
+        generation: message.routeGeneration,
+      }, body, controls ? { replyMarkup: controls.replyMarkup } : {});
+      if (result.ok && controls) {
+        await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
+      }
+      return result;
+    } catch (error) { await cancelBinaryBody(body, error); throw error; }
   }
 
   async setTyping(
@@ -217,14 +242,17 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     ) {
       return { accepted: false };
     }
+    const owner = { installationId, generation: routeGeneration };
+    const release = this.retirement.start(owner);
     try {
-      await setManagedTelegramTyping(this.botToken(), state.surfaceId, this.telegramFetch());
+      await setManagedTelegramTyping(this.botToken(), state.surfaceId, this.telegramFetch(owner));
     } catch {
       console.warn(JSON.stringify({
         component: "managed_telegram",
         event: "typing_delivery_failed",
       }));
     }
+    finally { release(); }
     return { accepted: true };
   }
 
@@ -252,10 +280,15 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       canonicalOrigin: requireCanonicalOrigin(input.canonicalOrigin),
       linkedAt: Date.now(),
     };
+    const current = await this.requireState();
+    this.retirement.requireLive(route);
+    await this.env.TELEGRAM_INSTALLATIONS.getByName(route.installationId).registerResource({ kind: "adapter-peer", name: `managed:${current.surfaceId}`, objectId: this.ctx.id.toString(), generation: route.generation });
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Telegram peer is not initialized");
       const existing = state.pairing?.preparedRoute;
+      if (state.pairing?.operationId === input.operationId && existing && (existing.installationId !== route.installationId || existing.localUid !== route.localUid)) throw new Error("Pairing operation identity changed");
       const effectiveRoute = state.pairing?.operationId === input.operationId && existing
         ? existing
         : route;
@@ -278,6 +311,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Telegram peer is not initialized");
       const activated = activateManagedTelegramPairing(state, {
@@ -298,6 +332,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(route);
       const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed Telegram peer is not initialized");
       const finalized = finalizeManagedTelegramPairing(state, {
@@ -330,6 +365,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
 
   async disconnect(input: AdapterPairingDisconnectInput): Promise<{ disconnected: boolean }> {
     return await this.ctx.storage.transaction(async (txn) => {
+      this.retirement.requireLive(input);
       const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
       if (!state) return { disconnected: false };
       if (state.actorId !== input.actorId || state.surfaceId !== input.surfaceId) {
@@ -385,11 +421,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     if (payload.kind === "approval") {
       const state = await this.requireState();
       const route = state.activeRoute;
-      if (!route || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
+      if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
         return { terminal: true };
       }
       const token = this.botToken();
-      const fetcher = this.telegramFetch();
+      const fetcher = this.telegramFetch(route);
       await handleTelegramApprovalCallback(
         this.ctx.storage,
         this.env.GATEWAY,
@@ -423,7 +459,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return await this.pairingResponse(inbound);
     }
     const route = state.activeRoute;
-    if (!route || route.generation !== payload.routeGeneration) {
+    if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) {
       return { terminal: true };
     }
 
@@ -431,7 +467,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       getFile: async (fileId) => await getManagedTelegramFile(
         this.botToken(),
         fileId,
-        this.telegramFetch(),
+        this.telegramFetch(route),
       ),
       downloadFile: async (filePath, expectedSize, maxBytes) =>
         await downloadManagedTelegramFile(
@@ -439,7 +475,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           filePath,
           expectedSize,
           maxBytes,
-          this.telegramFetch(),
+          this.telegramFetch(route),
         ),
     });
     if (inbound.media?.length && transfer.media.length === 0) {
@@ -454,6 +490,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const currentRoute = current.activeRoute;
     if (
       !currentRoute
+      || this.retirement.retired(route)
       || currentRoute.installationId !== route.installationId
       || currentRoute.generation !== route.generation
     ) {
@@ -492,6 +529,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       },
       transfer.body,
     );
+    if (this.retirement.retired(route)) return { terminal: true };
     if (result.challenge) return await this.pairingResponse(inbound);
     const disposition = adapterInboundResultDisposition(result, {
       surface: { kind: "dm", id: inbound.surfaceId },
@@ -596,6 +634,18 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     body?: BinaryBody,
     options: TelegramTextMessageOptions = {},
   ): Promise<AdapterSendResult> {
+    const owner = context.kind === "installation" ? context : null;
+    let release: () => void;
+    try { release = this.retirement.start(owner); }
+    catch (error) { await cancelBinaryBody(body, error); throw error; }
+    try { return await this.deliverOwnedMessage(message, context, owner, body, options); }
+    finally { release(); }
+  }
+
+  private async deliverOwnedMessage(
+    message: AdapterOutboundMessage, context: ResponseContext, owner: AdapterDataScope,
+    body?: BinaryBody, options: TelegramTextMessageOptions = {},
+  ): Promise<AdapterSendResult> {
     try {
       const state = await this.requireState();
       this.assertPeerDestination(state, message.surface, message.actorId);
@@ -626,6 +676,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     let mediaBytes: Array<Uint8Array | undefined>;
     try {
       mediaBytes = await readAdapterMediaBody(media, body, {
+        signal: owner ? this.retirement.signal(owner) : undefined,
         maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
         maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
       });
@@ -644,7 +695,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     }
     let claim;
     try {
-      claim = await this.deliveries.claim(message.deliveryId, fingerprint);
+      claim = await this.deliveries.claim(message.deliveryId, fingerprint, owner);
     } catch {
       return { ok: false, error: "Telegram delivery ledger unavailable", retryable: true };
     }
@@ -670,7 +721,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       this.assertPeerDestination(current, message.surface, message.actorId);
       this.assertDeliveryContext(current, context);
       const token = this.botToken();
-      const fetcher = this.telegramFetch();
+      const fetcher = this.telegramFetch(owner);
       const replyToMessageId = parseTelegramMessageId(message.replyToId);
       let messageId: string | undefined;
       if (media.length === 0) {
@@ -726,6 +777,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
 
   private assertDeliveryContext(state: ManagedTelegramPeerState, context: ResponseContext): void {
     if (context.kind === "installation") {
+      this.retirement.requireLive(context);
       if (
         state.activeRoute?.installationId !== context.installationId
         || state.activeRoute.generation !== context.generation
@@ -766,10 +818,13 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return value;
   }
 
-  private telegramFetch(): ManagedTelegramFetch {
-    return this.env.TELEGRAM_API
-      ? (input, init) => this.env.TELEGRAM_API!.fetch(input, init)
-      : fetch;
+  private telegramFetch(owner: AdapterDataScope = null): ManagedTelegramFetch {
+    return (input, init) => {
+      this.retirement.requireLive(owner);
+      const signal = owner ? this.retirement.signal(owner) : undefined;
+      const request = { ...init, signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal };
+      return this.env.TELEGRAM_API ? this.env.TELEGRAM_API.fetch(input, request) : fetch(input, request);
+    };
   }
 }
 

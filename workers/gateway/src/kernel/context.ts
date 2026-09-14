@@ -18,6 +18,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "./auth-store";
 import type { DevicePairingStore } from "./device-pairings";
+import type { MemberRecoveryStore } from "./member-recovery";
+import type { AccountRecoveryStore } from "./account-recovery";
+import type { PeopleStore } from "./people";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { TargetRegistry } from "./target-registry";
@@ -49,6 +52,10 @@ export type KernelContext = {
   installationIdentity: InstallationIdentity | null;
   auth: AuthStore;
   pairings: DevicePairingStore;
+  accountRecovery: AccountRecoveryStore;
+  memberRecovery: MemberRecoveryStore;
+  people: PeopleStore;
+  invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
   targets: TargetRegistry;

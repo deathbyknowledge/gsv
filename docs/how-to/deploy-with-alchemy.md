@@ -1,30 +1,95 @@
 # Deploy GSV with Alchemy
 
-The public Alchemy stack deploys a standalone, user-owned GSV into your
-Cloudflare account. It creates the Gateway, R2 storage, ripgit, and the selected
-adapter Workers from the release manifest generated from each adapter's
-`adapter.json`.
+The public Alchemy stack deploys one operator environment into your Cloudflare
+account. It serves isolated spaces with public Accounts, Gateway and inference
+Workers, R2 storage and ripgit. H&M services are optional. The root deployment
+commands use the `operator` stage; they do not upgrade an existing singleton
+deployment in place.
+
+## Deploy a new operator
+
+Use a Cloudflare account and a domain in one of its DNS zones, plus Node.js 22 or
+newer, npm and Rust for the source build. The composition includes CodeMode
+and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/).
+Run these commands from the repository
+root. Replace the account, domain and zone values with your own:
 
 ```bash
 npm ci
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+export GSV_DOMAIN="example.com"
+export GSV_ZONE_ID="your-zone-id"
 npx alchemy login
 npx alchemy cloudflare bootstrap
 npm run deployment:plan
 npm run deployment:deploy
 ```
 
-The default includes every bundled adapter. Select a subset without changing
-source:
+Both deployment commands build the release manifest and Worker/web bundles
+before invoking Alchemy. Keep the same Alchemy state, account, resource names and
+`operator` stage for later updates. The default administration origin is
+`https://accounts.<domain>`; space handles route under `<handle>.<domain>`.
 
-```bash
-GSV_ADAPTERS=telegram,discord npm run deployment:plan
-GSV_ADAPTERS=telegram,discord npm run deployment:deploy
+The [operator configuration reference](./operate-gsv.md) lists optional inputs,
+including `GSV_ADMIN_ORIGIN`, the Worker name prefix, Cloudflare Access and
+inference limits. The default inference service uses the operator's Workers AI
+account. People can also configure their own model credentials inside a space.
+
+## Create the first space
+
+Deployment prints `installationDatabase` and `administration`; it does not
+create a space or rotate credentials. Put the returned database ID in
+`GSV_INSTALLATIONS_DATABASE_ID`. From a local controlling terminal, supply
+`CLOUDFLARE_API_TOKEN` through your environment with access to that D1 database,
+then issue the first-use link:
+
+```sh
+npm run deployment:bootstrap -- issue \
+  --account "$CLOUDFLARE_ACCOUNT_ID" \
+  --database "$GSV_INSTALLATIONS_DATABASE_ID" \
+  --origin "https://accounts.$GSV_DOMAIN" --mode operator
 ```
 
-Adapter credentials are entered through GSV after deployment and remain owned
-by the adapter. The deployment stack provides Telegram its stable Worker URL
-for webhook registration; it does not put a bot token in source or Alchemy
-state.
+Use the configured administration origin if you changed its default. Open the
+one-time link printed to the terminal, create the first space and follow its
+setup invitation. In the default `operator` access mode, save the operator
+credential shown once by the page. It opens `/operator` for explicit creation
+of further spaces. Cloudflare Access deployments use `--mode access` and their
+configured policy instead. See [bootstrap and recovery](../../deployment/operator-bootstrap.md)
+for link reissue and credential recovery. Keep credentials out of source files
+and command arguments.
 
-The stack state is independent from a managed GSV operator. Do not point this
-stack and another deployment owner at the same Worker names or retained state.
+Owner email-code sign-in and **My spaces** are optional deployment configuration;
+they do not create spaces or grant operator access. Configure a verified sender
+with `GSV_OWNER_EMAIL_FROM`, or the supported OIDC provider inputs, as described
+in the [owner sign-in guide](../../deployment/operator-bootstrap.md#owner-email-sign-in).
+
+## Enable adapters
+
+No messenger adapters are enabled by default. Set `GSV_ADAPTERS` to a
+comma-separated list of operator-supported adapter IDs after supplying each
+adapter's deployment configuration. Its `adapter.json` declares the required
+application secrets and variables in its single `deployment` manifest section.
+For example, [Telegram's manifest](../../workers/adapters/telegram/adapter.json)
+requires the bot token, webhook secret, bot username and public webhook origin.
+
+The operator supplies application credentials through the deployment environment
+and configures the public callback route and provider registration. Enabling a
+Worker does not complete that provider setup. People then link their own
+messenger identities from their space. See [operator adapter setup](./operate-gsv.md#connect-services-and-verify-cleanup).
+
+## Update an existing deployment
+
+Use the same operator configuration and state, install the desired revision's
+dependencies, then run `deployment:plan` and `deployment:deploy` again. Preserve
+physical resource identities. Operators adopting a legacy combined Accounts
+database must first complete the one-time
+[migration ownership handoff](../../deployment/installation-migration-adoption.md);
+ordinary updates of an adopted public database use its migration ledger.
+Deployments with an existing Mail queue also follow the
+[reader-before-writer upgrade](../../deployment/mail-queue-upgrade.md).
+
+The common stack does not adopt an old standalone deployment in place. Keep
+that deployment on its preserved source or release until its data has been
+exported and a new operator environment prepared. See the
+[standalone retirement guide](./standalone-retirement.md).

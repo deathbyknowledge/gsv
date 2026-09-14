@@ -7,11 +7,11 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "gateway-test",
-	"main": "src/index.ts",
+	"main": "src/test-fixtures/worker.ts",
 	"compatibility_date": "2025-09-01",
 	// pi-ai loads node:os for its user-agent. Production's newer compatibility
 	// date enables this builtin; the older unit-test date requires it explicitly.
-	"compatibility_flags": ["nodejs_compat", "enable_nodejs_os_module"],
+	"compatibility_flags": ["nodejs_compat", "enable_nodejs_os_module", "enable_ctx_exports"],
 	"rules": [
 		{
 			"type": "Text",
@@ -57,6 +57,7 @@
 			}
 		]
 	},
+	"services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gateway-test", "entrypoint": "TestInstallationDirectory" }],
 	"observability": {
 		"enabled": true
 	},

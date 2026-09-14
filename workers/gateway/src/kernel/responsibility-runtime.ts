@@ -48,7 +48,10 @@ async recoverResponsibilityWakes(): Promise<void> {
 async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
     const now = Date.now();
     const state = this.host.responsibilities.wakeState(ownerUid);
-    const nextWakeAt = this.host.responsibilities.nextWakeAt(ownerUid, now);
+    const pending = this.host.responsibilities.pendingBatch(ownerUid);
+    const nextWakeAt = !pending && this.host.auth.isAccountDisabled(ownerUid)
+      ? null
+      : this.host.responsibilities.nextWakeAt(ownerUid, now);
     if (nextWakeAt === null) {
       this.host.responsibilities.setWakeTask(
         ownerUid,
@@ -110,6 +113,12 @@ async onResponsibilityWake(
     if (task?.id && state.taskId !== task.id) return;
 
     const gate = await this.host.onboarding.managedWorkGate();
+    const pending = this.host.responsibilities.pendingBatch(payload.ownerUid);
+    // A persisted batch already owns its event id; removal only fences new batches.
+    if (!pending && this.host.auth.isAccountDisabled(payload.ownerUid)) {
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+      return;
+    }
     if (!gate.allowed) {
       await this.scheduleResponsibilityWakeAt(
         payload.ownerUid,
@@ -120,7 +129,7 @@ async onResponsibilityWake(
       return;
     }
 
-    const batch = this.host.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
+    const batch = pending ?? this.host.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
     if (!batch) {
       await this.reconcileResponsibilityWake(payload.ownerUid);
       return;

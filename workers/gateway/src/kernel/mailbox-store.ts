@@ -476,15 +476,15 @@ export class MailboxStore {
     if (!existing || existing.fingerprint !== fingerprint) {
       throw new Error("Outbound mail reference does not match durable state");
     }
-    if (existing.state !== "queued" || existing.enqueuedAt !== null) {
+    if (existing.state !== "staging" && existing.state !== "queued") {
       return existing;
     }
     this.sql.exec(
       `UPDATE mail_outbound
           SET enqueue_attempts = enqueue_attempts + 1,
-              enqueue_next_at = ?
+              enqueue_next_at = CASE WHEN state = 'queued' THEN ? ELSE NULL END
         WHERE outbound_id = ? AND fingerprint = ?
-          AND state = 'queued' AND enqueued_at IS NULL`,
+          AND state IN ('staging', 'queued')`,
       nextAt,
       outboundId,
       fingerprint,
@@ -503,7 +503,7 @@ export class MailboxStore {
     if (existing.enqueuedAt === null) {
       this.sql.exec(
         `UPDATE mail_outbound
-            SET enqueued_at = ?, enqueue_next_at = NULL
+            SET enqueued_at = ?
           WHERE outbound_id = ? AND fingerprint = ?
             AND state IN ('queued', 'accepted', 'failed', 'unknown')`,
         Date.now(),
@@ -547,6 +547,13 @@ export class MailboxStore {
     const outbound = this.getOutbound(completion.outboundId);
     if (!outbound) throw new Error("Outbound mail disappeared after completion");
     return outbound;
+  }
+
+  pendingOutboundEnqueues(): { outboundId: string; nextAt: number | null }[] {
+    return this.sql.exec<{ outbound_id: string; enqueue_next_at: number | null }>(
+      `SELECT outbound_id, enqueue_next_at FROM mail_outbound
+       WHERE state = 'queued' ORDER BY enqueue_next_at, created_at`,
+    ).toArray().map((row) => ({ outboundId: row.outbound_id, nextAt: row.enqueue_next_at }));
   }
 
   getMessage(ownerUid: number, messageIdOrPrefix: string): MailMessageRecord | null {

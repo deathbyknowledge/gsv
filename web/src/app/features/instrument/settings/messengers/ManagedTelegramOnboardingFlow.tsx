@@ -24,7 +24,7 @@ type ManagedTelegramOnboardingFlowProps = {
 };
 
 type ManagedMessengerOnboardingFlowProps = Omit<ManagedTelegramOnboardingFlowProps, "dependencies"> & {
-  adapterId: "telegram" | "slack";
+  adapterId: "telegram" | "slack" | "discord";
   dependencies: ManagedTelegramDependencies;
 };
 
@@ -80,6 +80,10 @@ export function ManagedSlackOnboardingFlow({
   );
 }
 
+export function SharedDiscordOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+}
+
 function ManagedMessengerOnboardingFlow({
   adapterId,
   onBack,
@@ -97,10 +101,12 @@ function ManagedMessengerOnboardingFlow({
   dependencies.useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
 
   const isSlack = adapterId === "slack";
-  const platform = isSlack ? "Slack" : "Telegram";
+  const isDiscord = adapterId === "discord";
+  const installsApp = isSlack || isDiscord;
+  const platform = isSlack ? "Slack" : isDiscord ? "Discord" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
-  const launchUrl = isSlack
-    ? info.data?.installUrl ?? adapterDocUrl("slack")
+  const launchUrl = installsApp
+    ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
   const displayIdentity = candidate?.actorHandle
     || candidate?.actorName
@@ -138,23 +144,23 @@ function ManagedMessengerOnboardingFlow({
     mode: "managed-shared",
     lastActivity: null,
     error: "",
-    extra: !isSlack && botUsername ? { botUsername } : {},
+    extra: !installsApp && botUsername ? { botUsername } : {},
   });
 
   const flow: ConnectFlowDef = {
     key: `managed-${adapterId}`,
     navLabel: platform.toUpperCase(),
     parentLabel: "MESSENGERS",
-    icon: isSlack ? "chat" : "telegram",
+    icon: installsApp ? "chat" : "telegram",
     title: `Connect ${platform}`,
-    blurb: isSlack
-      ? "Install the official GSV app, mention it in Slack, then confirm your identity here."
+    blurb: installsApp
+      ? `Install the GSV app, mention it in ${platform}, then confirm your identity here.`
       : "Message the official GSV bot, then confirm that Telegram identity here.",
     steps: [
       {
         key: "message",
-        label: isSlack ? "INSTALL & MENTION" : "MESSAGE GSV",
-        title: isSlack ? "Install and mention GSV" : "Message the GSV bot",
+        label: installsApp ? "INSTALL & MENTION" : "MESSAGE GSV",
+        title: installsApp ? "Install and mention GSV" : "Message the GSV bot",
         meta: `IN ${platform.toUpperCase()}`,
         status: paired ? "CONNECTED" : "NOT CONNECTED",
         tone: paired ? "online" : "idle",
@@ -163,20 +169,20 @@ function ManagedMessengerOnboardingFlow({
             <Alert
               variant="attention"
               title={`START IN ${platform.toUpperCase()}`}
-              text={isSlack
-                ? "Install the official GSV app in your workspace, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM."
+              text={installsApp
+                ? `Install the GSV app in your ${isDiscord ? "server" : "workspace"}, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM.`
                 : "Send the official GSV bot any private message. It will reply with a short-lived pairing code."}
             />
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
             ) : !info.data?.configured ? (
-              <Alert variant="warning" text={`Managed ${platform} is not configured for this GSV environment yet.`} />
+              <Alert variant="warning" text={`${platform} linking is not configured for this GSV yet.`} />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label="BACK" onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
-              <Link href={launchUrl}>{isSlack
-                ? info.data?.installUrl ? "INSTALL GSV IN SLACK" : "VIEW SLACK SETUP"
+              <Link href={launchUrl}>{installsApp
+                ? info.data?.installUrl ? `INSTALL GSV IN ${platform.toUpperCase()}` : `VIEW ${platform.toUpperCase()} SETUP`
                 : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
               <Button
                 variant="primary"
@@ -259,7 +265,7 @@ function ManagedMessengerOnboardingFlow({
             <div class="gsv-cf-framed">
               <ListRow
                 label={displayIdentity}
-                sub={candidate ? `${platform} ID ${candidate.actorId}` : "No identity loaded"}
+                sub={candidate ? `${platform} ID ${candidate.actorId}${isDiscord ? ` · ${candidate.accountId}` : ""}` : "No identity loaded"}
                 status="none"
               />
             </div>

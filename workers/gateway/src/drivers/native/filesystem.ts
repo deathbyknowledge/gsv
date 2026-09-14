@@ -33,7 +33,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       cron: createCronFileService(ctx),
       schedules: ctx.schedules,
       processRequest: createProcessViewRequest(ctx.installationId),
-      baseAiModels: () => baseAiModelStack(ctx.env),
+      baseAiModels: baseAiModelStack,
     },
     ctx.processId ?? undefined,
     sourceBackend,

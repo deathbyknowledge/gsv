@@ -648,7 +648,9 @@ main() {
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
     fi
-    echo "  Next: gsv auth setup"
+    echo "  Next: finish setting up your space in your browser."
+    echo "  CLI login: gsv --url wss://your-space.example/ws auth login"
+    echo "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
     echo "  Open: gsv desktop"
     echo ""
 }

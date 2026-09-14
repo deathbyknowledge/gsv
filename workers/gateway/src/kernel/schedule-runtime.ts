@@ -126,13 +126,15 @@ async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
     }
 
     const gate = await this.host.onboarding.managedWorkGate();
+    const latest = this.host.schedules.getStored(scheduleId);
+    if (latest && this.disableRemovedAccountSchedule(latest)) return;
     if (!gate.allowed) {
-      if (record?.enabled && record.state.nextRunAtMs !== null) {
+      if (latest?.enabled && latest.state.nextRunAtMs !== null) {
         const nextWakeId = await this.scheduleScheduleWake(
-          record.id,
+          latest.id,
           Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
         );
-        this.host.schedules.setWakeScheduleId(record.id, nextWakeId);
+        this.host.schedules.setWakeScheduleId(latest.id, nextWakeId);
       }
       return;
     }
@@ -192,6 +194,11 @@ async runScheduleRecord(
     record: ScheduleRecord,
     mode: "due" | "force",
   ): Promise<ScheduleRunResult> {
+    // Check after installation admission and each preceding target's awaited dispatch.
+    // Once this occurrence starts, its target retains ownership of completion.
+    if (this.disableRemovedAccountSchedule(record)) {
+      return skippedScheduleResult(record.id, "schedule account is disabled");
+    }
     const now = Date.now();
     const scheduledAtMs = record.state.nextRunAtMs;
 
@@ -255,7 +262,7 @@ async runScheduleRecord(
             record.expression,
             Math.max(finishedAtMs, scheduledAtMs ?? finishedAtMs),
           );
-    const updated = this.host.schedules.finishRun({
+    let updated = this.host.schedules.finishRun({
       scheduleId: record.id,
       ownerUid: record.ownerUid,
       scheduledAtMs: mode === "force" ? null : scheduledAtMs,
@@ -269,6 +276,9 @@ async runScheduleRecord(
       oneShotOccurrenceId: running.oneShotOccurrenceId,
       countOneShotAttempt: oneShotAttemptNumber !== null,
     });
+    if (updated && this.disableRemovedAccountSchedule(updated)) {
+      updated = this.host.schedules.get(updated.id);
+    }
 
     if (updated?.enabled && updated.state.nextRunAtMs !== null && mode !== "force") {
       const wakeId = await this.scheduleScheduleWake(updated.id, updated.state.nextRunAtMs);
@@ -286,6 +296,17 @@ async runScheduleRecord(
     };
     if (error) runResult.error = error;
     return runResult;
+  }
+
+private disableRemovedAccountSchedule(record: ScheduleRecord): boolean {
+    if (!this.host.auth.isAccountDisabled(record.ownerUid)
+      && !this.host.auth.isAccountDisabled(record.runAs.uid)) return false;
+    const current = this.host.schedules.getStored(record.id);
+    if (current?.enabled) {
+      this.host.schedules.update(record.id, { enabled: false, now: Date.now() });
+    }
+    if (current?.wakeScheduleId) this.host.schedules.setWakeScheduleId(record.id, null);
+    return true;
   }
 
 async dispatchScheduleTarget(

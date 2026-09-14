@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
+import { createInstallationStorage } from "../installation/storage";
 import type { Process } from "./do";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { renderCompactionTranscriptWindow } from "./history/compaction-renderer";
@@ -39,7 +40,7 @@ describe("selected target message context", () => {
     const stub = await initProcess("selected-target-media", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       const key = `var/media/0/${process.pid}/fixture.png`;
-      await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+      await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
         httpMetadata: { contentType: "image/png" },
         customMetadata: { uid: "0", gid: "0", mode: "400", processId: process.pid },
       });

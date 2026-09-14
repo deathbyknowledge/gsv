@@ -107,24 +107,15 @@ export async function createAccount(
   ctx: KernelContext,
   input: CreateAccountInput,
 ): Promise<CreatedAccount> {
-  const { auth, env } = ctx;
-  const username = input.username;
+  const prepared = await prepareAccount(input);
+  const result = commitAccount(ctx, prepared);
+  await prepareAccountHome(ctx.env, input, result.identity);
+  return result;
+}
 
-  if (!ACCOUNT_USERNAME_RE.test(username)) {
-    throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
-  }
-  if (auth.getPasswdByUsername(username)) {
-    throw new Error(`User already exists: ${username}`);
-  }
-  if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
-    throw new Error(`Access group already exists: ${input.accessGroupName}`);
-  }
+export type PreparedAccount = { input: CreateAccountInput; shadowHash: string };
 
-  const ownerUsername = input.ownerUid != null
-    ? auth.getPasswdByUid(input.ownerUid)?.username ?? null
-    : null;
-  const crossMember = (input.crossMemberOwner ?? input.ownerUid != null) && ownerUsername != null;
-
+export async function prepareAccount(input: CreateAccountInput): Promise<PreparedAccount> {
   // Validate (and hash) before any auth-state mutation: a human account with a
   // bad/missing password must not leave a half-created passwd row behind, which
   // would also make the username unavailable on retry.
@@ -133,11 +124,36 @@ export async function createAccount(
     if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
       throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     }
+    if (input.password.length > 1024) throw new Error("password must be at most 1024 characters");
     shadowHash = await hashPassword(input.password);
   } else {
     // Locked account: agents are never logged into directly.
     shadowHash = "!";
   }
+  return { input, shadowHash };
+}
+
+/** Synchronous identity writes let an enrollment owner commit its receipt in the same transaction. */
+export function commitAccount(ctx: KernelContext, prepared: PreparedAccount): CreatedAccount {
+  const { auth } = ctx;
+  const { input, shadowHash } = prepared;
+  const username = input.username;
+
+  if (!ACCOUNT_USERNAME_RE.test(username)) {
+    throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  if (auth.getPasswdByUsername(username)) {
+    throw new Error(`User already exists: ${username}`);
+  }
+  if (auth.getGroupByName(username)) throw new Error(`Group already exists: ${username}`);
+  if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
+    throw new Error(`Access group already exists: ${input.accessGroupName}`);
+  }
+
+  const ownerUsername = input.ownerUid != null
+    ? auth.getPasswdByUid(input.ownerUid)?.username ?? null
+    : null;
+  const crossMember = (input.crossMemberOwner ?? input.ownerUid != null) && ownerUsername != null;
 
   const uid = auth.nextUid();
   const gid = uid; // User Private Group
@@ -195,6 +211,11 @@ export async function createAccount(
   const entry = auth.getPasswdByUid(uid)!;
   const identity = accountIdentity(auth, entry);
 
+  return { identity, created: true, accessGroupGid };
+}
+
+/** Idempotent remote scaffolding resumes after an enrollment receipt has committed. */
+export async function prepareAccountHome(env: Pick<Env, "STORAGE" | "RIPGIT">, input: CreateAccountInput, identity: ProcessIdentity): Promise<void> {
   await ensureAccountHomeLayout(env, identity, {
     seedPromptContext: input.kind === "agent",
     personalAgent: input.personalAgentOf != null,
@@ -207,7 +228,6 @@ export async function createAccount(
     await seedContextFile(env, identity, file.name, file.text);
   }
 
-  return { identity, created: true, accessGroupGid };
 }
 
 /**
@@ -254,4 +274,3 @@ export async function seedContextFile(
     ops,
   );
 }
-

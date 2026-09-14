@@ -1,13 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { retain } from "alchemy/RemovalPolicy";
+import type { AdapterWorkerDeploymentManifest } from "./manifest.ts";
 
 export const GSV_WORKER_COMPATIBILITY = {
   date: "2026-07-29",
   flags: ["nodejs_compat" as const],
 };
-
-export type GsvRuntimeMode = "standalone" | "managed";
 
 export type GsvRuntimeNames = {
   gateway: string;
@@ -27,13 +26,13 @@ export type GsvAdapterBinding = {
   gatewayEntrypoint: string;
   gatewayBindingLogicalId?: string;
   worker: Cloudflare.Workers.Worker;
+  lifecycle?: AdapterWorkerDeploymentManifest["lifecycle"];
   calls?: readonly string[];
 };
 
 export type GsvRuntimeServices = {
-  installationDirectory?: Cloudflare.Workers.Worker;
-  inference?: Cloudflare.Workers.WorkerEntrypointBinding;
-  inferenceInstallations?: Cloudflare.Workers.WorkerBindingProps[string];
+  installationDirectory: Cloudflare.Workers.Worker;
+  inferenceExecution: Cloudflare.Workers.WorkerBindingProps[string];
   entitlements?: Cloudflare.Workers.WorkerEntrypointBinding;
   mailOutbound?: Cloudflare.Queues.Queue;
   adapters?: readonly GsvAdapterBinding[];
@@ -41,11 +40,10 @@ export type GsvRuntimeServices = {
 };
 
 export type GsvRuntimeProps = {
-  mode: GsvRuntimeMode;
   logicalPrefix: string;
   names: GsvRuntimeNames;
   paths: GsvRuntimePaths;
-  services?: GsvRuntimeServices;
+  services: GsvRuntimeServices;
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
   gatewayWorkersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
@@ -77,10 +75,24 @@ const telemetryProducerObservability = {
   traces: { enabled: false },
 } satisfies Cloudflare.Workers.WorkerObservability;
 
-export const GsvRuntime = (props: GsvRuntimeProps) =>
-  Effect.gen(function* () {
+export type GsvRuntimeDependencies = { Cloudflare: typeof Cloudflare; Effect: typeof Effect; retain: typeof retain };
+export const gsvRuntimeDependencies: GsvRuntimeDependencies = { Cloudflare, Effect, retain };
+
+export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDependencies) => {
+  const { Cloudflare, Effect, retain } = dependencies;
+  return Effect.gen(function* () {
+    const directory = props.services?.installationDirectory;
+    const inferenceExecution = props.services?.inferenceExecution;
+    if (!directory || !inferenceExecution) {
+      throw new Error("GSV requires an installation directory and inference execution service. Use GsvDeployment or supply both services.");
+    }
     const compatibility = props.compatibility ?? GSV_WORKER_COMPATIBILITY;
     const adapters = props.services?.adapters ?? [];
+    for (const adapter of adapters) {
+      if (!/^[a-z][a-z0-9-]*$/.test(adapter.id) || !adapter.lifecycle) {
+        throw new Error(`Adapter ${adapter.id} requires an owned lifecycle before multi-space deployment`);
+      }
+    }
     const storageResource = Cloudflare.R2.Bucket(
       `${props.logicalPrefix}Storage`,
       { name: props.names.storageBucket },
@@ -105,23 +117,18 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
       },
     ).pipe(retain());
 
-    const managedBindings: Cloudflare.Workers.WorkerBindingProps = {};
-    if (props.services?.installationDirectory) {
-      managedBindings.INSTALLATION_DIRECTORY =
-        props.services.installationDirectory;
-    }
-    if (props.services?.inference) {
-      managedBindings.MANAGED_INFERENCE = props.services.inference;
-    }
-    if (props.services?.inferenceInstallations) {
-      managedBindings.MANAGED_INFERENCE_INSTALLATIONS =
-        props.services.inferenceInstallations;
-    }
+    const serviceBindings: Cloudflare.Workers.WorkerBindingProps = {
+      INFERENCE_EXECUTION: inferenceExecution,
+    };
+    serviceBindings.INSTALLATION_DIRECTORY = directory;
+    serviceBindings.INSTALLATION_OWNERSHIP = Cloudflare.WorkerEntrypoint(directory, {
+      entrypoint: "InstallationOwnershipEntrypoint", props: { authority: "kernel-owner-link" },
+    });
     if (props.services?.entitlements) {
-      managedBindings.ENTITLEMENTS = props.services.entitlements;
+      serviceBindings.ENTITLEMENTS = props.services.entitlements;
     }
     if (props.services?.mailOutbound) {
-      managedBindings.MANAGED_MAIL_OUTBOUND = props.services.mailOutbound;
+      serviceBindings.MANAGED_MAIL_OUTBOUND = props.services.mailOutbound;
     }
     const gatewayEnv: Cloudflare.Workers.WorkerBindingProps = {
       KERNEL: Cloudflare.DurableObject("KERNEL", {
@@ -134,10 +141,9 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
         className: "Conversation",
       }),
       STORAGE: storageResource,
-      AI: Cloudflare.Workers.AI(),
       RIPGIT: ripgitWorker,
       LOADER: Cloudflare.WorkerLoader(),
-      ...managedBindings,
+      ...serviceBindings,
       ...adapterGatewayBindings(adapters),
       ...props.services?.extraBindings,
     };
@@ -167,11 +173,20 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
     ).pipe(retain());
 
     for (const adapter of adapters) {
+      yield* directory.bind(`${props.logicalPrefix}${adapter.id}DeletionBinding`, {
+        bindings: [{ type: "service", name: `DELETION_OWNER_${adapter.id.replaceAll("-", "_").toUpperCase()}`,
+          service: adapter.worker.workerName, entrypoint: adapter.lifecycle!.entrypoint,
+          props: { authority: "installation-deletion" } }],
+      });
       yield* adapter.worker.bind(
         adapter.gatewayBindingLogicalId ??
           `${props.logicalPrefix}${adapter.id}GatewayBinding`,
         {
           bindings: [{
+            type: "service" as const,
+            name: "ACCOUNTS",
+            service: directory.workerName,
+          }, {
             type: "service",
             name: "GATEWAY",
             service: props.names.gateway,
@@ -191,20 +206,14 @@ export const GsvRuntime = (props: GsvRuntimeProps) =>
     const storage = yield* storageResource;
     const ripgit = yield* ripgitWorker;
     const gateway = yield* gatewayWorker;
-    return { mode: props.mode, storage, ripgit, gateway };
+    yield* directory.bind(`${props.logicalPrefix}DirectoryRecoveryBinding`, {
+      bindings: [{ type: "service", name: "ACCOUNTS_GATEWAY_RECOVERY", service: props.names.gateway,
+        entrypoint: "GatewayRecoveryEntrypoint", props: { authority: "installation-owner-recovery" } }],
+    });
+    yield* directory.bind(`${props.logicalPrefix}DirectoryGatewayDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_GATEWAY", service: props.names.gateway,
+        entrypoint: "GatewayLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
+    });
+    return { storage, ripgit, gateway };
   });
-
-export type StandaloneGsvProps = Omit<GsvRuntimeProps, "mode" | "services"> & {
-  adapters?: readonly GsvAdapterBinding[];
-  extraBindings?: Cloudflare.Workers.WorkerBindingProps;
 };
-
-export const StandaloneGsv = (props: StandaloneGsvProps) =>
-  GsvRuntime({
-    ...props,
-    mode: "standalone",
-    services: {
-      adapters: props.adapters,
-      extraBindings: props.extraBindings,
-    },
-  });

@@ -1,24 +1,15 @@
-export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
+export function slackApiWorkerScript(): string {
   return `
-    const mode = ${JSON.stringify(mode)};
+    const mode = "managed";
     const calls = [];
     let nextTs = 1700001000;
     let nextFile = 0;
-    let failNextOpen = false;
 
     export default {
       async fetch(request) {
         const url = new URL(request.url);
         if (request.method === "GET" && url.pathname === "/calls") {
           return Response.json(calls);
-        }
-        if (
-          mode === "standalone"
-          && request.method === "POST"
-          && url.pathname === "/fail-next-open"
-        ) {
-          failNextOpen = true;
-          return Response.json({ ok: true });
         }
         if (request.method === "GET" && url.pathname.startsWith("/files-pri/")) {
           const bytes = new TextEncoder().encode(mode + " inbound file");
@@ -45,13 +36,11 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             : Object.fromEntries(await request.formData());
         const call = {
           method,
-          body: mode === "managed"
-            ? { ...body, authorization: request.headers.get("Authorization") }
-            : body,
+          body: { ...body, authorization: request.headers.get("Authorization") },
         };
         calls.push(call);
 
-        if (mode === "managed" && method === "oauth.v2.access") {
+        if (method === "oauth.v2.access") {
           return Response.json({
             ok: true,
             access_token: "xoxb-managed-test-token",
@@ -72,21 +61,11 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             ok: true,
             team_id: "TWORK123",
             team: "Acme",
-            user_id: mode === "managed" ? "UALICE01" : "UGSVBOT1",
-            ...(mode === "managed" ? { user: "alice" } : {}),
+            user_id: "UALICE01",
+            user: "alice",
           });
         }
-        if (mode === "standalone" && method === "apps.connections.open") {
-          if (failNextOpen) {
-            failNextOpen = false;
-            return Response.json({ ok: false, error: "temporary_unavailable" });
-          }
-          return Response.json({
-            ok: true,
-            url: "wss://wss-primary.slack.com/link/?ticket=test",
-          });
-        }
-        if (mode === "managed" && method === "conversations.list") {
+        if (method === "conversations.list") {
           if (body.cursor === "wait-for-cancel" || body.cursor === "wait-for-fs-cancel") {
             await new Promise((resolve, reject) => {
               const timer = setTimeout(resolve, 5_000);
@@ -117,7 +96,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             response_metadata: { next_cursor: "" },
           });
         }
-        if (mode === "managed" && method === "conversations.info") {
+        if (method === "conversations.info") {
           if (body.channel === "CBOTONLY1") {
             return Response.json({ ok: false, error: "channel_not_found" });
           }
@@ -133,8 +112,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
           });
         }
         if (
-          mode === "managed"
-          && (method === "conversations.history" || method === "conversations.replies")
+          (method === "conversations.history" || method === "conversations.replies")
         ) {
           return Response.json({
             ok: true,
@@ -146,10 +124,10 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             response_metadata: { next_cursor: "" },
           });
         }
-        if (mode === "managed" && method === "reactions.add") {
+        if (method === "reactions.add") {
           return Response.json({ ok: true });
         }
-        if (mode === "managed" && method === "users.list") {
+        if (method === "users.list") {
           return Response.json({
             ok: true,
             members: [{
@@ -161,7 +139,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             response_metadata: { next_cursor: "" },
           });
         }
-        if (mode === "managed" && method === "users.info") {
+        if (method === "users.info") {
           return Response.json({
             ok: true,
             user: {
@@ -172,7 +150,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
             },
           });
         }
-        if (mode === "managed" && method === "conversations.open") {
+        if (method === "conversations.open") {
           const channels = { UALICE01: "DALICE01", UBOB0001: "DBOB0001" };
           return Response.json({
             ok: true,
@@ -194,7 +172,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
         }
         if (method === "files.info") {
           const bytes = new TextEncoder().encode(mode + " inbound file");
-          const fileId = mode === "managed" ? "FFILE001" : "FFILE002";
+          const fileId = "FFILE001";
           return Response.json({
             ok: true,
             file: {
@@ -217,7 +195,7 @@ export function slackApiWorkerScript(mode: "managed" | "standalone"): string {
           });
         }
         if (method === "files.completeUploadExternal") {
-          if (mode === "managed" && body.initial_comment?.includes("Membership failure")) {
+          if (body.initial_comment?.includes("Membership failure")) {
             return Response.json({ ok: false, error: "not_in_channel" });
           }
           return Response.json({ ok: true, files: body.files });

@@ -31,6 +31,7 @@
   text-wrap: pretty;
 }
 .fd-hello .place { color: var(--target); }
+.fd-actions { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 20px; }
 .fd-row {
   border-top: 1px solid var(--rule-inner);
   padding: 14px 0;

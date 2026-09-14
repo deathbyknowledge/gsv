@@ -26,6 +26,7 @@ export async function deliverTargetConnectionEvent(
       const process = kernel.procs.get(watch.targetProcessId);
       const ctx = kernel.buildProcessContext(watch.targetProcessId);
       if (!process || process.ownerUid !== watch.uid || !ctx?.peer ||
+          kernel.auth.isAccountDisabled(watch.uid) || kernel.auth.isAccountDisabled(process.uid) ||
           !peerAllowsCall(ctx.peer, "signal.watch") ||
           !getVisibleTarget(ctx, payload.targetId, { includeOffline: true })) {
         throw new Error("Target watch authorization no longer permits delivery");

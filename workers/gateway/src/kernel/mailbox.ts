@@ -86,7 +86,9 @@ export async function acceptManagedInboundMail(
   if (existingMailbox && existingMailbox.mailboxId !== mailboxId) {
     throw new Error("Managed mail is already assigned to another local owner");
   }
-  const mailbox = ctx.mailboxes.ensureMailbox(mailboxId, owner.uid, address);
+  if (existingMailbox && (existingMailbox.ownerUid !== owner.uid || existingMailbox.address !== address)) {
+    throw new Error("Mailbox identity conflicts with existing state");
+  }
   const replay = ctx.mailboxes.acceptReplay({
     mailboxId,
     intakeId: metadata.intakeId,
@@ -97,12 +99,15 @@ export async function acceptManagedInboundMail(
     await cancelBody(body, "Managed mail was already accepted");
     return { messageId: replay.messageId };
   }
+  assertMailboxOwnerEnabled(owner.uid, ctx);
 
   const messageId = await stableOpaqueId("mail", [
     ctx.installationId,
-    mailbox.mailboxId,
+    mailboxId,
     metadata.digest,
   ]);
+  assertMailboxOwnerEnabled(owner.uid, ctx);
+  const mailbox = ctx.mailboxes.ensureMailbox(mailboxId, owner.uid, address);
   const messageRoot = `${owner.home}/.gsv/mail/inbox/${messageId}`;
   const rawPath = `${messageRoot}/raw.eml`;
   const textPath = `${messageRoot}/message.txt`;
@@ -160,7 +165,8 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
-  if (!ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
+  if (ctx.auth.isAccountDisabled(mailbox.ownerUid)
+    || !ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
     ctx.mailboxes.markEventDelivered(summarized.messageId);
     return;
   }
@@ -282,7 +288,7 @@ function resolveMailboxOwner(ctx: KernelContext): ProcessIdentity {
   if (persisted) return requireHumanIdentity(ctx, persisted.ownerUid);
 
   const human = ctx.auth.getPasswdEntries().find((entry) => {
-    if (entry.uid < 1000 || ctx.auth.isPersonalAgentUid(entry.uid)) return false;
+    if (entry.uid < 1000 || ctx.auth.isPersonalAgentUid(entry.uid) || ctx.auth.isAccountDisabled(entry.uid)) return false;
     const shadow = ctx.auth.getShadowByUsername(entry.username);
     return Boolean(shadow && !isLocked(shadow));
   });
@@ -290,6 +296,12 @@ function resolveMailboxOwner(ctx: KernelContext): ProcessIdentity {
     throw new Error("Managed mail requires a configured human account");
   }
   return accountIdentity(ctx.auth, human);
+}
+
+function assertMailboxOwnerEnabled(uid: number, ctx: KernelContext): void {
+  if (ctx.auth.isAccountDisabled(uid)) {
+    throw new Error("Mailbox owner is not an active human account");
+  }
 }
 
 function requireHumanIdentity(ctx: KernelContext, uid: number): ProcessIdentity {

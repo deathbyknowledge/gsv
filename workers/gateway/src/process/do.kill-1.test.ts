@@ -1,5 +1,5 @@
 import { processDurableObjectName } from "../installation/routing";
-import { installationStoragePrefix } from "../installation/storage";
+import { createInstallationStorage, installationStoragePrefix } from "../installation/storage";
 import { getProcessByPid } from "../shared/utils";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { evictDurableObject } from "cloudflare:test";
@@ -44,7 +44,7 @@ describe("proc.kill", () => {
     const pid = "mech-kill-archive-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const activeKey = `var/media/0/${pid}/proof.png`;
-    await env.STORAGE.put(activeKey, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(activeKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
       customMetadata: {
         uid: "0",
@@ -72,10 +72,10 @@ describe("proc.kill", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const archive = (killed.data as any).archives[0];
     expect(archive).toBeTruthy();
-    expect(await env.STORAGE.head(activeKey)).toBeNull();
+    expect(await createInstallationStorage(env.STORAGE, "inst_test").head(activeKey)).toBeNull();
 
     const resumedPid = "mech-resume-archive-media";
-    const resumed = await getProcessByPid(resumedPid);
+    const resumed = await getProcessByPid(resumedPid, "inst_test");
     const initialized = await okProcessResponse(
       resumed,
       makeReq("proc.setidentity", {
@@ -102,16 +102,16 @@ describe("proc.kill", () => {
     });
     expect(media.path).toBe(`/${media.key}`);
 
-    const restored = await env.STORAGE.get(media.key);
+    const restored = await createInstallationStorage(env.STORAGE, "inst_test").get(media.key);
     expect(restored && [...new Uint8Array(await restored.arrayBuffer())]).toEqual([1, 2, 3]);
 
-    await env.STORAGE.delete([archive.path.replace(/^\//, ""), media.key]);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete([archive.path.replace(/^\//, ""), media.key]);
     await resumed.recvFrame(makeReq("proc.kill", { archive: false }));
   });
 
   it("can dispose an executor whose identity initialization never completed", async () => {
     const pid = "mech-kill-uninitialized";
-    const stub = await getProcessByPid(pid);
+    const stub = await getProcessByPid(pid, "inst_test");
 
     const killed = await stub.recvFrame(makeReq("proc.kill", { pid, archive: false }));
     expect(killed).toMatchObject({
@@ -245,7 +245,7 @@ describe("proc.kill", () => {
         await archiveMessageRecords(...args);
       });
       const activeMediaKey = `var/media/0/${pid}/stable.png`;
-      await process.env.STORAGE.put(activeMediaKey, new Uint8Array([4, 5, 6]), {
+      await process.storage.put(activeMediaKey, new Uint8Array([4, 5, 6]), {
         httpMetadata: { contentType: "image/png" },
         customMetadata: {
           uid: "0",
@@ -312,10 +312,10 @@ describe("proc.kill", () => {
       const response = await killing;
       const archivePath = response.data.archives[0].path;
       const archived = archiveSnapshots.at(-1)!;
-      const archivedMedia = await process.env.STORAGE.list({
+      const archivedMedia = await process.storage.list({
         prefix: "root/.gsv/media/archived-media:",
       });
-      await process.env.STORAGE.delete([
+      await process.storage.delete([
         archivePath.replace(/^\//, ""),
         ...archivedMedia.objects.map((object: any) => object.key),
       ]);
@@ -465,7 +465,7 @@ describe("proc.kill", () => {
     const runId = "run-kill-late-context-media";
     const key = `var/media/0/${pid}/context.png`;
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
     });
 
@@ -473,7 +473,7 @@ describe("proc.kill", () => {
       const originalStorage = process.storage;
       const { promise: readBlocked, resolve: releaseRead } = deferred();
       const { promise: readStarted, resolve: markReadStarted } = deferred();
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         get: vi.fn(async (requestedKey: string) => {
           const object = await originalStorage.get(requestedKey);
           markReadStarted();
@@ -482,7 +482,7 @@ describe("proc.kill", () => {
         }),
         list: (...args: any[]) => originalStorage.list(...args),
         delete: (...args: any[]) => originalStorage.delete(...args),
-      };
+      });
       process.sendSignal = vi.fn(async () => {});
       process.store.messages.appendMessage("user", "inspect the image", {
         runId,
@@ -509,7 +509,7 @@ describe("proc.kill", () => {
       ).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
       releaseRead();
       await expect(ticking).resolves.toBeUndefined();
-      process.storage = originalStorage;
+      storageOverride.mockRestore();
     });
   });
 
@@ -649,7 +649,7 @@ describe("proc.kill", () => {
       const originalStorage = process.storage;
       const { promise: headBlocked, resolve: releaseHead } = deferred();
       const { promise: headStarted, resolve: markHeadStarted } = deferred();
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         head: vi.fn(async (requestedKey: string) => {
           if (requestedKey === key) {
             markHeadStarted();
@@ -661,7 +661,7 @@ describe("proc.kill", () => {
         list: (...args: any[]) => originalStorage.list(...args),
         delete: (...args: any[]) => originalStorage.delete(...args),
         put: (...args: any[]) => originalStorage.put(...args),
-      };
+      });
       const writing = process.resources.storeIncomingResource(
         { type: "image", mimeType: "image/png", mediaId },
         bodyFromBytes(new Uint8Array([1])),
@@ -675,7 +675,7 @@ describe("proc.kill", () => {
         ok: false,
         error: "Process reset during media upload",
       });
-      process.storage = originalStorage;
+      storageOverride.mockRestore();
     });
   });
 
@@ -684,7 +684,6 @@ describe("proc.kill", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const killed = await runInProcess(stub, async (process, state) => {
-      const originalStorage = process.storage;
       const mediaDelete = vi.fn(async () => {
         expect(state.storage.kv.get("__gsv_process_killed__")).toMatchObject({
           pid,
@@ -692,13 +691,13 @@ describe("proc.kill", () => {
         });
         throw new Error("media delete unavailable");
       });
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         list: vi.fn(async () => ({
           objects: [{ key: `var/media/0/${pid}/pending.png` }],
           truncated: false,
         })),
         delete: mediaDelete,
-      };
+      });
       process.runs.active = { runId: "run-kill-failure" };
       process.sendSignal = vi.fn(async () => {
         expect(state.storage.kv.get("__gsv_process_killed__")).toMatchObject({
@@ -723,7 +722,7 @@ describe("proc.kill", () => {
         };
       } finally {
         deleteAlarm.mockRestore();
-        process.storage = originalStorage;
+        storageOverride.mockRestore();
       }
     });
 
@@ -767,7 +766,6 @@ describe("proc.kill", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const result = await runInProcess(stub, async (process, state) => {
-      const originalStorage = process.storage;
       let listCalls = 0;
       const { promise: retryStarted, resolve: markRetryStarted } = deferred();
       const { promise: retryBlocked, resolve: releaseRetry } = deferred();
@@ -783,12 +781,12 @@ describe("proc.kill", () => {
         await retryBlocked;
         return { objects: [], truncated: false };
       });
-      process.storage = {
+      const storageOverride = vi.spyOn(process, "storage", "get").mockReturnValue({
         list,
         delete: vi.fn(async () => {
           throw new Error("media delete unavailable");
         }),
-      };
+      });
 
       const initial = await process.recvFrame(makeReq("proc.kill", { archive: false }));
       const firstRetry = process.recvFrame(makeReq("proc.kill", { archive: false }));
@@ -797,7 +795,7 @@ describe("proc.kill", () => {
       releaseRetry();
       const retries = await Promise.all([firstRetry, secondRetry]);
       const tombstone = state.storage.kv.get("__gsv_process_killed__");
-      process.storage = originalStorage;
+      storageOverride.mockRestore();
       return { initial, retries, listCalls, tombstone };
     });
 
@@ -885,7 +883,7 @@ describe("proc.kill", () => {
       const epochKey = `${process.history.historyArchiveDir()}/epochs/${epochId}.json.gz`;
 
       const response = await process.recvFrame(makeReq("proc.kill", {}));
-      const archived = await process.env.STORAGE.get(epochKey);
+      const archived = await process.storage.get(epochKey);
       if (!archived) throw new Error("Expected killed context epoch archive");
       const manifest = await new Response(
         archived.body.pipeThrough(new DecompressionStream("gzip")),

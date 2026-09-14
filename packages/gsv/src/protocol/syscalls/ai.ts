@@ -300,6 +300,8 @@ export type AiAssistantMessage = {
   responseId?: string;
   diagnostics?: unknown[];
   usage: AiUsage;
+  /** Inference owns provider pricing metadata; absent on historical records. */
+  usageCostSource?: "model-pricing" | "provider" | null;
   stopReason: AiStopReason;
   errorMessage?: string;
   timestamp?: number;

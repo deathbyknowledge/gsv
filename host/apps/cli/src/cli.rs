@@ -66,6 +66,9 @@ pub(crate) enum Commands {
     },
 
     /// Authentication and onboarding
+    #[command(
+        after_help = "Create a space using the Accounts-issued browser setup link, then run `gsv auth login`."
+    )]
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -338,45 +341,6 @@ pub(crate) enum AuthAction {
         actor_id: String,
     },
 
-    /// Initialize gateway identity/auth (setup mode only)
-    Setup {
-        /// First user username
-        #[arg(long)]
-        username: Option<String>,
-
-        /// First user password
-        #[arg(long = "new-password")]
-        new_password: Option<String>,
-
-        /// Optional root password (omit to keep root locked)
-        #[arg(long)]
-        root_password: Option<String>,
-
-        /// Optional AI provider
-        #[arg(long)]
-        ai_provider: Option<String>,
-
-        /// Optional AI model
-        #[arg(long)]
-        ai_model: Option<String>,
-
-        /// Optional AI API key
-        #[arg(long)]
-        ai_api_key: Option<String>,
-
-        /// Optional device id to pre-issue a device token for
-        #[arg(long = "device-id", alias = "node-id")]
-        device_id: Option<String>,
-
-        /// Optional device token label
-        #[arg(long = "device-label", alias = "node-label")]
-        device_label: Option<String>,
-
-        /// Optional device token expiry unix ms
-        #[arg(long = "device-expires-at", alias = "node-expires-at")]
-        device_expires_at: Option<i64>,
-    },
-
     /// Manage auth tokens
     Token {
         #[command(subcommand)]
@@ -593,6 +557,35 @@ pub(crate) enum LocalConfigAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_setup_is_removed_and_help_points_to_accounts() {
+        let error = Cli::try_parse_from(["gsv", "auth", "setup"])
+            .err()
+            .expect("setup is no longer an auth command");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        let help = Cli::try_parse_from(["gsv", "auth", "--help"])
+            .err()
+            .expect("help is displayed")
+            .to_string();
+        assert!(help.contains("Accounts-issued browser setup link"));
+        assert!(help.contains("gsv auth login"));
+    }
+
+    #[test]
+    fn auth_login_and_machine_pairing_remain_available() {
+        let login = Cli::try_parse_from(["gsv", "auth", "login", "--username", "owner"])
+            .expect("login parses");
+        assert!(matches!(login.command, Commands::Auth {
+            action: AuthAction::Login { username: Some(username), .. }
+        } if username == "owner"));
+        let pair = Cli::try_parse_from(["gsv", "pair", "fixture-invitation", "--no-install"])
+            .expect("device enrollment parses");
+        assert!(
+            matches!(pair.command, Commands::Pair { code: Some(code), no_install: true, .. }
+            if code == "fixture-invitation")
+        );
+    }
 
     #[test]
     fn spawn_accepts_initial_model_and_effort() {

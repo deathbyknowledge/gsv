@@ -1,0 +1,126 @@
+# First installation and operator recovery
+
+The public directory owns the first-installation bootstrap and installation
+administration. Cloudflare Access and the optional operator credential authorize
+that administration; neither grants a Kernel account credential. Owner identity
+and Kernel root recovery use their separate owner-link flow.
+
+`GsvDeployment` creates the public directory D1 and Worker when the operator does
+not supply an existing directory. Its `installation_migrations` ledger applies
+only public schema migrations. Existing combined Accounts databases must use the
+[verified migration handoff](installation-migration-adoption.md); supplying an
+existing Worker does not create a new database or replay historical migrations.
+
+After a successful initial deployment, run the explicit bootstrap command from
+your local terminal, using the account ID, directory database ID, administration
+origin and configured access mode from the deployment. The API token stays in
+the operator's environment; do not paste it into the command or a request file.
+
+```sh
+node deployment/src/operator-bootstrap-command.ts issue \
+  --account "$CLOUDFLARE_ACCOUNT_ID" --database "$GSV_INSTALLATIONS_DATABASE_ID" \
+  --origin "https://accounts.example.com" --mode operator
+```
+
+The command requires `CLOUDFLARE_API_TOKEN` with access to that D1 database. It
+opens `/dev/tty` before making a database change and writes the bootstrap link
+only there. Redirected stdout receives a status without credentials. CI has no
+controlling terminal and must not run this step. The link expires after one hour;
+only its hash is stored. Running `issue` again is inert once a claim or an
+installation exists. Ordinary deployment never rotates access or creates another
+first installation.
+
+Opening the link clears its fragment from browser history. Before redemption,
+the browser stores its attempt and newly generated setup/operator secrets in
+session storage. A lost HTTP response therefore retries the same attempt. A
+successful redemption creates one installation and its setup link. In operator
+mode the page displays the operator credential once and installs a host-only,
+HttpOnly, Secure, SameSite=Strict cookie. Save the credential in your password
+manager; `/operator` accepts it after signing out. In Access mode the page issues
+no operator credential. Setup completion, explicit setup reissue, operator
+rotation and revocation remain authoritative when an old bootstrap is retried.
+
+If initial terminal output was lost or the unused link expired, run the same
+command with `reissue-bootstrap`. This replaces only an unstarted claim. Once
+redemption starts, use `rotate-operator` to regain operator administration; it
+revokes the previous operator credential and never creates a new first
+installation. `revoke-operator` revokes operator access without modifying
+installation identities or setup claims. Access deployments use their Access
+policy for recovery. These operations require deployment-owner Cloudflare
+credentials and must never be exposed as unauthenticated Worker routes.
+
+An uncertain D1 response is not automatically replayed. `issue` remains inert if
+the original commit succeeded; use explicit reissue/recovery when needed. A
+rotation whose terminal output was lost requires another explicit rotation.
+
+Validation covers real local D1 fixtures for fresh schema, expiry, lost replies,
+interleaved retries, setup claim preservation, second-installation isolation,
+access mode, CSRF, cookie flags and credential recovery. These local fixtures do
+not substitute for fresh-account Cloudflare deployment and two-installation
+acceptance on staging.
+
+## Owner email sign-in
+
+Enable [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/get-started/send-emails/)
+for a domain in the deployment account, then set `GSV_OWNER_EMAIL_FROM` to a
+sender on that verified domain, for example `accounts@example.com`. The public
+Alchemy composition creates a restricted `OWNER_EMAIL` binding and a stable
+secret for verifying codes. Redeploy with the same Alchemy state so that the
+secret remains unchanged. The runtime does not need a Cloudflare API token to
+send codes.
+
+`GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` optionally restricts recipients to a
+comma-separated list of real test mailboxes. Use this on staging; omit it when
+opening email sign-in to your users. No email credential becomes usable until
+its recipient completes verification. Cloudflare Email Sending may incur
+usage charges under the operator's account.
+
+Visit the Accounts origin, or `/owner/login`, to receive a six-digit sign-in
+code. `/owner/spaces` lists only the signed-in owner's active or restricted
+spaces. A new owner initially sees an empty list. This page does not create a
+space: the operator still issues setup invitations, and root links ownership
+from the space's Settings. My spaces does not sign the owner into local Kernel
+accounts or grant access to `/admin`.
+
+`/owner/recover` asks for the space handle and its owner's email. It requires a
+new code bound to this recovery attempt, even if the owner is already signed
+in. After verification, Accounts issues the existing single-use root reset
+claim; the Kernel replaces root's password and revokes root's old credentials.
+Mail delivery runs in Accounts, independently of the space being recovered.
+
+Codes expire after ten minutes and lock after five failed guesses. Resending
+keeps the same expiry, has a one-minute cooldown, and consumes mailbox/IP send
+quota. The browser must retain its host-only HttpOnly cookies through the
+flow. Ordinary sessions expire after thirty days; sign-out revokes the current
+session. The scheduled Accounts task removes expired challenges and sessions
+in bounded batches. Authentication mail and credentials are never logged.
+
+Existing OIDC settings remain supported. When both methods are configured,
+linking and recovery offer the existing provider at `/owner/identity/link` and
+`/owner/identity/recover`; in-flight callbacks retain `/owner/callback`.
+Matching email addresses never automatically merge native email credentials
+and existing provider subjects. A provider-backed owner must keep using that
+provider until explicit credential linking is implemented.
+
+## Deletion inventory
+
+Set `GSV_DELETION_CATALOG_FILE` to an operator-reviewed JSON catalog before
+enabling complete deletion inventory registration. The schema and evidence API
+are documented in the [operator evidence contract](../engineering/installation-deletion-operator.md).
+Without that file, ordinary service works but full deletion admission remains
+unavailable. Configuration never supplies an erasure receipt.
+
+When supplying `services.inferenceExecution`, also supply
+`services.inferenceLifecycle`: its actual Worker, cleanup `entrypoint`, and
+owned `namespaces` (`className` plus `inference-executor` or
+`inference-installation` kind). The execution RPC binding may be a named
+entrypoint; it does not itself describe cleanup ownership. `GsvDeployment`
+combines this explicit inventory with Gateway, ripgit and adapter namespaces
+and binds the supplied cleanup service to the directory.
+
+`GsvDeletionResourceBindings` combines the operator catalog with the exact
+application-owner storage scopes. `GsvDeployment` derives those scopes for its
+fresh public components. An overlay supplying its own directory, inference or
+Mail must call the helper with its complete owner inventory. Historical services,
+exports, custom provider endpoints and user-provider accounts remain the
+operator's responsibility; today's enabled bindings cannot prove their absence.

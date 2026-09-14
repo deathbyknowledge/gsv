@@ -1,3 +1,4 @@
+import { createInstallationStorage } from "../installation/storage";
 import type { InternalRequestFrame } from "../protocol/process-frames";
 import type {
   ProcessAdapterDeliverArgs,
@@ -396,7 +397,7 @@ describe("proc.send", () => {
     const pid = "mech-send-foreign-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
     const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
-    await env.STORAGE.put(foreignKey, new Uint8Array([1, 2, 3]));
+    await createInstallationStorage(env.STORAGE, "inst_test").put(foreignKey, new Uint8Array([1, 2, 3]));
 
     try {
       const result = await runInProcess(stub, async (process) => {
@@ -418,9 +419,9 @@ describe("proc.send", () => {
         currentRun: { runId: "run-existing" },
         messages: [],
       });
-      expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
+      expect(await createInstallationStorage(env.STORAGE, "inst_test").head(foreignKey)).not.toBeNull();
     } finally {
-      await env.STORAGE.delete(foreignKey);
+      await createInstallationStorage(env.STORAGE, "inst_test").delete(foreignKey);
     }
   });
 
@@ -442,10 +443,10 @@ describe("proc.send", () => {
           if (fails) {
             throw new Error("media config failed");
           }
-          return { ai: process.env.AI };
+          return {};
         });
         const mediaKey = `var/media/0/${pid}/race.png`;
-        await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+        await process.storage.put(mediaKey, new Uint8Array([1, 2, 3]), {
           httpMetadata: { contentType: "image/png" },
         });
 
@@ -501,11 +502,10 @@ describe("proc.send", () => {
         throw new Error("scheduler unavailable");
       });
       process.resources.resolveMediaProcessingOptions = vi.fn(async () => ({
-        ai: process.env.AI,
       }));
       const prepareMedia = vi.spyOn(process.resources, "prepareRunMedia");
       const mediaKey = `var/media/0/${pid}/schedule.png`;
-      await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+      await process.storage.put(mediaKey, new Uint8Array([1, 2, 3]), {
         httpMetadata: { contentType: "image/png" },
       });
 
@@ -552,12 +552,12 @@ describe("proc.send", () => {
             markMediaStarted();
             await mediaBlocked;
           }
-          return { ai: process.env.AI };
+          return {};
         },
       );
       process.runs.active = { runId: "run-busy" };
       const mediaKey = `var/media/0/${pid}/fifo.png`;
-      await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+      await process.storage.put(mediaKey, new Uint8Array([1, 2, 3]), {
         httpMetadata: { contentType: "image/png" },
       });
 
@@ -642,7 +642,7 @@ describe("proc.send", () => {
       expect(media[0].key).toMatch(/^root\/\.gsv\/media\/archived-media:/);
       expect(media[0].path).toBe(`/${media[0].key}`);
 
-      const stored = await env.STORAGE.get(media[0].key);
+      const stored = await createInstallationStorage(env.STORAGE, "inst_test").get(media[0].key);
       expect(stored).not.toBeNull();
       expect(stored?.customMetadata).toMatchObject({
         uid: "0",
@@ -733,7 +733,7 @@ describe("proc.send", () => {
         expect(media).toHaveLength(1);
         mediaKey = media[0].key;
 
-        const stored = await env.STORAGE.get(mediaKey);
+        const stored = await createInstallationStorage(env.STORAGE, "inst_test").get(mediaKey);
         expect(stored && [...new Uint8Array(await stored.arrayBuffer())]).toEqual([1, 2, 3]);
         expect(stored?.customMetadata).toMatchObject({
           uid: "0",
@@ -766,7 +766,7 @@ describe("proc.send", () => {
         ]);
       });
     } finally {
-      if (mediaKey) await env.STORAGE.delete(mediaKey);
+      if (mediaKey) await createInstallationStorage(env.STORAGE, "inst_test").delete(mediaKey);
     }
   });
 
@@ -775,10 +775,10 @@ describe("proc.send", () => {
     const sourcePath = "/root/resource-retain-cancel.png";
     const sourceKey = sourcePath.slice(1);
     const bytes = new Uint8Array([1, 2, 3]);
-    await env.STORAGE.put(sourceKey, bytes, {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(sourceKey, bytes, {
       httpMetadata: { contentType: "image/png" },
     });
-    const source = await env.STORAGE.head(sourceKey);
+    const source = await createInstallationStorage(env.STORAGE, "inst_test").head(sourceKey);
     if (!source) throw new Error("fixture source was not stored");
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -836,7 +836,7 @@ describe("proc.send", () => {
         expect(await process.storage.head(retainedKey)).toBeNull();
       });
     } finally {
-      await env.STORAGE.delete(sourceKey);
+      await createInstallationStorage(env.STORAGE, "inst_test").delete(sourceKey);
     }
   });
 
@@ -844,10 +844,10 @@ describe("proc.send", () => {
     const sourcePath = "/root/resource-retain-cross-process.png";
     const sourceKey = sourcePath.slice(1);
     const bytes = new Uint8Array([4, 5, 6]);
-    await env.STORAGE.put(sourceKey, bytes, {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(sourceKey, bytes, {
       httpMetadata: { contentType: "image/png" },
     });
-    const source = await env.STORAGE.head(sourceKey);
+    const source = await createInstallationStorage(env.STORAGE, "inst_test").head(sourceKey);
     if (!source) throw new Error("fixture source was not stored");
     const successfulStub = await initProcess("mech-resource-retain-owner", ROOT_IDENTITY);
     const cancelledStub = await initProcess("mech-resource-retain-cancelled", ROOT_IDENTITY);
@@ -883,7 +883,7 @@ describe("proc.send", () => {
           throw new Error("successful Process did not retain the fixture");
         }
         successfulKey = response.data.resources[0].ref.path.replace(/^\/+/, "");
-        expect(await env.STORAGE.head(successfulKey)).not.toBeNull();
+        expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
       });
 
       await runInProcess(cancelledStub, async (process, _state, instance) => {
@@ -922,11 +922,11 @@ describe("proc.send", () => {
           error: { message: "Send cancelled" },
         });
         expect(cancelledKey).not.toBe(successfulKey);
-        expect(await env.STORAGE.head(cancelledKey)).toBeNull();
-        expect(await env.STORAGE.head(successfulKey)).not.toBeNull();
+        expect(await createInstallationStorage(env.STORAGE, "inst_test").head(cancelledKey)).toBeNull();
+        expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
       });
     } finally {
-      await env.STORAGE.delete([sourceKey, successfulKey, cancelledKey].filter(Boolean));
+      await createInstallationStorage(env.STORAGE, "inst_test").delete([sourceKey, successfulKey, cancelledKey].filter(Boolean));
     }
   });
 
@@ -935,10 +935,10 @@ describe("proc.send", () => {
     const sourcePath = "/root/resource-retain-batch.png";
     const sourceKey = sourcePath.slice(1);
     const bytes = new Uint8Array([8, 9, 10]);
-    await env.STORAGE.put(sourceKey, bytes, {
+    await createInstallationStorage(env.STORAGE, "inst_test").put(sourceKey, bytes, {
       httpMetadata: { contentType: "image/png" },
     });
-    const source = await env.STORAGE.head(sourceKey);
+    const source = await createInstallationStorage(env.STORAGE, "inst_test").head(sourceKey);
     if (!source) throw new Error("fixture source was not stored");
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -993,7 +993,7 @@ describe("proc.send", () => {
         ).toEqual(before);
       });
     } finally {
-      await env.STORAGE.delete(sourceKey);
+      await createInstallationStorage(env.STORAGE, "inst_test").delete(sourceKey);
     }
   });
 });
