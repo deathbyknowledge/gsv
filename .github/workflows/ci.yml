@@ -120,10 +120,13 @@ jobs:
               - 'workers/installations/**'
             deployment:
               - '.github/workflows/ci.yml'
+              - '.github/workflows/preview*.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'alchemy.run.ts'
+              - 'preview*.alchemy.ts'
               - 'deployment/**'
+              - 'scripts/preview-*'
               - 'scripts/capture-ai-gateway-logs.ts'
               - 'scripts/build-cloudflare-bundles.sh'
               - 'scripts/build-deployment-manifest.mjs'
@@ -326,6 +329,10 @@ jobs:
       - name: Test deployment package
         if: needs.changes.outputs.deployment == 'true'
         run: npm test --workspace deployment
+
+      - name: Test preview orchestration and cleanup
+        if: needs.changes.outputs.deployment == 'true'
+        run: npm run preview:test
 
       - name: Test web shell
         if: needs.changes.outputs.web == 'true'

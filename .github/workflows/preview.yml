@@ -1,0 +1,206 @@
+name: GSV Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open pull request number (same repository)
+        required: true
+        type: string
+      head_sha:
+        description: Exact 40-character commit SHA to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GSV_PREVIEW_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+  GSV_PREVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+
+jobs:
+  resolve:
+    if: vars.GSV_PREVIEWS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.pr.outputs.eligible }}
+      number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.headSha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - id: pr
+        name: Verify current same-repository PR revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/preview-github.mjs resolve
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: workers/ripgit
+          key: preview
+      # Builds run without any preview deployment or inference credentials.
+      - name: Build this revision's public GSV stack
+        run: npm run deployment:build
+      - name: Test fresh onboarding and two-space lifecycle
+        run: npx vitest run --config deployment/test/deletion-stack.vitest.config.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gsv-preview-${{ needs.resolve.outputs.head_sha }}
+          path: dist/cloudflare
+          if-no-files-found: error
+          retention-days: 2
+
+  deploy:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Share this lock with close/cleanup jobs. Do not interrupt an Alchemy apply.
+    concurrency:
+      group: gsv-preview-${{ github.repository_id }}-${{ needs.resolve.outputs.number }}
+      cancel-in-progress: false
+    environment: gsv-previews
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GSV_PREVIEW_NUMBER: ${{ needs.resolve.outputs.number }}
+      GSV_PREVIEW_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+      GSV_PREVIEW_REPOSITORY_ID: ${{ github.repository_id }}
+      GSV_PREVIEW_BASE_DOMAIN: ${{ vars.GSV_PREVIEW_BASE_DOMAIN }}
+      GSV_PREVIEW_ZONE_ID: ${{ vars.GSV_PREVIEW_ZONE_ID }}
+      GSV_PREVIEW_ZONE_NAME: ${{ vars.GSV_PREVIEW_ZONE_NAME }}
+      GSV_PREVIEW_ACCESS_TEAM_DOMAIN: ${{ vars.GSV_PREVIEW_ACCESS_TEAM_DOMAIN }}
+      GSV_PREVIEW_ACCESS_EMAIL_DOMAINS: ${{ vars.GSV_PREVIEW_ACCESS_EMAIL_DOMAINS }}
+      GSV_PREVIEW_ACCESS_EMAILS: ${{ vars.GSV_PREVIEW_ACCESS_EMAILS }}
+      GSV_PREVIEW_INFERENCE_MODEL: ${{ vars.GSV_PREVIEW_INFERENCE_MODEL }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.GSV_PREVIEW_ACCOUNT_ID }}
+      ALCHEMY_STATE_URL: ${{ vars.GSV_PREVIEW_STATE_URL }}
+      GSV_ALLOW_RESOURCE_DELETION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install deployment dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build the public SDK
+        run: npm run gsv:build
+      - uses: actions/download-artifact@v4
+        with:
+          name: gsv-preview-${{ needs.resolve.outputs.head_sha }}
+          path: dist/cloudflare
+      - id: current
+        name: Recheck PR after acquiring deployment lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/preview-github.mjs resolve
+      - name: Mark preview updating
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GSV_PREVIEW_STATUS: building
+        run: node scripts/preview-github.mjs publish
+
+      - id: provision
+        name: Record ownership and deploy isolated resources
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.GSV_PREVIEW_STATE_TOKEN }}
+          GSV_PREVIEW_R2_ACCESS_KEY_ID: ${{ secrets.GSV_PREVIEW_R2_ACCESS_KEY_ID }}
+          GSV_PREVIEW_R2_SECRET_ACCESS_KEY: ${{ secrets.GSV_PREVIEW_R2_SECRET_ACCESS_KEY }}
+        run: |
+          node scripts/preview-cloud.mjs preflight
+          node scripts/preview-cloud.mjs record
+          npx alchemy deploy --config preview.alchemy.ts --stage "pr-${GSV_PREVIEW_NUMBER}" --yes
+      - name: Preserve inventory after partial or complete deployment
+        if: always() && steps.provision.outcome != 'skipped' && steps.provision.outcome != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.GSV_PREVIEW_STATE_TOKEN }}
+        run: node scripts/preview-cloud.mjs record --refresh
+      - id: ready
+        name: Verify certificate and preview reachability
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.GSV_PREVIEW_STATE_TOKEN }}
+        run: node scripts/preview-cloud.mjs ready
+      - id: final
+        name: Recheck revision before announcing readiness
+        if: always() && steps.current.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/preview-github.mjs resolve
+      - name: Publish preview link
+        if: success() && steps.final.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GSV_PREVIEW_STATUS: ready
+          GSV_PREVIEW_URL: ${{ steps.ready.outputs.url }}
+        run: node scripts/preview-github.mjs publish
+      - name: Report deployment failure
+        if: failure() && steps.final.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GSV_PREVIEW_STATUS: failed
+        run: node scripts/preview-github.mjs publish
+
+  report-build-failure:
+    needs: [resolve, build]
+    if: always() && needs.resolve.outputs.eligible == 'true' && needs.build.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - id: current
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/preview-github.mjs resolve
+      - if: steps.current.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GSV_PREVIEW_STATUS: failed
+        run: node scripts/preview-github.mjs publish
