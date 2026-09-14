@@ -94,7 +94,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
           ALCHEMY_COMMAND: ${{ steps.current.outputs.command }}
-        run: npx alchemy "$ALCHEMY_COMMAND" --config preview.alchemy.ts --stage "pr-${GSV_PREVIEW_NUMBER}" --yes
+        run: npx alchemy "$ALCHEMY_COMMAND" preview.alchemy.ts --stage "pr-${GSV_PREVIEW_NUMBER}" --yes
       - name: Update the preview link
         if: steps.current.outputs.command != ''
         uses: actions/github-script@v7
