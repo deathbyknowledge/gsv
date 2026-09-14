@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["../alchemy.run.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["../alchemy.run.ts", "../preview.alchemy.ts", "../preview-state.alchemy.ts", "src/**/*.ts", "test/**/*.ts"]
 }
