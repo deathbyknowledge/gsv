@@ -3,17 +3,24 @@ name: GSV Preview
 on:
   pull_request:
     branches: [main]
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited]
   pull_request_target:
-    branches: [main]
-    types: [closed]
+    types: [closed, edited]
 
 permissions:
   contents: read
 
 jobs:
   preview:
-    if: vars.GSV_PREVIEWS_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.event_name == 'pull_request' && vars.GSV_PREVIEWS_ENABLED == 'true' &&
+          (github.event.action != 'edited' || github.event.changes.base.ref.from != null)) ||
+        (github.event_name == 'pull_request_target' &&
+          (github.event.action == 'closed' ||
+            (github.event.changes.base.ref.from == 'main' && github.event.pull_request.base.ref != 'main')))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: gsv-previews
@@ -44,14 +51,17 @@ jobs:
             const { data: pr } = await github.rest.pulls.get({
               ...context.repo, pull_number: context.issue.number,
             });
-            const closing = context.eventName === "pull_request_target";
+            const teardown = context.eventName === "pull_request_target";
             if (pr.head.repo?.full_name !== context.payload.repository.full_name
-              || pr.base.ref !== "main"
-              || (closing ? pr.state !== "closed"
-                : pr.state !== "open" || pr.head.sha !== context.payload.pull_request.head.sha)) return;
-            core.setOutput("command", closing ? "destroy" : "deploy");
-            // The privileged close event always runs trusted main code.
-            core.setOutput("ref", closing ? "main" : pr.head.sha);
+              || (teardown ? pr.state !== "closed" && pr.base.ref === "main"
+                : pr.state !== "open" || pr.base.ref !== "main" || pr.head.sha !== context.payload.pull_request.head.sha)) return;
+            if (teardown && !process.env.CLOUDFLARE_ACCOUNT_ID) {
+              core.notice("No preview account is configured; skipping teardown.");
+              return;
+            }
+            core.setOutput("command", teardown ? "destroy" : "deploy");
+            // Privileged cleanup events always run trusted main code.
+            core.setOutput("ref", teardown ? "main" : pr.head.sha);
       - uses: actions/checkout@v4
         if: steps.current.outputs.command != ''
         with:
@@ -102,4 +112,4 @@ jobs:
             });
             const previous = comments.find(comment => comment.user?.login === "github-actions[bot]" && comment.body?.startsWith(marker));
             if (previous) await github.rest.issues.updateComment({ ...context.repo, comment_id: previous.id, body });
-            else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            else if (process.env.ALCHEMY_COMMAND === "deploy") await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

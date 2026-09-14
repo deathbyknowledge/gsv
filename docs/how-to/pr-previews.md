@@ -8,10 +8,10 @@ External messengers and native client releases are separate.
 
 [`preview.alchemy.ts`](../../preview.alchemy.ts) composes the existing public
 components. [GitHub Actions](../../.github/workflows/preview.yml) builds the PR
-and runs `alchemy deploy`; pushes update that same stack. Closing or merging
-runs `alchemy destroy` from `main`. Cleanup uses `pull_request_target: closed`
-so closing a PR with merge conflicts also triggers it. Alchemy owns state,
-dependencies and deletion.
+and runs `alchemy deploy`; pushes update that same stack. Closing, merging or
+retargeting away from `main` runs `alchemy destroy` from `main`. Cleanup uses
+`pull_request_target` so closing a PR with merge conflicts also triggers it.
+Alchemy owns state, dependencies and deletion.
 There is no separate preview registry or cleanup controller.
 
 ## Operator setup
@@ -54,8 +54,11 @@ applications/policies, DNS, routes, certificates and Alchemy's Secrets Store.
 Alchemy derives its state credentials through its native Cloudflare provider.
 No separate state token or R2 S3 credentials are needed.
 
-Finally, set repository variable **`GSV_PREVIEWS_ENABLED=true`**. Until then the
-workflow is disabled. Only same-repository PRs targeting `main` are eligible;
+Finally, set repository variable **`GSV_PREVIEWS_ENABLED=true`** to enable creation
+and updates. Cleanup remains enabled when this flag is false; keep the account
+configuration and credentials available until existing previews are gone.
+Before a preview account is configured, teardown skips cloud operations.
+Only same-repository PRs targeting `main` are eligible for deployment;
 fork PRs receive no preview credentials. Trusted PR infrastructure runs with
 the preview token when Alchemy applies it. Review external contributions before
 bringing them into a trusted branch.
@@ -65,8 +68,8 @@ bringing them into a trusted branch.
 Jobs serialize per PR and recheck its current state and revision after taking
 the lock. Builds run before the step that receives the Cloudflare token.
 Successful deploys publish a PR link; successful teardown marks it removed.
-Reopening after deletion creates a fresh preview. Existing CI checks remain
-independent of whether previews are enabled.
+Reopening or retargeting back to `main` after deletion creates a fresh preview
+when previews are enabled. Existing CI checks remain independent of that flag.
 
 `allowResourceDeletion` defaults to **false** in the public components and
 `GSV_ALLOW_RESOURCE_DELETION` defaults to **false** in both entrypoints. CI
