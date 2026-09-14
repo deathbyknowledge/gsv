@@ -186,14 +186,36 @@ describe("public inference executor RPC", () => {
   });
 
   it("expires a provider that never responds and fences a late completion", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 100)); return completion(); }));
+    const dispatched = Promise.withResolvers<void>();
+    const provider = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const data = new TextEncoder().encode(await completion().text());
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      dispatched.resolve();
+      await provider.promise;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(data); },
+        cancel() { cancelled.resolve(); },
+      }), { headers: { "content-type": "text/event-stream" } });
+    }));
     const executor = await service.getExecutor("space_timeout");
     const input = request("space_timeout");
-    input.deadlineAt = Date.now() + 80;
-    const result = await executor.generate(input);
-    expect(result).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect((await rows(input.installationId)).requests[0]).toMatchObject({ state: "timeout", output_tokens: 32, reserved_tokens: 0 });
+    const pending = Promise.resolve(executor.generate(input));
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      await dispatched.promise;
+      clock = vi.spyOn(Date, "now").mockReturnValue(input.deadlineAt + 1);
+      await runDurableObjectAlarm(env.INFERENCE_EXECUTORS.getByName(input.installationId));
+      expect(await pending).toMatchObject({ stopReason: "error", errorMessage: "Inference deadline exceeded" });
+      provider.resolve();
+      await cancelled.promise;
+      expect((await rows(input.installationId)).requests[0]).toMatchObject({ state: "timeout", output_tokens: 32, reserved_tokens: 0 });
+    } finally {
+      clock?.mockRestore();
+      provider.resolve();
+      await env.INFERENCE_EXECUTORS.getByName(input.installationId).abort(input.logicalRequestId);
+      await pending;
+    }
   });
 
   it("cancels native response bodies that arrive after the deadline", async () => {
@@ -242,19 +264,30 @@ describe("public inference executor RPC", () => {
   });
 
   it("holds token reservations across concurrent requests", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); return completion(); }));
+    const dispatched = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Expected a cancellable provider request");
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      dispatched.resolve();
+    })));
     const executor = await service.getExecutor("space_concurrent");
     const first = request("space_concurrent");
     first.connection.maxTokens = 64;
     const pending = Promise.resolve(executor.generate(first));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    const second = request("space_concurrent");
-    second.connection.maxTokens = 64;
-    await expect(Promise.resolve(executor.generate(second))).rejects.toThrow("output token limit");
-    await executor.abort(first.logicalRequestId);
-    expect((await pending).stopReason).toBe("aborted");
-    expect((await rows(first.installationId)).usage[0]).toMatchObject({ requests: 1, output_tokens: 64, reserved_tokens: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 220));
+    try {
+      await dispatched.promise;
+      const activeExecutor = await service.getExecutor(first.installationId);
+      const second = request("space_concurrent");
+      second.connection.maxTokens = 64;
+      await expect(Promise.resolve(activeExecutor.generate(second))).rejects.toThrow("output token limit");
+      await activeExecutor.abort(first.logicalRequestId);
+      expect((await pending).stopReason).toBe("aborted");
+      expect((await rows(first.installationId)).usage[0]).toMatchObject({ requests: 1, output_tokens: 64, reserved_tokens: 0 });
+    } finally {
+      await env.INFERENCE_EXECUTORS.getByName(first.installationId).abort(first.logicalRequestId);
+      await pending;
+    }
   });
 
   it("supports explicit unlimited monthly quotas while requiring positive request bounds", async () => {

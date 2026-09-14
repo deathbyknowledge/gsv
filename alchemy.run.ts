@@ -17,6 +17,9 @@ export default Alchemy.Stack("gsv", {
   const zoneId = yield* Config.string("GSV_ZONE_ID");
   const adminOrigin = yield* Config.string("GSV_ADMIN_ORIGIN").pipe(Config.withDefault(`https://accounts.${domain}`));
   const prefix = yield* Config.string("GSV_WORKER_PREFIX").pipe(Config.withDefault("gsv"));
+  const deletionSetting = yield* Config.string("GSV_ALLOW_RESOURCE_DELETION").pipe(Config.withDefault("false"));
+  if (deletionSetting !== "true" && deletionSetting !== "false") throw new Error("GSV_ALLOW_RESOURCE_DELETION must be true or false");
+  const allowResourceDeletion = deletionSetting === "true";
   const accessMode = yield* Config.string("GSV_ACCESS_MODE").pipe(Config.withDefault("operator"));
   if (accessMode !== "operator" && accessMode !== "access") throw new Error("GSV_ACCESS_MODE must be operator or access");
   const access = accessMode === "access" ? { kind: "cloudflare-access" as const,
@@ -45,6 +48,7 @@ export default Alchemy.Stack("gsv", {
     const adapterEnvironment: Cloudflare.Workers.WorkerBindingProps = { GSV_ACCOUNT_ORIGIN: adminOrigin };
     for (const variable of adapter.deployment.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.string(variable);
     const worker = yield* GsvAdapterWorker({ logicalId: `GsvAdapter-${id}`, workerName: `${prefix}-channel-${id}`,
+      allowResourceDeletion,
       adapter, deployment: adapter.deployment,
       env: adapterEnvironment,
       secrets: Object.fromEntries(adapter.deployment.requiredSecrets.map((secret) => [secret, { env: secret }])),
@@ -56,6 +60,7 @@ export default Alchemy.Stack("gsv", {
   const catalogPath = Option.getOrUndefined(yield* Config.string("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
   const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
+    allowResourceDeletion,
     deletion,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,
     services: { adapters },

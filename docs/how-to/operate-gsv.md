@@ -15,6 +15,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ZONE_ID` | Cloudflare DNS zone containing that domain. |
 | `GSV_ADMIN_ORIGIN` | Administration origin; defaults to `https://accounts.<domain>`. |
 | `GSV_WORKER_PREFIX` | Physical resource name prefix; defaults to `gsv`. |
+| `GSV_ALLOW_RESOURCE_DELETION` | Explicit physical resource deletion opt-in; defaults to `false`, including in CI. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
 | `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My spaces and recovery. |
@@ -30,6 +31,10 @@ Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MAX_DURATION_MS`. The default Workers AI route uses the operator's
 Cloudflare account. Installations can also configure their own model credentials;
 provider execution uses the same public service either way.
+
+For isolated deployments attached to pull requests, see
+[Pull request previews](./pr-previews.md). Previews use the same public stack,
+normal onboarding and included inference, with explicit disposable resources.
 
 Build and review the deployment before applying it:
 

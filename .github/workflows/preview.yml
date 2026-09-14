@@ -1,0 +1,115 @@
+name: GSV Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+  pull_request_target:
+    types: [closed, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.event_name == 'pull_request' && vars.GSV_PREVIEWS_ENABLED == 'true' &&
+          (github.event.action != 'edited' || github.event.changes.base.ref.from != null)) ||
+        (github.event_name == 'pull_request_target' &&
+          (github.event.action == 'closed' ||
+            (github.event.changes.base.ref.from == 'main' && github.event.pull_request.base.ref != 'main')))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: gsv-previews
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: gsv-preview-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      GSV_PREVIEW_NUMBER: ${{ github.event.pull_request.number }}
+      GSV_PREVIEW_REPOSITORY_ID: ${{ github.repository_id }}
+      GSV_PREVIEW_BASE_DOMAIN: ${{ vars.GSV_PREVIEW_BASE_DOMAIN }}
+      GSV_PREVIEW_ZONE_ID: ${{ vars.GSV_PREVIEW_ZONE_ID }}
+      GSV_PREVIEW_ZONE_NAME: ${{ vars.GSV_PREVIEW_ZONE_NAME }}
+      GSV_PREVIEW_ACCESS_TEAM_DOMAIN: ${{ vars.GSV_PREVIEW_ACCESS_TEAM_DOMAIN }}
+      GSV_PREVIEW_ACCESS_EMAIL_DOMAINS: ${{ vars.GSV_PREVIEW_ACCESS_EMAIL_DOMAINS }}
+      GSV_PREVIEW_ACCESS_EMAILS: ${{ vars.GSV_PREVIEW_ACCESS_EMAILS }}
+      GSV_PREVIEW_INFERENCE_MODEL: ${{ vars.GSV_PREVIEW_INFERENCE_MODEL }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.GSV_PREVIEW_ACCOUNT_ID }}
+      GSV_ALLOW_RESOURCE_DELETION: 'true'
+    steps:
+      # Recheck after taking the lock: stale deploys must not recreate a closed PR.
+      - uses: actions/github-script@v7
+        id: current
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo, pull_number: context.issue.number,
+            });
+            const teardown = context.eventName === "pull_request_target";
+            if (pr.head.repo?.full_name !== context.payload.repository.full_name
+              || (teardown ? pr.state !== "closed" && pr.base.ref === "main"
+                : pr.state !== "open" || pr.base.ref !== "main" || pr.head.sha !== context.payload.pull_request.head.sha)) return;
+            if (teardown && !process.env.CLOUDFLARE_ACCOUNT_ID) {
+              core.notice("No preview account is configured; skipping teardown.");
+              return;
+            }
+            core.setOutput("command", teardown ? "destroy" : "deploy");
+            // Privileged cleanup events always run trusted main code.
+            core.setOutput("ref", teardown ? "main" : pr.head.sha);
+      - uses: actions/checkout@v4
+        if: steps.current.outputs.command != ''
+        with:
+          ref: ${{ steps.current.outputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.current.outputs.command != ''
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.current.outputs.command == 'deploy'
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.current.outputs.command == 'deploy'
+        with:
+          workspaces: workers/ripgit
+          key: preview
+      - name: Build the PR's public GSV stack
+        if: steps.current.outputs.command == 'deploy'
+        run: npm run deployment:build
+      - name: Install trusted cleanup dependencies
+        if: steps.current.outputs.command == 'destroy'
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run gsv:build
+      - name: Apply the Alchemy lifecycle
+        if: steps.current.outputs.command != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
+          ALCHEMY_COMMAND: ${{ steps.current.outputs.command }}
+        run: npx alchemy "$ALCHEMY_COMMAND" preview.alchemy.ts --stage "pr-${GSV_PREVIEW_NUMBER}" --yes
+      - name: Update the preview link
+        if: steps.current.outputs.command != ''
+        uses: actions/github-script@v7
+        env:
+          ALCHEMY_COMMAND: ${{ steps.current.outputs.command }}
+        with:
+          script: |
+            const marker = "<!-- gsv-preview -->";
+            const url = `https://accounts.pr-${process.env.GSV_PREVIEW_NUMBER}.${process.env.GSV_PREVIEW_BASE_DOMAIN}/admin/installations`;
+            const body = process.env.ALCHEMY_COMMAND === "destroy"
+              ? `${marker}\nPreview removed.`
+              : `${marker}\n[Open GSV preview](${url}) for ${context.payload.pull_request.head.sha}. Sign in, create a space and complete normal onboarding. Included inference is configured. Initial certificate issuance can take a few minutes.`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const previous = comments.find(comment => comment.user?.login === "github-actions[bot]" && comment.body?.startsWith(marker));
+            if (previous) await github.rest.issues.updateComment({ ...context.repo, comment_id: previous.id, body });
+            else if (process.env.ALCHEMY_COMMAND === "deploy") await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

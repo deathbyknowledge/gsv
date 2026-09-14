@@ -5,7 +5,7 @@ import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRunti
 import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
-  kind: "cloudflare-access"; teamDomain: string; audience: string;
+  kind: "cloudflare-access"; teamDomain: string; audience: string | Output.Output<string>;
 };
 
 export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
@@ -68,9 +68,17 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || admin.protocol !== "https:" || !admin.hostname.endsWith(`.${props.domain}`)) {
     throw new Error("Deployment requires a base domain and an HTTPS administration origin below it");
   }
-  if (props.access.kind === "cloudflare-access" && (!props.access.audience.trim()
-    || !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(props.access.teamDomain))) {
-    throw new Error("Cloudflare Access requires an explicit team origin and audience");
+  let accessAudience: string | Output.Output<string> = "";
+  if (props.access.kind === "cloudflare-access") {
+    const { audience, teamDomain } = props.access;
+    if ((!Output.isOutput(audience) && !audience.trim())
+      || !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(teamDomain)) {
+      throw new Error("Cloudflare Access requires an explicit team origin and audience");
+    }
+    accessAudience = !Output.isOutput(audience) ? audience : audience.pipe(Output.map((value) => {
+      if (!value.trim()) throw new Error("Cloudflare Access requires an explicit team origin and audience");
+      return value;
+    }));
   }
   if (!props.services?.inferenceExecution) {
     if ([props.inference.monthlyRequests, props.inference.monthlyOutputTokens]
@@ -118,12 +126,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       name: props.installations.databaseName,
       migrationsDir: props.installations.migrationsDirectory,
       migrationsTable: "installation_migrations",
-    }).pipe(retain());
+    }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
       GSV_ADMIN_ORIGIN: props.adminOrigin, GSV_OPERATOR_ACCESS_MODE: props.access.kind === "operator" ? "operator" : "access",
       GSV_ADMIN_ACCESS_TEAM_DOMAIN: props.access.kind === "cloudflare-access" ? props.access.teamDomain : "",
-      GSV_ADMIN_ACCESS_AUD: props.access.kind === "cloudflare-access" ? props.access.audience : "",
+      GSV_ADMIN_ACCESS_AUD: accessAudience,
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
     };
@@ -142,7 +150,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       crons: ["* * * * *"],
       compatibility, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
-    }).pipe(retain());
+    }).pipe(retain(props.allowResourceDeletion !== true));
   }
   let inference = props.services?.inferenceExecution;
   let inferenceWorker: Cloudflare.Workers.Worker | undefined;
@@ -162,7 +170,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       name: props.inference.workerName, main: props.inference.workerBundle, bundle: false,
       compatibility: { ...compatibility, flags: [...compatibility.flags, "enable_nodejs_os_module"] }, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
-    }).pipe(retain());
+    }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
   const runtime = yield* GsvRuntime({ ...props, compatibility,
@@ -199,13 +207,13 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   if (props.routing) {
     yield* Cloudflare.DNS.Record(`${props.logicalPrefix}WildcardDns`, {
       zoneId: props.routing.zoneId, name: `*.${props.domain}`, type: "AAAA", content: "100::", proxied: true,
-    });
+    }).pipe(retain(props.allowResourceDeletion !== true));
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsRoute`, {
       zoneId: props.routing.zoneId, pattern: `${admin.hostname}/*`, script: directory.workerName,
-    });
+    }).pipe(retain(props.allowResourceDeletion !== true));
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {
       zoneId: props.routing.zoneId, pattern: `*.${props.domain}/*`, script: runtime.gateway.workerName,
-    });
+    }).pipe(retain(props.allowResourceDeletion !== true));
   }
   return { ...runtime, directory, database, inference: inferenceWorker ?? inference };
   });

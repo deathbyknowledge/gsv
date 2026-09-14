@@ -13,6 +13,8 @@ export type GsvAdapterWorkerProps = {
   workerName: string;
   adapter: AdapterDeploymentManifest;
   deployment: AdapterWorkerDeploymentManifest;
+  /** Only explicit disposable deployments may delete this Worker; omission retains it. */
+  allowResourceDeletion?: boolean;
   env?: Cloudflare.Workers.WorkerBindingProps;
   secrets?: Readonly<
     Record<string, { env: string; pattern?: RegExp }>
@@ -87,5 +89,5 @@ export const GsvAdapterWorker = (
     crons: props.deployment.crons,
     observability: props.observability ?? { enabled: true },
     env: workerEnv,
-  }).pipe(runtime.retain());
+  }).pipe(runtime.retain(props.allowResourceDeletion !== true));
 };

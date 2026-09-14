@@ -120,9 +120,11 @@ jobs:
               - 'workers/installations/**'
             deployment:
               - '.github/workflows/ci.yml'
+              - '.github/workflows/preview*.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'alchemy.run.ts'
+              - 'preview*.alchemy.ts'
               - 'deployment/**'
               - 'scripts/capture-ai-gateway-logs.ts'
               - 'scripts/build-cloudflare-bundles.sh'
