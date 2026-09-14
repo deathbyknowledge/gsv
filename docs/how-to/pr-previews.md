@@ -18,7 +18,7 @@ There is no separate preview registry or cleanup controller.
 
 Choose a preview Cloudflare account with Workers Paid, Workers AI and an AI
 Gateway named `default`. Configure Alchemy's standard Cloudflare state store
-with `npx alchemy bootstrap cloudflare` using that account's credentials. The
+with `npx alchemy cloudflare bootstrap` using that account's credentials. The
 shared state store stays outside individual preview stacks.
 
 Choose a dedicated base domain in an active full-setup Cloudflare zone with
