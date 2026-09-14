@@ -264,19 +264,30 @@ describe("public inference executor RPC", () => {
   });
 
   it("holds token reservations across concurrent requests", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); return completion(); }));
+    const dispatched = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Expected a cancellable provider request");
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      dispatched.resolve();
+    })));
     const executor = await service.getExecutor("space_concurrent");
     const first = request("space_concurrent");
     first.connection.maxTokens = 64;
     const pending = Promise.resolve(executor.generate(first));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    const second = request("space_concurrent");
-    second.connection.maxTokens = 64;
-    await expect(Promise.resolve(executor.generate(second))).rejects.toThrow("output token limit");
-    await executor.abort(first.logicalRequestId);
-    expect((await pending).stopReason).toBe("aborted");
-    expect((await rows(first.installationId)).usage[0]).toMatchObject({ requests: 1, output_tokens: 64, reserved_tokens: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 220));
+    try {
+      await dispatched.promise;
+      const activeExecutor = await service.getExecutor(first.installationId);
+      const second = request("space_concurrent");
+      second.connection.maxTokens = 64;
+      await expect(Promise.resolve(activeExecutor.generate(second))).rejects.toThrow("output token limit");
+      await activeExecutor.abort(first.logicalRequestId);
+      expect((await pending).stopReason).toBe("aborted");
+      expect((await rows(first.installationId)).usage[0]).toMatchObject({ requests: 1, output_tokens: 64, reserved_tokens: 0 });
+    } finally {
+      await env.INFERENCE_EXECUTORS.getByName(first.installationId).abort(first.logicalRequestId);
+      await pending;
+    }
   });
 
   it("supports explicit unlimited monthly quotas while requiring positive request bounds", async () => {
