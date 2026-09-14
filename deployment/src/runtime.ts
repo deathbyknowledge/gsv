@@ -97,7 +97,13 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     }
     const storageResource = Cloudflare.R2.Bucket(
       `${props.logicalPrefix}Storage`,
-      { name: props.names.storageBucket },
+      {
+        name: props.names.storageBucket,
+        lifecycleRules: props.allowResourceDeletion === true ? [{
+          id: "abort-incomplete-uploads",
+          abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 86_400 } },
+        }] : undefined,
+      },
     ).pipe(retain(props.allowResourceDeletion !== true));
     const ripgitWorker = Cloudflare.Worker(
       `${props.logicalPrefix}Ripgit`,

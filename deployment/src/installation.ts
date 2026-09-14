@@ -71,11 +71,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   let accessAudience: string | Output.Output<string> = "";
   if (props.access.kind === "cloudflare-access") {
     const { audience, teamDomain } = props.access;
-    if ((typeof audience === "string" && !audience.trim())
+    if ((!Output.isOutput(audience) && !audience.trim())
       || !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(teamDomain)) {
       throw new Error("Cloudflare Access requires an explicit team origin and audience");
     }
-    accessAudience = typeof audience === "string" ? audience : audience.pipe(Output.map((value) => {
+    accessAudience = !Output.isOutput(audience) ? audience : audience.pipe(Output.map((value) => {
       if (!value.trim()) throw new Error("Cloudflare Access requires an explicit team origin and audience");
       return value;
     }));
