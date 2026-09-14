@@ -1,43 +1,58 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Output from "alchemy/Output";
+import { RemovalPolicy, retain } from "alchemy/RemovalPolicy";
+import { Stage } from "alchemy/Stage";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { beforeEach, describe, expect, it } from "vitest";
+import * as Schema from "effect/Schema";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GsvAdapterWorker, type GsvAdapterWorkerRuntime } from "../src/adapter.ts";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
 import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
-type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[] };
-const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [] };
+type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[];
+  bindings: RecordedBinding[]; removalPolicies: Map<string, "retain" | "destroy" | undefined> };
+const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [], removalPolicies: new Map() };
+function recordedResource<A>(id: string, value: A): Effect.Effect<A> {
+  return Effect.map(Effect.serviceOption(RemovalPolicy), (policy) => {
+    recorded.removalPolicies.set(id, Option.getOrUndefined(policy));
+    return value;
+  });
+}
 const recordedCloudflare = {
   ...Cloudflare,
   Worker(id: string, props: RecordedWorker["props"]) {
     recorded.workers.push({ id, props });
-    return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
+    return recordedResource(id, { workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
         Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
-  D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
-  R2: { Bucket(_id: string, props: { name: string }) { return Effect.succeed({ bucketName: props.name }); } },
+  D1: { Database(id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return recordedResource(id, { databaseId: "fixture-database" }); } },
+  R2: { Bucket(id: string, props: { name: string }) { return recordedResource(id, { bucketName: props.name }); } },
+  DNS: { Record(id: string, props: { name: string }) { return recordedResource(id, props); } },
   Queues: { Queue(_id: string, props: { name: string }) { return Effect.succeed({ queueName: props.name, queueId: "fixture-queue" }); } },
   DurableObject(binding: string, props: { className: string }) { return { binding, ...props }; },
   WorkerLoader() { return { kind: "loader" }; },
   WorkerEntrypoint(worker: { workerName: string }, options: string | { entrypoint: string; props: { authority: string } }) { return { worker: worker.workerName, options }; },
-  Workers: { AI() { return { kind: "ai" }; } },
+  Workers: { AI() { return { kind: "ai" }; }, WorkerRoute(id: string, props: { pattern: string }) { return recordedResource(id, props); } },
 };
 // SAFETY: this injected recorder implements every constructor/bind operation used
 // by these compositions, returns local Effects, and never invokes a provider.
 // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- The injected test recorder intentionally omits Alchemy provider metadata; only the exercised constructor/bind surface is implemented.
-const dependencies = { Cloudflare: recordedCloudflare, Effect, retain: () => <T>(value: T): T => value } as unknown as GsvRuntimeDependencies;
+const dependencies = { Cloudflare: recordedCloudflare, Effect, retain } as unknown as GsvRuntimeDependencies;
 function run<A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> {
   // SAFETY: all resource construction below uses the injected local recorder,
   // so these Effects have no Cloudflare provider services at runtime.
   return Effect.runPromise(effect as Effect.Effect<A, E>);
 }
-beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; });
+beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; recorded.removalPolicies.clear(); });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 const input: GsvDeploymentProps = {
   logicalPrefix: "Fixture", domain: "example.com", adminOrigin: "https://accounts.example.com", access: { kind: "operator" },
@@ -56,7 +71,100 @@ const catalog: OperatorResourceCatalog = [
   { id: "default-provider", kind: "provider", namespace: "operator-provider", source: "provider", scope: "installation", disposition: "retained" },
 ];
 
+describe("resource removal policy", () => {
+  const contexts = [{ stage: "operator", ci: undefined }, { stage: "pr-123", ci: "true" }];
+  const ownedResources = ["FixtureInstallationsDatabase", "FixtureInstallations", "FixtureInference", "FixtureStorage",
+    "FixtureRipgit", "FixtureGateway", "FixtureWildcardDns", "FixtureInstallationsRoute", "FixtureGatewayRoute"];
+
+  it.each([undefined, false, true])("requires an explicit true to remove all owned resources: %s", async (allowResourceDeletion) => {
+    for (const { stage, ci } of contexts) {
+      vi.stubEnv("CI", ci);
+      vi.stubEnv("ALCHEMY_STAGE", stage);
+      recorded.removalPolicies.clear();
+      await run(GsvDeployment({ ...input, routing: { zoneId: "fixture-zone" },
+        ...(allowResourceDeletion === undefined ? {} : { allowResourceDeletion }),
+      }, dependencies).pipe(
+        Effect.provideService(Stage, stage),
+        Effect.provideService(RemovalPolicy, allowResourceDeletion === true ? "retain" : "destroy"),
+      ));
+      expect(Object.fromEntries(recorded.removalPolicies)).toEqual(Object.fromEntries(
+        ownedResources.map((id) => [id, allowResourceDeletion === true ? "destroy" : "retain"]),
+      ));
+    }
+  });
+
+  it("does not treat truthy values from untyped callers as permission to delete", async () => {
+    for (const value of ["true", 1]) {
+      const props = { ...input, routing: { zoneId: "fixture-zone" } };
+      Reflect.set(props, "allowResourceDeletion", value);
+      await run(GsvDeployment(props, dependencies));
+      expect([...recorded.removalPolicies.values()]).toEqual(ownedResources.map(() => "retain"));
+    }
+  });
+
+  it.each([undefined, false, true])("requires the same explicit opt-in for adapter Workers: %s", async (allowResourceDeletion) => {
+    const deployment = { main: "adapter.js", bundle: false, gatewayEntrypoint: "FixtureAdapter",
+      adapterEntrypoint: "FixtureAdapter", durableObjects: [], requiredSecrets: [] };
+    const adapter = { id: "test", displayName: "Test", gatewayBinding: "CHANNEL_TEST", deployment };
+    const runtime: GsvAdapterWorkerRuntime = { Cloudflare: dependencies.Cloudflare, Config, Schema, retain };
+    for (const { stage, ci } of contexts) {
+      vi.stubEnv("CI", ci);
+      vi.stubEnv("ALCHEMY_STAGE", stage);
+      await run(GsvAdapterWorker({ logicalId: "FixtureAdapter", workerName: "fixture-adapter", adapter, deployment,
+        ...(allowResourceDeletion === undefined ? {} : { allowResourceDeletion }),
+      }, runtime).pipe(
+        Effect.provideService(Stage, stage),
+        Effect.provideService(RemovalPolicy, allowResourceDeletion === true ? "retain" : "destroy"),
+      ));
+      expect(recorded.removalPolicies.get("FixtureAdapter")).toBe(allowResourceDeletion === true ? "destroy" : "retain");
+    }
+  });
+
+  it.each([false, true])("keeps supplied service policies independent of this composition's opt-in: %s", async (allowResourceDeletion) => {
+    const directory = await run(dependencies.Cloudflare.Worker("ExternalDirectory", { name: "directory", main: "directory.js" }).pipe(retain(!allowResourceDeletion)));
+    const executor = await run(dependencies.Cloudflare.Worker("ExternalInference", { name: "executor", main: "executor.js" }).pipe(retain(!allowResourceDeletion)));
+    const adapter = await run(dependencies.Cloudflare.Worker("ExternalAdapter", { name: "adapter", main: "adapter.js" }).pipe(retain(!allowResourceDeletion)));
+    await run(GsvDeployment({ ...input, allowResourceDeletion: !allowResourceDeletion,
+      services: { installationDirectory: directory, inferenceExecution: executor,
+        inferenceLifecycle: { worker: executor, entrypoint: "InferenceLifecycleEntrypoint", namespaces: [
+          { className: "InferenceExecutor", kind: "inference-executor" },
+        ] }, adapters: [{ id: "telegram", worker: adapter, gatewayBinding: "CHANNEL_TELEGRAM", gatewayEntrypoint: "ManagedTelegramChannel",
+          lifecycle: { entrypoint: "TelegramLifecycleEntrypoint", namespaces: [
+            { className: "TelegramInstallation", kind: "adapter-installation" },
+          ] } }],
+      },
+    }, dependencies));
+    for (const id of ["ExternalDirectory", "ExternalInference", "ExternalAdapter"]) {
+      expect(recorded.removalPolicies.get(id)).toBe(allowResourceDeletion ? "destroy" : "retain");
+    }
+    expect(recorded.removalPolicies.get("FixtureGateway")).toBe(allowResourceDeletion ? "retain" : "destroy");
+    expect(recorded.removalPolicies.has("FixtureInstallationsDatabase")).toBe(false);
+  });
+});
+
 describe("public operator composition", () => {
+  it.each(["fixture-audience", Output.literal("fixture-audience")])("binds an explicit or provisioned Access audience", async (audience) => {
+    await run(GsvDeployment({ ...input, access: { kind: "cloudflare-access", teamDomain: "https://fixture.cloudflareaccess.com", audience } }, dependencies));
+    const binding = recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.env?.GSV_ADMIN_ACCESS_AUD;
+    expect(await run(Output.evaluate(binding, {}))).toBe("fixture-audience");
+  });
+
+  it("rejects an empty literal Access audience before constructing resources", async () => {
+    await expect(run(GsvDeployment({ ...input,
+      access: { kind: "cloudflare-access", teamDomain: "https://fixture.cloudflareaccess.com", audience: " " },
+    }, dependencies))).rejects.toThrow("Cloudflare Access requires an explicit team origin and audience");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it("rejects an empty provisioned Access audience when resolving its binding", async () => {
+    await run(GsvDeployment({ ...input,
+      access: { kind: "cloudflare-access", teamDomain: "https://fixture.cloudflareaccess.com", audience: Output.literal(" ") },
+    }, dependencies));
+    const binding = recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.env?.GSV_ADMIN_ACCESS_AUD;
+    await expect(run(Output.evaluate(binding, {}))).rejects.toThrow("Cloudflare Access requires an explicit team origin and audience");
+  });
+
   it.each([
     { monthlyRequests: 0, monthlyOutputTokens: 1000 },
     { monthlyRequests: 100, monthlyOutputTokens: 0 },

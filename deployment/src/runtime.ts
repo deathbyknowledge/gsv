@@ -44,6 +44,8 @@ export type GsvRuntimeProps = {
   names: GsvRuntimeNames;
   paths: GsvRuntimePaths;
   services: GsvRuntimeServices;
+  /** Only explicit disposable deployments may delete owned resources; omission retains them. */
+  allowResourceDeletion?: boolean;
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
   gatewayWorkersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
@@ -96,7 +98,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     const storageResource = Cloudflare.R2.Bucket(
       `${props.logicalPrefix}Storage`,
       { name: props.names.storageBucket },
-    ).pipe(retain());
+    ).pipe(retain(props.allowResourceDeletion !== true));
     const ripgitWorker = Cloudflare.Worker(
       `${props.logicalPrefix}Ripgit`,
       {
@@ -115,7 +117,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           }),
         },
       },
-    ).pipe(retain());
+    ).pipe(retain(props.allowResourceDeletion !== true));
 
     const serviceBindings: Cloudflare.Workers.WorkerBindingProps = {
       INFERENCE_EXECUTION: inferenceExecution,
@@ -170,7 +172,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         },
         env: gatewayEnv,
       },
-    ).pipe(retain());
+    ).pipe(retain(props.allowResourceDeletion !== true));
 
     for (const adapter of adapters) {
       yield* directory.bind(`${props.logicalPrefix}${adapter.id}DeletionBinding`, {
