@@ -21,6 +21,16 @@ type GraphRecord = {
     audio?: { id?: string; link?: string };
     image?: { id?: string; link?: string; caption?: string };
     interactive?: { type: string; body: { text: string }; action: { buttons: ReplyButton[] } };
+    template?: {
+      name: string;
+      language: { code: string };
+      components: Array<{
+        type: string;
+        sub_type?: string;
+        index?: string;
+        parameters: Array<{ type: string; text?: string; payload?: string }>;
+      }>;
+    };
     context?: { message_id: string };
     status?: string;
     message_id?: string;
@@ -134,7 +144,8 @@ type ManagedPeerStub = {
 type MessageContent =
   | { type: "text"; text: { body: string } }
   | { type: "audio"; audio: { id: string; mime_type: string; voice: boolean } }
-  | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } };
+  | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } }
+  | { type: "button"; context: { from: string; id: string }; button: { payload: string; text: string } };
 
 async function sign(body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -183,6 +194,14 @@ async function graphRecords(): Promise<GraphRecord[]> {
 
 async function sentMessages(): Promise<GraphRecord[]> {
   return (await graphRecords()).filter((record) => record.kind === "message");
+}
+
+async function templateMessages(): Promise<GraphRecord[]> {
+  return (await sentMessages()).filter((record) => record.body.type === "template");
+}
+
+function templateParameter(record: GraphRecord | undefined): string | undefined {
+  return record?.body.template?.components.find((component) => component.type === "body")?.parameters[0]?.text;
 }
 
 async function gatewayCalls(): Promise<GatewayCall[]> {
@@ -578,7 +597,54 @@ describe("managed WhatsApp clean-instance flow", () => {
     })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("code 131026") });
   });
 
-  it("refuses free-form sends once the 24-hour customer service window has closed", async () => {
+  it("sends the template when Meta refuses a free-form message and lets the person's reply clear it", async () => {
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
+    const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
+    const peer = typedStub<ManagedPeerStub>(stub);
+    const route = (await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!
+    ))).activeRoute!;
+    const templatesBefore = (await templateMessages()).length;
+
+    // The local receipt still says the window is open, but Meta answers 131047.
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-meta-closed",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "outside window marker quick note",
+    })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
+    const templates = await templateMessages();
+    expect(templates).toHaveLength(templatesBefore + 1);
+    expect(templates.at(-1)!.body.to).toBe(ACTOR);
+    expect(templates.at(-1)!.body.template).toEqual({
+      name: "gsv_message",
+      language: { code: "en" },
+      components: [
+        { type: "body", parameters: [{ type: "text", text: "outside window marker quick note" }] },
+        { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: "gsvt:show" }] },
+      ],
+    });
+    expect((await sentMessages()).some((record) => record.body.text?.body === "outside window marker quick note")).toBe(false);
+    const pending = await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
+    ));
+    expect(pending).toMatchObject({ messageId: templates.at(-1)!.result.id });
+
+    // The person's next message answers the template and reopens the window.
+    expect((await SELF.fetch(await text("wamid.in.8", "back again"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ context: { message_id: "wamid.in.8" } }),
+      }));
+    });
+    expect(await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
+    ))).toBeUndefined();
+  });
+
+  it("holds longer replies and approvals behind one template until the person taps or writes back", async () => {
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
     const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
@@ -587,44 +653,128 @@ describe("managed WhatsApp clean-instance flow", () => {
       (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!
     ));
     const route = state.activeRoute!;
-    const sentBefore = (await sentMessages()).length;
-
+    const surface = { kind: "dm" as const, id: ACTOR };
     await runInDurableObject(stub, async (_instance, context) => {
       await context.storage.put(STATE_KEY, { ...state, lastInboundAt: Date.now() - 25 * 60 * 60 * 1000 });
     });
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-outside-window",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "late follow-up",
-    })).resolves.toEqual({
-      ok: false,
-      error: expect.stringContaining("customer service window is closed"),
-    });
-    expect((await sentMessages()).length).toBe(sentBefore);
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-outside-window",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "late follow-up",
-    })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("template messages are not implemented") });
+    const templatesBefore = (await templateMessages()).length;
+    const interactiveBefore = (await sentMessages()).filter((record) => record.body.type === "interactive").length;
 
-    // The next message from the person reopens the window.
-    expect((await SELF.fetch(await text("wamid.in.8", "back again", Math.floor(Date.now() / 1000)))).status).toBe(200);
+    // A short reply fits the template's parameter and is delivered by it alone.
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-closed-short",
+      surface,
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "late follow-up",
+    })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
+    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+    const template = (await templateMessages()).at(-1)!;
+    expect(templateParameter(template)).toBe("late follow-up");
+
+    // A longer reply waits behind the pending template instead of sending another.
+    const sentBeforeHolding = (await sentMessages()).length;
+    const longText = `**Report**\n\n${"word ".repeat(300).trimEnd()}\n\nAnything else?`;
+    const longDelivery = {
+      deliveryId: "outbound-closed-long",
+      surface,
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: longText,
+    };
+    await expect(peer.sendMessage(route.installationId, longDelivery)).resolves.toEqual({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+    expect((await sentMessages()).length).toBe(sentBeforeHolding);
+
+    // An approval prompt waits too: the template cannot carry its buttons.
+    const lateHil = {
+      pid: "proc-late",
+      requestId: "request-late",
+      runId: "run-late",
+      callId: "call-late",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      target: "gsv",
+      args: { input: "uptime" },
+      createdAt: 1_700_000_200_000,
+    };
+    const lateContext = {
+      deliveryId: "run-late:hil:request-late",
+      accountId: "managed",
+      actorId: ACTOR,
+      surface,
+      routeGeneration: route.generation,
+      processId: "proc-late",
+      runId: "run-late",
+      processMode: "ship" as const,
+      hil: lateHil,
+    };
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: lateContext.deliveryId,
+      surface,
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "",
+    }, undefined, lateContext)).resolves.toEqual({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+    expect((await sentMessages()).filter((record) => record.body.type === "interactive")).toHaveLength(interactiveBefore);
+
+    // The Kernel's retry of a held delivery is deduplicated by the ledger.
+    await expect(peer.sendMessage(route.installationId, longDelivery)).resolves.toMatchObject({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+
+    // Tapping the button reopens the window and releases the held messages in
+    // order through the free-form path, paragraph by paragraph, without
+    // relaying the tap to the Process.
+    const recordsBeforeTap = (await graphRecords()).length;
+    expect((await SELF.fetch(await notification("wamid.in.10", {
+      type: "button",
+      context: { from: "34600000000", id: template.result.id! },
+      button: { payload: "gsvt:show", text: "Show me" },
+    }))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ context: { message_id: "wamid.in.8" } }),
+      const released = (await graphRecords()).slice(recordsBeforeTap).filter((record) => record.kind === "message");
+      expect(released.map((record) => record.body.type)).toEqual(["text", "text", "interactive"]);
+    });
+    const released = (await graphRecords()).slice(recordsBeforeTap).filter((record) => record.kind === "message");
+    expect(released[0]!.body.text?.body).toMatch(/^\*Report\*\n\nword word/);
+    expect(released[1]!.body.text?.body).toBe("Anything else?");
+    expect(released[2]!.body.interactive?.body.text).toContain("Requested action: run \"uptime\".");
+    expect(released[2]!.body.interactive?.action.buttons.map((button) => button.reply.title))
+      .toEqual(["Approve once", "Always approve", "Deny"]);
+    expect((await gatewayCalls()).some((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Show me")).toBe(false);
+    expect(await graphRecords()).toContainEqual(expect.objectContaining({
+      kind: "read",
+      body: expect.objectContaining({ status: "read", message_id: "wamid.in.10" }),
+    }));
+
+    // The released prompt resolves through proc.hil like any other.
+    const approveOnce = released[2]!.body.interactive!.action.buttons[0]!.reply.id;
+    expect(approveOnce).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:o$/);
+    expect((await SELF.fetch(await notification("wamid.in.11", {
+      type: "interactive",
+      context: { from: "34600000000", id: released[2]!.result.id! },
+      interactive: { type: "button_reply", button_reply: { id: approveOnce, title: "Approve once" } },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "proc.hil",
+        args: { pid: "proc-late", requestId: "request-late", decision: "approve", remember: false },
       }));
     });
+
+    // With the window open again, replies are free-form and nothing is held.
     await expect(peer.sendMessage(route.installationId, {
       deliveryId: "outbound-inside-window",
-      surface: { kind: "dm", id: ACTOR },
+      surface,
       actorId: ACTOR,
       routeGeneration: route.generation,
       text: "welcome back",
     })).resolves.toMatchObject({ ok: true });
+    expect(await sentMessages()).toContainEqual(expect.objectContaining({
+      body: expect.objectContaining({ type: "text", text: { preview_url: false, body: "welcome back" } }),
+    }));
+    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
   });
 });
 

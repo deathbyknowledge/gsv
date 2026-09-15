@@ -122,6 +122,14 @@ export default defineConfig({
                     if (body.text?.body === "graph rejects this") {
                       return Response.json({ error: { message: "rejected", type: "OAuthException", code: 131026 } }, { status: 400 });
                     }
+                    // Meta refuses a free-form message outside the customer service
+                    // window with 131047; tests carry this marker to provoke it.
+                    if (body.text?.body?.includes("outside window marker")) {
+                      return Response.json(
+                        { error: { message: "Re-engagement message", type: "OAuthException", code: 131047, error_subcode: 2494010 } },
+                        { status: 400 },
+                      );
+                    }
                     const result = { id: "wamid.out." + nextId++ };
                     records.push({ kind: "message", version, phoneNumberId: segments[1], body, result });
                     return Response.json({
@@ -141,5 +149,7 @@ export default defineConfig({
   ],
   test: {
     include: ["test/managed-flow.test.ts", "test/retirement.test.ts"],
+    // The window scenario holds, releases and approves several messages in one flow.
+    testTimeout: 30_000,
   },
 });

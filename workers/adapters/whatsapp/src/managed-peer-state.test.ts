@@ -7,10 +7,13 @@ import {
   finalizeManagedWhatsAppPairing,
   prepareManagedWhatsAppPairing,
   WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS,
+  whatsAppTemplatePending,
   whatsAppWindowOpen,
+  withPendingWhatsAppTemplate,
   type ManagedWhatsAppPeerRoute,
   type ManagedWhatsAppPeerState,
 } from "./managed-peer-state";
+import { HELD_OUTBOUND_RETENTION_MS } from "./whatsapp-held-outbound";
 
 const previousRoute: ManagedWhatsAppPeerRoute = {
   installationId: "installation-old",
@@ -67,6 +70,27 @@ describe("managed WhatsApp peer state", () => {
       actorId: "34699999999", surfaceId: "34699999999", messageId: "wamid.x",
     }, now)).toThrow("identity mismatch");
     expect(whatsAppWindowOpen({ version: 1, actorId: "1", surfaceId: "1" }, now)).toBe(false);
+  });
+
+  it("resolves a pending template with the person's next message and keeps it across replays", () => {
+    const now = 1_700_000_000_000;
+    const identity = { actorId: "34611111189", surfaceId: "34611111189" };
+    const base = bindManagedWhatsAppPeerIdentity(undefined, { ...identity, messageId: "wamid.one", timestamp: now - 5_000 }, now);
+    const pending = withPendingWhatsAppTemplate(base, now, "wamid.template");
+    expect(pending.pendingTemplate).toEqual({
+      sentAt: now,
+      expiresAt: now + HELD_OUTBOUND_RETENTION_MS,
+      messageId: "wamid.template",
+    });
+    expect(whatsAppTemplatePending(pending, now)).toBe(true);
+    expect(whatsAppTemplatePending(pending, now + HELD_OUTBOUND_RETENTION_MS)).toBe(false);
+    expect(whatsAppTemplatePending(base, now)).toBe(false);
+
+    const replay = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.zero", timestamp: now - 60_000 }, now);
+    expect(replay.pendingTemplate).toEqual(pending.pendingTemplate);
+    const answered = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.two", timestamp: now + 1_000 }, now + 1_000);
+    expect(answered.pendingTemplate).toBeUndefined();
+    expect(answered).toMatchObject({ lastInboundAt: now + 1_000, lastInboundMessageId: "wamid.two" });
   });
 
   it("keeps the old route live until explicit confirmation activates the new one", () => {

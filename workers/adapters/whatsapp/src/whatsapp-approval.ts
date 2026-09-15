@@ -7,11 +7,13 @@ import {
   submitAdapterHilApproval,
   type AdapterHilDecision,
   type AdapterHilResolution,
+  type StoredAdapterHilRequest,
 } from "../../shared/src/hil-approval";
 import {
   createAdapterHilPresentation,
   renderAdapterHilPrompt,
   renderAdapterHilResolution,
+  type AdapterHilPresentation,
 } from "../../shared/src/peer-render";
 import type {
   AdapterInstallationContext,
@@ -31,6 +33,20 @@ export type WhatsAppApprovalControls = {
   buttons: WhatsAppReplyButton[];
 };
 
+/**
+ * What the peer keeps to present an approval again later: the delivery
+ * context, the request identity and the rendered presentation. The tool
+ * arguments never leave the original request.
+ */
+export type WhatsAppApprovalSource = {
+  context: Pick<
+    AdapterDeliveryContext,
+    "deliveryId" | "accountId" | "actorId" | "surface" | "routeGeneration" | "processId" | "runId"
+  >;
+  request: StoredAdapterHilRequest;
+  presentation: AdapterHilPresentation;
+};
+
 const PROVIDER = "whatsapp";
 const APPROVAL_REPLY_PREFIX = "gsvh:";
 /** Meta's limit for an interactive message body. */
@@ -38,27 +54,51 @@ export const WHATSAPP_INTERACTIVE_BODY_LIMIT = 1024;
 /** Meta allows three reply buttons with titles of at most twenty characters. */
 const REPLY_BUTTON_TITLE_LIMIT = 20;
 
+/** Reduces one approval send to what the peer may keep and present again. */
+export function describeWhatsAppApproval(
+  context: AdapterDeliveryContext,
+  request: ProcHilRequest,
+): WhatsAppApprovalSource {
+  const stored: WhatsAppApprovalSource["context"] = {
+    deliveryId: context.deliveryId,
+    accountId: context.accountId,
+    surface: context.surface,
+  };
+  if (context.actorId !== undefined) stored.actorId = context.actorId;
+  if (context.routeGeneration !== undefined) stored.routeGeneration = context.routeGeneration;
+  if (context.processId !== undefined) stored.processId = context.processId;
+  if (context.runId !== undefined) stored.runId = context.runId;
+  return {
+    context: stored,
+    request: { pid: request.pid, requestId: request.requestId, runId: request.runId },
+    presentation: createAdapterHilPresentation(context, request),
+  };
+}
+
+export function whatsAppApprovalPrompt(source: WhatsAppApprovalSource): string {
+  return renderAdapterHilPrompt(source.presentation, "native");
+}
+
 /**
  * Persist a callback capability before exposing reply buttons. Returns null
  * when the prompt cannot be presented natively, so the caller falls back to
- * the plain text that directs the person to Chat.
+ * the plain text that directs the person to Chat. Preparing the same source
+ * again yields the same token, so a held prompt can be presented later.
  */
 export async function prepareWhatsAppApproval(
   storage: DurableObjectStorage,
-  context: AdapterDeliveryContext,
-  request: ProcHilRequest,
+  source: WhatsAppApprovalSource,
   owner?: AdapterDataScope,
 ): Promise<WhatsAppApprovalControls | null> {
-  const presentation = createAdapterHilPresentation(context, request);
-  const text = renderAdapterHilPrompt(presentation, "native");
+  const text = whatsAppApprovalPrompt(source);
   if ([...text].length > WHATSAPP_INTERACTIVE_BODY_LIMIT) return null;
   const token = await prepareAdapterHilApproval(
     storage,
     PROVIDER,
     undefined,
-    context,
-    request,
-    presentation,
+    source.context,
+    source.request,
+    source.presentation,
     owner,
   );
   if (!token) return null;

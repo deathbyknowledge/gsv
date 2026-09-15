@@ -9,6 +9,7 @@ import {
   normalizeWhatsAppWebhook,
   validWhatsAppSignatureHeader,
   verifyWhatsAppSignature,
+  whatsAppEventActor,
   type ManagedWhatsAppPeerEvent,
 } from "./whatsapp-webhook";
 
@@ -87,8 +88,7 @@ export async function handleManagedWhatsAppRequest(
   const allowlist = allowedActorIds(env.WHATSAPP_ALLOWED_ACTOR_IDS);
   let rejected = 0;
   for (const event of normalized.events) {
-    const actorId = event.kind === "approval" ? event.reply.actorId : event.inbound.actorId;
-    const surfaceId = event.kind === "approval" ? event.reply.surfaceId : event.inbound.surfaceId;
+    const { actorId, surfaceId } = whatsAppEventActor(event);
     if (allowlist && !allowlist.has(actorId)) continue;
     const id = env.MANAGED_WHATSAPP_PEER.idFromName(`managed:${surfaceId}`);
     // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.

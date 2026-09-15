@@ -7,6 +7,7 @@ import { TestDurableObjectStorage } from "../../shared/test/sqlite-storage";
 import type { AdapterDeliveryContext, GatewayFrame } from "./types";
 import {
   buildWhatsAppInteractivePayload,
+  describeWhatsAppApproval,
   handleWhatsAppApprovalReply,
   prepareWhatsAppApproval,
 } from "./whatsapp-approval";
@@ -42,7 +43,7 @@ function storage(): DurableObjectStorage {
 
 describe("WhatsApp approval buttons", () => {
   it("renders at most three short reply buttons bound to one persisted token", async () => {
-    const controls = await prepareWhatsAppApproval(storage(), CONTEXT, REQUEST);
+    const controls = await prepareWhatsAppApproval(storage(), describeWhatsAppApproval(CONTEXT, REQUEST));
     expect(controls).not.toBeNull();
     expect(controls!.text).toContain("Requested action: run \"date\".");
     expect(controls!.buttons).toHaveLength(3);
@@ -72,12 +73,16 @@ describe("WhatsApp approval buttons", () => {
 
   it("falls back to plain text when the prompt exceeds the interactive body limit", async () => {
     const longRequest = { ...REQUEST, args: { input: "x".repeat(1_100) } };
-    expect(await prepareWhatsAppApproval(storage(), { ...CONTEXT, hil: longRequest }, longRequest)).toBeNull();
+    const source = describeWhatsAppApproval({ ...CONTEXT, hil: longRequest }, longRequest);
+    expect(await prepareWhatsAppApproval(storage(), source)).toBeNull();
+    // The stored source keeps the request identity and its presentation, never the arguments.
+    expect(JSON.stringify(source)).not.toContain("\"args\"");
+    expect(source.request).toEqual({ pid: "proc-1", requestId: "request-1", runId: "run-1" });
   });
 
   it("submits a reply button through the linked-human proc.hil path and answers with the decision", async () => {
     const store = storage();
-    const controls = (await prepareWhatsAppApproval(store, CONTEXT, REQUEST))!;
+    const controls = (await prepareWhatsAppApproval(store, describeWhatsAppApproval(CONTEXT, REQUEST)))!;
     const linkedPeerFrame = vi.fn<AdapterGatewayBinding["linkedPeerFrame"]>(async (_installation, _context, frame) => ({
       type: "res",
       id: frame.id,

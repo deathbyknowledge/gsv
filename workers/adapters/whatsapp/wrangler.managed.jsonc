@@ -9,6 +9,10 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "WHATSAPP_TEMPLATE_NAME": "gsv_message",
+    "WHATSAPP_TEMPLATE_LANGUAGE": "en"
+  },
   "durable_objects": {
     "bindings": [
       {

@@ -6,6 +6,7 @@ import {
   normalizeWhatsAppWebhook,
   verifyWhatsAppSignature,
   whatsAppDeliveryToken,
+  whatsAppEventActor,
 } from "./whatsapp-webhook";
 
 const PHONE_NUMBER_ID = "111222333444555";
@@ -27,6 +28,7 @@ type MessageFixture = {
   location?: { latitude: number; longitude: number; name?: string; address?: string };
   context?: { from?: string; id?: string };
   interactive?: { type: string; button_reply?: { id: string; title?: string }; list_reply?: { id: string } };
+  button?: { payload?: string; text?: string };
   reaction?: { message_id: string; emoji: string };
   contacts?: Array<{ name: { formatted_name: string } }>;
 };
@@ -189,6 +191,37 @@ describe("WhatsApp webhook normalization", () => {
           timestamp: 1_700_000_100_000,
         },
       }],
+    });
+  });
+
+  it("turns a quick-reply tap on the template into a release event that is not relayed", () => {
+    const result = normalizeWhatsAppWebhook(notification([{
+      from: "34611111189", id: "wamid.tap", type: "button", timestamp: "1700000200",
+      context: { from: "34600000000", id: "wamid.template" },
+      button: { payload: "gsvt:show", text: "Show me" },
+    }]), PHONE_NUMBER_ID);
+    expect(result).toEqual({
+      kind: "accepted",
+      events: [{
+        kind: "release",
+        tap: {
+          interactionId: "wamid.tap",
+          actorId: "34611111189",
+          surfaceId: "34611111189",
+          providerMessageId: "wamid.template",
+          timestamp: 1_700_000_200_000,
+        },
+      }],
+    });
+    if (result.kind !== "accepted") throw new Error("expected accepted events");
+    expect(whatsAppEventActor(result.events[0]!)).toEqual({ actorId: "34611111189", surfaceId: "34611111189" });
+
+    const foreign = normalizeWhatsAppWebhook(notification([{
+      from: "34611111189", id: "wamid.other-tap", type: "button", button: { payload: "someone-else", text: "Other" },
+    }]), PHONE_NUMBER_ID);
+    expect(foreign).toMatchObject({
+      kind: "accepted",
+      events: [{ kind: "message", inbound: { unsupportedContent: true, text: "" } }],
     });
   });
 

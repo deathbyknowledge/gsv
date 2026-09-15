@@ -38,7 +38,10 @@ export const WHATSAPP_GRAPH_BASE = `https://graph.facebook.com/${WHATSAPP_GRAPH_
 /** Meta's code for a free-form message sent outside the 24-hour customer service window. */
 export const WHATSAPP_WINDOW_CLOSED_CODE = 131047;
 export const WHATSAPP_WINDOW_CLOSED_ERROR =
-  "WhatsApp customer service window is closed: this number has not messaged GSV in the last 24 hours, and template messages are not implemented yet";
+  "WhatsApp customer service window is closed: this number has not messaged GSV in the last 24 hours";
+/** Meta's template errors (missing, unapproved, paused, parameter mismatch) share the 1320xx range. */
+const TEMPLATE_ERROR_MIN = 132000;
+const TEMPLATE_ERROR_MAX = 132999;
 const RATE_LIMIT_CODES = new Set([4, 80007, 130429, 131048, 131056]);
 
 const graphErrorSchema = z.object({
@@ -78,6 +81,14 @@ export class ManagedWhatsAppDeliveryError extends Error {
   get windowClosed(): boolean {
     return this.graphCode === WHATSAPP_WINDOW_CLOSED_CODE;
   }
+
+  get templateRejected(): boolean {
+    return isWhatsAppTemplateErrorCode(this.graphCode);
+  }
+}
+
+export function isWhatsAppTemplateErrorCode(code: number | undefined): boolean {
+  return code !== undefined && code >= TEMPLATE_ERROR_MIN && code <= TEMPLATE_ERROR_MAX;
 }
 
 export async function sendWhatsAppMessage(
@@ -237,13 +248,19 @@ export async function callWhatsAppGraph<T>(
   }
   const code = failure?.success ? failure.data.error.code : undefined;
   throw new ManagedWhatsAppDeliveryError(
-    code === WHATSAPP_WINDOW_CLOSED_CODE
-      ? WHATSAPP_WINDOW_CLOSED_ERROR
-      : `WhatsApp Graph API rejected the request (HTTP ${response.status}${code === undefined ? "" : `, code ${code}`})`,
+    rejectionMessage(response.status, code),
     classifyWhatsAppFailure(response.status, code, options.idempotent),
     response.status,
     code,
   );
+}
+
+function rejectionMessage(status: number, code: number | undefined): string {
+  if (code === WHATSAPP_WINDOW_CLOSED_CODE) return WHATSAPP_WINDOW_CLOSED_ERROR;
+  if (isWhatsAppTemplateErrorCode(code)) {
+    return `WhatsApp template message was rejected by Meta (code ${code}); check the template filed in the Meta app against the message templates section of workers/adapters/whatsapp/README.md`;
+  }
+  return `WhatsApp Graph API rejected the request (HTTP ${status}${code === undefined ? "" : `, code ${code}`})`;
 }
 
 async function readGraphBody(response: Response): Promise<GraphBody> {

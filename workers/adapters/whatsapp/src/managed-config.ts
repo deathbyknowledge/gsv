@@ -1,8 +1,20 @@
 const E164_PATTERN = /^\+[1-9][0-9]{4,14}$/;
 const GRAPH_ID_PATTERN = /^[0-9]{1,32}$/;
 const VERIFY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
+/** Meta template names are lowercase letters, digits and underscores. */
+const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+/** Meta language codes such as `en`, `en_US` or `pt_BR`. */
+const TEMPLATE_LANGUAGE_PATTERN = /^[a-z]{2,3}(?:_[A-Z]{2})?$/;
 
-export type ManagedWhatsAppConfigEnv = {
+export const DEFAULT_WHATSAPP_TEMPLATE_NAME = "gsv_message";
+export const DEFAULT_WHATSAPP_TEMPLATE_LANGUAGE = "en";
+
+export type ManagedWhatsAppTemplateEnv = {
+  WHATSAPP_TEMPLATE_NAME?: string;
+  WHATSAPP_TEMPLATE_LANGUAGE?: string;
+};
+
+export type ManagedWhatsAppConfigEnv = ManagedWhatsAppTemplateEnv & {
   WHATSAPP_ACCESS_TOKEN?: string;
   WHATSAPP_APP_SECRET?: string;
   WHATSAPP_VERIFY_TOKEN?: string;
@@ -11,6 +23,28 @@ export type ManagedWhatsAppConfigEnv = {
   WHATSAPP_WEBHOOK_BASE_URL?: string;
   WHATSAPP_DISPLAY_NUMBER?: string;
 };
+
+/** The Utility template Meta requires outside the customer service window. */
+export type ManagedWhatsAppTemplate = {
+  name: string;
+  language: string;
+};
+
+/**
+ * The template the adapter sends outside the window. Unset values take the
+ * defaults; an empty name switches templates off, and an invalid value reads
+ * as not configured so the send fails with a pointer to the docs.
+ */
+export function managedWhatsAppTemplate(env: ManagedWhatsAppTemplateEnv): ManagedWhatsAppTemplate | null {
+  const name = env.WHATSAPP_TEMPLATE_NAME === undefined
+    ? DEFAULT_WHATSAPP_TEMPLATE_NAME
+    : env.WHATSAPP_TEMPLATE_NAME.trim();
+  const language = env.WHATSAPP_TEMPLATE_LANGUAGE === undefined
+    ? DEFAULT_WHATSAPP_TEMPLATE_LANGUAGE
+    : env.WHATSAPP_TEMPLATE_LANGUAGE.trim();
+  if (!TEMPLATE_NAME_PATTERN.test(name) || !TEMPLATE_LANGUAGE_PATTERN.test(language)) return null;
+  return { name, language };
+}
 
 /** The number people message, normalized to E.164 with a leading plus. */
 export function normalizedManagedWhatsAppDisplayNumber(value: string | undefined): string {

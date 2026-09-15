@@ -54,7 +54,13 @@ describe("WhatsApp Graph API client", () => {
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(500, 2)))
       .rejects.toMatchObject({ kind: "ambiguous", graphStatus: 500 });
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(400, 131026)))
-      .rejects.toMatchObject({ kind: "permanent", graphCode: 131026 });
+      .rejects.toMatchObject({ kind: "permanent", graphCode: 131026, templateRejected: false });
+    await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(400, 132001)))
+      .rejects.toMatchObject({
+        kind: "permanent",
+        templateRejected: true,
+        message: expect.stringContaining("template message was rejected by Meta (code 132001)"),
+      });
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => { throw new Error("socket"); }))
       .rejects.toMatchObject({ kind: "ambiguous" });
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => new Response("<html>", { status: 200 })))

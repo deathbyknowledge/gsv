@@ -3,6 +3,7 @@ import {
   type WhatsAppInboundMediaSource,
 } from "./whatsapp-inbound-media";
 import { maskWhatsAppNumber } from "./managed-config";
+import { WHATSAPP_TEMPLATE_RELEASE_PAYLOAD } from "./whatsapp-template";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
@@ -28,6 +29,11 @@ const whatsAppMessageSchema = z.object({
   interactive: z.object({
     type: z.string(),
     button_reply: z.object({ id: z.string(), title: z.string().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
+  /** A quick-reply tap on a template message arrives as its own message type. */
+  button: z.object({
+    payload: z.string().optional(),
+    text: z.string().optional(),
   }).passthrough().optional(),
   context: z.object({
     from: z.string().optional(),
@@ -89,9 +95,39 @@ export type WhatsAppApprovalReply = {
   timestamp?: number;
 };
 
+/**
+ * A quick-reply tap on the template GSV sent outside the customer service
+ * window. It reopens the window and releases the held messages; it is not
+ * relayed to the Process.
+ */
+export type WhatsAppTemplateTap = {
+  /** The tap message's own id; it identifies one interaction. */
+  interactionId: string;
+  actorId: string;
+  surfaceId: string;
+  /** The id of the template message the person tapped, when Meta relays it. */
+  providerMessageId?: string;
+  timestamp?: number;
+};
+
 export type ManagedWhatsAppPeerEvent =
   | { kind: "message"; inbound: ManagedWhatsAppInbound }
-  | { kind: "approval"; reply: WhatsAppApprovalReply };
+  | { kind: "approval"; reply: WhatsAppApprovalReply }
+  | { kind: "release"; tap: WhatsAppTemplateTap };
+
+/** The WhatsApp identity behind one peer event. */
+export type WhatsAppEventActor = { actorId: string; surfaceId: string };
+
+export function whatsAppEventActor(event: ManagedWhatsAppPeerEvent): WhatsAppEventActor {
+  switch (event.kind) {
+    case "message":
+      return { actorId: event.inbound.actorId, surfaceId: event.inbound.surfaceId };
+    case "approval":
+      return { actorId: event.reply.actorId, surfaceId: event.reply.surfaceId };
+    case "release":
+      return { actorId: event.tap.actorId, surfaceId: event.tap.surfaceId };
+  }
+}
 
 export type ManagedWhatsAppWebhookDisposition =
   | { kind: "accepted"; events: ManagedWhatsAppPeerEvent[] }
@@ -216,6 +252,16 @@ function normalizeMessage(
         timestamp,
       },
     };
+  }
+
+  if (message.type === "button") {
+    if (message.button?.payload?.trim() !== WHATSAPP_TEMPLATE_RELEASE_PAYLOAD) {
+      return unsupported(message.id, token, actorId, contacts, timestamp);
+    }
+    const providerMessageId = message.context?.id?.trim();
+    const tap: WhatsAppTemplateTap = { interactionId: messageId, actorId, surfaceId: actorId, timestamp };
+    if (providerMessageId && WAMID_PATTERN.test(providerMessageId)) tap.providerMessageId = providerMessageId;
+    return { kind: "release", tap };
   }
 
   const content = message.type === "text" || MEDIA_MESSAGE_TYPES.has(message.type)
