@@ -91,6 +91,7 @@
   font-size: clamp(18px, 1.7vw, 24px);
   line-height: 1.3;
   color: var(--accent);
+  white-space: pre-wrap;
 }
 .zen-moment.is-ship .text {
   font-family: var(--gsv-font-prose);
