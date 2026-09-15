@@ -120,6 +120,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
   try {
     switch (message.type) {
       case "status":
+        // The panel polls while it is open, so a pending ask has been seen: clear the badge.
+        void clearAttentionBadge();
         return await stateResponse();
       case "refresh":
         await maybeConnect();
@@ -231,7 +233,30 @@ async function stopAll(): Promise<RuntimeResponse> {
   return await stateResponse();
 }
 
+// Chrome will not open the side panel without a person's gesture, so an ask from your GSV cannot
+// pop it. The toolbar icon carries the ask instead: a dot in the accent colour until the panel is
+// opened or the recording is allowed. Badges need no extra permission.
+async function showAttentionBadge(): Promise<void> {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#b3aeff" });
+    await chrome.action.setBadgeTextColor?.({ color: "#07061a" });
+    await chrome.action.setBadgeText({ text: "•" });
+    await chrome.action.setTitle({ title: "Your GSV wants to record this tab" });
+  } catch (error) {
+    console.warn("Your GSV: could not badge the toolbar icon", error);
+  }
+}
+async function clearAttentionBadge(): Promise<void> {
+  try {
+    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setTitle({ title: "Your GSV" });
+  } catch {
+    // no badge to clear
+  }
+}
+
 async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
+  void clearAttentionBadge();
   const grant = await grantMediaCapture(tabId);
   addActivity({
     kind: "sensitive",
@@ -347,6 +372,7 @@ function addActivity(input: BrowserTargetActivity): void {
     at: new Date().toISOString(),
     ...input,
   };
+  if (entry.status === "error" && /tab media capture/i.test(entry.detail)) void showAttentionBadge();
   diagnostics = recordDiagnosticActivity(diagnostics, entry);
   diagnostics = recordDiagnosticArtifactPaths(diagnostics, artifactPathsFromDetail(entry.detail));
   queueDiagnosticsSave();
