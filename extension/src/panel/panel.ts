@@ -10,6 +10,8 @@ import type { ActivityEntry, ExtensionUiState, RuntimeResponse } from "../shared
 
 type Notice = { kind: "info" | "error"; text: string };
 type ConfigField = keyof ExtensionConfig;
+type FieldErrors = Partial<Record<ConfigField, string>>;
+const CONFIG_FIELDS: readonly ConfigField[] = ["gatewayUrl", "username", "token", "deviceId"];
 
 const BANNER_NOTE_KEY = "gsvExtensionBannerNoteSeen";
 const THEME_KEY = "gsv-theme";
@@ -39,7 +41,7 @@ let showBannerNote = false;
 let advancedOpen = false;
 let tokenVisible = false;
 let draft: ExtensionConfig | null = null;
-let fieldErrors: Partial<Record<ConfigField, string>> = {};
+let fieldErrors: FieldErrors = {};
 
 appEl.addEventListener("click", (event) => {
   const target = event.target;
@@ -206,6 +208,7 @@ function render(): void {
     appEl.innerHTML = `<p class="loading">Reaching your GSV…</p>`;
     return;
   }
+  const restore = keepFormState();
   const paired = configReady(state.config);
   appEl.innerHTML = [
     header(state, paired),
@@ -217,6 +220,35 @@ function render(): void {
   ].join("");
   const form = appEl.querySelector<HTMLFormElement>("form[data-form='connection']");
   if (form) paintValidation(form);
+  restore();
+}
+
+type FocusedField = { form: string; name: string; start: number | null; end: number | null };
+const INVITATION = "form[data-form='pair'] textarea[name='invitation']";
+
+/** The status poll re-renders every two seconds. What the person is doing must survive it: the
+ *  pasted invitation, which field has focus, and where the caret is. Connection values live in
+ *  `draft`, so they come back on their own. */
+function keepFormState(): () => void {
+  const active = document.activeElement;
+  const focused: FocusedField | null = (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && active.form && appEl.contains(active)
+    ? { form: active.form.dataset.form ?? "", name: active.name, start: active.selectionStart, end: active.selectionEnd }
+    : null;
+  const invitation = appEl.querySelector<HTMLTextAreaElement>(INVITATION)?.value ?? "";
+  return () => {
+    const textarea = appEl.querySelector<HTMLTextAreaElement>(INVITATION);
+    if (textarea && invitation && !textarea.value) textarea.value = invitation;
+    if (!focused) return;
+    const field = appEl.querySelector<HTMLInputElement | HTMLTextAreaElement>(`form[data-form='${focused.form}'] [name='${focused.name}']`);
+    if (!field) return;
+    field.focus({ preventScroll: true });
+    if (focused.start === null || focused.end === null) return;
+    try {
+      field.setSelectionRange(focused.start, focused.end);
+    } catch {
+      // A checkbox has no caret to put back.
+    }
+  };
 }
 
 function header(current: ExtensionUiState, paired: boolean): string {
@@ -475,13 +507,22 @@ function where(detail: string): string {
   if (url) {
     const host = url[1].replace(/^www\./, "");
     const page = url[2].split("/").filter(Boolean).pop();
-    return page ? `${host} · ${decodeURIComponent(page).replace(/[-_]+/g, " ")}` : host;
+    return page ? `${host} · ${decodeSegment(page).replace(/[-_]+/g, " ")}` : host;
   }
   if (detail.startsWith("/") || detail.startsWith("~")) {
     const parts = detail.split("/").filter(Boolean);
     return parts.length > 1 ? `${parts.at(-1)} · ${parts.at(-2)}/` : detail;
   }
   return truncateMiddle(detail, 56);
+}
+
+/** A URL path segment as words. A malformed escape stays as written instead of breaking the panel. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 function verb(label: string): string {
@@ -505,8 +546,8 @@ function readConnectionForm(form: HTMLFormElement): ExtensionConfig {
   };
 }
 
-function validate(config: ExtensionConfig): Partial<Record<ConfigField, string>> {
-  const errors: Partial<Record<ConfigField, string>> = {};
+function validate(config: ExtensionConfig) {
+  const errors: FieldErrors = {};
   if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your GSV's address, like yours.gsv.space.";
   if (!config.username) errors.username = "Username is required.";
   if (!config.token) errors.token = "A credential is required. Pairing fills this in.";
@@ -516,7 +557,7 @@ function validate(config: ExtensionConfig): Partial<Record<ConfigField, string>>
 }
 
 function paintValidation(form: HTMLFormElement): void {
-  for (const name of ["gatewayUrl", "username", "token", "deviceId"] as ConfigField[]) {
+  for (const name of CONFIG_FIELDS) {
     const wrap = form.querySelector<HTMLElement>(`[data-field="${name}"]`);
     const small = wrap?.querySelector<HTMLElement>("[data-error]");
     const message = draft ? fieldErrors[name] ?? "" : "";
@@ -525,6 +566,6 @@ function paintValidation(form: HTMLFormElement): void {
   }
 }
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : String(error);
 }
