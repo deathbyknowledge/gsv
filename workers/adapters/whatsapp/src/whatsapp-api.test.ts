@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readAdapterMediaBody } from "../../shared/src/media-body";
 import {
   classifyWhatsAppFailure,
+  type ManagedWhatsAppFetch,
   downloadWhatsAppMedia,
   lookupWhatsAppMedia,
   ManagedWhatsAppDeliveryError,
@@ -22,7 +23,7 @@ function graphError(status: number, code: number, message = "rejected"): Respons
 
 describe("WhatsApp Graph API client", () => {
   it("posts one text message with the bearer token and returns its id", async () => {
-    const fetcher = vi.fn(async () => Response.json({
+    const fetcher = vi.fn<ManagedWhatsAppFetch>(async () => Response.json({
       messaging_product: "whatsapp",
       contacts: [{ input: "34611111189", wa_id: "34611111189" }],
       messages: [{ id: "wamid.sent" }],
@@ -32,11 +33,11 @@ describe("WhatsApp Graph API client", () => {
       type: "text",
       text: { preview_url: false, body: "hello" },
     }, fetcher)).resolves.toEqual({ messageId: "wamid.sent" });
-    const [url, init] = fetcher.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(url).toBe(`${WHATSAPP_GRAPH_BASE}/${PHONE_NUMBER_ID}/messages`);
-    expect(init.method).toBe("POST");
-    expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
-    expect(JSON.parse(String(init.body))).toEqual({
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(String(url)).toBe(`${WHATSAPP_GRAPH_BASE}/${PHONE_NUMBER_ID}/messages`);
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(String(init?.body))).toEqual({
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: "34611111189",
@@ -66,22 +67,22 @@ describe("WhatsApp Graph API client", () => {
   });
 
   it("marks a message read with an optional typing indicator", async () => {
-    const fetcher = vi.fn(async () => Response.json({ success: true }));
+    const fetcher = vi.fn<ManagedWhatsAppFetch>(async () => Response.json({ success: true }));
     await markWhatsAppMessageRead(TOKEN, PHONE_NUMBER_ID, "wamid.in", fetcher, { typing: true });
-    const [, init] = fetcher.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(JSON.parse(String(init.body))).toEqual({
+    const [, init] = fetcher.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toEqual({
       messaging_product: "whatsapp",
       status: "read",
       message_id: "wamid.in",
       typing_indicator: { type: "text" },
     });
     await markWhatsAppMessageRead(TOKEN, PHONE_NUMBER_ID, "wamid.in", fetcher);
-    const [, plain] = fetcher.mock.calls[1]! as unknown as [string, RequestInit];
-    expect(JSON.parse(String(plain.body))).not.toHaveProperty("typing_indicator");
+    const [, plain] = fetcher.mock.calls[1]!;
+    expect(JSON.parse(String(plain?.body))).not.toHaveProperty("typing_indicator");
   });
 
   it("looks media up by id and downloads it with the token", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetcher = vi.fn<ManagedWhatsAppFetch>(async (input) => {
       const url = String(input);
       if (url.startsWith(`${WHATSAPP_GRAPH_BASE}/1001`)) {
         expect(new URL(url).searchParams.get("phone_number_id")).toBe(PHONE_NUMBER_ID);
@@ -95,14 +96,14 @@ describe("WhatsApp Graph API client", () => {
     expect(body.length).toBe(4);
     await expect(readAdapterMediaBody([{ type: "image", mimeType: "image/jpeg", body: { offset: 0, length: 4 } }], body))
       .resolves.toEqual([new Uint8Array([1, 2, 3, 4])]);
-    const [, downloadInit] = fetcher.mock.calls[1]! as unknown as [string, RequestInit];
-    expect(new Headers(downloadInit.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
+    const [, downloadInit] = fetcher.mock.calls[1]!;
+    expect(new Headers(downloadInit?.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
     await expect(downloadWhatsAppMedia(TOKEN, lookup.url, 4, 1024, async () => new Response("nope", { status: 404 })))
       .rejects.toThrow("HTTP 404");
   });
 
   it("uploads bytes as multipart form data and returns the media id", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = vi.fn<ManagedWhatsAppFetch>(async (_input, init) => {
       const form = init?.body;
       if (!(form instanceof FormData)) throw new Error("expected multipart upload");
       const file = form.get("file");

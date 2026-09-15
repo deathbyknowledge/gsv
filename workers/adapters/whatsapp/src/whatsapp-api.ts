@@ -6,6 +6,7 @@ import {
   cancelResponseBody,
   responseBodyToBinaryBody,
 } from "../../shared/src/media-body";
+import { jsonValueSchema } from "../../../../packages/gsv/src/protocol/json.js";
 import type { BinaryBody } from "./types";
 import type { WhatsAppMediaLookup } from "./whatsapp-inbound-media";
 import { z } from "zod";
@@ -21,6 +22,12 @@ export type WhatsAppJsonValue =
 /** One `messages` request body without the fixed `messaging_product` field. */
 export type WhatsAppOutboundPayload = { [key: string]: WhatsAppJsonValue };
 export type WhatsAppSentMessage = { messageId?: string };
+type WhatsAppReadReceipt = {
+  messaging_product: "whatsapp";
+  status: "read";
+  message_id: string;
+  typing_indicator?: { type: "text" };
+};
 export type ManagedWhatsAppFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -51,6 +58,11 @@ const mediaLookupSchema = z.object({
   file_size: z.union([z.number(), z.string()]).optional(),
 }).passthrough();
 const uploadedMediaSchema = z.object({ id: z.string() }).passthrough();
+const acknowledgedSchema = z.object({}).passthrough();
+type GraphBody =
+  | { kind: "json"; value: z.infer<typeof jsonValueSchema> }
+  | { kind: "empty" }
+  | { kind: "malformed" };
 
 export class ManagedWhatsAppDeliveryError extends Error {
   constructor(
@@ -79,13 +91,9 @@ export async function sendWhatsAppMessage(
     `${WHATSAPP_GRAPH_BASE}/${phoneNumberId}/messages`,
     { method: "POST", body: { messaging_product: "whatsapp", recipient_type: "individual", ...payload } },
     fetcher,
-    { idempotent: false },
+    { idempotent: false, schema: sentMessageSchema },
   );
-  const parsed = sentMessageSchema.safeParse(result);
-  if (!parsed.success) {
-    throw new ManagedWhatsAppDeliveryError("WhatsApp message response is invalid", "ambiguous");
-  }
-  const messageId = parsed.data.messages?.[0]?.id?.trim();
+  const messageId = result.messages?.[0]?.id?.trim();
   return messageId ? { messageId } : {};
 }
 
@@ -97,20 +105,18 @@ export async function markWhatsAppMessageRead(
   fetcher: ManagedWhatsAppFetch = fetch,
   options: { typing?: boolean } = {},
 ): Promise<void> {
+  const body: WhatsAppReadReceipt = {
+    messaging_product: "whatsapp",
+    status: "read",
+    message_id: messageId,
+  };
+  if (options.typing) body.typing_indicator = { type: "text" };
   await callWhatsAppGraph(
     accessToken,
     `${WHATSAPP_GRAPH_BASE}/${phoneNumberId}/messages`,
-    {
-      method: "POST",
-      body: {
-        messaging_product: "whatsapp",
-        status: "read",
-        message_id: messageId,
-        ...(options.typing ? { typing_indicator: { type: "text" } } : {}),
-      },
-    },
+    { method: "POST", body },
     fetcher,
-    { idempotent: true },
+    { idempotent: true, schema: acknowledgedSchema },
   );
 }
 
@@ -122,13 +128,17 @@ export async function lookupWhatsAppMedia(
 ): Promise<WhatsAppMediaLookup> {
   const url = new URL(`${WHATSAPP_GRAPH_BASE}/${encodeURIComponent(mediaId)}`);
   url.searchParams.set("phone_number_id", phoneNumberId);
-  const result = await callWhatsAppGraph(accessToken, url.toString(), { method: "GET" }, fetcher, { idempotent: true });
-  const parsed = mediaLookupSchema.safeParse(result);
-  if (!parsed.success) throw new Error("WhatsApp media lookup response is invalid");
-  const size = Number(parsed.data.file_size);
+  const result = await callWhatsAppGraph(
+    accessToken,
+    url.toString(),
+    { method: "GET" },
+    fetcher,
+    { idempotent: true, schema: mediaLookupSchema },
+  );
+  const size = Number(result.file_size);
   return {
-    url: parsed.data.url,
-    mimeType: parsed.data.mime_type,
+    url: result.url,
+    mimeType: result.mime_type,
     size: Number.isSafeInteger(size) && size >= 0 ? size : undefined,
   };
 }
@@ -176,68 +186,80 @@ export async function uploadWhatsAppMedia(
     `${WHATSAPP_GRAPH_BASE}/${phoneNumberId}/media`,
     { method: "POST", body: form },
     fetcher,
-    { idempotent: true },
+    { idempotent: true, schema: uploadedMediaSchema },
   );
-  const parsed = uploadedMediaSchema.safeParse(result);
-  if (!parsed.success || !parsed.data.id.trim()) {
+  const mediaId = result.id.trim();
+  if (!mediaId) {
     throw new ManagedWhatsAppDeliveryError("WhatsApp media upload response is invalid", "retryable");
   }
-  return parsed.data.id.trim();
+  return mediaId;
 }
 
 /**
- * Calls one Graph endpoint with the platform access token. A message send has
- * no idempotency key, so its transport and server failures are ambiguous; the
- * other calls can be repeated safely and report the same failures as retryable.
+ * Calls one Graph endpoint with the platform access token and parses the
+ * response with the caller's schema. A message send has no idempotency key,
+ * so its transport and server failures are ambiguous; the other calls can be
+ * repeated safely and report the same failures as retryable.
  */
-export async function callWhatsAppGraph(
+export async function callWhatsAppGraph<T>(
   accessToken: string,
   url: string,
   init: { method: "GET" | "POST"; body?: FormData | WhatsAppOutboundPayload },
   fetcher: ManagedWhatsAppFetch,
-  options: { idempotent: boolean },
-): Promise<unknown> {
+  options: { idempotent: boolean; schema: z.ZodType<T> },
+): Promise<T> {
   const token = requireToken(accessToken);
-  const formData = init.body instanceof FormData;
   const unknownOutcome: DeliveryFailureKind = options.idempotent ? "retryable" : "ambiguous";
+  const headers = new Headers({ Authorization: `Bearer ${token}` });
+  let body: FormData | string | undefined;
+  if (init.body instanceof FormData) {
+    body = init.body;
+  } else if (init.body !== undefined) {
+    headers.set("Content-Type", "application/json; charset=utf-8");
+    body = JSON.stringify(init.body);
+  }
   let response: Response;
   try {
-    response = await fetcher(url, {
-      method: init.method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(init.body && !formData ? { "Content-Type": "application/json; charset=utf-8" } : {}),
-      },
-      body: init.body === undefined ? undefined : formData ? init.body as FormData : JSON.stringify(init.body),
-    });
+    response = await fetcher(url, { method: init.method, headers, body });
   } catch {
     throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API transport failed", unknownOutcome);
   }
 
-  let parsed: unknown = null;
-  let malformed = false;
+  const graphBody = await readGraphBody(response);
+  const failure = graphBody.kind === "json" ? graphErrorSchema.safeParse(graphBody.value) : null;
+  if (response.ok && graphBody.kind === "json" && !failure?.success) {
+    const parsed = options.schema.safeParse(graphBody.value);
+    if (parsed.success) return parsed.data;
+    throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API returned an invalid response", unknownOutcome);
+  }
+  if (response.ok && graphBody.kind !== "json") {
+    throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API returned an invalid response", unknownOutcome);
+  }
+  const code = failure?.success ? failure.data.error.code : undefined;
+  throw new ManagedWhatsAppDeliveryError(
+    code === WHATSAPP_WINDOW_CLOSED_CODE
+      ? WHATSAPP_WINDOW_CLOSED_ERROR
+      : `WhatsApp Graph API rejected the request (HTTP ${response.status}${code === undefined ? "" : `, code ${code}`})`,
+    classifyWhatsAppFailure(response.status, code, options.idempotent),
+    response.status,
+    code,
+  );
+}
+
+async function readGraphBody(response: Response): Promise<GraphBody> {
+  let text: string;
   try {
-    const text = await response.text();
-    parsed = text ? JSON.parse(text) : null;
+    text = await response.text();
   } catch {
-    malformed = true;
+    return { kind: "malformed" };
   }
-  const failure = graphErrorSchema.safeParse(parsed);
-  if (!response.ok || failure.success || malformed || parsed === null) {
-    if (response.ok && (malformed || parsed === null)) {
-      throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API returned an invalid response", unknownOutcome);
-    }
-    const code = failure.success ? failure.data.error.code : undefined;
-    throw new ManagedWhatsAppDeliveryError(
-      code === WHATSAPP_WINDOW_CLOSED_CODE
-        ? WHATSAPP_WINDOW_CLOSED_ERROR
-        : `WhatsApp Graph API rejected the request (HTTP ${response.status}${code === undefined ? "" : `, code ${code}`})`,
-      classifyWhatsAppFailure(response.status, code, options.idempotent),
-      response.status,
-      code,
-    );
+  if (!text) return { kind: "empty" };
+  try {
+    const decoded = jsonValueSchema.safeParse(JSON.parse(text));
+    return decoded.success ? { kind: "json", value: decoded.data } : { kind: "malformed" };
+  } catch {
+    return { kind: "malformed" };
   }
-  return parsed;
 }
 
 export function classifyWhatsAppFailure(

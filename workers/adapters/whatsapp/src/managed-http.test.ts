@@ -61,9 +61,9 @@ async function webhookRequest(
   body: string,
   options: { signature?: string | null; headers?: Record<string, string> } = {},
 ): Promise<Request> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...options.headers };
+  const headers = new Headers({ "Content-Type": "application/json", ...options.headers });
   const signature = options.signature === undefined ? await sign(body) : options.signature;
-  if (signature !== null) headers["X-Hub-Signature-256"] = signature;
+  if (signature !== null) headers.set("X-Hub-Signature-256", signature);
   return new Request("https://whatsapp.gsv.example/webhook", { method: "POST", headers, body });
 }
 

@@ -81,5 +81,9 @@ describe("splitWhatsAppText", () => {
 
   it("does not cut early when the only boundary is near the start", () => {
     expect(splitWhatsAppText(`a ${"b".repeat(30)}`, 20)).toEqual([`a ${"b".repeat(18)}`, "b".repeat(12)]);
+    expect(splitWhatsAppText(`*Title*\n\n${"word ".repeat(10)}`, 30))
+      .toEqual(["*Title*", "word ".repeat(6).trimEnd(), "word ".repeat(4).trimEnd()]);
+    expect(splitWhatsAppText(`*T*\n\n${"word ".repeat(10)}`, 30))
+      .toEqual([`*T*\n\n${"word ".repeat(5).trimEnd()}`, "word ".repeat(5).trimEnd()]);
   });
 });

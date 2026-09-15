@@ -35,10 +35,14 @@ export function splitWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): st
       break;
     }
     const window = codePoints.slice(0, limit).join("");
-    const boundary = /\s/.test(codePoints[limit]!)
+    // A boundary in the first quarter would leave most of the message for the
+    // next chunk, so each boundary kind is tried in turn before a hard cut.
+    const minimum = Math.floor(window.length / 4);
+    const cut = /\s/.test(codePoints[limit]!)
       ? window.length
-      : lastBoundary(window, "\n\n") ?? lastBoundary(window, "\n") ?? lastBoundary(window, " ");
-    const cut = boundary !== null && boundary >= Math.floor(window.length / 4) ? boundary : window.length;
+      : ["\n\n", "\n", " "]
+        .map((separator) => lastBoundary(window, separator))
+        .find((index) => index !== null && index >= minimum) ?? window.length;
     const chunk = rest.slice(0, cut).trimEnd();
     if (chunk) chunks.push(chunk);
     rest = rest.slice(cut).trimStart();

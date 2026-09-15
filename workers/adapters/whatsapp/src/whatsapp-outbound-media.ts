@@ -15,6 +15,14 @@ export const WHATSAPP_MEDIA_BYTE_LIMITS = {
   document: 100 * MEGABYTE,
 } satisfies Record<AdapterMedia["type"], number>;
 
+/** The attachment object Meta accepts under the media type key of a message. */
+export type WhatsAppOutboundAttachment = {
+  id?: string;
+  link?: string;
+  caption?: string;
+  filename?: string;
+};
+
 export type WhatsAppMediaApi = {
   upload(bytes: Uint8Array, mimeType: string, filename: string): Promise<string>;
   send(payload: WhatsAppOutboundPayload): Promise<WhatsAppSentMessage>;
@@ -43,7 +51,7 @@ export async function sendWhatsAppMediaMessage(
   replyToId?: string,
 ): Promise<WhatsAppSentMessage> {
   const limit = WHATSAPP_MEDIA_BYTE_LIMITS[media.type];
-  let reference: { id: string } | { link: string };
+  let attachment: WhatsAppOutboundAttachment;
   if (bytes) {
     if (bytes.byteLength > limit) {
       throw new ManagedWhatsAppDeliveryError(
@@ -51,9 +59,9 @@ export async function sendWhatsAppMediaMessage(
         "permanent",
       );
     }
-    reference = { id: await api.upload(bytes, media.mimeType, whatsAppMediaFilename(media)) };
+    attachment = { id: await api.upload(bytes, media.mimeType, whatsAppMediaFilename(media)) };
   } else if (media.url) {
-    reference = { link: media.url };
+    attachment = { link: media.url };
   } else {
     throw new ManagedWhatsAppDeliveryError(
       "WhatsApp media attachment must include either a binary body or a URL",
@@ -61,7 +69,6 @@ export async function sendWhatsAppMediaMessage(
     );
   }
 
-  const attachment: { [key: string]: string } = { ...reference };
   const trimmedCaption = caption?.trim();
   if (trimmedCaption && whatsAppMediaSupportsCaption(media.type) && whatsAppCaptionFits(trimmedCaption)) {
     attachment.caption = trimmedCaption;

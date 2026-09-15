@@ -11,27 +11,53 @@ import {
 const PHONE_NUMBER_ID = "111222333444555";
 const APP_SECRET = "app_secret_value_0123456789";
 
-type MessageFixture = Record<string, unknown> & { id: string; from: string; type: string };
+type MediaFixture = { id?: string; mime_type?: string; sha256?: string; caption?: string; filename?: string; voice?: boolean; animated?: boolean };
+type MessageFixture = {
+  id: string;
+  from: string;
+  type: string;
+  timestamp?: string;
+  group_id?: string;
+  text?: { body: string };
+  image?: MediaFixture;
+  document?: MediaFixture;
+  audio?: MediaFixture;
+  video?: MediaFixture;
+  sticker?: MediaFixture;
+  location?: { latitude: number; longitude: number; name?: string; address?: string };
+  context?: { from?: string; id?: string };
+  interactive?: { type: string; button_reply?: { id: string; title?: string }; list_reply?: { id: string } };
+  reaction?: { message_id: string; emoji: string };
+  contacts?: Array<{ name: { formatted_name: string } }>;
+};
+type ContactFixture = { profile: { name: string }; wa_id: string };
+type StatusFixture = { id: string; status: string; timestamp: string; recipient_id: string };
+type ValueFixture = {
+  messaging_product: string;
+  metadata: { display_phone_number: string; phone_number_id: string };
+  contacts: ContactFixture[];
+  messages?: MessageFixture[];
+  statuses?: StatusFixture[];
+  group_id?: string;
+};
 
 function notification(
   messages: MessageFixture[],
-  overrides: { phoneNumberId?: string; contacts?: unknown[]; statuses?: unknown[]; field?: string; value?: Record<string, unknown> } = {},
+  overrides: { phoneNumberId?: string; statuses?: StatusFixture[]; field?: string; groupId?: string } = {},
 ) {
+  const value: ValueFixture = {
+    messaging_product: "whatsapp",
+    metadata: { display_phone_number: "34600000000", phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID },
+    contacts: [{ profile: { name: "Hank Human" }, wa_id: "34611111189" }],
+  };
+  if (messages.length > 0) value.messages = messages;
+  if (overrides.statuses) value.statuses = overrides.statuses;
+  if (overrides.groupId) value.group_id = overrides.groupId;
   return {
     object: "whatsapp_business_account",
     entry: [{
       id: "9876543210",
-      changes: [{
-        field: overrides.field ?? "messages",
-        value: {
-          messaging_product: "whatsapp",
-          metadata: { display_phone_number: "34600000000", phone_number_id: overrides.phoneNumberId ?? PHONE_NUMBER_ID },
-          contacts: overrides.contacts ?? [{ profile: { name: "Hank Human" }, wa_id: "34611111189" }],
-          ...(messages.length > 0 ? { messages } : {}),
-          ...(overrides.statuses ? { statuses: overrides.statuses } : {}),
-          ...overrides.value,
-        },
-      }],
+      changes: [{ field: overrides.field ?? "messages", value }],
     }],
   };
 }
@@ -51,14 +77,14 @@ async function sign(body: string, secret = APP_SECRET): Promise<string> {
 describe("WhatsApp webhook signature", () => {
   it("accepts the HMAC of the exact body and rejects tampering or a missing header", async () => {
     const body = JSON.stringify(notification([textMessage()]));
+    const bytes = new TextEncoder().encode(body);
     const header = await sign(body);
-    expect(await verifyWhatsAppSignature(header, body, APP_SECRET)).toBe(true);
-    expect(await verifyWhatsAppSignature(header, new TextEncoder().encode(body), APP_SECRET)).toBe(true);
-    expect(await verifyWhatsAppSignature(header, `${body} `, APP_SECRET)).toBe(false);
-    expect(await verifyWhatsAppSignature(await sign(body, "another_secret_0123456789"), body, APP_SECRET)).toBe(false);
-    expect(await verifyWhatsAppSignature(null, body, APP_SECRET)).toBe(false);
-    expect(await verifyWhatsAppSignature("sha1=abc", body, APP_SECRET)).toBe(false);
-    expect(await verifyWhatsAppSignature(header, body, "")).toBe(false);
+    expect(await verifyWhatsAppSignature(header, bytes, APP_SECRET)).toBe(true);
+    expect(await verifyWhatsAppSignature(header, new TextEncoder().encode(`${body} `), APP_SECRET)).toBe(false);
+    expect(await verifyWhatsAppSignature(await sign(body, "another_secret_0123456789"), bytes, APP_SECRET)).toBe(false);
+    expect(await verifyWhatsAppSignature(null, bytes, APP_SECRET)).toBe(false);
+    expect(await verifyWhatsAppSignature("sha1=abc", bytes, APP_SECRET)).toBe(false);
+    expect(await verifyWhatsAppSignature(header, bytes, "")).toBe(false);
   });
 });
 
@@ -188,7 +214,7 @@ describe("WhatsApp webhook normalization", () => {
       .toEqual({ kind: "ignored" });
     expect(normalizeWhatsAppWebhook(notification([{ ...textMessage(), group_id: "120363000000000000@g.us" }]), PHONE_NUMBER_ID))
       .toEqual({ kind: "ignored" });
-    expect(normalizeWhatsAppWebhook(notification([textMessage()], { value: { group_id: "120363000000000000@g.us" } }), PHONE_NUMBER_ID))
+    expect(normalizeWhatsAppWebhook(notification([textMessage()], { groupId: "120363000000000000@g.us" }), PHONE_NUMBER_ID))
       .toEqual({ kind: "ignored" });
     expect(normalizeWhatsAppWebhook(notification([{ ...textMessage(), from: "not-a-number" }]), PHONE_NUMBER_ID))
       .toEqual({ kind: "ignored" });

@@ -124,11 +124,10 @@ export function validWhatsAppSignatureHeader(value: string | null): value is str
 /** Compares `X-Hub-Signature-256` against the HMAC of the exact bytes Meta sent. */
 export async function verifyWhatsAppSignature(
   header: string | null,
-  rawBody: Uint8Array | string,
+  rawBody: Uint8Array,
   appSecret: string,
 ): Promise<boolean> {
   if (!validWhatsAppSignatureHeader(header) || !appSecret) return false;
-  const bytes = typeof rawBody === "string" ? new TextEncoder().encode(rawBody) : rawBody;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(appSecret),
@@ -136,7 +135,7 @@ export async function verifyWhatsAppSignature(
     false,
     ["sign"],
   );
-  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes));
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, rawBody));
   const expected = `sha256=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   return constantTimeEqual(header.trim(), expected);
 }
@@ -161,7 +160,11 @@ export function normalizeWhatsAppWebhook<T>(
       const messagesValue = payload.data;
       if (messagesValue.metadata.phone_number_id !== phoneNumberId || messagesValue.group_id) continue;
       for (const candidate of messagesValue.messages ?? []) {
-        const event = normalizeMessage(candidate, messagesValue.contacts ?? []);
+        // Individual messages are parsed one at a time so one unfamiliar shape
+        // does not reject the other messages in the same notification.
+        const message = whatsAppMessageSchema.safeParse(candidate);
+        if (!message.success) continue;
+        const event = normalizeMessage(message.data, messagesValue.contacts ?? []);
         if (event) events.push(event);
       }
     }
@@ -181,12 +184,9 @@ export function whatsAppDeliveryToken(messageId: string): string | null {
 }
 
 function normalizeMessage(
-  candidate: unknown,
+  message: z.infer<typeof whatsAppMessageSchema>,
   contacts: z.infer<typeof whatsAppContactSchema>[],
 ): ManagedWhatsAppPeerEvent | null {
-  const parsed = whatsAppMessageSchema.safeParse(candidate);
-  if (!parsed.success) return null;
-  const message = parsed.data;
   if (message.group_id || message.context?.group_id || !WA_ID_PATTERN.test(message.from)) return null;
   if (SILENT_MESSAGE_TYPES.has(message.type)) return null;
   const messageId = message.id.trim();

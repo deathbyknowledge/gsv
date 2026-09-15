@@ -1,0 +1,76 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-whatsapp-test",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "WHATSAPP_ACCESS_TOKEN": "test-access-token",
+    "WHATSAPP_APP_SECRET": "test_app_secret_0123456789",
+    "WHATSAPP_VERIFY_TOKEN": "test_verify_token_123",
+    "WHATSAPP_PHONE_NUMBER_ID": "111222333444555",
+    "WHATSAPP_BUSINESS_ACCOUNT_ID": "9876543210",
+    "WHATSAPP_WEBHOOK_BASE_URL": "https://whatsapp.test",
+    "WHATSAPP_DISPLAY_NUMBER": "+34600000000",
+    "WHATSAPP_ALLOWED_ACTOR_IDS": "34611111189"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_WHATSAPP_PEER",
+        "class_name": "ManagedWhatsAppPeer"
+      },
+      {
+        "name": "MANAGED_WHATSAPP_PAIRING",
+        "class_name": "ManagedWhatsAppPairing"
+      },
+      {
+        "name": "WHATSAPP_INSTALLATIONS",
+        "class_name": "WhatsAppInstallation"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ManagedWhatsAppPeer",
+        "ManagedWhatsAppPairing",
+        "WhatsAppInstallation"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "managed-whatsapp-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "whatsapp",
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
+      }
+    },
+    {
+      "binding": "WHATSAPP_API",
+      "service": "managed-whatsapp-api-test"
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "managed-whatsapp-gateway-test",
+      "entrypoint": "AdapterGatewayEntrypoint"
+    },
+    {
+      "binding": "LIFECYCLE",
+      "service": "gsv-managed-whatsapp-test",
+      "entrypoint": "WhatsAppLifecycleEntrypoint",
+      "props": {
+        "authority": "installation-deletion"
+      }
+    }
+  ]
+}

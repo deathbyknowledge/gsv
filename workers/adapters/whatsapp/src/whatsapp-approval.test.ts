@@ -78,14 +78,16 @@ describe("WhatsApp approval buttons", () => {
   it("submits a reply button through the linked-human proc.hil path and answers with the decision", async () => {
     const store = storage();
     const controls = (await prepareWhatsAppApproval(store, CONTEXT, REQUEST))!;
-    const linkedPeerFrame = vi.fn(async (_installation, _context, frame: GatewayFrame) => ({
-      type: "res" as const,
+    const linkedPeerFrame = vi.fn<AdapterGatewayBinding["linkedPeerFrame"]>(async (_installation, _context, frame) => ({
+      type: "res",
       id: frame.id,
-      ok: true as const,
+      ok: true,
       data: { ok: true, pid: "proc-1", requestId: "request-1", decision: "approve", resumed: true, remembered: true },
     }));
-    // SAFETY: the fake implements the single linked-peer call this test exercises.
-    const gateway = { linkedPeerFrame, serviceFrame: vi.fn() } as unknown as AdapterGatewayBinding;
+    const gateway: AdapterGatewayBinding = {
+      linkedPeerFrame,
+      serviceFrame: async (): Promise<GatewayFrame | null> => null,
+    };
     const status = await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
       interactionId: "wamid.reply",
       actorId: "34611111189",
