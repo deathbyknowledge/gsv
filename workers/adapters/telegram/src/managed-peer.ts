@@ -44,7 +44,16 @@ import {
   handleTelegramApprovalCallback,
   prepareTelegramApproval,
 } from "./telegram-approval";
-import type { TelegramTextMessageOptions } from "./telegram-formatting";
+import {
+  markdownToTelegramHtml,
+  TELEGRAM_TEXT_LIMIT,
+  type TelegramTextMessageOptions,
+} from "./telegram-formatting";
+import {
+  fitMarkdownToLimit,
+  splitMarkdownParagraphs,
+  splitTextAtLimit,
+} from "../../shared/src/paragraph-messages";
 import type {
   ManagedTelegramPairingEnv,
   ManagedTelegramPairingRecord,
@@ -107,6 +116,8 @@ type ResponseContext =
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }> };
 type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
+/** One provider message of a delivery; resolves to the Telegram message id it produced. */
+type DeliveryPart = () => Promise<string | undefined>;
 
 const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
@@ -118,6 +129,12 @@ const INBOUND_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INBOUND_MAX_RECORDS = 4_096;
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CHARACTERS = 12;
+/**
+ * Telegram accepts about one message per second per chat and answers faster
+ * bursts with 429. The client does not read `retry_after`, so consecutive
+ * parts of one delivery are paced instead; the typing indicator covers the gap.
+ */
+const TELEGRAM_PART_PACE_MS = 1000;
 const UNSUPPORTED_TEXT =
   "GSV Telegram could not receive that message type. Please send text or a supported attachment.";
 const MEDIA_UNAVAILABLE_TEXT =
@@ -715,7 +732,6 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return { ok: false, error };
     };
 
-    let acceptedProviderDeliveries = 0;
     try {
       const current = await this.requireState();
       this.assertPeerDestination(current, message.surface, message.actorId);
@@ -723,18 +739,27 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       const token = this.botToken();
       const fetcher = this.telegramFetch(owner);
       const replyToMessageId = parseTelegramMessageId(message.replyToId);
-      let messageId: string | undefined;
+      const chatId = current.surfaceId;
+      const parts: DeliveryPart[] = [];
+      // The provider id reported for the delivery: the message that carries
+      // the approval buttons when there are any, otherwise the first message.
+      let anchor = 0;
       if (media.length === 0) {
-        const sent = await sendManagedTelegramText(
-          token,
-          current.surfaceId,
-          text,
-          replyToMessageId,
-          fetcher,
-          options,
-        );
-        acceptedProviderDeliveries = 1;
-        messageId = String(sent.message_id);
+        const chunks = telegramTextChunks(text);
+        for (const [index, chunk] of chunks.entries()) {
+          parts.push(async () => {
+            const sent = await sendManagedTelegramText(
+              token,
+              chatId,
+              chunk,
+              index === 0 ? replyToMessageId : undefined,
+              fetcher,
+              index === chunks.length - 1 ? options : {},
+            );
+            return String(sent.message_id);
+          });
+        }
+        if (options.replyMarkup) anchor = parts.length - 1;
       } else {
         const callApi = <T>(method: string, payload: TelegramApiPayload) =>
           callManagedTelegramApi<T>(token, method, payload, fetcher);
@@ -743,36 +768,64 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         for (const [index, delivery] of deliveries.entries()) {
           const caption = index === 0 ? text : "";
           const deliveryBytes = mediaBytes.slice(mediaOffset, mediaOffset + delivery.length);
-          const firstSent = delivery.length === 1
-            ? await sendTelegramMediaMessage(
-                callApi,
-                current.surfaceId,
-                delivery[0],
-                deliveryBytes[0],
-                caption,
-                replyToMessageId,
-              )
-            : (await sendTelegramMediaGroupMessage(
-                callApi,
-                current.surfaceId,
-                delivery,
-                deliveryBytes,
-                caption,
-                replyToMessageId,
-              ))[0];
-          acceptedProviderDeliveries += 1;
           mediaOffset += delivery.length;
-          if (!messageId && firstSent) messageId = String(firstSent.message_id);
+          parts.push(async () => {
+            const firstSent = delivery.length === 1
+              ? await sendTelegramMediaMessage(
+                  callApi,
+                  chatId,
+                  delivery[0],
+                  deliveryBytes[0],
+                  caption,
+                  replyToMessageId,
+                )
+              : (await sendTelegramMediaGroupMessage(
+                  callApi,
+                  chatId,
+                  delivery,
+                  deliveryBytes,
+                  caption,
+                  replyToMessageId,
+                ))[0];
+            return firstSent ? String(firstSent.message_id) : undefined;
+          });
         }
       }
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-      return { ok: true, messageId };
+
+      // Every accepted part is recorded before the next provider call, so a
+      // retry of this delivery resumes after the parts the person already has.
+      let anchorMessageId = claim.progress.messageId;
+      let sentInAttempt = 0;
+      for (let index = claim.progress.sent; index < parts.length; index += 1) {
+        if (sentInAttempt > 0) await this.pauseBetweenParts(chatId, fetcher);
+        const messageId = await parts[index]!();
+        sentInAttempt += 1;
+        if (index === anchor) anchorMessageId = messageId;
+        await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
+          sent: index + 1,
+          messageId: anchorMessageId,
+        });
+      }
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
+      return { ok: true, messageId: anchorMessageId };
     } catch (error) {
-      const kind = acceptedProviderDeliveries > 0
-        ? "ambiguous"
-        : error instanceof ManagedTelegramDeliveryError ? error.kind : "permanent";
-      return await fail(kind);
+      // A definite rejection resumes at the first unsent part on retry; an
+      // unknown provider outcome stays ambiguous and is never replayed.
+      return await fail(error instanceof ManagedTelegramDeliveryError ? error.kind : "permanent");
     }
+  }
+
+  /** Telegram allows about one message per second per chat; typing covers the pause. */
+  private async pauseBetweenParts(chatId: string, fetcher: ManagedTelegramFetch): Promise<void> {
+    try {
+      await setManagedTelegramTyping(this.botToken(), chatId, fetcher);
+    } catch {
+      console.warn(JSON.stringify({
+        component: "managed_telegram",
+        event: "typing_delivery_failed",
+      }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, TELEGRAM_PART_PACE_MS));
   }
 
   private assertDeliveryContext(state: ManagedTelegramPeerState, context: ResponseContext): void {
@@ -826,6 +879,18 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return this.env.TELEGRAM_API ? this.env.TELEGRAM_API.fetch(input, request) : fetch(input, request);
     };
   }
+}
+
+/**
+ * Ship's Markdown as the ordered Telegram messages it becomes: one per
+ * paragraph group, each within the text limit as Markdown and as HTML so the
+ * rich, HTML and plain fallbacks all fit.
+ */
+function telegramTextChunks(markdown: string): string[] {
+  const chunks = splitMarkdownParagraphs(markdown).flatMap((paragraphs) =>
+    fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
+      .map((fitted) => fitted.markdown));
+  return chunks.length > 0 ? chunks : splitTextAtLimit(markdown, TELEGRAM_TEXT_LIMIT);
 }
 
 function telegramFingerprintMessage(
