@@ -5,10 +5,12 @@ const ICON = { href: "https://gsv.test/favicon.svg", type: "image/svg+xml" };
 const DOT = "data:image/png;base64,dot";
 
 type Badge = { promise: Promise<string>; resolve: (href: string) => void; reject: (error: Error) => void };
+/** The slice of `document` the tab attention reads and writes; the test flips visibility by hand. */
+type FakeDocument = { title: string; visibilityState: DocumentVisibilityState; hasFocus: () => boolean };
 
 function page() {
   let focused = false;
-  const document = { title: "GSV", visibilityState: "hidden" as DocumentVisibilityState, hasFocus: () => focused };
+  const document: FakeDocument = { title: "GSV", visibilityState: "hidden", hasFocus: () => focused };
   const icon = { ...ICON };
   const badges: Badge[] = [];
   const attention = createTabAttention({
