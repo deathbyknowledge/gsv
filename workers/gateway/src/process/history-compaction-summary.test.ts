@@ -42,6 +42,9 @@ function historyContents(process: any): string[] {
   return process.store.messages.getMessages().map((message: { content: string }) => message.content);
 }
 
+/** How many times compaction asked the provider for a summary. */
+type ProviderCalls = { calls: number };
+
 /**
  * Feeds provider results into compaction through the boundary production uses:
  * the Process generation service over the inference executor binding, or the
@@ -52,8 +55,8 @@ function installCompactionProvider(
   pid: string,
   executor: Executor,
   respond: (attempt: number) => AiAssistantMessage,
-): { calls: number } {
-  const state = { calls: 0 };
+): ProviderCalls {
+  const state: ProviderCalls = { calls: 0 };
   const next = () => {
     state.calls += 1;
     return respond(state.calls);
