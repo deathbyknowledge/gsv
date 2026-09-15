@@ -34,6 +34,8 @@ export type PromptLineProps = {
 
 export type PromptLineHandle = {
   disabled: boolean;
+  /** The place chip, so the picker it opens can tell a press on it from one outside. */
+  chip: HTMLButtonElement | null;
   setValue(value: string): void;
   focus(): void;
   blur(): void;
@@ -131,6 +133,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   };
   useImperativeHandle(ref, () => ({
     disabled: Boolean(disabled),
+    get chip() { return chipRef.current; },
     setValue(value) {
       if (!inputRef.current) return;
       inputRef.current.value = value;
