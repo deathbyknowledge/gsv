@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
+import { conversationMessageRow } from "../../../services/chat/domain/conversations";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
 import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
@@ -458,6 +459,13 @@ describe("noteSummary", () => {
 describe("momentsFromConversation", () => {
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
+  });
+  it("keeps a person's line breaks from the committed message through reload", () => {
+    const typed = "cancel printer\nremind me of the plan for gmail\n\npark 3";
+    const committed: ConversationMessage = { id: "m1", conversationId: "canonical-ship", sequence: 1,
+      author: { kind: "user", uid: 1000 }, text: typed, origin: { kind: "client", clientId: "web" }, createdAt: 1_000 };
+    expect(momentsFromConversation([conversationMessageRow(committed)], [], null))
+      .toEqual([expect.objectContaining({ role: "human", text: typed })]);
   });
   it("keeps the canonical reply's process when joining another transcript and fills only absent identities", () => {
     const moments = momentsFromConversation([

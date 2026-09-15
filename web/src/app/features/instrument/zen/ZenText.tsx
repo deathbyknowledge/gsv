@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import type { JSX } from "preact";
-import { escapeHtml, renderMarkdownHtml } from "../shared/markdown";
+import { renderMarkdownHtml, renderPlainTextHtml } from "../shared/markdown";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
 
 export function ZenText({ text, markdown, progress, tick, onClick }: {
@@ -15,7 +15,7 @@ export function ZenText({ text, markdown, progress, tick, onClick }: {
   const content = useRef<HTMLDivElement>(null);
   const reveal = useRef<GlyphReveal | null>(null);
   const streaming = progress !== null && progress < 0;
-  const html = useMemo(() => markdown ? renderMarkdownHtml(text) : escapeHtml(text), [markdown, text]);
+  const html = useMemo(() => markdown ? renderMarkdownHtml(text) : renderPlainTextHtml(text), [markdown, text]);
   useLayoutEffect(() => {
     const element = content.current;
     if (!element) return;
