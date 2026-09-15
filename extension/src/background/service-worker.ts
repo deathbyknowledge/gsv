@@ -40,14 +40,14 @@ let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
 }).catch((error) => {
-  console.warn("GSV browser target diagnostics unavailable", error);
+  console.warn("Your GSV: diagnostics unavailable", error);
 });
 let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 const runtimeStateReady = loadRuntimeState().then((state) => {
   connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
 }).catch((error) => {
-  console.warn("GSV browser target runtime state unavailable", error);
+  console.warn("Your GSV: runtime state unavailable", error);
 });
 
 const browserTarget = createBrowserTargetDriver(addActivity);
@@ -84,6 +84,12 @@ client.onStatus((status) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   void maybeConnect().catch(() => {});
+  // The toolbar icon opens the side panel, the extension's one surface. The onClicked fallback
+  // covers browsers without setPanelBehavior; it runs inside the user gesture, as open() requires.
+  void chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
+});
+chrome.action.onClicked.addListener((tab) => {
+  void openSidePanel(tab.windowId).catch((error) => console.warn("Could not open the panel", error));
 });
 
 chrome.runtime.onStartup.addListener(() => {

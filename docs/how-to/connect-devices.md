@@ -16,10 +16,14 @@ Once the daemon connects, the place appears as connected.
 
 ## Connect a browser
 
-Choose **Browser** in the same flow. Download and unzip the extension, enable
-developer mode at `chrome://extensions`, and load its folder. Paste the invitation
-into **Pair this browser** in the extension's options and click **Pair browser**.
-The first-day browser row opens this flow too.
+Choose **Browser** in the same flow. Download and unzip the extension, called
+**Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.
+Click its toolbar icon to open the panel, paste the invitation, and choose
+**Pair this browser**. The first-day browser row opens this flow too.
+
+While your GSV works in a tab, Chrome shows a banner at the top of that tab.
+That is Chrome's notice that an extension is driving the page; it goes when the
+work is done.
 
 ## Try it
 

@@ -1,0 +1,40 @@
+/* The extension wears the instrument's identity. Tokens mirror web/src/styles/gsv-tokens.css
+   (dark) and the .is-light block in web/src/app/features/instrument/instrument.css; change them
+   there first. The extension has no theme toggle: it lives inside Chrome's chrome and follows
+   the system. Martian Mono is the machine, Host Grotesk the person. */
+@font-face { font-family: "Martian Mono"; src: url("/fonts/MartianMono-Variable.woff2") format("woff2"); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Host Grotesk"; src: url("/fonts/HostGrotesk-Variable.woff2") format("woff2"); font-weight: 300 800; font-style: normal; font-display: swap; }
+
+:root {
+  --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
+  --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+
+  --void: #07061a; --panel: #0a0820; --panel-2: #0a0822; --node-bg: #0b0a1e; --header-bar: #13112e;
+  --border: #322e74; --border-raised: #4a449e; --rule-inner: #25224d; --rule-section: #3a3676; --dashed: #5a52a8;
+  --hover: #171441; --active: #201c4d; --selected: #221d56;
+  --text-hi: #f4f2ff; --text: #efeefe; --text-title: #e2dfff; --accent: #b3aeff; --accent-bright: #cbc7ff;
+  --link: #8fb6ff; --link-hover: #b8d2ff; --label: #b3aee2; --text-muted: #8c86c8; --text-dim: #837ebd;
+  --online: #5ef2a0; --error: #ff6f8c; --idle: #6661a0; --update: #ffd24d; --live: #8f8aff; --warn: #e0a64c;
+  --primary-hi: #6b62c4; --danger: #a8324a; --danger-hi: #c4445f;
+  --glyph: #8071dd; --faint: #4e496f; --principal: #8ec9a4; --target: #97aaff; --path: #bea4e8;
+  --glow: 0 0 5px rgba(140, 120, 235, .55), 0 0 14px rgba(110, 95, 209, .28);
+  --glow-focus: 0 0 9px rgba(150, 140, 255, .4);
+  --dot-glow: 0 0 6px currentColor;
+  --dur-fast: 120ms; --dur-move: 150ms;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --void: #f4f3fb; --panel: #ffffff; --panel-2: #f0eef8; --node-bg: #f7f6fc; --header-bar: #e9e6f5;
+    --border: #d8d4ec; --border-raised: #c4bee3; --rule-inner: #e6e3f2; --rule-section: #d1ccea; --dashed: #a7a3c8;
+    --hover: #edeaf8; --active: #e4e0f7; --selected: #e4e0f7;
+    --text-hi: #14112b; --text: #1b1836; --text-title: #221e44; --accent: #5a52a8; --accent-bright: #4a43a0;
+    --link: #2f5fc7; --link-hover: #1f4db0; --label: #4a4677; --text-muted: #5f5a8e; --text-dim: #6d6899;
+    --online: #1e8a55; --error: #c0364f; --idle: #9d98c6; --update: #a46b00; --live: #5a52a8; --warn: #a46b00;
+    --primary-hi: #4a43a0; --danger: #a8324a; --danger-hi: #c0364f;
+    --glyph: #6b5fd6; --faint: #a7a3c8; --principal: #2e7d4f; --target: #3d4fbf; --path: #7a56b5;
+    --glow: none; --glow-focus: none; --dot-glow: none;
+    color-scheme: light;
+  }
+}
