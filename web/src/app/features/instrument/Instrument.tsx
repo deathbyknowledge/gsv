@@ -13,6 +13,7 @@ import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
 import "./instrument.css";
 
@@ -80,6 +81,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const helpRef = useRef<HTMLElement>(null);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
     setScale((current) => {
       const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
@@ -144,6 +147,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     window.addEventListener("keydown", dismissHelp, true);
     return () => window.removeEventListener("keydown", dismissHelp, true);
   }, [help]);
+  /* a press anywhere else closes the keys; the panel and its button do not */
+  useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -196,9 +201,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} />
+        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       {help ? (
-        <aside id="instrument-help" class="instrument-help" aria-label="Keys">
+        <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
           <h4>Views & appearance</h4>
           <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>

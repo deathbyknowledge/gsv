@@ -24,6 +24,7 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
+import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { FirstDay } from "../firstday/FirstDay";
 import { useFirstDay } from "../firstday/useFirstDay";
 import { ActivityWorking } from "./ActivityWorking";
@@ -364,6 +365,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     setPickerQuery("");
     setPickerIndex(0);
   }, []);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerOpen = pickerQuery !== null && pickerPlaces.length > 0;
+  /* a press anywhere else closes the picker; the picker itself and the chip that opens it do not */
+  useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
     const id = where ?? CLOUD_PLACE_ID;
     if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
@@ -947,8 +952,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           {note ? <span class="is-err" role="alert">{note}</span> : null}
         </div>}
         <div>
-          {pickerQuery !== null && pickerPlaces.length > 0 ? (
-            <div class="zen-picker" role="listbox" aria-label="Places">
+          {pickerOpen ? (
+            <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
               {pickerPlaces.map((place, index) => (
                 <button
                   type="button"
