@@ -235,7 +235,6 @@ function main(current: ExtensionUiState): string {
   } else if (connected) {
     title = "Ready.";
     detail = "Your GSV can use this browser, signed in as you. Ask it from anywhere.";
-    actions.push(textButton("pause", "pause"));
   } else if (connecting) {
     title = "Connecting to your GSV…";
     detail = "This usually takes a moment.";
@@ -322,7 +321,7 @@ function row(entry: ActivityEntry): string {
       <span class="dot ${mood}"></span>
       <span class="what" title="${escapeHtml(entry.label)}">${escapeHtml(what(entry))}</span>
       <span class="when" title="${escapeHtml(entry.at)}">${escapeHtml(when)}</span>
-      ${entry.detail && entry.detail !== "(no path)" ? `<span class="where" title="${escapeHtml(entry.detail)}">${escapeHtml(where(entry.detail))}</span>` : ""}
+      ${placeLike(entry.detail) ? `<span class="where" title="${escapeHtml(entry.detail)}">${escapeHtml(where(entry.detail))}</span>` : ""}
     </div>`;
 }
 
@@ -444,6 +443,12 @@ function what(entry: ActivityEntry): string {
   if (label.includes("tab")) return "Used a tab";
   return entry.label.charAt(0).toUpperCase() + entry.label.slice(1);
 }
+/** A detail worth a second line: a URL, a path, or a short command. Error prose is not. */
+function placeLike(detail: string): boolean {
+  if (!detail || detail === "(no path)") return false;
+  return /^https?:\/\//.test(detail) || detail.startsWith("/") || detail.startsWith("~") || (detail.length <= 40 && !/[.!]\s/.test(detail));
+}
+
 /** Where a row happened, short: the site and the page for a URL, the file for a path. The full
  *  detail stays in the row's title, so hovering shows it. */
 function where(detail: string): string {
