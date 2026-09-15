@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "GSV Browser Target",
-  "description": "Expose this browser profile as a Unix-looking GSV target.",
+  "name": "Your GSV",
+  "description": "Lets your GSV use this browser, signed in as you.",
   "version": "0.6.0",
   "minimum_chrome_version": "116",
   "icons": {
@@ -45,7 +45,7 @@
   },
   "options_page": "options.html",
   "side_panel": {
-    "default_path": "sidepanel.html"
+    "default_path": "panel.html"
   },
   "action": {
     "default_icon": {
@@ -55,7 +55,6 @@
       "48": "icons/gsv-48.png",
       "64": "icons/gsv-64.png"
     },
-    "default_title": "GSV Browser Target",
-    "default_popup": "popup.html"
+    "default_title": "Your GSV"
   }
 }

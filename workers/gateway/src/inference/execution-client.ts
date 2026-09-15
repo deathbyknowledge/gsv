@@ -15,7 +15,7 @@ import { raceWithAbort } from "../shared/abort";
 import { createGenerationAbort, TimeoutError } from "./timeout";
 import { RoutedInferenceTransport } from "./transport";
 import { applyManagedInferenceEvent } from "./stream-projection";
-import { describeGeneratedTextFailure, extractGeneratedText } from "./generated-text";
+import { extractCompletedText } from "./generated-text";
 import { errorMessageFromUnknown } from "./errors";
 
 type GenerateRequest = {
@@ -38,11 +38,9 @@ export function createGenerationService(env: GatewayEnv) {
   return {
     generate,
     stream: (request: GenerateRequest) => start(request, true),
+    /** One completed final text for persisted results such as compaction summaries. */
     async generateText(request: GenerateRequest): Promise<string> {
-      const response = await generate(request);
-      const text = extractGeneratedText(response);
-      if (text) return text;
-      throw new Error(describeGeneratedTextFailure(request, response));
+      return extractCompletedText(await generate(request));
     },
   };
 }

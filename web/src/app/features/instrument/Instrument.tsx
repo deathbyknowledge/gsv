@@ -14,6 +14,7 @@ import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
+import { useTabAttention } from "./shared/useTabAttention";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -76,6 +77,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
+  /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
+  useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
   const helpRef = useRef<HTMLElement>(null);

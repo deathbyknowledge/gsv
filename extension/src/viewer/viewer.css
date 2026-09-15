@@ -1,7 +1,11 @@
+@import "../ui/tokens.css";
+
+/* The file viewer your GSV opens for images, audio, video, and text it saved in this browser.
+   Same identity as the panel: void ground, the prose face for words, the machine face for text files. */
 :root {
-  color: #181a1b;
-  background: #101112;
-  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--void);
+  font: 14px/1.45 var(--gsv-font-prose);
 }
 
 * {
@@ -29,12 +33,12 @@ body {
 .stage {
   display: grid;
   min-height: 0;
-  background: #f4f1ec;
+  background: var(--panel);
 }
 
 .stage--image,
 .stage--video {
-  background: #101112;
+  background: var(--void);
 }
 
 .stage--frame {
@@ -58,7 +62,7 @@ body {
 .media--video {
   width: 100%;
   height: 100%;
-  background: #101112;
+  background: var(--void);
   object-fit: contain;
 }
 
@@ -75,9 +79,9 @@ body {
   margin: 0;
   padding: 18px;
   overflow: auto;
-  color: #121516;
-  background: #fbfaf7;
-  font: 13px/1.5 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--label);
+  background: var(--panel);
+  font: 12px/1.6 var(--gsv-font-mono);
   white-space: pre-wrap;
 }
 
@@ -88,7 +92,7 @@ body {
   justify-self: center;
   width: min(560px, calc(100vw - 48px));
   margin: 0;
-  color: #343737;
+  color: var(--label);
 }
 
 .fallback,
@@ -96,13 +100,13 @@ body {
   display: grid;
   gap: 8px;
   padding: 18px;
-  border: 1px solid #c9c0b4;
-  background: #fbfaf7;
+  border: 1px solid var(--border);
+  background: var(--panel);
 }
 
 .fallback a {
-  color: #0b63a3;
-  font-weight: 650;
+  color: var(--link);
+  font-weight: 600;
 }
 
 .fallback p,
@@ -111,8 +115,9 @@ body {
 }
 
 .error span {
-  color: #8a3a2b;
-  font: 11px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--error);
+  font: 10.5px/1.2 var(--gsv-font-mono);
+  letter-spacing: .14em;
   text-transform: uppercase;
 }
 

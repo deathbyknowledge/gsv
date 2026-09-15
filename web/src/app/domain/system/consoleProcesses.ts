@@ -29,3 +29,8 @@ export function findConsoleProcess(
 ): ConsoleProcess | null {
   return processes.find((process) => process.pid === pid) ?? null;
 }
+
+/** The personal process, the Kernel-marked handler of the Ship conversation; null before one exists. */
+export function findConsolePersonalProcess(processes: readonly ConsoleProcess[]): ConsoleProcess | null {
+  return processes.find((process) => process.personal) ?? null;
+}

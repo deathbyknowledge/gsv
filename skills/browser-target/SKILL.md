@@ -274,8 +274,10 @@ tabs open /home/browser/recordings/demo.webm
 Audio recordings are WebM/Opus when supported. Use `--video` or
 `--mode video` for tab video with audio; video recordings are WebM when
 supported and can grow quickly, so set `--max-bytes` explicitly for longer
-captures. Tab capture may require asking the user to focus the tab and click
-Grant Recording in the GSV extension UI first; each grant can start one
+captures. Chrome only lets the extension record a tab the person has invoked
+it on, so a first `media record start` on a tab may be refused. When it is,
+ask the person to focus that tab, open Your GSV from the toolbar, and choose
+Allow recording, then run the command again; each allowance starts one
 recording. By default, captured tab audio remains audible; use `--monitor off`
 only when the task calls for disabling playback. To move a finished recording
 to another target, copy it from the native GSV shell after recording stops.

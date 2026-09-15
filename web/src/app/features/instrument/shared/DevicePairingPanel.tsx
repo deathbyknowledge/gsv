@@ -69,7 +69,7 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
       <p class="note" role="status">Invitation for {pairing.label} · <code>{pairing.targetId}</code>. Expires at {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>
       <PlatformChoice platform={draft.platform} onChange={(value) => owner.setPlatform(value)} />
       {draft.platform === "browser" ? <>
-        <p class="note">Download and unzip the extension. In <code>chrome://extensions</code>, enable developer mode and load its folder. Paste this invitation in the extension’s connection settings.</p>
+        <p class="note">Download and unzip the extension. In <code>chrome://extensions</code>, enable developer mode and load its folder. Click its toolbar icon and paste this invitation into the panel.</p>
         <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
         <SetupCommand text={code} label="copy invitation" />
       </> : <>

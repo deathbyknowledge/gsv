@@ -89,3 +89,27 @@ describe("gateway inference execution boundary", () => {
     expect(target.abort).toHaveBeenCalledOnce();
   });
 });
+
+describe("gateway completed text generation", () => {
+  const planning = { type: "thinking" as const, thinking: "We need to summarize the segment. Let's extract the important facts first." };
+  const summary = { type: "text" as const, text: "The user asked for the deployment checklist and the assistant listed three steps." };
+
+  it("keeps the final text and drops the reasoning that preceded it", async () => {
+    const { target, service, request } = fixture();
+    target.generate.mockResolvedValue({ ...message, content: [planning, summary] });
+    expect(await service.generateText(request)).toBe(summary.text);
+  });
+
+  const incomplete: Array<[string, Partial<AiAssistantMessage>, string]> = [
+    ["reasoning only", { content: [planning] }, "LLM returned reasoning but no final response"],
+    ["empty content", { content: [] }, "LLM returned empty response"],
+    ["truncated output", { content: [planning, summary], stopReason: "length" }, "LLM output was truncated before the final response completed"],
+    ["a provider error", { content: [], stopReason: "error", errorMessage: "upstream connect error" }, "upstream connect error"],
+    ["an aborted generation", { content: [summary], stopReason: "aborted", errorMessage: "generation cancelled" }, "generation cancelled"],
+  ];
+  it.each(incomplete)("rejects %s instead of returning a partial result", async (_label, overrides, failure) => {
+    const { target, service, request } = fixture();
+    target.generate.mockResolvedValue({ ...message, ...overrides });
+    await expect(service.generateText(request)).rejects.toThrow(failure);
+  });
+});

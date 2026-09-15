@@ -67,6 +67,9 @@ omission and oversized payloads. Person-only events are excluded from summary
 input as well. Prefix selection keeps storage coordinates while estimating only
 the corresponding provider messages; calls and their results remain together.
 The replacement is a `history.compacted` event with summary and segment identity.
+Compaction installs only a completed final-text summary. A reasoning-only,
+empty, truncated, aborted or failed generation fails the compaction through
+the ordinary retry and fallback path and leaves the history unchanged.
 
 Web, Desktop, CLI, and the native agent shell switch on record kind. They use
 explicit call routing, result outcomes, and event severity instead of inferring
