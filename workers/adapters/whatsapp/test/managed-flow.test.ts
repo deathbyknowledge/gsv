@@ -141,9 +141,16 @@ type ManagedPeerStub = {
   ): Promise<{ accepted: boolean }>;
 };
 
+type RejectedRecord = {
+  kind: string;
+  status: number;
+  body: { to?: string; text?: { body: string }; context?: { message_id: string } };
+};
 type MessageContent =
   | { type: "text"; text: { body: string } }
   | { type: "audio"; audio: { id: string; mime_type: string; voice: boolean } }
+  | { type: "image"; image: { id: string; mime_type: string } }
+  | { type: "reaction"; reaction: { message_id: string; emoji: string } }
   | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } }
   | { type: "button"; context: { from: string; id: string }; button: { payload: string; text: string } };
 
@@ -202,6 +209,26 @@ async function templateMessages(): Promise<GraphRecord[]> {
 
 function templateParameter(record: GraphRecord | undefined): string | undefined {
   return record?.body.template?.components.find((component) => component.type === "body")?.parameters[0]?.text;
+}
+
+/** Sends the fake Graph API refused on purpose, so an attempt can be told from a delivery. */
+async function rejectedSends(): Promise<RejectedRecord[]> {
+  // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+  const binding = env.WHATSAPP_API as Fetcher;
+  return await (await binding.fetch("https://graph.test/rejected")).json();
+}
+
+/** Makes the fake Graph API answer 429 to texts carrying `marker`; an empty marker lifts it. */
+async function throttle(marker: string): Promise<void> {
+  // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+  const binding = env.WHATSAPP_API as Fetcher;
+  await binding.fetch("https://graph.test/throttle", { method: "POST", body: marker });
+}
+
+async function heldKeys(stub: DurableObjectStub<ManagedWhatsAppPeer>): Promise<string[]> {
+  return await runInDurableObject(stub, async (_instance, context) => (
+    [...(await context.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).keys()]
+  ));
 }
 
 async function gatewayCalls(): Promise<GatewayCall[]> {
@@ -406,6 +433,24 @@ describe("managed WhatsApp clean-instance flow", () => {
         bodyBytes: [1, 2, 3, 4],
       }));
     });
+
+    // Media Meta no longer serves, whether the lookup or the download says so,
+    // is answered with the unavailable notice and completes, so the person's
+    // later messages are not stuck behind it.
+    expect((await SELF.fetch(await notification("wamid.in.5b", {
+      type: "audio",
+      audio: { id: "gone", mime_type: "audio/ogg", voice: true },
+    }))).status).toBe(200);
+    expect((await SELF.fetch(await notification("wamid.in.5c", {
+      type: "image",
+      image: { id: "vanished", mime_type: "image/jpeg" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      const unavailable = (await sentMessages())
+        .filter((record) => record.body.text?.body.includes("could not receive that attachment"));
+      expect(unavailable.map((record) => record.body.context?.message_id)).toEqual(["wamid.in.5b", "wamid.in.5c"]);
+    });
+    expect((await gatewayCalls()).some((call) => call.args?.message?.media?.some((media) => media.type === "image"))).toBe(false);
 
     expect((await SELF.fetch(await text("wamid.in.6", "__gateway_unavailable__"))).status).toBe(200);
     await vi.waitFor(async () => {
@@ -660,17 +705,30 @@ describe("managed WhatsApp clean-instance flow", () => {
     const templatesBefore = (await templateMessages()).length;
     const interactiveBefore = (await sentMessages()).filter((record) => record.body.type === "interactive").length;
 
-    // A short reply fits the template's parameter and is delivered by it alone.
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-closed-short",
+    // Two short replies racing after the window closed both fit the template's
+    // parameter, but the pending template is claimed durably before Meta is
+    // called: one delivery sends it and the other waits behind it. Both carry
+    // the marker that makes the fake Graph API fail their free-form release
+    // with a server error, so the waiting one later meets an unknown outcome.
+    const racing = ["first late note (graph fails ambiguously)", "second late note (graph fails ambiguously)"];
+    const raceResults = await Promise.all(racing.map((raceText, index) => peer.sendMessage(route.installationId, {
+      deliveryId: `outbound-closed-race-${index}`,
       surface,
       actorId: ACTOR,
       routeGeneration: route.generation,
-      text: "late follow-up",
-    })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
+      text: raceText,
+    })));
+    expect(raceResults.every((result) => result.ok)).toBe(true);
     expect(await templateMessages()).toHaveLength(templatesBefore + 1);
     const template = (await templateMessages()).at(-1)!;
-    expect(templateParameter(template)).toBe("late follow-up");
+    const winner = racing.findIndex((raceText) => templateParameter(template) === raceText);
+    expect(winner).toBeGreaterThanOrEqual(0);
+    const heldRaceIndex = 1 - winner;
+    expect(raceResults[winner]).toMatchObject({ ok: true, messageId: template.result.id });
+    expect(raceResults[heldRaceIndex]).toEqual({ ok: true });
+    expect(await heldKeys(stub)).toEqual([
+      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${heldRaceIndex}`)}`,
+    ]);
 
     // A longer reply waits behind the pending template instead of sending another.
     const sentBeforeHolding = (await sentMessages()).length;
@@ -747,6 +805,15 @@ describe("managed WhatsApp clean-instance flow", () => {
       kind: "read",
       body: expect.objectContaining({ status: "read", message_id: "wamid.in.10" }),
     }));
+    // The waiting racer's release met a server failure: its outcome is unknown,
+    // so its record is kept rather than resent or dropped, while the messages
+    // held after it still went out.
+    const ambiguousReleases = async (): Promise<RejectedRecord[]> => (await rejectedSends())
+      .filter((record) => record.status === 500 && record.body.text?.body === racing[heldRaceIndex]);
+    expect(await ambiguousReleases()).toHaveLength(1);
+    expect(await heldKeys(stub)).toEqual([
+      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${heldRaceIndex}`)}`,
+    ]);
 
     // The released prompt resolves through proc.hil like any other.
     const approveOnce = released[2]!.body.interactive!.action.buttons[0]!.reply.id;
@@ -763,7 +830,18 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
     });
 
-    // With the window open again, replies are free-form and nothing is held.
+    // A later message from the person tries the release again: the ledger
+    // remembers the unknown outcome, so nothing is resent and the record stays.
+    expect((await SELF.fetch(await text("wamid.in.12", "still here"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ context: { message_id: "wamid.in.12" } }),
+      }));
+    });
+    expect(await ambiguousReleases()).toHaveLength(1);
+    expect(await heldKeys(stub)).toHaveLength(1);
+
+    // With the window open again, replies are free-form and nothing new is held.
     await expect(peer.sendMessage(route.installationId, {
       deliveryId: "outbound-inside-window",
       surface,
@@ -775,6 +853,80 @@ describe("managed WhatsApp clean-instance flow", () => {
       body: expect.objectContaining({ type: "text", text: { preview_url: false, body: "welcome back" } }),
     }));
     expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+  });
+
+  it("drops a reply whose route changed before it could be delivered", async () => {
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
+    const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
+    const previous = (await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!
+    ))).activeRoute!;
+
+    // The reply a linked person's message earns is bound to the route that
+    // admitted it. Throttle it so it is still pending when the person relinks.
+    await throttle("could not receive that message type");
+    expect((await SELF.fetch(await notification("wamid.in.13", {
+      type: "reaction",
+      reaction: { message_id: "wamid.in.12", emoji: "👍" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await rejectedSends()).some((record) => record.status === 429 && record.body.context?.message_id === "wamid.in.13")).toBe(true);
+    });
+
+    // A pair command is attempted ahead of the queue, so the pending reply does not hold it up.
+    expect((await SELF.fetch(await text("wamid.in.14", "/link"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.text?.body).toContain("Pairing code:");
+    });
+    const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
+    expect(code).toBeTruthy();
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
+    const pairing = typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code!.replaceAll("-", "")}`)));
+    const operation = {
+      code: code!.replaceAll("-", ""),
+      installationId: previous.installationId,
+      localUid: 1000,
+      operationId: "operation_relink_2",
+      canonicalOrigin: "https://test.gsv.space",
+    };
+    const prepared = await pairing.prepare(operation);
+    await pairing.activate({ code: operation.code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+    await pairing.finalize({ code: operation.code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+    expect(prepared.route.generation).not.toBe(previous.generation);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "unlinkAdapterIdentity",
+        input: expect.objectContaining({ expectedGeneration: previous.generation }),
+      }));
+    });
+
+    // Once the throttle lifts, the reply bound to the old route is dropped for
+    // good rather than delivered on the new one, and it no longer stands in
+    // front of later inbound messages.
+    await throttle("");
+    await runInDurableObject(stub, async (instance) => { await instance.alarm(); });
+    expect((await sentMessages()).some((record) => record.body.context?.message_id === "wamid.in.13")).toBe(false);
+    await runInDurableObject(stub, async (_instance, context) => {
+      const records = [...(await context.storage.list<{ state: string }>({ prefix: "managed_whatsapp_peer:v1:inbound:" })).values()];
+      expect(records.filter((record) => record.state !== "completed")).toEqual([]);
+    });
+
+    // An unsupported message on the new route is answered as usual.
+    expect((await SELF.fetch(await notification("wamid.in.15", {
+      type: "reaction",
+      reaction: { message_id: "wamid.in.14", emoji: "👍" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({
+          text: expect.objectContaining({ body: expect.stringContaining("could not receive that message type") }),
+          context: { message_id: "wamid.in.15" },
+        }),
+      }));
+    });
+    expect((await sentMessages()).some((record) => record.body.context?.message_id === "wamid.in.13")).toBe(false);
   });
 });
 

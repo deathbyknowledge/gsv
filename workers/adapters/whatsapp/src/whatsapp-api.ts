@@ -166,17 +166,32 @@ export async function downloadWhatsAppMedia(
   try {
     response = await fetcher(url, { headers: { Authorization: `Bearer ${token}` } });
   } catch {
-    throw new Error("WhatsApp media download transport failed");
+    throw new ManagedWhatsAppDeliveryError("WhatsApp media download transport failed", "retryable");
   }
+  // Media Meta no longer serves (deleted, expired, unavailable) answers 4xx
+  // and will not reappear on retry; server and transport trouble is retried.
   if (!response.ok) {
     await cancelResponseBody(response, "WhatsApp media download failed");
-    throw new Error(`WhatsApp media download failed (HTTP ${response.status})`);
+    throw new ManagedWhatsAppDeliveryError(
+      `WhatsApp media download failed (HTTP ${response.status})`,
+      classifyWhatsAppFailure(response.status, undefined, true),
+      response.status,
+    );
   }
-  return await responseBodyToBinaryBody(response, {
-    maxBytes,
-    expectedBytes: expectedSize,
-    label: "WhatsApp media",
-  });
+  try {
+    return await responseBodyToBinaryBody(response, {
+      maxBytes,
+      expectedBytes: expectedSize,
+      label: "WhatsApp media",
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "WhatsApp media body could not be read";
+    // A body past the transfer limit stays past it; an interrupted read may succeed next time.
+    throw new ManagedWhatsAppDeliveryError(
+      detail,
+      detail.includes("exceeds transfer limit") ? "permanent" : "retryable",
+    );
+  }
 }
 
 /** Uploads bytes to the business number's media store and returns the media id. */

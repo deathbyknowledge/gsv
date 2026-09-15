@@ -108,6 +108,22 @@ describe("WhatsApp Graph API client", () => {
       .rejects.toThrow("HTTP 404");
   });
 
+  it("classifies media that Meta no longer serves as permanent and server trouble as retryable", async () => {
+    const url = "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1001";
+    await expect(downloadWhatsAppMedia(TOKEN, url, 4, 1024, async () => new Response("gone", { status: 404 })))
+      .rejects.toMatchObject({ kind: "permanent", graphStatus: 404 });
+    await expect(downloadWhatsAppMedia(TOKEN, url, 4, 1024, async () => new Response("later", { status: 503 })))
+      .rejects.toMatchObject({ kind: "retryable", graphStatus: 503 });
+    await expect(downloadWhatsAppMedia(TOKEN, url, 4, 1024, async () => { throw new Error("socket"); }))
+      .rejects.toMatchObject({ kind: "retryable" });
+    await expect(downloadWhatsAppMedia(TOKEN, url, undefined, 2, async () => new Response(new Uint8Array(4), { headers: { "content-length": "4" } })))
+      .rejects.toMatchObject({ kind: "permanent", message: expect.stringContaining("exceeds transfer limit") });
+    await expect(lookupWhatsAppMedia(TOKEN, "gone", PHONE_NUMBER_ID, async () => graphError(400, 100, "Object with ID 'gone' does not exist")))
+      .rejects.toMatchObject({ kind: "permanent", graphCode: 100 });
+    await expect(lookupWhatsAppMedia(TOKEN, "later", PHONE_NUMBER_ID, async () => graphError(500, 2)))
+      .rejects.toMatchObject({ kind: "retryable" });
+  });
+
   it("uploads bytes as multipart form data and returns the media id", async () => {
     const fetcher = vi.fn<ManagedWhatsAppFetch>(async (_input, init) => {
       const form = init?.body;

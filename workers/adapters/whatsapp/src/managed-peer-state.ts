@@ -92,7 +92,17 @@ export function whatsAppTemplatePending(state: ManagedWhatsAppPeerState, now: nu
   return state.pendingTemplate !== undefined && state.pendingTemplate.expiresAt > now;
 }
 
-/** Records the template just sent so later messages wait behind it until the person replies. */
+/** Lifts a template claim whose send failed, so the next delivery may try again. */
+export function withoutPendingWhatsAppTemplate(state: ManagedWhatsAppPeerState): ManagedWhatsAppPeerState {
+  const { pendingTemplate: _, ...rest } = state;
+  return rest;
+}
+
+/**
+ * Claims or records a template: without a message id it marks a send in
+ * progress, with one it marks the template sent. Either way later messages
+ * wait behind it until the person replies.
+ */
 export function withPendingWhatsAppTemplate(
   state: ManagedWhatsAppPeerState,
   sentAt: number,

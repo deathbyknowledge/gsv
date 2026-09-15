@@ -75,6 +75,10 @@ export default defineConfig({
               // Records every Graph API call. Message sends, read receipts and
               // media uploads are listed with a kind so tests can tell them apart.
               const records = [];
+              // Sends refused on purpose (throttled or failing) are listed here
+              // so tests can tell an attempt from a delivery.
+              const rejected = [];
+              let throttledText = null;
               let nextId = 100;
               export default {
                 async fetch(request) {
@@ -82,12 +86,32 @@ export default defineConfig({
                   if (request.method === "GET" && url.pathname === "/records") {
                     return Response.json(records);
                   }
+                  if (request.method === "GET" && url.pathname === "/rejected") {
+                    return Response.json(rejected);
+                  }
+                  // Text messages containing the posted marker are answered 429
+                  // until the marker is cleared with an empty body.
+                  if (request.method === "POST" && url.pathname === "/throttle") {
+                    throttledText = (await request.text()) || null;
+                    return Response.json({ ok: true });
+                  }
                   if (url.hostname === "lookaside.test") {
+                    // Media whose id ends in "vanished" was served once and is gone now.
+                    if (url.pathname.endsWith("/vanished")) {
+                      return new Response("Not Found", { status: 404 });
+                    }
                     const bytes = new Uint8Array([1, 2, 3, 4]);
                     return new Response(bytes, { headers: { "content-length": String(bytes.byteLength) } });
                   }
                   const segments = url.pathname.split("/").filter(Boolean);
                   const version = segments[0];
+                  if (request.method === "GET" && segments.length === 2 && segments[1] === "gone") {
+                    // Meta's answer for a media id it no longer knows.
+                    return Response.json(
+                      { error: { message: "Unsupported get request. Object with ID 'gone' does not exist", type: "GraphMethodException", code: 100, error_subcode: 33 } },
+                      { status: 400 },
+                    );
+                  }
                   if (request.method === "GET" && segments.length === 2) {
                     return Response.json({
                       url: "https://lookaside.test/media/" + segments[1],
@@ -121,6 +145,15 @@ export default defineConfig({
                     }
                     if (body.text?.body === "graph rejects this") {
                       return Response.json({ error: { message: "rejected", type: "OAuthException", code: 131026 } }, { status: 400 });
+                    }
+                    if (throttledText && body.text?.body?.includes(throttledText)) {
+                      rejected.push({ kind: "message", status: 429, body });
+                      return Response.json({ error: { message: "Too many requests", type: "OAuthException", code: 130429 } }, { status: 429 });
+                    }
+                    // A server failure after the request left leaves the outcome unknown.
+                    if (body.text?.body?.includes("graph fails ambiguously")) {
+                      rejected.push({ kind: "message", status: 500, body });
+                      return Response.json({ error: { message: "unknown", type: "OAuthException", code: 2 } }, { status: 500 });
                     }
                     // Meta refuses a free-form message outside the customer service
                     // window with 131047; tests carry this marker to provoke it.
