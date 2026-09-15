@@ -12,6 +12,19 @@ type Notice = { kind: "info" | "error"; text: string };
 type ConfigField = keyof ExtensionConfig;
 
 const BANNER_NOTE_KEY = "gsvExtensionBannerNoteSeen";
+const THEME_KEY = "gsv-theme";
+
+// The theme follows the system until a person picks one; then the pick is remembered. Same rule as
+// the site. localStorage is per extension origin, so the panel and the options page agree.
+type Theme = "light" | "dark";
+const lightQuery = window.matchMedia("(prefers-color-scheme: light)");
+function storedTheme(): Theme | null {
+  try { const value = localStorage.getItem(THEME_KEY); return value === "light" || value === "dark" ? value : null; } catch { return null; }
+}
+function effectiveTheme(): Theme { return storedTheme() ?? (lightQuery.matches ? "light" : "dark"); }
+function applyTheme(): void { document.documentElement.dataset.theme = effectiveTheme(); }
+applyTheme();
+lightQuery.addEventListener("change", () => { if (!storedTheme()) { applyTheme(); render(); } });
 const isPage = document.documentElement.dataset.mode === "page";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -125,6 +138,12 @@ async function runAction(action: string): Promise<void> {
       case "toggle-token":
         tokenVisible = !tokenVisible;
         break;
+      case "toggle-theme": {
+        const next: Theme = effectiveTheme() === "light" ? "dark" : "light";
+        try { localStorage.setItem(THEME_KEY, next); } catch { /* a blocked store: the choice lasts for this page */ }
+        document.documentElement.dataset.theme = next;
+        break;
+      }
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -374,7 +393,7 @@ function advanced(current: ExtensionUiState): string {
 function footer(current: ExtensionUiState, paired: boolean): string {
   return `
     <footer class="foot">
-      <span>your gsv</span>
+      ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
       <span class="host" title="${escapeHtml(current.config.gatewayUrl)}">${escapeHtml(paired ? current.gatewayHost : "not paired yet")}</span>
     </footer>`;
 }

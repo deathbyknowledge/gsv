@@ -53,12 +53,8 @@ a { color: var(--accent); text-decoration: none; }
   transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
 }
 .ibtn:hover { border-color: var(--accent); background: var(--hover); text-decoration: none; }
-.ibtn.is-primary { background: #5a52a8; border-color: var(--primary-hi); color: #fff; box-shadow: 0 0 18px rgba(120, 110, 230, .4); }
-.ibtn.is-primary:hover { background: var(--primary-hi); box-shadow: 0 0 28px rgba(120, 110, 230, .7); }
-@media (prefers-color-scheme: light) {
-  .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
-  .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
-}
+.ibtn.is-primary { background: var(--primary-bg); border-color: var(--primary-border); color: #fff; box-shadow: var(--primary-glow); }
+.ibtn.is-primary:hover { background: var(--primary-hover-bg); box-shadow: var(--primary-hover-glow); }
 .tbtn { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); padding: 2px 0; }
 .tbtn:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .tbtn.is-danger { color: var(--error); }
@@ -76,8 +72,7 @@ a { color: var(--accent); text-decoration: none; }
 .pair textarea { min-height: 72px; }
 .pair textarea::placeholder, .field input::placeholder { color: var(--faint); letter-spacing: .08em; }
 .pair textarea:hover, .field input:hover { border-color: var(--primary-hi); }
-.pair textarea:focus, .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(150, 140, 255, .22); text-shadow: var(--glow-focus); }
-@media (prefers-color-scheme: light) { .pair textarea:focus, .field input:focus { box-shadow: 0 0 0 1px var(--accent); } }
+.pair textarea:focus, .field input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); text-shadow: var(--glow-focus); }
 
 /* ── notes: the first-run banner explanation, errors ── */
 .note { border-left: 2px solid var(--accent); padding: 2px 0 2px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -122,5 +117,6 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ── footer line ── */
 .foot { display: flex; justify-content: space-between; gap: 12px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding-top: 10px; border-top: 1px solid var(--rule-inner); }
+.foot .tbtn { font-size: 10.5px; }
 .foot .host { color: var(--text-dim); text-transform: none; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loading { font-family: var(--gsv-font-prose); color: var(--text-dim); padding: 24px 0; }
