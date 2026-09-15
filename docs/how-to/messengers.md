@@ -6,13 +6,11 @@ GSV adapters are extensible. This page documents the messenger implementations
 bundled with the current release; it is not a complete list of transports an
 adapter can implement.
 
-Your deployment operator enables the Telegram, Slack, and Discord apps offered
-in **Messengers**. You link your human identity to a space by inspecting and
-confirming a short-lived code while signed in. You do not need to create a bot
-or paste its token into the space. If a code expires, message the app again.
-
-The previous WhatsApp linked-device adapter is no longer bundled. There is no
-WhatsApp connection or QR setup flow in this deployment model.
+Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
+apps offered in **Messengers**. You link your human identity to a space by
+inspecting and confirming a short-lived code while signed in. You do not need
+to create a bot or paste its token into the space. If a code expires, message
+the app again.
 
 ## Telegram
 
@@ -95,6 +93,39 @@ Installing the bot does not link everyone in a server. Each person pairs their
 own identity, and a server route is separate from a direct-message route. Two
 people in the same server can use different spaces. Replies remain bound to the
 confirmed author and observed destination.
+
+## WhatsApp
+
+GSV uses one operator-owned WhatsApp Business number on the WhatsApp Business
+Platform. You message that number from your own WhatsApp account.
+
+1. In GSV, open **Settings → Messengers → WhatsApp**. It shows the GSV number
+   and a link that opens WhatsApp on it.
+2. Send the number any message. It replies with a short-lived pairing code. If
+   your number is already connected to another GSV, send `/link` to get a new
+   code.
+3. Enter the code back in GSV. GSV shows the WhatsApp profile name and the
+   masked number that requested it.
+4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
+   space or user; the signed-in GSV session supplies both.
+5. Send another message. It reaches the same Ship conversation you use in GSV.
+
+You can send text, photos, documents, voice notes, videos, and locations. GSV
+replies with text and attachments, and approval prompts arrive with reply
+buttons; the decision comes back as a reply quoting the prompt.
+
+WhatsApp accepts a free-form message from GSV only within 24 hours of your last
+message to the number. If Ship has something for you after that, GSV cannot
+deliver it to WhatsApp until you message the number again. Message templates,
+which Meta requires for later delivery, are not part of this release.
+
+Meta currently restricts general-purpose assistants on the WhatsApp Business
+Platform to numbers with European Economic Area or Brazilian country codes, so
+availability is not worldwide. Ask your operator whether your number is
+eligible.
+
+The earlier linked-device adapter, which paired by scanning a QR code, is no
+longer bundled, and its pairings do not carry over.
 
 ## Disconnect or change a space
 

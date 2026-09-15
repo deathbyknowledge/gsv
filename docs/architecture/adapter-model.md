@@ -2,7 +2,7 @@
 
 Use this page when you want to understand how GSV connects an open-ended set of
 external messaging systems to the same durable process model used by the CLI
-and Desktop. Discord, Telegram, and Slack are bundled adapter
+and Desktop. Discord, Telegram, Slack, and WhatsApp are bundled adapter
 implementations, not a closed list of transports recognized by the Kernel.
 
 ## Why adapters exist
@@ -139,6 +139,8 @@ one peer Durable Object from the authenticated private Telegram identity. Slack
 admits the signed event through its installed workspace record, then derives a
 peer from that workspace and human author. Discord uses a shared application
 connection plus a separate peer for the author's direct-message or server route.
+WhatsApp derives one peer from the sender's number after verifying Meta's
+webhook signature for the operator's WhatsApp Business number.
 Each peer owns an exclusive route containing the installation, local uid, and a
 fresh generation. Inbound records and queued replies retain that generation and
 recheck it immediately before crossing the Gateway or provider boundary, so
@@ -475,6 +477,8 @@ Examples:
 - Telegram verifies a webhook secret and supports private-message pairing.
 - Slack separates workspace installation, personal OAuth visibility, and human pairing.
 - Discord uses a bot token and long-lived gateway connection behavior.
+- WhatsApp accepts a free-form reply only within 24 hours of the person's last
+  message and needs approved templates after that.
 - Platforms differ in media support, typing indicators, group semantics, and peer identity shapes.
 
 Those quirks belong inside the adapter worker, not in the Kernel or process

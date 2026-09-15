@@ -7,16 +7,22 @@ import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { refreshMessengerConnections } from "../wire/messengerSync";
 import { MessengerPairing } from "./Telegram";
+import type { ManagedMessengerId } from "./messengers/ManagedTelegramOnboardingFlow";
 import { loadMessengerConnections, messengerConnectionStatus } from "./messengerConnectionsService";
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 
-const MESSENGERS = [{ id: "telegram", name: "Telegram" }, { id: "slack", name: "Slack" }, { id: "discord", name: "Discord" }] as const;
+const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: string }> = [
+  { id: "telegram", name: "Telegram", blurb: "Talk to your Ship from Telegram." },
+  { id: "slack", name: "Slack", blurb: "Talk to your Ship from your Slack workspace." },
+  { id: "discord", name: "Discord", blurb: "Talk to your Ship from Discord DMs and servers." },
+  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your Ship from WhatsApp." },
+];
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
-  const [pairing, setPairing] = useState<"telegram" | "slack" | "discord" | null>(null);
+  const [pairing, setPairing] = useState<ManagedMessengerId | null>(null);
   const [removing, setRemoving] = useState<ConsoleIdentityLink | null>(null);
   const canList = canConfigure(account, "adapter.list") && canConfigure(account, "sys.link.list");
   const canUnlink = account.uid >= 1000 && canConfigure(account, "adapter.pair.disconnect");
@@ -40,7 +46,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">Loading messaging connections…</LoadingState>}
     {connections.isError && <button class="settings-text-action" disabled={!connected || connections.isFetching} onClick={() => void connections.refetch()}>try again</button>}
-    {connections.data && MESSENGERS.map(({ id, name }) => {
+    {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
       const available = adapter?.enabled && adapter.supportsPairing;
@@ -53,7 +59,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             {pairing === id ? "close setup" : links.length ? "connect another" : `connect ${name}`}
           </button>
         </div>
-        <p class="settings-muted">{id === "telegram" ? "Talk to your Ship from Telegram." : id === "slack" ? "Talk to your Ship from your Slack workspace." : "Talk to your Ship from Discord DMs and servers."}</p>
+        <p class="settings-muted">{blurb}</p>
         {!available && <p class="settings-muted">{name} linking is not available on this GSV.</p>}
         {available && !canPair && <p class="settings-muted">Your account cannot link a {name} identity.</p>}
         {links.length === 0 && available && <p class="settings-muted">No {name} identity is linked to you.</p>}

@@ -105,6 +105,7 @@ jobs:
               - 'workers/adapters/telegram/**'
               - 'workers/adapters/slack/**'
               - 'workers/adapters/discord/**'
+              - 'workers/adapters/whatsapp/**'
             inference:
               - '.github/workflows/ci.yml'
               - 'package.json'
