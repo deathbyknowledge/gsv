@@ -1,6 +1,5 @@
 import type { AssistantMessage, TextContent, ThinkingContent } from "@humansandmachines/gsv/services/inference-context";
-import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
-import { formatProviderErrorMessage } from "./errors";
+import { describeAssistantResponseFailure } from "./output";
 
 /**
  * Extract usable text from a generation for non-conversational callers such as
@@ -12,11 +11,7 @@ import { formatProviderErrorMessage } from "./errors";
  * run alive instead of hard-failing with "returned no text".
  */
 export function extractGeneratedText(response: AssistantMessage): string {
-  const text = response.content
-    .filter((block): block is TextContent => block.type === "text")
-    .map((block) => block.text)
-    .join("")
-    .trim();
+  const text = finalText(response);
   if (text) {
     return text;
   }
@@ -28,20 +23,35 @@ export function extractGeneratedText(response: AssistantMessage): string {
     .trim();
 }
 
-export function describeGeneratedTextFailure(
-  request: {
-    config: Pick<AiConfigResult, "provider" | "model">;
-  },
-  response: AssistantMessage,
-): string {
-  if (
-    (response.stopReason === "error" || response.stopReason === "aborted") &&
-    response.errorMessage
-  ) {
-    return formatProviderErrorMessage(response.errorMessage, {
-      provider: request.config.provider,
-      model: request.config.model,
-    });
+/**
+ * Extract the completed final text of a generation whose result is persisted,
+ * such as a compaction summary that replaces history in later model context.
+ *
+ * The reasoning fallback above does not apply here. A model that stops after
+ * planning has not written the summary, and installing its reasoning would
+ * pollute every later generation as well as the history people read. A
+ * reasoning-only, empty, truncated, aborted or failed response throws the same
+ * failure text the run loop reports, so the caller's existing retry and
+ * fallback path decides what happens next.
+ */
+export function extractCompletedText(response: AssistantMessage): string {
+  const failure = describeAssistantResponseFailure(response);
+  if (failure) throw new Error(failure);
+  const text = finalText(response);
+  if (!text) throw new Error("Generation returned no text");
+  if (response.stopReason === "length") {
+    throw new Error("LLM output was truncated before the final response completed");
   }
-  return "Generation returned no text";
+  if (response.stopReason !== "stop") {
+    throw new Error(`LLM generation ended with ${response.stopReason} before the final response completed`);
+  }
+  return text;
+}
+
+function finalText(response: AssistantMessage): string {
+  return response.content
+    .filter((block): block is TextContent => block.type === "text")
+    .map((block) => block.text)
+    .join("")
+    .trim();
 }
