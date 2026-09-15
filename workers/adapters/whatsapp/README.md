@@ -37,19 +37,78 @@ hosting plan in `engineering/unified-hosting-and-web-release.md`.
 
 ## Outbound
 
-- Text is rendered from Markdown with WhatsApp's own markers and split into
-  messages of at most 4096 characters at paragraph, line, or word boundaries.
+- A reply goes out as paragraph messages: the Markdown is split at blank lines
+  by the shared splitter in `workers/adapters/shared/src/paragraph-messages.ts`,
+  fenced code blocks, lists and tables stay whole, and runs of short paragraphs
+  merge so a greeting and a one-line question stay in one bubble. Each message
+  is rendered with WhatsApp's own markers and kept within Meta's 4096 character
+  limit by splitting the Markdown further and rendering again. Only the first
+  message quotes the inbound message; the typing indicator is refreshed between
+  messages; an approval prompt keeps its reply buttons on the last message.
+- Every accepted message is recorded in the delivery ledger before the next
+  one is sent, so a retry after a retryable rejection resumes at the first
+  message the person has not received; an interrupted delivery stays ambiguous
+  and is never replayed.
 - `image`, `video`, `audio`, and `document` attachments are sent one message
   each. Bytes from the request body are uploaded to the number's media store
   and referenced by id; a `url` attachment is passed as a link. The text becomes
   the caption of the first attachment when WhatsApp accepts a caption for it and
-  it fits 1024 characters; otherwise it is sent as its own message first.
-- Meta accepts free-form messages only within 24 hours of the person's last
-  message. The peer tracks that receipt and fails a later send with a specific
-  error before contacting Meta. Message templates, which Meta requires outside
-  that window, are not implemented.
+  it fits 1024 characters; otherwise it is sent as paragraph messages first.
+- Meta accepts free-form messages, buttons included, only within 24 hours of
+  the person's last message. Inside that window the adapter never uses a
+  template. Outside it the adapter sends the operator's message template
+  instead; see below.
 - Typing is shown by attaching WhatsApp's typing indicator to the read receipt
   of the person's last message.
+
+## Message templates
+
+Outside the 24-hour customer service window Meta accepts only a pre-approved
+template, and a template does not reopen the window; only the person's reply
+does, and a tap on a quick-reply button counts as a reply. Meta bills each
+template sent outside the window per message under its utility rate.
+
+The adapter uses one Utility template with a single body parameter and one
+quick-reply button. The operator files it once in the Meta app under
+**WhatsApp → Message templates → Create template** and waits for Meta's
+review, which usually completes within minutes but may take up to a day:
+
+- Category: **Utility**
+- Name: `gsv_message` (or the value of `WHATSAPP_TEMPLATE_NAME`)
+- Language: English (`en`, or the value of `WHATSAPP_TEMPLATE_LANGUAGE`)
+- Header and footer: none
+- Body: `Your GSV: {{1}}`
+- Body parameter example (Meta asks for one during review):
+  `Your report is ready. Tap the button to read it here.`
+- Button: type **Quick reply**, label `Show me`
+
+The parameter receives the reply flattened to one line: paragraphs join with
+` · `, WhatsApp markers and code fences are removed, and whitespace collapses,
+because Meta refuses newlines, tabs and more than four consecutive spaces in a
+parameter. The value is cut to 1000 characters with an ellipsis so the rendered
+body stays under Meta's 1024 character cap.
+
+Behaviour once the template is approved:
+
+- When the peer's own receipt says the window is closed, or Meta answers a
+  free-form send with error 131047, the template goes out instead.
+- A reply that fits the parameter is delivered by the template alone.
+- A longer reply, or an approval prompt whose buttons the template cannot
+  carry, is held in the peer's storage and reported to the Kernel as accepted.
+  The person's next message, or the tap on **Show me**, opens the window and
+  releases the held messages in order through the normal free-form path with
+  paragraph splitting, before their own message is relayed. The tap itself is
+  not relayed to the Process.
+- One template is pending at a time. While it is, further replies wait behind
+  it rather than each sending a template. Held messages and the pending
+  template expire after seven days.
+- Attachments cannot wait behind a template; a send with media outside the
+  window fails with a specific error.
+- With `WHATSAPP_TEMPLATE_NAME` set to an empty value, no template is used and
+  a send outside the window fails with `WhatsApp customer service window is
+  closed: this number has not messaged GSV in the last 24 hours, and no
+  template is configured` and a pointer to this section. A template Meta does
+  not know or has paused fails with Meta's 1320xx code and the same pointer.
 
 ## Configuration
 
@@ -63,7 +122,14 @@ The platform operator configures these Worker secrets and variables:
 - `WHATSAPP_BUSINESS_ACCOUNT_ID` — the WhatsApp Business Account id
 - `WHATSAPP_WEBHOOK_BASE_URL` — the adapter Worker's public origin
 - `WHATSAPP_DISPLAY_NUMBER` — the number people message, in E.164, shown in GSV
+- `WHATSAPP_TEMPLATE_NAME` — the Utility template sent outside the 24-hour
+  window; defaults to `gsv_message`, and an empty value switches templates off
+- `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
 - `WHATSAPP_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
+
+The template values are declared with their defaults in
+`wrangler.managed.jsonc`; the operator stack overrides them only when the
+template was filed under another name or language.
 
 In the Meta app, the WhatsApp product's webhook callback URL is
 `<WHATSAPP_WEBHOOK_BASE_URL>/webhook` with the verify token, subscribed to the

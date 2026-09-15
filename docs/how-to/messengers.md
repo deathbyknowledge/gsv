@@ -111,13 +111,27 @@ Platform. You message that number from your own WhatsApp account.
 5. Send another message. It reaches the same Ship conversation you use in GSV.
 
 You can send text, photos, documents, voice notes, videos, and locations. GSV
-replies with text and attachments, and approval prompts arrive with reply
-buttons; the decision comes back as a reply quoting the prompt.
+replies with text and attachments, and a long reply arrives as several
+messages, one per paragraph group, rather than one wall of text. Approval
+prompts arrive with reply buttons; the decision comes back as a reply quoting
+the prompt.
 
 WhatsApp accepts a free-form message from GSV only within 24 hours of your last
-message to the number. If Ship has something for you after that, GSV cannot
-deliver it to WhatsApp until you message the number again. Message templates,
-which Meta requires for later delivery, are not part of this release.
+message to the number. When Ship has something for you after that, you receive
+a short template message instead: `Your GSV:` followed by the reply on one
+line, with a **Show me** button. A short reply fits in that message entirely.
+A longer reply, or an approval prompt with its buttons, waits until you tap the
+button or write anything back; either reopens the window and the waiting
+messages arrive in order. GSV sends one such template at a time, so later
+replies wait behind it instead of each sending a template, and nothing waits
+longer than seven days. Meta bills the operator for each template sent outside
+the window; inside the window GSV never uses one.
+
+The operator files the template once in the Meta app, where Meta reviews it.
+The exact template is described in the WhatsApp adapter README in the source
+tree under "Message templates": category Utility, body `Your GSV: {{1}}`, one
+quick-reply button labelled `Show me`, and the adapter's `WHATSAPP_TEMPLATE_NAME`
+and `WHATSAPP_TEMPLATE_LANGUAGE` values (`gsv_message` and `en` by default).
 
 Meta currently restricts general-purpose assistants on the WhatsApp Business
 Platform to numbers with European Economic Area or Brazilian country codes, so
