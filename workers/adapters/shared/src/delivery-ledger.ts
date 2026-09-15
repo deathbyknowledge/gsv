@@ -13,12 +13,23 @@ const MAX_MESSAGE_ID_LENGTH = 256;
 const RECORD_PREFIX = "outbound_delivery:v1:record:";
 const META_KEY = "outbound_delivery:v1:meta";
 
+/**
+ * How far a delivery made of several provider messages has come. `sent` counts
+ * the provider messages already accepted; `messageId` is the provider id that
+ * represents the delivery once its anchor part has gone out.
+ */
+export type DeliveryProgress = {
+  sent: number;
+  messageId?: string;
+};
+
 type DeliveryRecord = (
   | {
       state: "attempting";
       deliveryId: string;
       requestFingerprint: string;
       attemptId: string;
+      progress?: DeliveryProgress;
       createdAt: number;
       expiresAt: number;
     }
@@ -26,6 +37,7 @@ type DeliveryRecord = (
       state: "retryable";
       deliveryId: string;
       requestFingerprint: string;
+      progress?: DeliveryProgress;
       createdAt: number;
       expiresAt: number;
     }
@@ -52,7 +64,7 @@ type DeliveryMeta = {
 };
 
 export type DeliveryClaim =
-  | { claimed: true; attemptId: string }
+  | { claimed: true; attemptId: string; progress: DeliveryProgress }
   | { claimed: false; result: AdapterSendResult };
 
 export type DeliveryLedgerOptions = {
@@ -232,7 +244,8 @@ export class DeliveryLedger {
             attemptId,
           } satisfies DeliveryRecord);
           await txn.put(META_KEY, meta);
-          return { claimed: true, attemptId };
+          // The retry resumes after the parts an earlier attempt already delivered.
+          return { claimed: true, attemptId, progress: existing.progress ?? { sent: 0 } };
         }
         await txn.put(META_KEY, meta);
         return claimFromExisting(existing);
@@ -266,8 +279,25 @@ export class DeliveryLedger {
         count: meta.count + 1,
         nextPruneAt: meta.nextPruneAt,
       } satisfies DeliveryMeta);
-      return { claimed: true, attemptId };
+      return { claimed: true, attemptId, progress: { sent: 0 } };
     });
+  }
+
+  /**
+   * Records that one more provider message of this attempt went out. Written
+   * after each accepted part and before the next provider call, so a later
+   * retryable rejection resumes at the first unsent part while an interrupted
+   * attempt still reads as ambiguous.
+   */
+  async recordProgress(
+    deliveryId: string,
+    attemptId: string,
+    progress: DeliveryProgress,
+  ): Promise<void> {
+    await this.replaceAttempt(deliveryId, attemptId, (attempt) => ({
+      ...attempt,
+      progress: normalizeProgress(progress),
+    }));
   }
 
   async succeed(
@@ -325,14 +355,16 @@ export class DeliveryLedger {
       if (!isMatchingAttempt(record, attemptId) || this.options.retirement?.retired(record.owner)) {
         return;
       }
-      await txn.put(key, {
-        ...(record.owner !== undefined ? { owner: record.owner } : undefined),
+      const released: DeliveryRecord = {
         state: "retryable",
         deliveryId,
         requestFingerprint: record.requestFingerprint,
         createdAt: record.createdAt,
         expiresAt: record.expiresAt,
-      } satisfies DeliveryRecord);
+      };
+      if (record.owner !== undefined) released.owner = record.owner;
+      if (record.progress !== undefined) released.progress = record.progress;
+      await txn.put(key, released);
     });
   }
 
@@ -460,10 +492,10 @@ function isDeliveryRecord(value: DeliveryMeta | DeliveryRecord | null | undefine
     return false;
   }
   if (record.state === "attempting") {
-    return isStringValue(record.attemptId);
+    return isStringValue(record.attemptId) && isDeliveryProgress(record.progress);
   }
   if (record.state === "retryable") {
-    return true;
+    return isDeliveryProgress(record.progress);
   }
   if (record.state === "sent") {
     return record.messageId === undefined || isStringValue(record.messageId);
@@ -472,6 +504,27 @@ function isDeliveryRecord(value: DeliveryMeta | DeliveryRecord | null | undefine
     return isStringValue(record.error);
   }
   return false;
+}
+
+function isDeliveryProgress(value: DeliveryProgress | undefined): boolean {
+  if (value === undefined) return true;
+  return Number.isSafeInteger(value.sent)
+    && value.sent >= 0
+    && (value.messageId === undefined || isStringValue(value.messageId));
+}
+
+function normalizeProgress(progress: DeliveryProgress): DeliveryProgress {
+  const sent = positiveIntegerOrZero(progress.sent, "progress.sent");
+  const normalized: DeliveryProgress = { sent };
+  if (progress.messageId) normalized.messageId = truncate(progress.messageId, MAX_MESSAGE_ID_LENGTH);
+  return normalized;
+}
+
+function positiveIntegerOrZero(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return value;
 }
 
 function positiveInteger(value: number, name: string): number {
