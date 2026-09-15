@@ -1,0 +1,56 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-whatsapp",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_WHATSAPP_PEER",
+        "class_name": "ManagedWhatsAppPeer"
+      },
+      {
+        "name": "MANAGED_WHATSAPP_PAIRING",
+        "class_name": "ManagedWhatsAppPairing"
+      },
+      {
+        "name": "WHATSAPP_INSTALLATIONS",
+        "class_name": "WhatsAppInstallation"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ManagedWhatsAppPeer",
+        "ManagedWhatsAppPairing",
+        "WhatsAppInstallation"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv-managed-gateway",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "whatsapp",
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
+      }
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "gsv-installations"
+    }
+  ]
+}
