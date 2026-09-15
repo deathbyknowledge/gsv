@@ -235,7 +235,6 @@ function main(current: ExtensionUiState): string {
   } else if (connected) {
     title = "Ready.";
     detail = "Your GSV can use this browser, signed in as you. Ask it from anywhere.";
-    actions.push(textButton("allow-recording", "allow recording of this tab"));
     actions.push(textButton("pause", "pause"));
   } else if (connecting) {
     title = "Connecting to your GSV…";
@@ -254,6 +253,11 @@ function main(current: ExtensionUiState): string {
   const grantLine = grant
     ? `<p>Recording is allowed on <span class="site">${escapeHtml(grant.title || grant.url || `tab ${grant.tabId}`)}</span> for ${escapeHtml(timeUntil(grant.expiresAt))}.</p>`
     : "";
+  // Chrome only lets an extension record a tab after a person has invoked it there, so the ask
+  // appears in the moment: right after your GSV tried to record and was refused.
+  const recordingAsk = !grant && wantsRecording(current)
+    ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
+    : "";
   const bannerNote = showBannerNote
     ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes when it's done.</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
     : "";
@@ -265,6 +269,7 @@ function main(current: ExtensionUiState): string {
       ${grantLine}
     </section>
     ${actions.length ? `<div class="actions">${actions.join("")}</div>` : ""}
+    ${recordingAsk}
     ${bannerNote}`;
 }
 
@@ -317,7 +322,7 @@ function row(entry: ActivityEntry): string {
       <span class="dot ${mood}"></span>
       <span class="what" title="${escapeHtml(entry.label)}">${escapeHtml(what(entry))}</span>
       <span class="when" title="${escapeHtml(entry.at)}">${escapeHtml(when)}</span>
-      ${entry.detail && entry.detail !== "(no path)" ? `<span class="where" title="${escapeHtml(entry.detail)}">${escapeHtml(truncateMiddle(entry.detail, 64))}</span>` : ""}
+      ${entry.detail && entry.detail !== "(no path)" ? `<span class="where" title="${escapeHtml(entry.detail)}">${escapeHtml(where(entry.detail))}</span>` : ""}
     </div>`;
 }
 
@@ -398,6 +403,12 @@ function tone(current: ExtensionUiState): string {
   return "is-err";
 }
 
+/** True when the newest non-connection row is a refused recording: the moment to offer the allowance. */
+function wantsRecording(current: ExtensionUiState): boolean {
+  const latest = current.activity.find((entry) => entry.kind !== "connection");
+  return Boolean(latest && latest.status === "error" && /tab media capture/i.test(latest.detail));
+}
+
 /** The site your GSV is in, from the newest active row that names one. */
 function workingSite(current: ExtensionUiState): string | null {
   for (const entry of current.activity) {
@@ -422,7 +433,7 @@ function liveSentence(current: ExtensionUiState): string {
 /** What an activity row did, in the person's words. */
 function what(entry: ActivityEntry): string {
   const label = entry.label.toLowerCase();
-  if (entry.status === "error") return `Couldn't ${verb(label)}`;
+  if (entry.status === "error") return /tab media capture/i.test(entry.detail) ? "Wanted to record a tab" : `Couldn't ${verb(label)}`;
   if (label === "page screenshot") return "Took a screenshot";
   if (label === "page text") return "Read a page";
   if (label === "page js" || label.startsWith("page ")) return "Worked on a page";
@@ -433,6 +444,22 @@ function what(entry: ActivityEntry): string {
   if (label.includes("tab")) return "Used a tab";
   return entry.label.charAt(0).toUpperCase() + entry.label.slice(1);
 }
+/** Where a row happened, short: the site and the page for a URL, the file for a path. The full
+ *  detail stays in the row's title, so hovering shows it. */
+function where(detail: string): string {
+  const url = detail.match(/^https?:\/\/([^/\s?#]+)([^\s?#]*)/);
+  if (url) {
+    const host = url[1].replace(/^www\./, "");
+    const page = url[2].split("/").filter(Boolean).pop();
+    return page ? `${host} · ${decodeURIComponent(page).replace(/[-_]+/g, " ")}` : host;
+  }
+  if (detail.startsWith("/") || detail.startsWith("~")) {
+    const parts = detail.split("/").filter(Boolean);
+    return parts.length > 1 ? `${parts.at(-1)} · ${parts.at(-2)}/` : detail;
+  }
+  return truncateMiddle(detail, 56);
+}
+
 function verb(label: string): string {
   if (label.startsWith("page")) return "finish on a page";
   if (label.startsWith("fs.")) return "finish a file operation";
