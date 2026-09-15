@@ -342,7 +342,7 @@ async function getTabMediaStreamId(tabId?: number): Promise<string> {
         ? `Unable to start tab media capture for tab ${tabId}.`
         : "Unable to start tab media capture for the active tab.",
       "Chrome only grants tab capture after the extension has been invoked for the tab.",
-      "Focus the tab, click Grant Recording in the GSV extension UI, then retry; each grant can start one recording.",
+      "Ask the person to focus the tab, open Your GSV from the toolbar, and choose Allow recording; then retry. Each allowance starts one recording.",
       message,
     ].filter(Boolean).join(" "));
   }
