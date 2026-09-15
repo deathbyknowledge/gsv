@@ -50,6 +50,7 @@ import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
+import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
@@ -876,7 +877,9 @@ export class ProcessRun {
         options.signal,
         attribution.logicalRequestId,
       );
-      return result.text ?? "";
+      // The Kernel's text field keeps a reasoning fallback for ai.text.generate
+      // callers; a persisted summary needs the completed final text.
+      return extractCompletedText(adaptGeneratedAssistantMessage(result.message));
     }
     const routedFetch = this.host.kernel.createGenerationFetch(
       options.config,
