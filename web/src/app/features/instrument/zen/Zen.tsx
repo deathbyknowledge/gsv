@@ -42,6 +42,7 @@ import {
   isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
+  momentTime,
   memoryPagesForMoment,
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
@@ -87,6 +88,12 @@ function reducedMotion(): boolean {
 
 function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets>>): Place[] {
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
+}
+
+/** When the moment was sent. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
+function MomentTime({ timestamp, now }: { timestamp: number; now: number }) {
+  const when = momentTime(timestamp, now);
+  return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 }
 
 function ActivityLine({
@@ -770,6 +777,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
+  const now = Date.now();
   const latestMessageIndex = moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
   const historyFailure = conversation.historyError ? (
@@ -845,6 +853,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
                       {moment.role === "human" ? who : "ship"}
+                      {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} now={now} /> : null}
                     </div> : null}
                     {moment.activities
                       .filter((activity) => activity.you)

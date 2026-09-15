@@ -14,6 +14,7 @@ import {
   linkPlaceReferences,
   momentsFromRows,
   momentsFromConversation,
+  momentTime,
   memoryPagesForMoment,
   isMessageSend,
   outputText,
@@ -437,6 +438,25 @@ describe("formatting", () => {
   it("links known place mentions", () => {
     expect(linkPlaceReferences("on @laptop and @nowhere", places)).toBe("on [@laptop](#place:laptop) and @nowhere");
     expect(linkPlaceReferences("mail@laptop", places)).toBe("mail@laptop");
+  });
+});
+
+describe("momentTime", () => {
+  const now = new Date(2026, 8, 15, 20, 30).getTime();
+
+  it("shows only the clock for a message from today", () => {
+    expect(momentTime(new Date(2026, 8, 15, 9, 5).getTime(), now).label).toBe("09:05");
+    expect(momentTime(new Date(2026, 8, 15, 0, 0).getTime(), now).label).toBe("00:00");
+  });
+
+  it("puts the day and month before the clock for an older message", () => {
+    expect(momentTime(new Date(2026, 8, 14, 23, 59).getTime(), now).label).toBe("14 Sep · 23:59");
+    expect(momentTime(new Date(2026, 8, 3, 14, 5).getTime(), now).label).toBe("3 Sep · 14:05");
+    expect(momentTime(new Date(2025, 11, 31, 8, 0).getTime(), now).label).toBe("31 Dec · 08:00");
+  });
+
+  it("carries the whole local date-time for the title", () => {
+    expect(momentTime(new Date(2026, 8, 3, 14, 5, 9).getTime(), now, "en-GB").title).toMatch(/^Thursday, 3 September 2026.*14:05:09$/);
   });
 });
 

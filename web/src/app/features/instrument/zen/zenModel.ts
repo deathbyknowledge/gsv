@@ -542,6 +542,23 @@ export function placesUsed(moment: Moment): number {
   return new Set(moment.activities.flatMap((activity) => activity.target === null ? [] : [activity.target])).size;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** When a message was sent: the clock alone for today, the day and month before it for anything older, and the whole local date-time for a title. */
+export function momentTime(timestamp: number, now = Date.now(), locale?: string): { label: string; title: string } {
+  const at = new Date(timestamp);
+  const today = new Date(now);
+  const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth() && at.getDate() === today.getDate();
+  return {
+    label: sameDay ? clock : `${at.getDate()} ${MONTHS[at.getMonth()]} · ${clock}`,
+    title: at.toLocaleString(locale, {
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }),
+  };
+}
+
 /* ---------- streaming text resolving out of ramp glyphs ---------- */
 
 export const RESOLVE_GLYPHS = "·.:+=o*Ø#@";
