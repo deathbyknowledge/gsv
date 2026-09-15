@@ -544,8 +544,11 @@ export function placesUsed(moment: Moment): number {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/** The short label shown beside a message and the full local date-time for its title. */
+export type MomentTime = { label: string; title: string };
+
 /** When a message was sent: the clock alone for today, the day and month before it for anything older, and the whole local date-time for a title. */
-export function momentTime(timestamp: number, now = Date.now(), locale?: string): { label: string; title: string } {
+export function momentTime(timestamp: number, now = Date.now(), locale?: string): MomentTime {
   const at = new Date(timestamp);
   const today = new Date(now);
   const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
