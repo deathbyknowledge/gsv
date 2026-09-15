@@ -1,3 +1,4 @@
+import { marked } from "marked";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -119,6 +120,29 @@ describe("fitMarkdownToLimit", () => {
       expect(message.rendered).not.toMatch(/&am?$|<b$/);
     }
     expect(fitted.map((message) => message.markdown).join(" ")).toBe(markdown);
+  });
+
+  it("carries reference link definitions with every piece that uses them", () => {
+    const definitions = "[r]: https://example.com/report\n[S]: https://example.com/summary \"Summary\"";
+    const markdown = `See the [report][r] and the [summary][S].\n\n${LONG}\n\nRead the [report][r] again.\n\n${definitions}`;
+    const messages = splitMarkdownParagraphs(markdown);
+    expect(messages).toEqual([
+      `See the [report][r] and the [summary][S].\n\n${LONG}\n\n${definitions}`,
+      "Read the [report][r] again.\n\n[r]: https://example.com/report",
+    ]);
+
+    const html = (piece: string): string => marked.parse(piece, { async: false });
+    const fitted = fitMarkdownToLimit(messages[0]!, html, 160);
+    expect(fitted.length).toBeGreaterThan(1);
+    for (const piece of fitted) {
+      expect(codePointLength(piece.markdown)).toBeLessThanOrEqual(160);
+      expect(codePointLength(piece.rendered)).toBeLessThanOrEqual(160);
+      expect(piece.rendered).not.toMatch(/\]\[/);
+      expect(piece.markdown.includes("[r]:")).toBe(/\[report\]\[r\]/.test(piece.markdown));
+    }
+    expect(fitted[0]!.rendered).toContain("<a href=\"https://example.com/report\">report</a>");
+    expect(fitted[0]!.rendered).toContain("<a href=\"https://example.com/summary\" title=\"Summary\">summary</a>");
+    expect(fitted.at(-1)!.markdown).not.toContain("[r]:");
   });
 
   it("keeps Markdown that fits but renders long from being cut inside markup", () => {

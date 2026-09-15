@@ -28,15 +28,30 @@ export type RenderedMessage = {
   rendered: string;
 };
 
+/** A reference-style link definition such as `[r]: https://example.com`. */
+type LinkDefinition = {
+  /** The label as marked normalizes it: lowercase, inner whitespace collapsed. */
+  tag: string;
+  raw: string;
+};
+
+type MarkdownBlocks = {
+  blocks: string[];
+  definitions: LinkDefinition[];
+};
+
 /**
  * Splits Markdown at blank lines into messages. Fenced code blocks, lists,
  * tables and block quotes stay whole even when they contain blank lines, and
- * runs of short paragraphs merge into one message.
+ * runs of short paragraphs merge into one message. A reference-style link
+ * definition travels with every message that uses it, since each message is
+ * rendered on its own later.
  */
 export function splitMarkdownParagraphs(markdown: string): string[] {
+  const { blocks, definitions } = markdownBlocks(markdown);
   const messages: string[] = [];
   let current = "";
-  for (const block of markdownBlocks(markdown)) {
+  for (const block of blocks) {
     if (!current) {
       current = block;
       continue;
@@ -49,7 +64,7 @@ export function splitMarkdownParagraphs(markdown: string): string[] {
     current = block;
   }
   if (current) messages.push(current);
-  return messages;
+  return messages.map((message) => withDefinitions(message, definitions));
 }
 
 /**
@@ -96,7 +111,10 @@ export function fitMarkdownToLimit(
   if (!Number.isSafeInteger(limit) || limit < MINIMUM_RENDER_LIMIT) {
     throw new Error("Rendered message limit is invalid");
   }
-  return fitPieces(markdown, render, limit, limit);
+  // Definitions are split away first so a cut never lands inside one, then
+  // handed back to each piece that references them.
+  const { blocks, definitions } = markdownBlocks(markdown);
+  return fitPieces(blocks.join("\n\n"), definitions, render, limit, limit);
 }
 
 export function codePointLength(text: string): number {
@@ -107,50 +125,77 @@ export function codePointLength(text: string): number {
 
 function fitPieces(
   markdown: string,
+  definitions: LinkDefinition[],
   render: (markdown: string) => string,
   limit: number,
   markdownLimit: number,
 ): RenderedMessage[] {
   const fitted: RenderedMessage[] = [];
   for (const piece of splitTextAtLimit(markdown, markdownLimit)) {
-    const rendered = render(piece);
+    const complete = withDefinitions(piece, definitions);
+    const rendered = render(complete);
     if (!rendered) continue;
-    const renderedLength = codePointLength(rendered);
-    if (renderedLength <= limit) {
-      fitted.push({ markdown: piece, rendered });
+    const longest = Math.max(codePointLength(rendered), codePointLength(complete));
+    if (longest <= limit) {
+      fitted.push({ markdown: complete, rendered });
       continue;
     }
     if (markdownLimit <= 1) {
       // One code point rendered past the limit; cutting the rendering is the last resort.
-      fitted.push(...splitTextAtLimit(rendered, limit).map((cut) => ({ markdown: piece, rendered: cut })));
+      fitted.push(...splitTextAtLimit(rendered, limit).map((cut) => ({ markdown: complete, rendered: cut })));
       continue;
     }
-    // Shrink the Markdown allowance by the observed rendering overhead, with
-    // some headroom, and always by at least one code point so the loop ends.
-    const proportional = Math.floor((markdownLimit * limit) / renderedLength * 0.9);
+    // Shrink the Markdown allowance by the observed overhead of rendering or
+    // of the definitions, with some headroom, and always by at least one code
+    // point so the loop ends.
+    const proportional = Math.floor((markdownLimit * limit) / longest * 0.9);
     const next = Math.max(1, Math.min(markdownLimit - 1, proportional));
-    fitted.push(...fitPieces(piece, render, limit, next));
+    fitted.push(...fitPieces(piece, definitions, render, limit, next));
   }
   return fitted;
 }
 
-function markdownBlocks(markdown: string): string[] {
+function markdownBlocks(markdown: string): MarkdownBlocks {
   const trimmed = markdown.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { blocks: [], definitions: [] };
   let tokens: Token[];
   try {
     tokens = lexer(trimmed);
   } catch {
-    return trimmed.split(/\n[ \t]*\n+/).map((block) => block.trim()).filter(Boolean);
+    return {
+      blocks: trimmed.split(/\n[ \t]*\n+/).map((block) => block.trim()).filter(Boolean),
+      definitions: [],
+    };
   }
   const blocks: string[] = [];
+  const definitions: LinkDefinition[] = [];
   for (const token of tokens) {
-    if (token.type === "space" || token.type === "def") continue;
+    if (token.type === "space") continue;
+    if (token.type === "def") {
+      definitions.push({ tag: token.tag, raw: token.raw.trim() });
+      continue;
+    }
     // Leading spaces belong to indented code; only surrounding blank lines go.
     const raw = token.raw.replace(/^\n+/, "").trimEnd();
     if (raw) blocks.push(raw);
   }
-  return blocks;
+  return { blocks, definitions };
+}
+
+/** Appends the definitions the text refers to, so the text renders its links alone. */
+function withDefinitions(text: string, definitions: LinkDefinition[]): string {
+  const used = definitions.filter((definition) => referencesDefinition(text, definition.tag));
+  if (used.length === 0) return text;
+  return `${text}\n\n${used.map((definition) => definition.raw).join("\n")}`;
+}
+
+/** Matches `[text][tag]`, `[tag][]` and `[tag]` with the label's case and spacing relaxed. */
+function referencesDefinition(text: string, tag: string): boolean {
+  const label = tag
+    .split(/\s+/)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s+");
+  return new RegExp(`\\[\\s*${label}\\s*\\]`, "i").test(text);
 }
 
 function lastBoundary(window: string, separator: string): number | null {
