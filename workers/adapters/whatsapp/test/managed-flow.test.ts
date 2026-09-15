@@ -480,6 +480,37 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(longChunks[1]!.body.context).toBeUndefined();
     expect(longChunks.every((record) => [...record.body.text!.body].length <= 4096)).toBe(true);
 
+    // A long reply goes out as paragraph messages in order: the greeting and
+    // intro stay with the paragraph they introduce, the closing question is its
+    // own message, only the first quotes the inbound, and the typing indicator
+    // rides a read receipt between messages.
+    const recordsBeforeParagraphs = (await graphRecords()).length;
+    await expect(peer.sendMessage("installation_test", {
+      deliveryId: "outbound-paragraphs-1",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: relinked.route.generation,
+      text: `Hi Hank!\n\nHere is the **report**.\n\n${"word ".repeat(1_000).trimEnd()}\n\nAnything else?`,
+      replyToId: "wamid.in.7",
+    })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
+    const paragraphRecords = (await graphRecords()).slice(recordsBeforeParagraphs);
+    expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message"]);
+    const paragraphMessages = paragraphRecords.filter((record) => record.kind === "message");
+    expect(paragraphMessages.map((record) => record.body.text?.body)).toEqual([
+      expect.stringMatching(/^Hi Hank!\n\nHere is the \*report\*\.\n\nword word/),
+      expect.stringMatching(/^word word/),
+      "Anything else?",
+    ]);
+    expect(paragraphMessages.every((record) => [...record.body.text!.body].length <= 4096)).toBe(true);
+    expect(paragraphMessages[0]!.body.context).toEqual({ message_id: "wamid.in.7" });
+    expect(paragraphMessages[1]!.body.context).toBeUndefined();
+    expect(paragraphMessages[2]!.body.context).toBeUndefined();
+    expect(paragraphRecords[1]!.body).toMatchObject({
+      status: "read",
+      message_id: "wamid.in.7",
+      typing_indicator: { type: "text" },
+    });
+
     // Binary audio is uploaded first and sent by media id; audio carries no caption,
     // so the text goes out as its own message beforehand.
     await expect(peer.sendMessage("installation_test", {

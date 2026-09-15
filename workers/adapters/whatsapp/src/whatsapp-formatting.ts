@@ -1,5 +1,10 @@
 import { lexer, type MarkedToken, type Token, type Tokens } from "marked";
 import { z } from "zod";
+import {
+  fitMarkdownToLimit,
+  splitMarkdownParagraphs,
+  splitTextAtLimit,
+} from "../../shared/src/paragraph-messages";
 
 /** Meta's limit for one free-form text message body. */
 export const WHATSAPP_TEXT_LIMIT = 4096;
@@ -21,38 +26,26 @@ export function renderWhatsAppText(markdown: string): string {
 }
 
 /**
- * Splits text into messages of at most `limit` code points, preferring
- * paragraph, line and word boundaries in that order.
+ * Ship's Markdown as the ordered WhatsApp messages it becomes: paragraph
+ * groups rendered with WhatsApp's markers, each within the text limit.
  */
-export function splitWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("WhatsApp text limit is invalid");
-  const chunks: string[] = [];
-  let rest = text.trim();
-  while (rest) {
-    const codePoints = [...rest];
-    if (codePoints.length <= limit) {
-      chunks.push(rest);
-      break;
-    }
-    const window = codePoints.slice(0, limit).join("");
-    // A boundary in the first quarter would leave most of the message for the
-    // next chunk, so each boundary kind is tried in turn before a hard cut.
-    const minimum = Math.floor(window.length / 4);
-    const cut = /\s/.test(codePoints[limit]!)
-      ? window.length
-      : ["\n\n", "\n", " "]
-        .map((separator) => lastBoundary(window, separator))
-        .find((index) => index !== null && index >= minimum) ?? window.length;
-    const chunk = rest.slice(0, cut).trimEnd();
-    if (chunk) chunks.push(chunk);
-    rest = rest.slice(cut).trimStart();
-  }
-  return chunks;
+export function whatsAppTextMessages(markdown: string): string[] {
+  const messages = splitMarkdownParagraphs(markdown).flatMap((paragraphs) =>
+    fitMarkdownToLimit(paragraphs, renderWhatsAppText, WHATSAPP_TEXT_LIMIT)
+      .map((fitted) => fitted.rendered));
+  return messages.length > 0
+    ? messages
+    : splitTextAtLimit(renderWhatsAppText(markdown) || markdown, WHATSAPP_TEXT_LIMIT);
 }
 
-function lastBoundary(window: string, separator: string): number | null {
-  const index = window.lastIndexOf(separator);
-  return index > 0 ? index : null;
+/**
+ * An approval prompt is plain text. Its paragraph groups become messages
+ * within `limit` code points; the caller attaches the buttons to the last one.
+ */
+export function whatsAppPromptMessages(prompt: string, limit: number): string[] {
+  const messages = splitMarkdownParagraphs(prompt).flatMap((paragraphs) =>
+    fitMarkdownToLimit(paragraphs, (plain) => plain, limit).map((fitted) => fitted.rendered));
+  return messages.length > 0 ? messages : splitTextAtLimit(prompt, limit);
 }
 
 function renderBlockTokens(tokens: Token[], blockquoteDepth = 0): string {

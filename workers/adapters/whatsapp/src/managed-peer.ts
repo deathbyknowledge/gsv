@@ -41,6 +41,7 @@ import {
   buildWhatsAppInteractivePayload,
   handleWhatsAppApprovalReply,
   prepareWhatsAppApproval,
+  WHATSAPP_INTERACTIVE_BODY_LIMIT,
   type WhatsAppApprovalControls,
 } from "./whatsapp-approval";
 import type {
@@ -69,8 +70,13 @@ import {
   WHATSAPP_WINDOW_CLOSED_ERROR,
   type ManagedWhatsAppFetch,
   type WhatsAppOutboundPayload,
+  type WhatsAppSentMessage,
 } from "./whatsapp-api";
-import { renderWhatsAppText, splitWhatsAppText } from "./whatsapp-formatting";
+import {
+  renderWhatsAppText,
+  whatsAppPromptMessages,
+  whatsAppTextMessages,
+} from "./whatsapp-formatting";
 import { loadWhatsAppInboundMedia } from "./whatsapp-inbound-media";
 import {
   sendWhatsAppMediaMessage,
@@ -110,6 +116,8 @@ type ResponseContext =
   | { kind: "installation"; installationId: string; generation: string };
 
 type DeliveryOptions = { controls?: WhatsAppApprovalControls };
+/** One provider message of a delivery; resolves to the WhatsApp message id it produced. */
+type DeliveryPart = () => Promise<string | undefined>;
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedWhatsAppPairingRecord): Promise<{ created: boolean }> };
 
@@ -726,7 +734,6 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: false, error };
     };
 
-    let acceptedProviderDeliveries = 0;
     try {
       const current = await this.requireState();
       this.assertPeerDestination(current, message.surface, message.actorId);
@@ -740,53 +747,93 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const phoneNumberId = this.phoneNumberId();
       const fetcher = this.whatsAppFetch(owner);
       const to = current.surfaceId;
-      let replyToId = whatsAppMessageId(message.replyToId);
-      let messageId: string | undefined;
-      const send = async (payload: WhatsAppOutboundPayload): Promise<{ messageId?: string }> => {
-        const withContext = replyToId ? { ...payload, context: { message_id: replyToId } } : payload;
-        replyToId = undefined;
-        const sent = await sendWhatsAppMessage(token, phoneNumberId, withContext, fetcher);
-        acceptedProviderDeliveries += 1;
-        messageId ??= sent.messageId;
-        return sent;
+      const replyToId = whatsAppMessageId(message.replyToId);
+      // Only the first provider message quotes the inbound message.
+      const send = async (payload: WhatsAppOutboundPayload, index: number): Promise<WhatsAppSentMessage> => {
+        const quoted = index === 0 && replyToId ? { ...payload, context: { message_id: replyToId } } : payload;
+        return await sendWhatsAppMessage(token, phoneNumberId, quoted, fetcher);
       };
-      const sendText = async (value: string): Promise<void> => {
-        for (const chunk of splitWhatsAppText(value)) {
-          await send({ to, type: "text", text: { preview_url: false, body: chunk } });
-        }
+      const parts: DeliveryPart[] = [];
+      const addPart = (part: (index: number) => Promise<WhatsAppSentMessage>): void => {
+        const index = parts.length;
+        parts.push(async () => (await part(index)).messageId);
       };
-
+      const addText = (body: string): void => {
+        addPart((index) => send({ to, type: "text", text: { preview_url: false, body } }, index));
+      };
+      // The provider id reported for the delivery: the message that carries
+      // the approval buttons when there are any, otherwise the first message.
+      let anchor = 0;
       if (options.controls) {
-        await send(buildWhatsAppInteractivePayload(to, options.controls));
+        const controls = options.controls;
+        const prompts = whatsAppPromptMessages(controls.text, WHATSAPP_INTERACTIVE_BODY_LIMIT);
+        for (const prompt of prompts.slice(0, -1)) addText(prompt);
+        const last = prompts.at(-1) ?? controls.text;
+        addPart((index) => send(buildWhatsAppInteractivePayload(to, { ...controls, text: last }), index));
+        anchor = parts.length - 1;
       } else if (media.length === 0) {
-        await sendText(renderWhatsAppText(text));
+        for (const body of whatsAppTextMessages(text)) addText(body);
       } else {
         const rendered = renderWhatsAppText(text);
         const captionOnFirst = Boolean(rendered)
           && whatsAppMediaSupportsCaption(media[0]!.type)
           && whatsAppCaptionFits(rendered);
-        if (rendered && !captionOnFirst) await sendText(rendered);
-        const graph = {
-          upload: (bytes: Uint8Array, mimeType: string, filename: string) =>
-            uploadWhatsAppMedia(token, phoneNumberId, bytes, mimeType, filename, fetcher),
-          send,
-        };
-        for (const [index, item] of media.entries()) {
-          await sendWhatsAppMediaMessage(
-            graph,
+        if (rendered && !captionOnFirst) {
+          for (const body of whatsAppTextMessages(text)) addText(body);
+        }
+        const upload = (bytes: Uint8Array, mimeType: string, filename: string) =>
+          uploadWhatsAppMedia(token, phoneNumberId, bytes, mimeType, filename, fetcher);
+        for (const [mediaIndex, item] of media.entries()) {
+          addPart((index) => sendWhatsAppMediaMessage(
+            { upload, send: (payload) => send(payload, index) },
             to,
             item,
-            mediaBytes[index],
-            index === 0 && captionOnFirst ? rendered : undefined,
-          );
+            mediaBytes[mediaIndex],
+            mediaIndex === 0 && captionOnFirst ? rendered : undefined,
+          ));
         }
       }
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-      return { ok: true, messageId };
+
+      // Every accepted part is recorded before the next provider call, so a
+      // retry of this delivery resumes after the parts the person already has.
+      let anchorMessageId = claim.progress.messageId;
+      let sentInAttempt = 0;
+      for (let index = claim.progress.sent; index < parts.length; index += 1) {
+        if (sentInAttempt > 0) await this.typingBetweenParts(current, fetcher);
+        const messageId = await parts[index]!();
+        sentInAttempt += 1;
+        if (index === anchor) anchorMessageId = messageId;
+        await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
+          sent: index + 1,
+          messageId: anchorMessageId,
+        });
+      }
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
+      return { ok: true, messageId: anchorMessageId };
     } catch (error) {
-      if (acceptedProviderDeliveries > 0) return await fail("ambiguous");
+      // A definite rejection resumes at the first unsent part on retry; an
+      // unknown provider outcome stays ambiguous and is never replayed.
       if (error instanceof ManagedWhatsAppDeliveryError) return await fail(error.kind, error.message);
       return await fail("permanent");
+    }
+  }
+
+  /** WhatsApp shows typing only as a companion to the read receipt of the person's last message. */
+  private async typingBetweenParts(state: ManagedWhatsAppPeerState, fetcher: ManagedWhatsAppFetch): Promise<void> {
+    if (!state.lastInboundMessageId) return;
+    try {
+      await markWhatsAppMessageRead(
+        this.accessToken(),
+        this.phoneNumberId(),
+        state.lastInboundMessageId,
+        fetcher,
+        { typing: true },
+      );
+    } catch {
+      console.warn(JSON.stringify({
+        component: "managed_whatsapp",
+        event: "typing_delivery_failed",
+      }));
     }
   }
 

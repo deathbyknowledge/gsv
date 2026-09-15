@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { renderWhatsAppText, splitWhatsAppText } from "./whatsapp-formatting";
+import {
+  renderWhatsAppText,
+  WHATSAPP_TEXT_LIMIT,
+  whatsAppPromptMessages,
+  whatsAppTextMessages,
+} from "./whatsapp-formatting";
 
 describe("renderWhatsAppText", () => {
   it("renders common agent Markdown with WhatsApp markers", () => {
@@ -54,36 +59,45 @@ describe("renderWhatsAppText", () => {
   });
 });
 
-describe("splitWhatsAppText", () => {
-  it("returns short text unchanged and drops empty input", () => {
-    expect(splitWhatsAppText("hello")).toEqual(["hello"]);
-    expect(splitWhatsAppText("   ")).toEqual([]);
+describe("whatsAppTextMessages", () => {
+  it("keeps a short reply as one rendered message and drops empty input", () => {
+    expect(whatsAppTextMessages("Hi!\n\nDid the **deploy** finish?")).toEqual(["Hi!\n\nDid the *deploy* finish?"]);
+    expect(whatsAppTextMessages("   ")).toEqual([]);
   });
 
-  it("prefers paragraph, then line, then word boundaries", () => {
-    const packed = splitWhatsAppText(`${"a".repeat(10)}\n\n${"b".repeat(10)}\n\n${"c".repeat(10)}`, 25);
-    expect(packed).toEqual([`${"a".repeat(10)}\n\n${"b".repeat(10)}`, "c".repeat(10)]);
-    const paragraphs = splitWhatsAppText(`${"a".repeat(10)}\n\n${"b".repeat(10)}\n${"c".repeat(10)}`, 25);
-    expect(paragraphs).toEqual(["a".repeat(10), `${"b".repeat(10)}\n${"c".repeat(10)}`]);
-    const lines = splitWhatsAppText(`${"a".repeat(10)}\n${"b".repeat(10)}\n${"c".repeat(10)}`, 25);
-    expect(lines).toEqual([`${"a".repeat(10)}\n${"b".repeat(10)}`, "c".repeat(10)]);
-    const words = splitWhatsAppText("one two three four five six", 9);
-    expect(words).toEqual(["one two", "three", "four five", "six"]);
+  it("sends each long paragraph as its own message within Meta's limit", () => {
+    const paragraph = "word ".repeat(80).trimEnd();
+    expect(whatsAppTextMessages(`${paragraph}\n\n${paragraph}\n\nBye.`)).toEqual([paragraph, paragraph, "Bye."]);
+    const messages = whatsAppTextMessages(`**Report**\n\n${"word ".repeat(1_000)}`);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatch(/^\*Report\*\n\nword word/);
+    expect(messages[1]).toMatch(/^word word/);
+    expect(messages.every((message) => [...message].length <= WHATSAPP_TEXT_LIMIT)).toBe(true);
   });
 
-  it("hard-cuts unbroken text by code point without splitting surrogate pairs", () => {
-    const chunks = splitWhatsAppText("😀".repeat(10), 4);
-    expect(chunks).toEqual(["😀".repeat(4), "😀".repeat(4), "😀".repeat(2)]);
-    expect(chunks.every((chunk) => [...chunk].length <= 4)).toBe(true);
-    const long = "x".repeat(4096 * 2 + 5);
-    expect(splitWhatsAppText(long).map((chunk) => chunk.length)).toEqual([4096, 4096, 5]);
+  it("keeps a code block whole and re-renders pieces of an oversized paragraph", () => {
+    const code = "```\nconst a = 1;\n\nconst b = 2;\n```";
+    expect(whatsAppTextMessages(`${"x".repeat(400)}\n\n${code}`)).toEqual(["x".repeat(400), code]);
+    const oversized = Array.from({ length: 700 }, (_, index) => `**w${index}**`).join(" ");
+    const messages = whatsAppTextMessages(oversized);
+    expect(messages.length).toBeGreaterThan(1);
+    expect(messages.every((message) => [...message].length <= WHATSAPP_TEXT_LIMIT)).toBe(true);
+    expect(messages.every((message) => /^(\*w\d+\*)( \*w\d+\*)*$/.test(message))).toBe(true);
+  });
+});
+
+describe("whatsAppPromptMessages", () => {
+  const prompt = "I need your confirmation before I can continue.\n\nRequested action: run \"date\".";
+
+  it("keeps an ordinary approval prompt as one message", () => {
+    expect(whatsAppPromptMessages(prompt, 1024)).toEqual([prompt]);
   });
 
-  it("does not cut early when the only boundary is near the start", () => {
-    expect(splitWhatsAppText(`a ${"b".repeat(30)}`, 20)).toEqual([`a ${"b".repeat(18)}`, "b".repeat(12)]);
-    expect(splitWhatsAppText(`*Title*\n\n${"word ".repeat(10)}`, 30))
-      .toEqual(["*Title*", "word ".repeat(6).trimEnd(), "word ".repeat(4).trimEnd()]);
-    expect(splitWhatsAppText(`*T*\n\n${"word ".repeat(10)}`, 30))
-      .toEqual([`*T*\n\n${"word ".repeat(5).trimEnd()}`, "word ".repeat(5).trimEnd()]);
+  it("splits a prompt that exceeds the limit so the last message can carry the buttons", () => {
+    const messages = whatsAppPromptMessages(prompt, 48);
+    expect(messages.length).toBeGreaterThan(1);
+    expect(messages.every((message) => [...message].length <= 48)).toBe(true);
+    expect(messages.at(-1)).toMatch(/"date"\.$/);
+    expect(messages.join(" ").replace(/\s+/g, " ")).toBe(prompt.replace(/\s+/g, " "));
   });
 });
