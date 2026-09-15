@@ -13,6 +13,7 @@ import {
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
+import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -42,7 +43,10 @@ import {
   isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
+  momentTime,
   memoryPagesForMoment,
+  nextDayBoundary,
+  ownerTimeZone,
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
   placeLabel,
@@ -87,6 +91,12 @@ function reducedMotion(): boolean {
 
 function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets>>): Place[] {
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
+}
+
+/** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
+function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
+  const when = momentTime(timestamp, timeZone, today);
+  return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 }
 
 function ActivityLine({
@@ -277,6 +287,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
+
+  /* message times follow the owner's zone; `today` moves once at that zone's midnight so a clock label gains its date */
+  const config = useConsoleConfig();
+  const accounts = useConsoleAccounts();
+  const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
+  const [today, setToday] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setToday(Date.now()), nextDayBoundary(today, timeZone) - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [today, timeZone]);
 
   const [note, setNote] = useState<string | null>(null);
   const pid = useZenProcess(pidProp, setNote);
@@ -845,6 +865,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
                       {moment.role === "human" ? who : "ship"}
+                      {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
                     </div> : null}
                     {moment.activities
                       .filter((activity) => activity.you)

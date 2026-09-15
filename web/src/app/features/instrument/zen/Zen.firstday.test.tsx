@@ -68,6 +68,8 @@ beforeEach(() => {
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets: [] } };
+    if (call === "sys.config.get") return { data: { entries: [] } };
+    if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
     if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
