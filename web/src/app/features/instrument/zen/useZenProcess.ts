@@ -3,6 +3,7 @@ import { isCancelledError, useQuery, useQueryClient } from "@tanstack/preact-que
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { spawnChatProcess } from "../../../services/chat/backend/chatService";
 import { loadConsoleProcesses } from "../../../services/system/consoleService";
+import { findConsolePersonalProcess } from "../../../domain/system/consoleProcesses";
 import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 
 /** Ship follows its owner's personal process; an explicit helper keeps its exact identity. */
@@ -27,7 +28,7 @@ export function useZenProcess(pidProp: string | null | undefined, onError: (mess
           queryFn: () => loadConsoleProcesses(client),
           staleTime: Infinity,
         });
-        const personal = current.find((process) => process.personal) ?? current.find((process) => process.interactive);
+        const personal = findConsolePersonalProcess(current) ?? current.find((process) => process.interactive);
         if (personal) {
           if (!cancelled) setShip({ pid: personal.pid, ownerUid: personal.uid });
           return;
