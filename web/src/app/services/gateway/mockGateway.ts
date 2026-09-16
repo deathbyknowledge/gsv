@@ -19,7 +19,7 @@
  *   /stream    a multi-paragraph answer streams in, word by word (finishing an open step first)
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
- *   /approve-mail, /approve-file   an email or file approval; y/n decides, Escape interrupts
+ *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
