@@ -150,6 +150,19 @@ describe("LedgerStore", () => {
       expect((await store.list({ ownerUid: 1000, limit: 10 })).lines[0]).toMatchObject({ call: "fs.read", args: '{"path":"~/notes.txt"}', outcome: "ok", error: null });
     });
   });
+  it("keeps the model's purpose beside the call through rotation and reads older lines without one", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const store = new LedgerStore(sql, storage, bucketOf(new MemoryBucket()));
+      store.append(entry({ requestId: "with-purpose", purpose: "check whether Granola is running" }));
+      store.append(entry({ requestId: "without-purpose" }));
+      store.complete("with-purpose", { outcome: "ok" }, 2000);
+      store.complete("without-purpose", { outcome: "ok" }, 2000);
+      const query = { ownerUid: 1000, limit: 10 };
+      expect((await store.list(query)).lines.map((line) => line.purpose)).toEqual([null, "check whether Granola is running"]);
+      await store.rotate(LEDGER_WINDOW_AGE_MS + 5000);
+      expect((await store.list(query)).lines.map((line) => line.purpose)).toEqual([null, "check whether Granola is running"]);
+    });
+  });
   it("keeps a bounded failure reason through rotation and reads older segments without one", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const bucket = new MemoryBucket();

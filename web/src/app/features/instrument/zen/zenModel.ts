@@ -2,6 +2,7 @@ import type { TerminalSession } from "../../../services/terminal/terminalSession
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import type { MemoryPageRef } from "../shared/navigation";
 
@@ -540,6 +541,59 @@ export function countLabel(count: number, singular: string, plural = `${singular
 
 export function placesUsed(moment: Moment): number {
   return new Set(moment.activities.flatMap((activity) => activity.target === null ? [] : [activity.target])).size;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The zone the owner reads times in, as the Kernel resolves it for Ship: their own setting, else the server's, else this browser's. */
+export function ownerTimeZone(config: readonly ConsoleConfigEntry[] | undefined, uid: number | undefined): string {
+  const setting = (key: string) => config?.find((entry) => entry.key === key)?.value || null;
+  return (uid === undefined ? null : setting(`users/${uid}/locale/timezone`))
+    || setting("config/server/timezone")
+    || Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** An instant read on the wall clock of one zone. */
+type WallClock = { year: number; month: number; day: number; hour: number; minute: number; second: number };
+
+function wallClock(timestamp: number, timeZone: string): WallClock {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+  }).formatToParts(new Date(timestamp));
+  const field = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+  return { year: field("year"), month: field("month"), day: field("day"), hour: field("hour"), minute: field("minute"), second: field("second") };
+}
+
+/** A wall clock reading as if its zone were UTC, so two readings in one zone can be compared and subtracted. */
+function wallInstant(clock: WallClock): number {
+  return Date.UTC(clock.year, clock.month - 1, clock.day, clock.hour, clock.minute, clock.second);
+}
+
+/** The short label shown beside a message and the full date-time for its title. */
+export type MomentTime = { label: string; title: string };
+
+/** When a message was sent, read in `timeZone`: the clock alone for today, the day and month before it for anything older, and the whole date-time for a title. */
+export function momentTime(timestamp: number, timeZone: string, now = Date.now(), locale?: string): MomentTime {
+  const at = wallClock(timestamp, timeZone);
+  const today = wallClock(now, timeZone);
+  const clock = `${String(at.hour).padStart(2, "0")}:${String(at.minute).padStart(2, "0")}`;
+  const sameDay = at.year === today.year && at.month === today.month && at.day === today.day;
+  return {
+    label: sameDay ? clock : `${at.day} ${MONTHS[at.month - 1]} · ${clock}`,
+    title: new Intl.DateTimeFormat(locale, {
+      timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }).format(timestamp),
+  };
+}
+
+/** The instant the calendar day after `timestamp` begins in `timeZone`; a clock change before that midnight moves it by the same amount. */
+export function nextDayBoundary(timestamp: number, timeZone: string): number {
+  const now = wallClock(timestamp, timeZone);
+  const midnight = Date.UTC(now.year, now.month - 1, now.day + 1);
+  const guess = timestamp + midnight - wallInstant(now);
+  const refined = guess + midnight - wallInstant(wallClock(guess, timeZone));
+  return refined > timestamp && wallInstant(wallClock(refined, timeZone)) >= midnight ? refined : guess;
 }
 
 /* ---------- streaming text resolving out of ramp glyphs ---------- */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
+import { conversationMessageRow } from "../../../services/chat/domain/conversations";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
 import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
@@ -14,6 +15,9 @@ import {
   linkPlaceReferences,
   momentsFromRows,
   momentsFromConversation,
+  momentTime,
+  nextDayBoundary,
+  ownerTimeZone,
   memoryPagesForMoment,
   isMessageSend,
   outputText,
@@ -440,6 +444,74 @@ describe("formatting", () => {
   });
 });
 
+describe("momentTime", () => {
+  const now = Date.UTC(2026, 8, 15, 20, 30);
+
+  it("shows only the clock for a message from today", () => {
+    expect(momentTime(Date.UTC(2026, 8, 15, 9, 5), "UTC", now).label).toBe("09:05");
+    expect(momentTime(Date.UTC(2026, 8, 15, 0, 0), "UTC", now).label).toBe("00:00");
+  });
+
+  it("puts the day and month before the clock for an older message", () => {
+    expect(momentTime(Date.UTC(2026, 8, 14, 23, 59), "UTC", now).label).toBe("14 Sep · 23:59");
+    expect(momentTime(Date.UTC(2026, 8, 3, 14, 5), "UTC", now).label).toBe("3 Sep · 14:05");
+    expect(momentTime(Date.UTC(2025, 11, 31, 8, 0), "UTC", now).label).toBe("31 Dec · 08:00");
+  });
+
+  it("carries the whole date-time for the title", () => {
+    expect(momentTime(Date.UTC(2026, 8, 3, 14, 5, 9), "UTC", now, "en-GB").title).toMatch(/^Thursday, 3 September 2026.*14:05:09$/);
+  });
+
+  it("reads the clock, the calendar day and the title in the owner's zone, not the runner's", () => {
+    const sent = Date.UTC(2026, 8, 15, 0, 30);
+    const evening = Date.UTC(2026, 8, 15, 12, 0);
+    const tokyo = momentTime(sent, "Asia/Tokyo", evening, "en-GB");
+    expect(tokyo.label).toBe("09:30");
+    expect(tokyo.title).toMatch(/^Tuesday, 15 September 2026.*09:30:00$/);
+    const losAngeles = momentTime(sent, "America/Los_Angeles", evening, "en-GB");
+    expect(losAngeles.label).toBe("14 Sep · 17:30");
+    expect(losAngeles.title).toMatch(/^Monday, 14 September 2026.*17:30:00$/);
+  });
+
+  it("turns the day over at the zone's midnight", () => {
+    const sent = Date.UTC(2026, 8, 14, 15, 0);
+    expect(momentTime(sent, "Asia/Tokyo", Date.UTC(2026, 8, 15, 12, 0)).label).toBe("00:00");
+    expect(momentTime(sent, "Asia/Tokyo", Date.UTC(2026, 8, 15, 15, 0)).label).toBe("15 Sep · 00:00");
+    expect(momentTime(sent, "America/Los_Angeles", Date.UTC(2026, 8, 15, 6, 59)).label).toBe("08:00");
+    expect(momentTime(sent, "America/Los_Angeles", Date.UTC(2026, 8, 15, 7, 0)).label).toBe("14 Sep · 08:00");
+  });
+});
+
+describe("nextDayBoundary", () => {
+  it("finds the zone's next midnight", () => {
+    expect(nextDayBoundary(Date.UTC(2026, 8, 15, 3, 30), "Asia/Tokyo")).toBe(Date.UTC(2026, 8, 15, 15, 0));
+    expect(nextDayBoundary(Date.UTC(2026, 8, 15, 3, 30), "America/Los_Angeles")).toBe(Date.UTC(2026, 8, 15, 7, 0));
+    expect(nextDayBoundary(Date.UTC(2026, 8, 15, 23, 59, 59), "UTC")).toBe(Date.UTC(2026, 8, 16));
+  });
+
+  it("follows a clock change between now and midnight", () => {
+    expect(nextDayBoundary(Date.UTC(2026, 10, 1, 8, 30), "America/Los_Angeles")).toBe(Date.UTC(2026, 10, 2, 8, 0));
+    expect(nextDayBoundary(Date.UTC(2026, 2, 8, 9, 0), "America/Los_Angeles")).toBe(Date.UTC(2026, 2, 9, 7, 0));
+  });
+});
+
+describe("ownerTimeZone", () => {
+  const entries = (...pairs: [string, string][]) => pairs.map(([key, value]) => ({ key, value, redacted: false }));
+
+  it("prefers the owner's setting, then the server's", () => {
+    expect(ownerTimeZone(entries(["users/7/locale/timezone", "Asia/Tokyo"], ["config/server/timezone", "Europe/Amsterdam"]), 7)).toBe("Asia/Tokyo");
+    expect(ownerTimeZone(entries(["users/8/locale/timezone", "Asia/Tokyo"], ["config/server/timezone", "Europe/Amsterdam"]), 7)).toBe("Europe/Amsterdam");
+    expect(ownerTimeZone(entries(["users/7/locale/timezone", ""], ["config/server/timezone", "Europe/Amsterdam"]), 7)).toBe("Europe/Amsterdam");
+    expect(ownerTimeZone(entries(["config/server/timezone", "Europe/Amsterdam"]), undefined)).toBe("Europe/Amsterdam");
+  });
+
+  it("falls back to this browser's zone while nothing is configured or loaded", () => {
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(ownerTimeZone(undefined, undefined)).toBe(local);
+    expect(ownerTimeZone([], 7)).toBe(local);
+  });
+});
+
 describe("noteSummary", () => {
   it("keeps a short note whole", () => {
     expect(noteSummary("Three installers were removed.")).toBe("Three installers were removed.");
@@ -458,6 +530,13 @@ describe("noteSummary", () => {
 describe("momentsFromConversation", () => {
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
+  });
+  it("keeps a person's line breaks from the committed message through reload", () => {
+    const typed = "cancel printer\nremind me of the plan for gmail\n\npark 3";
+    const committed: ConversationMessage = { id: "m1", conversationId: "canonical-ship", sequence: 1,
+      author: { kind: "user", uid: 1000 }, text: typed, origin: { kind: "client", clientId: "web" }, createdAt: 1_000 };
+    expect(momentsFromConversation([conversationMessageRow(committed)], [], null))
+      .toEqual([expect.objectContaining({ role: "human", text: typed })]);
   });
   it("keeps the canonical reply's process when joining another transcript and fills only absent identities", () => {
     const moments = momentsFromConversation([

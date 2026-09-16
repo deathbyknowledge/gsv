@@ -101,51 +101,88 @@ function processModePrefix(context: AdapterDeliveryContext): string {
       : "";
 }
 
+/**
+ * What the person reads before deciding: the model's own sentence when it wrote one,
+ * otherwise a sentence built from the request shape with the raw detail on a second line.
+ */
 function summarizeAdapterHilRequest(request: ProcHilRequest): string {
-  const path = safeQuotedDetail(request.args.path, 512);
-  const command = safeQuotedDetail(request.args.input, 1_200);
-  if (request.syscall === "shell.exec") {
-    return command
-      ? `Requested action: run ${command}.`
-      : "Requested action: run a shell command.";
-  }
-  if (request.syscall === "fs.read") {
-    return path ? `Requested action: read ${path}.` : "Requested action: read a file.";
-  }
-  if (request.syscall === "fs.write") {
-    return path ? `Requested action: write ${path}.` : "Requested action: write a file.";
-  }
-  if (request.syscall === "fs.edit") {
-    return path ? `Requested action: edit ${path}.` : "Requested action: edit a file.";
-  }
-  if (request.syscall === "fs.delete") {
-    return path ? `Requested action: delete ${path}.` : "Requested action: delete a file.";
-  }
-  if (request.syscall === "mail.send") {
-    const recipient = safeQuotedDetail(request.args.to);
-    const subject = safeQuotedDetail(request.args.subject);
-    const replyToMessageId = safeQuotedDetail(request.args.replyToMessageId);
-    if (recipient && subject) {
-      return `Requested action: send an email to ${recipient} with subject ${subject}.`;
-    }
-    if (recipient) return `Requested action: send an email to ${recipient}.`;
-    if (subject) return `Requested action: send an email with subject ${subject}.`;
-    if (replyToMessageId) return `Requested action: reply to stored email ${replyToMessageId}.`;
-    return "Requested action: send an email.";
-  }
-  return `Requested action: ${safeQuotedDetail(request.toolName, 160) ?? "an operation"}.`;
+  const purpose = safePlainDetail(request.purpose, 400);
+  if (purpose) return asSentence(purpose);
+  const summary = asSentence(describeAdapterHilRequest(request));
+  const detail = adapterHilRequestDetail(request);
+  return detail ? `${summary}\n${detail}` : summary;
 }
 
-function safeQuotedDetail(
-  value: JsonValue | string | undefined,
-  maximum = 160,
-): string | null {
+function describeAdapterHilRequest(request: ProcHilRequest): string {
+  const place = request.target === "gsv"
+    ? "in your cloud home"
+    : `on ${safePlainDetail(request.target, 80) ?? "a connected place"}`;
+  switch (request.syscall) {
+    case "shell.exec": return `run a command ${place}`;
+    case "fs.read": return `read a file ${place}`;
+    case "fs.write": return `write a file ${place}`;
+    case "fs.edit": return `edit a file ${place}`;
+    case "fs.delete": return `delete a file ${place}`;
+    case "net.fetch": return `fetch a web address ${place}`;
+    case "mail.send": {
+      const recipient = safeQuotedDetail(request.args.to);
+      const subject = safeQuotedDetail(request.args.subject);
+      const replyToMessageId = safeQuotedDetail(request.args.replyToMessageId);
+      if (recipient && subject) return `send an email to ${recipient} with subject ${subject}`;
+      if (recipient) return `send an email to ${recipient}`;
+      if (subject) return `send an email with subject ${subject}`;
+      if (replyToMessageId) return `reply to stored email ${replyToMessageId}`;
+      return "send an email";
+    }
+    default: return `use ${safePlainDetail(request.toolName, 80) ?? "a tool"} ${place}`;
+  }
+}
+
+function adapterHilRequestDetail(request: ProcHilRequest): string | null {
+  switch (request.syscall) {
+    case "shell.exec": return safeQuotedDetail(request.args.input, 1_200);
+    case "fs.read":
+    case "fs.write":
+    case "fs.edit":
+    case "fs.delete": return safeQuotedDetail(request.args.path, 512);
+    case "net.fetch": return safeQuotedDetail(request.args.url, 512);
+    default: return null;
+  }
+}
+
+function asSentence(text: string): string {
+  const first = Array.from(text)[0] ?? "";
+  const capitalized = `${first.toLocaleUpperCase()}${text.slice(first.length)}`;
+  return /[.!?…]$/u.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function singleLineDetail(value: JsonValue | string | undefined): string | null {
   const parsed = z.string().safeParse(value);
   if (!parsed.success) return null;
   const singleLine = parsed.data
     .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
+  return singleLine || null;
+}
+
+function safePlainDetail(
+  value: JsonValue | string | undefined,
+  maximum: number,
+): string | null {
+  const singleLine = singleLineDetail(value);
+  if (!singleLine) return null;
+  const characters = Array.from(singleLine);
+  return characters.length <= maximum
+    ? singleLine
+    : `${characters.slice(0, maximum - 1).join("")}…`;
+}
+
+function safeQuotedDetail(
+  value: JsonValue | string | undefined,
+  maximum = 160,
+): string | null {
+  const singleLine = singleLineDetail(value);
   if (!singleLine) return null;
   const quoted = JSON.stringify(singleLine);
   if (quoted.length <= maximum) return quoted;

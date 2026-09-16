@@ -92,7 +92,7 @@ function ComputerPanel({ targets }: { targets: readonly ConsoleTarget[] }) {
 
 function BrowserPanel({ targets }: { targets: readonly ConsoleTarget[] }) {
   return <>
-    <p>Add the GSV extension to Chrome. It appears here as a place I can reach, and you choose per site whether I'm allowed in.</p>
+    <p>Add the Your GSV extension to Chrome. It appears here as a place I can reach, and you choose per site whether I'm allowed in.</p>
     <DevicePairingPanel targets={targets} initialPlatform="browser" />
   </>;
 }

@@ -1,3 +1,4 @@
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { MAIL_SEND, NET_FETCH } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
@@ -20,6 +21,27 @@ export type ToolApprovalResolution = {
   target: string;
   matchedRule?: string;
 };
+
+/** Syscall arguments with the model's one-sentence purpose for the person lifted off them. */
+export type ToolArgsWithPurpose = {
+  args: JsonObject;
+  purpose?: string;
+};
+
+const PURPOSE_MAX_CHARACTERS = 400;
+
+/** Every syscall tool takes a `purpose` written for the person; it never reaches the syscall. */
+export function takePurpose(args: JsonObject): ToolArgsWithPurpose {
+  if (!("purpose" in args)) {
+    return { args };
+  }
+  const { purpose, ...rest } = args;
+  const text = z.string().safeParse(purpose).data?.replace(/\s+/g, " ").trim() ?? "";
+  if (!text) {
+    return { args: rest };
+  }
+  return { args: rest, purpose: Array.from(text).slice(0, PURPOSE_MAX_CHARACTERS).join("") };
+}
 
 export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
   default: "auto",

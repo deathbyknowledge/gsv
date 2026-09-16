@@ -152,6 +152,7 @@ export class ProcessKernelClient {
     dispatchId: string,
     call: SyscallName,
     args: JsonObject,
+    purpose?: string,
   ): Promise<void> {
     if (this.host.handleRunStopped(runId) || !this.host.store.tools.getPending(dispatchId)) {
       return;
@@ -175,6 +176,7 @@ export class ProcessKernelClient {
       args: dispatchArgs,
       runId,
     } as RequestFrame;
+    if (purpose) reqFrame.purpose = purpose;
 
     const response = await sendFrameToKernel(this.host.installationId, pid, reqFrame);
 

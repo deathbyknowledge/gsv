@@ -21,7 +21,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
-import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval, takePurpose } from "../approval";
 import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
@@ -50,6 +50,7 @@ import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
+import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
@@ -876,7 +877,9 @@ export class ProcessRun {
         options.signal,
         attribution.logicalRequestId,
       );
-      return result.text ?? "";
+      // The Kernel's text field keeps a reasoning fallback for ai.text.generate
+      // callers; a persisted summary needs the completed final text.
+      return extractCompletedText(adaptGeneratedAssistantMessage(result.message));
     }
     const routedFetch = this.host.kernel.createGenerationFetch(
       options.config,
@@ -1654,6 +1657,7 @@ export class ProcessRun {
         runId,
         syscall ?? toolCall.name,
         prepared.args,
+        takePurpose(prepared.args).purpose,
       );
       if (prepared.missingShellSessionTarget) {
         this.host.store.tools.fail(dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);

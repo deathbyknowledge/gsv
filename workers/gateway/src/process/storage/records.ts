@@ -20,6 +20,8 @@ export type ToolCallRecord = {
   dispatchId: string;
   call: string;
   args: JsonValue;
+  /** The model's one-sentence purpose for the person, lifted from the arguments at registration. */
+  purpose?: string;
   status: ToolCallStatus;
   result: JsonValue;
   error: string | null;
@@ -127,6 +129,7 @@ export type PendingHilRecord = {
   toolName: string;
   syscall: SyscallName;
   args: JsonObject;
+  purpose?: string;
   createdAt: number;
 };
 

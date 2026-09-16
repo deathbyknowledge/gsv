@@ -13,6 +13,7 @@ import {
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
+import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -23,9 +24,11 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
+import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { FirstDay } from "../firstday/FirstDay";
 import { useFirstDay } from "../firstday/useFirstDay";
 import { ActivityWorking } from "./ActivityWorking";
+import { ApprovalCard } from "./ApprovalCard";
 import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
@@ -39,10 +42,12 @@ import {
   answerHistorySnapshot,
   countLabel,
   defaultPlace,
-  isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
+  momentTime,
   memoryPagesForMoment,
+  nextDayBoundary,
+  ownerTimeZone,
   parsePromptInput,
   PLACE_REFERENCE_PREFIX,
   placeLabel,
@@ -87,6 +92,12 @@ function reducedMotion(): boolean {
 
 function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets>>): Place[] {
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
+}
+
+/** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
+function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
+  const when = momentTime(timestamp, timeZone, today);
+  return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 }
 
 function ActivityLine({
@@ -278,6 +289,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
 
+  /* message times follow the owner's zone; `today` moves once at that zone's midnight so a clock label gains its date */
+  const config = useConsoleConfig();
+  const accounts = useConsoleAccounts();
+  const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
+  const [today, setToday] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setToday(Date.now()), nextDayBoundary(today, timeZone) - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [today, timeZone]);
+
   const [note, setNote] = useState<string | null>(null);
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
@@ -344,6 +365,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     setPickerQuery("");
     setPickerIndex(0);
   }, []);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerOpen = pickerQuery !== null && pickerPlaces.length > 0;
+  /* a press anywhere else closes the picker; the picker itself and the chip that opens it do not */
+  useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
     const id = where ?? CLOUD_PLACE_ID;
     if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
@@ -845,6 +870,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
                       {moment.role === "human" ? who : "ship"}
+                      {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
                     </div> : null}
                     {moment.activities
                       .filter((activity) => activity.you)
@@ -880,28 +906,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                     ) : null}
                     {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
                     {isLatest && pendingHil ? (
-                      <div class="zen-approval">
-                        <div class="q">
-                          <button type="button" onClick={() => {
-                            if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                          }} title="Inspect this approval in Fleet">approval · {placeLabel(pendingHil.target, places)}</button>
-                        </div>
-                        <div class="machine-rail">
-                          <span class="cmd">
-                            <span class="who">{who}</span>@<span class="where">{pendingHil.target}</span> $ {pendingHil.syscall}{" "}
-                            {describeHilArgs(pendingHil)}
-                          </span>
-                        </div>
-                        <div class="keys">
-                          <button type="button" class="ibtn is-primary" onClick={() => void decide("approve")}>
-                            <kbd>y</kbd> run it
-                          </button>
-                          <button type="button" class="ibtn" onClick={() => void decide("deny")}>
-                            <kbd>n</kbd> don't
-                          </button>
-                          <span>nothing runs until you answer</span>
-                        </div>
-                      </div>
+                      <ApprovalCard
+                        request={pendingHil}
+                        who={who}
+                        place={placeLabel(pendingHil.target, places)}
+                        onInspect={() => {
+                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                        }}
+                        onDecide={(decision) => void decide(decision)}
+                      />
                     ) : null}
                   </div>
                 );
@@ -926,8 +939,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           {note ? <span class="is-err" role="alert">{note}</span> : null}
         </div>}
         <div>
-          {pickerQuery !== null && pickerPlaces.length > 0 ? (
-            <div class="zen-picker" role="listbox" aria-label="Places">
+          {pickerOpen ? (
+            <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
               {pickerPlaces.map((place, index) => (
                 <button
                   type="button"
@@ -994,11 +1007,3 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 }
 
-function describeHilArgs(request: ProcHilRequest): string {
-  const args = request.args;
-  const pick = (key: string): string | null => {
-    const value = args[key];
-    return isStringValue(value) ? value : null;
-  };
-  return pick("input") ?? pick("command") ?? pick("path") ?? pick("url") ?? request.toolName;
-}

@@ -26,6 +26,14 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+/**
+ * A person's text as HTML. It is escaped, never parsed as markup; the human moment's
+ * `white-space: pre-wrap` shows its line breaks, and runs of blank lines fold to one.
+ */
+export function renderPlainTextHtml(value: string): string {
+  return escapeHtml(value.replace(/\n(?:[ \t]*\n){2,}/g, "\n\n"));
+}
+
 function sanitize(value: string): string {
   if (purifier.sanitize) {
     return String(purifier.sanitize(value));

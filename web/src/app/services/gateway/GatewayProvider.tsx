@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { createContext } from "preact";
 import { useContext, useEffect, useState } from "preact/hooks";
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
+import { createMockGateway, mockGatewayRequested } from "./mockGateway";
 
 type GatewayContextValue = {
   client: GSVClient;
@@ -16,6 +17,10 @@ type GatewayProviderProps = {
 };
 
 function createWebGsvClient(): GSVClient {
+  // Dev only: `?mock=1` swaps in the in-memory gateway; the DEV check keeps it out of production bundles.
+  if (import.meta.env.DEV && mockGatewayRequested()) {
+    return createMockGateway();
+  }
   return new GSVClient({
     peer: {
       id: "gsv-ui",

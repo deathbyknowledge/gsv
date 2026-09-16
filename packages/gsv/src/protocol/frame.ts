@@ -25,6 +25,8 @@ export type RequestEnvelope<Body, Call extends string = string, Args = JsonValue
   call: Call;
   args: Args;
   runId?: string;
+  /** The model's one-sentence purpose behind a tool call; the Kernel keeps it on the ledger line. */
+  purpose?: string;
   body?: Body;
 };
 
@@ -91,6 +93,7 @@ export function frameEnvelopeSchemas<BodySchema extends z.ZodMiniType>(bodySchem
     call: z.string(),
     args: jsonValueSchema,
     runId: z.optional(z.string()),
+    purpose: z.optional(z.string()),
     body: z.optional(bodySchema),
   });
   const responseOk = z.strictObject({
