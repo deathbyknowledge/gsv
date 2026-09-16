@@ -31,6 +31,7 @@ const REPAIR_STEP_MS = 24 * 60 * 60 * 1000;
 /** Characters of JSON text a line keeps of its arguments; the cut is marked. */
 export const LEDGER_ARGS_LIMIT = 16_384;
 export const LEDGER_ERROR_LIMIT = 4096;
+export const LEDGER_PURPOSE_LIMIT = 512;
 export const LEDGER_ID_LIMIT = 128;
 export const LEDGER_LIST_MAX = 200;
 export const LEDGER_SEGMENTS_PER_READ = 4;
@@ -54,6 +55,8 @@ export type LedgerAppend = {
   target: string;
   call: string;
   args: string;
+  /** The model's one-sentence purpose behind a tool call, when the frame carried one. */
+  purpose?: string | null;
 };
 
 export type LedgerCompletion = {
@@ -106,6 +109,7 @@ type WindowRow = {
   target: string;
   call: string;
   args: string;
+  purpose: string | null;
   outcome: string | null;
   error: string | null;
   duration_ms: number | null;
@@ -142,6 +146,7 @@ const storedLineSchema = z.object({
   target: z.string(),
   call: z.string(),
   args: z.string(),
+  purpose: z.string().nullable().optional(),
   outcome: outcomeSchema.nullable(),
   error: z.string().nullable().optional(),
   durationMs: z.number().nullable(),
@@ -249,6 +254,7 @@ function rowToStored(row: WindowRow): StoredLine {
     target: row.target,
     call: row.call,
     args: row.args,
+    purpose: row.purpose ?? null,
     outcome: outcome.success ? outcome.data : null,
     error: row.error ?? null,
     durationMs: row.duration_ms,
@@ -356,8 +362,8 @@ export class LedgerStore {
   append(entry: LedgerAppend): number {
     const row = this.sql.exec<WindowRow>(
       `INSERT INTO ledger_window
-       (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, args)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+       (request_id, ts, principal_kind, uid, owner_uid, pid, run_id, target, call, args, purpose)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       capField(entry.requestId, LEDGER_ID_LIMIT),
       entry.timestamp,
       capField(entry.principalKind, 32),
@@ -368,6 +374,7 @@ export class LedgerStore {
       capField(entry.target, LEDGER_ID_LIMIT),
       capField(entry.call, LEDGER_ID_LIMIT),
       capField(entry.args, LEDGER_ARGS_LIMIT),
+      entry.purpose ? capField(entry.purpose, LEDGER_PURPOSE_LIMIT) : null,
     ).one();
     const seq = row.seq;
     this.open.set(entry.requestId, seq);

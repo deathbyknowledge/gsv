@@ -29,8 +29,11 @@ export type AssistantTurnClassification = {
   unofferedToolCalls: ToolCall[];
 };
 
+// Every syscall tool advertises `purpose` for the person, so the Shell form of a
+// run-control command can carry one. Classification reads the command alone.
 const terminalShellToolArgsSchema = z
   .object({
+    purpose: z.string().optional(),
     input: z.string(),
     target: z.enum(["gsv", "gateway"]).optional(),
     cwd: z.string().optional(),

@@ -6,6 +6,7 @@ import {
   type ProcHistoryArchivedResultPayload,
 } from "@humansandmachines/gsv/protocol";
 import { TOOL_TO_SYSCALL, type ToolSyscallName } from "../../syscalls/constants";
+import { takePurpose } from "../approval";
 import { parseStoredProcessMedia } from "../media";
 import { materializeLegacyToolResultImages, unwrapStoredToolResult } from "../tool-result-media";
 import type { ModelHistoryGroup } from "../history/model-renderer";
@@ -177,6 +178,8 @@ export function assistantHistoryRecords(input: {
       callId: call.id, tool: call.name, syscall, args, target, runId: input.runId,
     };
     if (call.thoughtSignature !== undefined) payload.thoughtSignature = call.thoughtSignature;
+    const { purpose } = takePurpose(args);
+    if (purpose) payload.purpose = purpose;
     return { kind: "call", payload };
   })];
 }

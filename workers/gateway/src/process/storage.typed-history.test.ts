@@ -85,7 +85,7 @@ describe("typed Process history storage", () => {
         { kind: null, payload_json: null, group_message_id: null },
       ]);
       expect(sql.exec("SELECT * FROM message_queue").toArray()).toEqual(queuedBefore.map((row) => ({ ...row, record_json: null })));
-      expect(listAppliedSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT)).toHaveLength(15);
+      expect(listAppliedSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT)).toHaveLength(16);
       const store = new ProcessStore(sql);
       expect(store.messages.getRecords().map(({ kind, source }) => [kind, source])).toEqual([
         ["note", "legacy"], ["call", "legacy"], ["call", "legacy"],

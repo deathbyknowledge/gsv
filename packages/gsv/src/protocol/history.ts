@@ -134,6 +134,7 @@ export const procHistoryCallPayloadSchema: z.ZodMiniType<ProcHistoryCallPayload>
   target: z.nullable(z.string()),
   runId: z.nullable(z.string()),
   thoughtSignature: z.optional(z.string()),
+  purpose: z.optional(z.string()),
 });
 export type ProcHistoryCallPayload = {
   callId: string;
@@ -143,6 +144,8 @@ export type ProcHistoryCallPayload = {
   target: string | null;
   runId: string | null;
   thoughtSignature?: string;
+  /** The model's one-sentence purpose for the person, lifted from the call's arguments. */
+  purpose?: string;
 };
 
 export const procHistoryResultErrorSchema: z.ZodMiniType<ProcHistoryResultError> = z.strictObject({

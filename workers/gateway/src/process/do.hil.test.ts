@@ -57,6 +57,7 @@ describe("proc.hil", () => {
         "dispatch-offered-read",
         "fs.read",
         { path: "/root/allowed.txt" },
+        undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
         {
@@ -138,6 +139,7 @@ describe("proc.hil", () => {
         "dispatch-offered-read-after-codemode",
         "fs.read",
         { path: "/root/allowed.txt" },
+        undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
         {
@@ -266,6 +268,54 @@ describe("proc.hil", () => {
       syscall: "shell.exec",
       target: "gsv",
       args: { input: "pwd", target: "gateway" },
+    });
+  });
+
+  it("carries the model's purpose to the person and keeps it out of the syscall arguments", async () => {
+    const pid = "mech-hil-purpose";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = {
+        runId: "run-hil-purpose",
+        approvalPolicy: {
+          default: "auto",
+          rules: [{ match: "shell.exec", action: "ask" }],
+        },
+      };
+      registerToolBlock(process, "run-hil-purpose", [
+        {
+          type: "toolCall",
+          id: "call-hil-purpose",
+          name: "Shell",
+          arguments: {
+            input: "pgrep -fl Granola",
+            target: "gsv",
+            purpose: "  check whether Granola\n is running  ",
+          },
+        },
+      ]);
+      await process.tools.processToolCalls("run-hil-purpose");
+    });
+
+    const history = await okProcessResponse(stub, makeReq("proc.history", {}));
+
+    expect(history.ok).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted domain shape.
+    const pendingHil = (history.data as any).pendingHil;
+    expect(pendingHil).toMatchObject({
+      pid,
+      syscall: "shell.exec",
+      target: "gsv",
+      purpose: "check whether Granola is running",
+    });
+    expect(pendingHil.args).toEqual({ input: "pgrep -fl Granola", target: "gsv" });
+
+    await runInProcess(stub, (process) => {
+      expect(process.store.tools.getPendingHilForRun("run-hil-purpose")?.purpose)
+        .toBe("check whether Granola is running");
+      expect(process.store.tools.getResults("run-hil-purpose").map((call) => call.purpose))
+        .toEqual(["check whether Granola is running"]);
     });
   });
 
@@ -662,6 +712,7 @@ describe("proc.hil", () => {
         "fs.read",
         { path: "/private/input" },
         process.runs.active.approvalPolicy,
+        undefined,
       );
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.run.tool.started",

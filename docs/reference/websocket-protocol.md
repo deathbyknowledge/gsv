@@ -326,8 +326,9 @@ Current principal defaults from `buildSignalList()`:
 - `proc.run.tool.started`
   - Emitted after a tool execution is durably marked dispatched. Its payload
     includes `pid`, `runId`, provider `callId`, and the unique `executionId`
-    used for that dispatch, alongside the existing tool name, syscall, and
-    arguments.
+    used for that dispatch, alongside the existing tool name, syscall,
+    arguments and, when the model wrote one, its one-sentence `purpose` for
+    the person.
 - `proc.run.tool.finished`
   - Emitted when each started execution first reaches a terminal outcome.
     Consumers deduplicate by `executionId`. The payload is `{ pid, runId,

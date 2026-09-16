@@ -662,6 +662,8 @@ export type SysLedgerLine = {
   target: string;
   call: string;
   args: string;
+  /** The model's one-sentence purpose behind the call, when it wrote one; absent on older entries. */
+  purpose?: string | null;
   /** Null while the call is still in flight. */
   outcome: SysLedgerOutcome | null;
   /** The reported failure reason, capped at 4,096 characters; absent on older entries. */

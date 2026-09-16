@@ -9,6 +9,7 @@ import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_histo
 import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
 import { PROCESS_V012_ADD_PROCESS_TRACE } from "./v012_add_process_trace";
+import { PROCESS_V016_CALL_PURPOSE } from "./v016_call_purpose";
 import { PROCESS_V013_ADD_CONTEXT_PROJECTIONS } from "./v013_add_context_projections";
 
 function normalizedStatements(): string[] {
@@ -41,7 +42,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(15);
+    expect(PROCESS_MIGRATIONS).toHaveLength(16);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -263,6 +264,14 @@ describe("process schema migrations", () => {
     expect(statements).toContain(
       "CREATE INDEX process_trace_spans_run_idx ON process_trace_spans (run_id, started_at, span_id)",
     );
+  });
+
+  it("keeps the model's purpose beside each tool call and pending approval in v16", () => {
+    expect(PROCESS_V016_CALL_PURPOSE).toMatchObject({ id: 16, name: "call_purpose" });
+    expect(PROCESS_V016_CALL_PURPOSE.statements).toEqual([
+      "ALTER TABLE pending_tool_calls ADD COLUMN purpose TEXT",
+      "ALTER TABLE pending_hil ADD COLUMN purpose TEXT",
+    ]);
   });
 
   it("adds context projection state and epoch-owned message references in v13", () => {

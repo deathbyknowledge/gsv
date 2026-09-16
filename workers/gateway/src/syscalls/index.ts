@@ -87,6 +87,35 @@ export function intoSyscallTool(
   };
 }
 
+export const PURPOSE_SCHEMA_DESCRIPTION = "One short sentence in the language the person writes in, as a bare verb phrase (no 'I want to', no 'I will') saying what this call does for them, for example 'check whether Granola is running and list its windows'. Always include it: it is what the person reads on an approval and later in the receipt of the run.";
+
+/**
+ * Put the person-facing `purpose` first on a syscall tool so it streams before the
+ * command or path. The Process lifts it off the arguments before dispatch and keeps it
+ * with the call record, the pending approval and the ledger line.
+ */
+export function withPurpose(tool: ToolDefinition): ToolDefinition {
+  const { required, properties } = parseSyscallInputSchema(tool.inputSchema);
+  if (Object.keys(properties).includes("purpose")) {
+    throw new Error(`Tool ${tool.name} already has a 'purpose' property.`);
+  }
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: {
+      type: "object",
+      properties: {
+        purpose: {
+          type: "string",
+          description: PURPOSE_SCHEMA_DESCRIPTION,
+        },
+        ...properties,
+      },
+      required,
+    },
+  };
+}
+
 export function isRoutableSyscall(call: SyscallName): boolean {
   return ROUTABLE_DOMAINS.includes(domainOf(call));
 }

@@ -125,6 +125,8 @@ export type ProcHilRequest = {
   /** Authoritative normalized execution target resolved by the Process approval policy. */
   target: string;
   args: JsonObject;
+  /** The model's one-sentence purpose for the person: what this call does for them. */
+  purpose?: string;
   createdAt: number;
 };
 
@@ -138,6 +140,7 @@ export const procHilRequestSchema = z.strictObject({
   syscall: z.string(),
   target: z.string(),
   args: z.record(z.string(), jsonValueSchema),
+  purpose: z.optional(z.string()),
   createdAt: z.number(),
 });
 
@@ -265,6 +268,8 @@ export type ProcRunToolStartedSignal = {
   name: string;
   syscall: string;
   args: unknown;
+  /** The model's one-sentence purpose for the person, when it wrote one. */
+  purpose?: string;
 };
 
 export type ProcRunToolFinishedSignal = {
