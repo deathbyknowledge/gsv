@@ -2,9 +2,11 @@
  * A gateway that lives in this tab, so Zen's states can be looked at on demand.
  *
  * Development only. GatewayProvider installs it when the page runs on the Vite dev server with
- * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. Any username and
- * password sign in. The real GSVClient runs unchanged over an in-memory WebSocket, so the frames,
- * statuses and signals are the ones the wire would carry. Fixtures are the plain objects below.
+ * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
+ * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
+ * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
+ * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
+ * are the ones the wire would carry. Fixtures are the plain objects below.
  *
  * Typed into the prompt:
  *   /think    Ship starts working with a tool and has no words yet; held until /reply or /stream
@@ -27,12 +29,41 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
+const MOCK_FLAG = "gsv.ui.mock";
+/** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
+const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
+const SEEDED_TOKEN_ID = "mock-session";
+
+/** Without a browser and its storage (tests, for instance) there is no mock. */
 export function mockGatewayRequested(): boolean {
-  return new URLSearchParams(window.location.search).get("mock") === "1";
+  try {
+    const asked = new URLSearchParams(window.location.search).get("mock");
+    if (asked === "1") window.sessionStorage.setItem(MOCK_FLAG, "1");
+    if (asked === "0") {
+      window.sessionStorage.removeItem(MOCK_FLAG);
+      forgetSeededSession();
+    }
+    return window.sessionStorage.getItem(MOCK_FLAG) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function createMockGatewayClient(peer: GsvPeerInfo): GSVClient {
+  try {
+    if (!window.localStorage.getItem(SESSION_TOKEN_KEY)) {
+      window.localStorage.setItem(SESSION_TOKEN_KEY, JSON.stringify({ username: "esteve", tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", expiresAt: null }));
+    }
+  } catch {
+    // Without storage the form still signs in.
+  }
   return new GSVClient({ peer, WebSocket: MockSocket });
+}
+
+/** The real gateway would only reject the mock's token; drop it so leaving mock mode goes straight to the form. */
+function forgetSeededSession(): void {
+  const stored = window.localStorage.getItem(SESSION_TOKEN_KEY);
+  if (stored && z.object({ tokenId: z.literal(SEEDED_TOKEN_ID) }).safeParse(JSON.parse(stored)).success) window.localStorage.removeItem(SESSION_TOKEN_KEY);
 }
 
 /* ---------- fixtures ---------- */
@@ -254,7 +285,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       world.sockets.add(socket);
       return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
     case "sys.token.create": {
-      const token: SysTokenCreateResult = { token: { tokenId: "mock-session", token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
+      const token: SysTokenCreateResult = { token: { tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
       return respond(id, token);
     }
     case "sys.token.revoke": return respond(id, { revoked: true });
