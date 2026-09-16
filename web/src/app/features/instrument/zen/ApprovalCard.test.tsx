@@ -18,7 +18,8 @@ describe("approval card", () => {
     expect(fold).toBeDefined();
     expect(fold?.props).not.toHaveProperty("open");
     const foldText = collectText(fold);
-    for (const part of ["jessicat", "my-mac", "shell.exec", "pgrep -fl Granola"]) expect(foldText).toContain(part);
+    for (const part of ["jessicat", "my-mac", "$", "pgrep -fl Granola"]) expect(foldText).toContain(part);
+    expect(foldText).not.toContain("shell.exec");
   });
 
   it("describes the request in the same shape when no reason was given", () => {
@@ -35,6 +36,20 @@ describe("approval card", () => {
     }));
     expect(text).toContain("Read a file on my mac");
     expect(text).toContain("show the details");
-    expect(text).toContain("/Users/jessicat/notes.md");
+    expect(text).toContain("read /Users/jessicat/notes.md");
+    expect(text).toContain("my-mac");
+    expect(text).not.toContain("fs.read");
+    expect(text).not.toContain("$");
+  });
+
+  it("names the recipient and subject for mail without faking a prompt", () => {
+    const text = collectText(ApprovalCard({
+      ...props,
+      request: { ...request, toolName: "mail.send", syscall: "mail.send", target: "gsv", args: { to: "mike@example.com", subject: "Contract follow-up", text: "private" } },
+    }));
+    expect(text).toContain("to mike@example.com · Contract follow-up");
+    expect(text).not.toContain("mail.send");
+    expect(text).not.toContain("private");
+    expect(text).not.toContain("$");
   });
 });

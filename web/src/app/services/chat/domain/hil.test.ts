@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeHilRequest, hilDetailLabel, hilRequestDetail, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { describeHilRequest, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 
 const BASE_REQUEST = {
   pid: "pid-1",
@@ -70,12 +70,29 @@ describe("HIL request wording", () => {
     expect(describeHilRequest({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
-  it("offers the raw detail behind the sentence", () => {
-    expect(hilRequestDetail(shell)).toBe("pgrep -fl Granola");
+  it("folds the request as a terminal line, a plain verb, or the tool's name, never the syscall id", () => {
+    expect(hilRequestLine(shell)).toEqual({ lead: "prompt", text: "pgrep -fl Granola" });
     expect(hilDetailLabel(shell)).toBe("show the command");
-    expect(hilRequestDetail({ ...shell, syscall: "fs.read", args: { path: "/root/secret.txt" } })).toBe("/root/secret.txt");
+    expect(hilRequestLine({ ...shell, syscall: "fs.read", args: { path: "/root/secret.txt", target: "my-mac" } }))
+      .toEqual({ lead: "place", text: "read /root/secret.txt" });
+    expect(hilRequestLine({ ...shell, syscall: "fs.write", args: { path: "/tmp/a", content: "x" } })?.text).toBe("write /tmp/a");
+    expect(hilRequestLine({ ...shell, syscall: "fs.edit", args: { path: "/tmp/a" } })?.text).toBe("edit /tmp/a");
+    expect(hilRequestLine({ ...shell, syscall: "fs.delete", args: { path: "/tmp/a" } })?.text).toBe("delete /tmp/a");
     expect(hilDetailLabel({ ...shell, syscall: "fs.read" })).toBe("show the details");
-    expect(hilRequestDetail({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", subject: "Hi" } })).toBe("mike@example.com · Hi");
-    expect(hilRequestDetail({ ...shell, syscall: "mail.send", args: {} })).toBeNull();
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", toolName: "mail.send", args: { to: "mike@example.com", subject: "Hi", text: "body" } }))
+      .toEqual({ lead: "none", text: "to mike@example.com · Hi" });
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {} })).toBeNull();
+    expect(hilRequestLine({ ...shell, syscall: "net.fetch", toolName: "net.fetch", args: { url: "https://example.com" } }))
+      .toEqual({ lead: "place", text: "fetch https://example.com" });
+    expect(hilRequestLine({ ...shell, syscall: "sys.mcp.call", toolName: "sys.mcp.call", args: { serverId: "s1", name: "search_docs", arguments: { q: "granola" } } })?.text)
+      .toBe("search_docs");
+    expect(hilRequestLine({ ...shell, syscall: "codemode.exec", toolName: "CodeMode", args: { code: "return 1" } })?.text)
+      .toBe("CodeMode return 1");
+    const lines = [
+      hilRequestLine(shell),
+      hilRequestLine({ ...shell, syscall: "fs.read", args: { path: "/x" } }),
+      hilRequestLine({ ...shell, syscall: "net.fetch", args: { url: "u" } }),
+    ];
+    for (const line of lines) expect(line?.text).not.toMatch(/\b(shell|fs|net)\.[a-z]+\b/);
   });
 });
