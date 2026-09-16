@@ -42,6 +42,7 @@ describe("minimal account setup", () => {
       await act(() => {
         screen.state().setup.onUsername("Alice");
         screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
@@ -54,7 +55,7 @@ describe("minimal account setup", () => {
       expect(screen.setup).toHaveBeenCalledOnce();
 
       await screen.change({ phase: "setup", message: "Please try again." });
-      expect(screen.state().setup).toMatchObject({ username: "alice", password: "password123", error: "Please try again." });
+      expect(screen.state().setup).toMatchObject({ username: "alice", password: "password123", passwordConfirm: "password123", error: "Please try again." });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledTimes(2);
     } finally { await screen.unmount(); }
@@ -66,6 +67,7 @@ describe("minimal account setup", () => {
       await act(() => {
         screen.state().setup.onUsername("Alice");
         screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await screen.change({ phase: "authenticating" });
@@ -73,11 +75,33 @@ describe("minimal account setup", () => {
       expect(screen.state().visibleView).toBe("login");
       expect(screen.state().login).toMatchObject({ username: "alice", password: "", error: "Connection interrupted." });
       expect(screen.state().setup.password).toBe("");
+      expect(screen.state().setup.passwordConfirm).toBe("");
 
       await act(() => { screen.state().login.onPassword("password123"); });
       await act(() => { screen.state().login.onSubmit(new Event("submit")); });
       expect(screen.login).toHaveBeenCalledWith({ username: "alice", password: "password123" });
       expect(screen.setup).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); }
+  });
+
+  it("does not create an account until the password confirmation matches", async () => {
+    const screen = await setupScreen();
+    try {
+      await act(() => {
+        screen.state().setup.onUsername("alice");
+        screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password124");
+      });
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).not.toHaveBeenCalled();
+      expect(screen.state().setup.error).toBe("Passwords do not match.");
+
+      await act(() => { screen.state().setup.onPasswordConfirm("password123"); });
+      expect(screen.state().setup.error).toBeNull();
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).toHaveBeenCalledWith({
+        username: "alice", password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      });
     } finally { await screen.unmount(); }
   });
 });

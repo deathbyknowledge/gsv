@@ -243,6 +243,7 @@ function useTooltipReveal(position: TooltipPosition) {
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
   const [placement, setPlacement] = useState<Placement | null>(null);
+  const [theme, setTheme] = useState<JSX.CSSProperties>({});
 
   const handleRef = useRef<TooltipHandle | null>(null);
   if (!handleRef.current) handleRef.current = { close: () => setOpen(false) };
@@ -330,6 +331,17 @@ function useTooltipReveal(position: TooltipPosition) {
       setPlacement(null);
       return;
     }
+    const wrap = wrapRef.current;
+    if (wrap) {
+      const style = getComputedStyle(wrap);
+      setTheme({
+        "--gsv-font-mono": style.getPropertyValue("--gsv-font-mono"),
+        "--void": style.getPropertyValue("--void"),
+        "--panel": style.getPropertyValue("--panel"),
+        "--border": style.getPropertyValue("--border"),
+        "--text": style.getPropertyValue("--text"),
+      });
+    }
     const handle = handleRef.current!;
     const track = () => {
       const wrap = wrapRef.current;
@@ -365,7 +377,7 @@ function useTooltipReveal(position: TooltipPosition) {
     };
   }, [open, position]);
 
-  return { wrapRef, bubbleRef, open, shown, placement };
+  return { wrapRef, bubbleRef, open, shown, placement, theme };
 }
 
 /** Renders the portaled bubble. Returns null until the wrapper is open. The
@@ -377,23 +389,26 @@ function TooltipBubble({
   shown,
   placement,
   bubbleRef,
+  theme,
   text,
 }: {
   open: boolean;
   shown: boolean;
   placement: Placement | null;
   bubbleRef: RefObject<HTMLSpanElement>;
+  theme: JSX.CSSProperties;
   text: string;
 }) {
   if (!open) return null;
   const sideClass = placement ? SIDE_CLASS[placement.side] : "";
-  const style = placement
-    ? ({
+  const style: JSX.CSSProperties = {
+    ...theme,
+    ...(placement ? {
         left: `${placement.left}px`,
         top: `${placement.top}px`,
         "--gsv-tt-arrow-offset": `${placement.arrowOffset}px`,
-      } satisfies JSX.CSSProperties)
-    : undefined;
+      } : {}),
+  };
   return createPortal(
     <span
       ref={bubbleRef}
@@ -420,7 +435,7 @@ export function Tooltip({
 }: TooltipProps) {
   const bubbleId = useId();
   const bare = children != null;
-  const { wrapRef, bubbleRef, open, shown, placement } = useTooltipReveal(position);
+  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]}`}>
       <button
@@ -436,6 +451,7 @@ export function Tooltip({
         shown={shown}
         placement={placement}
         bubbleRef={bubbleRef}
+        theme={theme}
         text={text}
       />
     </span>
@@ -462,7 +478,7 @@ export interface HintProps {
  *  `title`. */
 export function Hint({ text, position = "top", children }: HintProps) {
   const bubbleId = useId();
-  const { wrapRef, bubbleRef, open, shown, placement } = useTooltipReveal(position);
+  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
   const child = isValidElement(children)
     // SAFETY: isValidElement narrows children to a VNode accepted by cloneElement.
     ? cloneElement(children, {
@@ -478,6 +494,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
         shown={shown}
         placement={placement}
         bubbleRef={bubbleRef}
+        theme={theme}
         text={text}
       />
     </span>

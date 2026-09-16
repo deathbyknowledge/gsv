@@ -10,13 +10,15 @@ type SetupScreenProps = {
   space: string;
   username: string;
   password: string;
+  passwordConfirm: string;
   error: string | null;
   onUsername: (value: string) => void;
   onPassword: (value: string) => void;
+  onPasswordConfirm: (value: string) => void;
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, username, password, error, onUsername, onPassword, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, username, password, passwordConfirm, error, onUsername, onPassword, onPasswordConfirm, onSubmit }: SetupScreenProps) {
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
       <div class="gsv-setup-head">
@@ -31,6 +33,9 @@ export function SetupScreen({ visible, busy, space, username, password, error, o
         <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
           placeholder="At least 8 characters" onChange={onPassword}
           inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password": true }} />
+        <TextInput label="Confirm password" type="password" value={passwordConfirm} disabled={busy} clearable={false}
+          placeholder="Enter your password again" onChange={onPasswordConfirm}
+          inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true }} />
         <p class="gsv-setup-note">This sign-in is for this space.</p>
         <SessionError message={error} />
         <div class="gsv-setup-actions">

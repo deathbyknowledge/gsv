@@ -16,6 +16,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [loginPassword, setLoginPassword] = useState("");
   const [setupUsername, setSetupUsername] = useState(snapshot.username);
   const [setupPassword, setSetupPassword] = useState("");
+  const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
@@ -40,7 +41,10 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
 
   useEffect(() => {
     if (snapshot.phase !== "authenticating") setPendingAction(null);
-    if (snapshot.phase === "ready" || snapshot.phase === "locked") setSetupPassword("");
+    if (snapshot.phase === "ready" || snapshot.phase === "locked") {
+      setSetupPassword("");
+      setSetupPasswordConfirm("");
+    }
     if (snapshot.phase === "ready") setLoginPassword("");
   }, [snapshot.phase]);
 
@@ -61,7 +65,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     event.preventDefault();
     if (busy) return;
     const account = { username: setupUsername, password: setupPassword };
-    const error = validateSetupAccount(account);
+    const error = validateSetupAccount({ ...account, passwordConfirm: setupPasswordConfirm });
     if (error) { setSetupValidationError(error); return; }
     setSetupValidationError(null);
     setLoginValidationError(null);
@@ -89,8 +93,10 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       error: setupValidationError ?? (snapshot.phase === "setup" ? snapshot.message : null),
       username: setupUsername,
       password: setupPassword,
+      passwordConfirm: setupPasswordConfirm,
       onUsername: (value: string) => { setSetupValidationError(null); setSetupUsername(value.toLowerCase()); },
       onPassword: (value: string) => { setSetupValidationError(null); setSetupPassword(value); },
+      onPasswordConfirm: (value: string) => { setSetupValidationError(null); setSetupPasswordConfirm(value); },
       onSubmit: submitSetup,
     },
   };
