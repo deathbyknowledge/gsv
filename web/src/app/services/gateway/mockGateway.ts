@@ -1,351 +1,342 @@
 /**
- * Dev-only in-memory gateway, so Instrument states can be tried without a real space.
+ * A gateway that lives in this tab, so Zen's states can be looked at on demand.
  *
- * Open http://localhost:5181/?mock=1 while `npx vite` runs. The switch sticks to the tab
- * (sessionStorage) because Instrument rewrites the path on navigation; `?mock=0` turns it off.
- * The import site is gated by `import.meta.env.DEV`, so none of this reaches a production bundle.
+ * Development only. GatewayProvider installs it when the page runs on the Vite dev server with
+ * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. Any username and
+ * password sign in. The real GSVClient runs unchanged over an in-memory WebSocket, so the frames,
+ * statuses and signals are the ones the wire would carry. Fixtures are the plain objects below.
  *
- * Type into the prompt to drive states:
- *   /approve        Ship asks before a shell.exec on my-mac, with a purpose
- *   /approve-old    the same request without a purpose, so the fallback sentence shows
- *   /approve-mail   a mail.send approval with recipient, subject and a purpose
- *   /approve-file   an fs.write approval on my-mac with a purpose
- *   y / n            (or the card's buttons) answer the pending approval; Ship replies in one line
- *   anything else   Ship replies in one line
- *
- * Fixtures are plain objects below. Keep the scaffold obvious: a sibling worktree adds
- * thinking/streaming triggers to a file of this name and the two are merged by hand.
+ * Typed into the prompt:
+ *   /think    Ship starts working with a tool and has no words yet; held until /reply or /stream
+ *   /stream   a multi-paragraph answer streams in, word by word
+ *   /reply    a plain reply is committed, finishing an open /think first
+ *   anything else is committed as your message and answered briefly a second later
  */
+import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
-  GSVClient,
-  type GsvClientStatus,
-  type GsvConnectOptions,
-  type GsvRequestArguments,
-  type GsvRequestOptions,
-  type GsvResponse,
-} from "@humansandmachines/gsv/client";
-import type { ArgsOf, ConnectResult, JsonObject, JsonValue, ResultOf, SyscallName } from "@humansandmachines/gsv/protocol";
+  wireFrameSchemas,
+  type AccountSummary,
+  type ConnectResult,
+  type ConversationMessage,
+  type ConversationSummary,
+  type JsonValue,
+  type ProcHistoryRecordsResult,
+  type ProcListEntry,
+  type SysTargetSummary,
+  type SysTokenCreateResult,
+} from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
-const MOCK_FLAG = "gsv.dev.mock";
-const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
-
-const PERSON = "jessicat";
-const OWNER_UID = 1000;
-const SHIP_PID = "ship";
-const SHIP_UID = 1001;
-const CONVERSATION_ID = "canonical-ship";
-const MAC = "my-mac";
-const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
-
-const SHIP_AUTHOR: JsonObject = { kind: "process", pid: SHIP_PID, uid: SHIP_UID };
-const PERSON_AUTHOR: JsonObject = { kind: "user", uid: OWNER_UID };
-
-const ACCOUNTS: JsonObject[] = [
-  { uid: OWNER_UID, username: PERSON, displayName: "Jessica T.", relation: "self", runnable: true, capabilities: [] },
-  { uid: SHIP_UID, username: "ship", displayName: "Ship", relation: "personal-agent", runnable: true, capabilities: [] },
-];
-
-const MAC_TARGET: JsonObject = {
-  targetId: MAC, ownerUid: OWNER_UID, ownerUsername: PERSON, label: MAC, description: "MacBook Pro",
-  implements: ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search"],
-  platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now(),
-};
-
-const SEED_CONVERSATION: Array<[JsonObject, string]> = [
-  [PERSON_AUTHOR, "What do I have tomorrow morning?"],
-  [SHIP_AUTHOR, "Two things: standup at 9:30 and a call with Mike at 11. Nothing before 9."],
-  [PERSON_AUTHOR, "Remind me to send Mike the contract follow-up after the call."],
-  [SHIP_AUTHOR, "Will do. I'll nudge you at 11:45."],
-];
-
-type MockApproval = {
-  request: JsonObject;
-  approved: string;
-  denied: string;
-};
-
-/** The gated call a trigger stages, before it becomes a wire-shaped approval request. */
-type MockGatedCall = {
-  toolName: string;
-  syscall: string;
-  target: string;
-  args: JsonObject;
-  purpose?: string;
-};
-
-type SignalListener = (signal: string, payload: JsonValue | undefined) => void;
-
-/** `?mock=1` turns the fake on for this tab and `?mock=0` off; the choice survives Instrument's path rewrites. */
 export function mockGatewayRequested(): boolean {
-  const browser = globalThis.window;
-  if (!browser?.location) return false;
-  const flag = new URLSearchParams(browser.location.search).get("mock");
-  try {
-    if (flag === "1") browser.sessionStorage.setItem(MOCK_FLAG, "1");
-    if (flag === "0") browser.sessionStorage.removeItem(MOCK_FLAG);
-    return browser.sessionStorage.getItem(MOCK_FLAG) === "1";
-  } catch {
-    return flag === "1";
+  return new URLSearchParams(window.location.search).get("mock") === "1";
+}
+
+export function createMockGatewayClient(peer: GsvPeerInfo): GSVClient {
+  return new GSVClient({ peer, WebSocket: MockSocket });
+}
+
+/* ---------- fixtures ---------- */
+
+const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
+const SHIP = { pid: "p-ship", uid: 1001, username: "algo", home: "/home/algo" };
+const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
+const SHIP_CONVERSATION = "c-ship";
+
+/** A wall-clock instant some days back, so the conversation always spans yesterday and today. */
+function at(daysAgo: number, hour: number, minute: number): number {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  date.setHours(hour, minute, 0, 0);
+  return date.getTime();
+}
+
+const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
+  ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
+  ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["you", at(1, 18, 40), "What's still open from this week?"],
+  ["ship", at(1, 18, 40), "Two things. The pricing follow-up with Mara, and the studio backup, which has failed since Monday because the drive is nearly full."],
+  ["you", at(0, 8, 5), "Morning. Anything I should know before the standup?"],
+  ["ship", at(0, 8, 6), "Nothing urgent. The studio backup ran clean overnight after I cleared the old build caches, and Lena replied about the intro; she is in. Standup is at 9:30."],
+];
+
+const SHORT_REPLY = "Done. The action items are in your notes under Mara, and the reminder is set for Wednesday evening.";
+const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
+const LONG_REPLY = [
+  "Here is where things stand with the studio backup.",
+  "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
+  "Two things would keep this from happening again. A weekly clean of caches older than fourteen days, which I can add as a routine, and a warning when free space drops under a tenth of the disk. Say the word and I will set both up.",
+].join("\n\n");
+
+const targets: SysTargetSummary[] = [
+  { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
+  { targetId: "garage-pi", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "garage pi", description: "Raspberry Pi", implements: ["fs.*", "shell.*"], platform: "linux", version: "0.5.9", online: false, lastSeenAt: at(2, 22, 10) },
+];
+
+const accounts: AccountSummary[] = [
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false },
+  { uid: SHIP.uid, username: SHIP.username, displayName: "algo", relation: "personal-agent", runnable: true },
+];
+
+/* ---------- the world the fixtures live in ---------- */
+
+type OpenRun = { runId: string; question: ConversationMessage; tool: { callId: string; executionId: string } | null };
+type World = { messages: ConversationMessage[]; sequence: number; run: OpenRun | null; connections: number; sockets: Set<MockSocket> };
+const world: World = { messages: [], sequence: 0, run: null, connections: 0, sockets: new Set() };
+
+function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
+  const sequence = ++world.sequence;
+  const message: ConversationMessage = {
+    id: `m-${sequence}`,
+    conversationId: SHIP_CONVERSATION,
+    sequence,
+    author: who === "you" ? { kind: "user", uid: OWNER.uid } : { kind: "process", pid: SHIP.pid, uid: SHIP.uid },
+    text,
+    origin: who === "you" ? { kind: "client", clientId: "gsv-ui", platform: "browser" } : { kind: "process", pid: SHIP.pid, runId },
+    ...(who === "ship" ? { processId: SHIP.pid, runId } : undefined),
+    createdAt,
+  };
+  world.messages.push(message);
+  return message;
+}
+for (const [who, createdAt, text] of LINES) record(who, text, createdAt, `run-${world.sequence + 1}`);
+
+function processes(): ProcListEntry[] {
+  return [
+    { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? "running" : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
+    { pid: HELPER.pid, uid: OWNER.uid, username: SHIP.username, interactive: false, personal: false, parentPid: SHIP.pid, state: "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() - 40_000, label: HELPER.label, createdAt: at(0, 7, 58), cwd: SHIP.home },
+  ];
+}
+
+function conversation(pid: string): ConversationSummary {
+  const ship = pid === SHIP.pid;
+  return { id: ship ? SHIP_CONVERSATION : `c-${pid}`, kind: "ship", ownerUid: OWNER.uid, title: ship ? null : HELPER.label, handlerPid: pid, latestSequence: ship ? world.sequence : 0, createdAt: at(6, 10, 0), updatedAt: Date.now() };
+}
+
+function history(pid: string): ProcHistoryRecordsResult {
+  const runId = pid === SHIP.pid ? world.run?.runId ?? null : null;
+  return { ok: true, pid, format: 2, records: [], messages: [], messageCount: 0, hasMoreBefore: false, hasMoreAfter: false, activeRunId: runId, pendingHil: null, context: null, contextRevision: 0, historyRevision: 1, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: "mock:1" };
+}
+
+function connectResult(protocol: number): ConnectResult {
+  const connection = `mock-${++world.connections}`;
+  return {
+    protocol,
+    server: { version: "0.6.0", release: "mock", connectionId: connection },
+    peer: {
+      id: "gsv-ui", sessionId: connection,
+      principal: { kind: "human", account: { uid: OWNER.uid, gid: OWNER.uid, gids: [OWNER.uid], username: OWNER.username, home: OWNER.home, cwd: OWNER.home } },
+      grant: { calls: ["*"], signals: ["*"], implements: [] },
+    },
+  };
+}
+
+/* ---------- what Ship does when spoken to ---------- */
+
+function broadcast<T>(signal: string, payload: T): void {
+  for (const socket of world.sockets) socket.deliver({ type: "sig", signal, payload });
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => { window.setTimeout(resolve, ms); });
+}
+
+type ShipRuntime = { state: "running" | "idle"; activeRunId: string | null; queuedCount: number; lastActiveAt: number };
+function announce(state: ShipRuntime["state"], runId: string | null): void {
+  const runtime: ShipRuntime = { state, activeRunId: runId, queuedCount: 0, lastActiveAt: Date.now() };
+  broadcast("proc.changed", { pid: SHIP.pid, changes: ["state"], runtime });
+}
+
+function startRun(question: ConversationMessage): OpenRun {
+  const run: OpenRun = { runId: `run-${question.sequence}`, question, tool: null };
+  world.run = run;
+  announce("running", run.runId);
+  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, timestamp: Date.now() });
+  return run;
+}
+
+function startTool(run: OpenRun): void {
+  run.tool = { callId: `call-${run.runId}`, executionId: `exec-${run.runId}` };
+  broadcast("proc.run.tool.started", { pid: SHIP.pid, runId: run.runId, ...run.tool, name: "Shell", syscall: "shell.exec", target: "gsv", args: { command: "ls ~/notes/mara" } });
+}
+
+function finishTool(run: OpenRun): void {
+  if (!run.tool) return;
+  broadcast("proc.run.tool.finished", { pid: SHIP.pid, runId: run.runId, ...run.tool, outcome: "completed", timestamp: Date.now() });
+  run.tool = null;
+}
+
+function commitReply(run: OpenRun, text: string): void {
+  broadcast("message.committed", { message: record("ship", text, Date.now(), run.runId), directed: true });
+}
+
+function finishRun(run: OpenRun): void {
+  if (world.run === run) world.run = null;
+  broadcast("proc.run.finished", { pid: SHIP.pid, runId: run.runId, queuedCount: 0, timestamp: Date.now() });
+  announce("idle", null);
+}
+
+async function stream(run: OpenRun, text: string): Promise<void> {
+  const started = { conversationId: SHIP_CONVERSATION, messageId: `draft-${run.runId}`, processId: SHIP.pid, runId: run.runId, timestamp: Date.now() };
+  broadcast("message.started", started);
+  for (const word of text.split(/(?<=\s)/)) {
+    await wait(45);
+    if (world.run !== run) return;
+    broadcast("message.delta", { ...started, delta: word });
+  }
+  await wait(200);
+  commitReply(run, text);
+}
+
+async function answer(run: OpenRun, trigger: string): Promise<void> {
+  await wait(0);
+  if (trigger === "/think") {
+    await wait(300);
+    startTool(run);
+    return;
+  }
+  if (trigger === "/stream") {
+    await wait(600);
+    await stream(run, LONG_REPLY);
+  } else {
+    await wait(trigger === "/reply" ? 600 : 1000);
+    commitReply(run, trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY);
+  }
+  finishRun(run);
+}
+
+async function resolve(run: OpenRun, trigger: string): Promise<void> {
+  await wait(0);
+  finishTool(run);
+  if (trigger === "/stream") await stream(run, LONG_REPLY);
+  else commitReply(run, SHORT_REPLY);
+  finishRun(run);
+}
+
+type Sent = { message: ConversationMessage; runId: string };
+
+/** A message from the prompt: a control trigger resolves an open run under the question that opened it; anything else asks anew. */
+function send(text: string): Sent {
+  const trigger = text.trim().toLowerCase();
+  const open = world.run;
+  if (open && (trigger === "/reply" || trigger === "/stream")) {
+    void resolve(open, trigger);
+    return { message: open.question, runId: open.runId };
+  }
+  if (open) void resolve(open, "/reply");
+  const question = record("you", text, Date.now(), "");
+  const run: OpenRun = { runId: `run-${question.sequence}`, question, tool: null };
+  window.setTimeout(() => {
+    broadcast("message.committed", { message: question, directed: true });
+    void answer(startRun(question), trigger);
+  }, 0);
+  return { message: question, runId: run.runId };
+}
+
+/* ---------- the wire ---------- */
+
+const pidArgs = z.object({ pid: z.string() });
+const conversationArgs = z.object({ conversationId: z.string() });
+const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
+const connectArgs = z.object({ protocol: z.number() });
+const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
+
+function respond<T>(id: string, data: T): string {
+  return JSON.stringify({ type: "res", id, ok: true, data });
+}
+
+function refuse(id: string, code: number, message: string): string {
+  return JSON.stringify({ type: "res", id, ok: false, error: { code, message } });
+}
+
+function route(socket: MockSocket, id: string, call: string, args: JsonValue): string {
+  switch (call) {
+    case "sys.connect":
+      world.sockets.add(socket);
+      return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
+    case "sys.token.create": {
+      const token: SysTokenCreateResult = { token: { tokenId: "mock-session", token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
+      return respond(id, token);
+    }
+    case "sys.token.revoke": return respond(id, { revoked: true });
+    case "sys.token.list": return respond(id, { tokens: [] });
+    case "sys.config.get": return respond(id, { entries: [] });
+    case "account.list": return respond(id, { accounts });
+    case "sys.target.list": return respond(id, { targets });
+    case "proc.list": return respond(id, { processes: processes() });
+    case "proc.observe":
+    case "proc.unobserve": return respond(id, { ok: true, pid: pidArgs.parse(args).pid, observing: call === "proc.observe" });
+    case "proc.history": return respond(id, history(pidArgs.parse(args).pid));
+    case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
+    case "conversation.history": {
+      const ship = conversationArgs.parse(args).conversationId === SHIP_CONVERSATION;
+      return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), messages: ship ? world.messages : [], hasMore: false });
+    }
+    case "conversation.send": {
+      const sent = send(sendArgs.parse(args).text);
+      return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
+    }
+    case "contact.list": return respond(id, { contacts: [] });
+    default: return refuse(id, 501, `The mock gateway does not implement ${call}.`);
   }
 }
 
-export function createMockGateway(): GSVClient {
-  try {
-    // A stored session token lets the session service connect straight away instead of asking for a login.
-    globalThis.window.localStorage.setItem(
-      SESSION_TOKEN_KEY,
-      JSON.stringify({ username: PERSON, tokenId: "mock", token: "mock", expiresAt: null }),
-    );
-  } catch {
-    // Without storage the login screen shows; any name and password connect.
-  }
-  return new MockGateway();
-}
+/** The WebSocket the client thinks it opened; the other end is this module. */
+class MockSocket extends EventTarget implements WebSocket {
+  readonly CONNECTING = 0;
+  readonly OPEN = 1;
+  readonly CLOSING = 2;
+  readonly CLOSED = 3;
+  readonly url: string;
+  readonly protocol = "";
+  readonly extensions = "";
+  readonly bufferedAmount = 0;
+  binaryType: BinaryType = "blob";
+  readyState = 0;
+  onopen: WebSocket["onopen"] = null;
+  onmessage: WebSocket["onmessage"] = null;
+  onerror: WebSocket["onerror"] = null;
+  onclose: WebSocket["onclose"] = null;
 
-class MockGateway extends GSVClient {
-  private mockStatus: GsvClientStatus = { state: "disconnected", url: null, username: null, connectionId: null, message: null };
-  private readonly mockStatusListeners = new Set<(status: GsvClientStatus) => void>();
-  private readonly mockSignalListeners = new Set<SignalListener>();
-  private readonly messages: JsonObject[] = [];
-  private pendingApproval: MockApproval | null = null;
-  private activeRunId: string | null = null;
-  private runCount = 0;
-  private sequence = 0;
-
-  constructor() {
-    super({ peer: { id: "gsv-ui", version: "0.6.0", platform: "browser" } });
-    for (const [author, text] of SEED_CONVERSATION) this.commit(author, text);
-  }
-
-  override getStatus(): GsvClientStatus {
-    return this.mockStatus;
-  }
-
-  override isConnected(): boolean {
-    return this.mockStatus.state === "connected";
-  }
-
-  override onStatus(listener: (status: GsvClientStatus) => void): () => void {
-    this.mockStatusListeners.add(listener);
-    listener(this.mockStatus);
-    return () => { this.mockStatusListeners.delete(listener); };
-  }
-
-  override onSignal(listener: SignalListener): () => void {
-    this.mockSignalListeners.add(listener);
-    return () => { this.mockSignalListeners.delete(listener); };
-  }
-
-  override async connect(options: GsvConnectOptions = {}): Promise<ConnectResult> {
-    this.setMockStatus({ state: "connected", url: options.url ?? "mock://gsv", username: PERSON, connectionId: "mock-connection", message: null });
-    return {
-      protocol: 4,
-      server: { version: "0.6.0", release: "mock", connectionId: "mock-connection" },
-      peer: {
-        id: "gsv-ui",
-        sessionId: "mock-session",
-        principal: { kind: "human", account: { uid: OWNER_UID, gid: OWNER_UID, gids: [OWNER_UID], username: PERSON, home: `/home/${PERSON}`, cwd: `/home/${PERSON}` } },
-        grant: { calls: ["*"], signals: ["*"], implements: [] },
-      },
-    };
-  }
-
-  override disconnect(): void {
-    this.setMockStatus({ state: "disconnected", url: null, username: null, connectionId: null, message: null });
-  }
-
-  override close(): void {
-    this.disconnect();
-  }
-
-  override sendSignal(): void {}
-
-  override async request<S extends SyscallName>(call: S, args: ArgsOf<S>, options?: GsvRequestOptions): Promise<GsvResponse<ResultOf<S>>>;
-  override async request<T = JsonValue>(call: string, args?: GsvRequestArguments, options?: GsvRequestOptions): Promise<GsvResponse<T>>;
-  override async request<T = JsonValue>(call: string, args: GsvRequestArguments | ArgsOf<SyscallName> = {}): Promise<GsvResponse<T>> {
-    // SAFETY: each answer below carries the result shape the protocol declares for its call.
-    return { data: this.answer(call, args) as T };
-  }
-
-  private answer(call: string, args: GsvRequestArguments | ArgsOf<SyscallName>): JsonValue {
-    switch (call) {
-      case "sys.token.create":
-        return { token: { tokenId: "mock", token: "mock", tokenPrefix: "mock", uid: OWNER_UID, kind: "human", label: "gsv-ui-session", peerId: "gsv-ui", createdAt: Date.now(), expiresAt: null } };
-      case "sys.token.revoke": return { revoked: true };
-      case "proc.list": return { processes: [this.shipProcess()] };
-      case "sys.target.list": return { targets: [MAC_TARGET] };
-      case "account.list": return { accounts: ACCOUNTS };
-      case "sys.config.get": return { entries: [] };
-      case "conversation.forProcess": return { conversation: this.conversationSummary() };
-      case "conversation.history": {
-        const { beforeSequence } = z.object({ beforeSequence: z.number().optional() }).parse(args);
-        return { conversation: this.conversationSummary(), messages: beforeSequence === undefined ? this.messages : [], hasMore: false };
-      }
-      case "proc.history":
-        return {
-          ok: true, pid: SHIP_PID, format: 2, records: [], messages: [], messageCount: 0, cursor: "epoch:1", hasMore: false,
-          historyRevision: 1, historyGeneration: 1, historyResetRevision: 0,
-          activeRunId: this.activeRunId, pendingHil: this.pendingApproval?.request ?? null,
-        };
-      case "proc.observe": return { ok: true, pid: SHIP_PID, observing: true };
-      case "proc.unobserve": return { ok: true, pid: SHIP_PID, observing: false };
-      case "conversation.send": {
-        const { text, selectedTarget } = z.object({ text: z.string(), selectedTarget: z.string().optional() }).parse(args);
-        const message = this.commit(PERSON_AUTHOR, text, selectedTarget ? { selectedTarget } : {});
-        const runId = `run-${++this.runCount}`;
-        this.activeRunId = runId;
-        this.later(0, () => this.emit("message.committed", { message, directed: true }));
-        this.later(150, () => this.emit("proc.run.started", { pid: SHIP_PID, runId }));
-        this.later(700, () => this.act(text.trim(), runId));
-        return { message, handlerPid: SHIP_PID, runId };
-      }
-      case "proc.hil": {
-        const { requestId, decision } = z.object({ requestId: z.string(), decision: z.enum(["approve", "deny"]) }).parse(args);
-        const pending = this.pendingApproval;
-        if (!pending || pending.request.requestId !== requestId) return { ok: false, error: "That approval is no longer pending." };
-        this.pendingApproval = null;
-        this.emitProcessChanged();
-        const runId = z.string().parse(pending.request.runId);
-        this.later(400, () => this.reply(runId, decision === "approve" ? pending.approved : pending.denied));
-        return { ok: true, pid: SHIP_PID, requestId, decision, resumed: true, pendingHil: null };
-      }
-      case "proc.abort": {
-        const runId = this.activeRunId;
-        this.pendingApproval = null;
-        const result: JsonObject = { ok: true, pid: SHIP_PID, aborted: runId !== null };
-        if (runId) {
-          this.finishRun(runId);
-          result.runId = runId;
-        }
-        return result;
-      }
-      case "repo.list": return { repos: [] };
-      case "contact.list": return { contacts: [] };
-      case "contact.invite.list": return { invites: [] };
-      case "contact.request.list": return { requests: [] };
-      case "sys.link.list": return { links: [] };
-      case "sys.ledger.list": return { lines: [], nextCursor: null };
-      case "r12y.list": return { responsibilities: [], count: 0, revision: 0 };
-      case "r12y.source.list": return { sources: [] };
-      case "sched.list": return { schedules: [], count: 0 };
-      case "sys.mcp.list": return { servers: [] };
-      default: throw new Error(`mock gateway: no answer for ${call}`);
-    }
-  }
-
-  /** The Ship's turn after a person's message: a trigger raises an approval, anything else gets one line back. */
-  private act(text: string, runId: string): void {
-    const approval = approvalFor(text, runId);
-    if (approval) {
-      this.pendingApproval = approval;
-      this.emitProcessChanged();
-      this.emit("proc.run.hil.requested", approval.request);
-      return;
-    }
-    this.reply(runId, `Noted. Type /approve and I'll ask before running something on ${MAC}.`);
-  }
-
-  private reply(runId: string, text: string): void {
-    const message = this.commit(SHIP_AUTHOR, text, { processId: SHIP_PID, runId });
-    this.emit("message.committed", { message, directed: true });
-    this.finishRun(runId);
-  }
-
-  private finishRun(runId: string): void {
-    this.activeRunId = null;
-    this.emit("proc.run.finished", { pid: SHIP_PID, runId, queuedCount: 0 });
-    this.emitProcessChanged();
-  }
-
-  private commit(author: JsonObject, text: string, extra: JsonObject = {}): JsonObject {
-    this.sequence += 1;
-    const message: JsonObject = {
-      id: `m-${this.sequence}`, conversationId: CONVERSATION_ID, sequence: this.sequence, author, text,
-      origin: { kind: "client", clientId: "web" }, createdAt: Date.now() - (10 - this.sequence) * 60_000, ...extra,
-    };
-    this.messages.push(message);
-    return message;
-  }
-
-  private conversationSummary(): JsonObject {
-    return { id: CONVERSATION_ID, kind: "ship", ownerUid: OWNER_UID, title: null, handlerPid: SHIP_PID, latestSequence: this.sequence, createdAt: 1, updatedAt: Date.now() };
-  }
-
-  private shipProcess(): JsonObject {
-    return {
-      pid: SHIP_PID, uid: OWNER_UID, username: "ship", interactive: true, personal: true, parentPid: null,
-      state: this.runtimeState(), activeRunId: this.activeRunId, queuedCount: 0, lastActiveAt: Date.now(),
-      label: "ship", createdAt: 1, cwd: "/home/ship",
-    };
-  }
-
-  private runtimeState(): string {
-    return this.pendingApproval ? "waiting_hil" : this.activeRunId ? "running" : "idle";
-  }
-
-  private emitProcessChanged(): void {
-    this.emit("proc.changed", {
-      pid: SHIP_PID, changes: ["state"],
-      runtime: { state: this.runtimeState(), activeRunId: this.activeRunId, queuedCount: 0, lastActiveAt: Date.now() },
+  constructor(url: string | URL) {
+    super();
+    this.url = String(url);
+    queueMicrotask(() => {
+      if (this.readyState !== this.CONNECTING) return;
+      this.readyState = this.OPEN;
+      this.dispatchEvent(new Event("open"));
     });
   }
 
-  private emit(signal: string, payload: JsonValue): void {
-    for (const listener of this.mockSignalListeners) listener(signal, payload);
+  /** A frame from the gateway's side of the wire. */
+  deliver<T>(frame: T): void {
+    if (this.readyState !== this.OPEN) return;
+    this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) }));
   }
 
-  private later(ms: number, run: () => void): void {
-    globalThis.setTimeout(run, ms);
-  }
-
-  private setMockStatus(status: GsvClientStatus): void {
-    this.mockStatus = status;
-    for (const listener of this.mockStatusListeners) listener(status);
-  }
-}
-
-function approvalFor(trigger: string, runId: string): MockApproval | null {
-  switch (trigger) {
-    case "/approve":
-    case "/approve-old": {
-      const gated: MockGatedCall = { toolName: "Shell", syscall: "shell.exec", target: MAC, args: { input: GRANOLA_COMMAND, target: MAC } };
-      if (trigger === "/approve") gated.purpose = "check whether Granola is running and list its windows";
-      return {
-        request: hilRequest(runId, gated),
-        approved: "Granola is running (pid 48213) with two windows open: \"Weekly sync\" and \"Untitled note\".",
-        denied: "Okay, I left Granola alone.",
-      };
+  send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    const text = z.string().safeParse(data);
+    if (!text.success) return; // bodies are not carried here
+    const frame = wireFrameSchemas.request.safeParse(JSON.parse(text.data));
+    if (!frame.success) return; // cancels and other signals need no answer
+    const { id, call, args } = frame.data;
+    let reply: string;
+    try {
+      reply = route(this, id, call, args);
+    } catch (error) {
+      reply = refuse(id, 400, error instanceof Error ? error.message : "Bad request");
     }
-    case "/approve-mail":
-      return {
-        request: hilRequest(runId, {
-          toolName: "mail.send", syscall: "mail.send", target: "gsv",
-          args: { to: "mike@example.com", subject: "Contract follow-up", text: "Hi Mike, as promised, here is the follow-up on the contract…" },
-          purpose: "email Mike the contract follow-up you asked for",
-        }),
-        approved: "Sent. Mike has the contract follow-up.",
-        denied: "Not sent. The draft is still here if you change your mind.",
-      };
-    case "/approve-file":
-      return {
-        request: hilRequest(runId, {
-          toolName: "Write", syscall: "fs.write", target: MAC,
-          args: { path: `/Users/${PERSON}/Notes/granola-windows.md`, content: "# Granola windows\n\n- Weekly sync\n- Untitled note\n", target: MAC },
-          purpose: "save the list of Granola windows to your Notes folder",
-        }),
-        approved: "Saved to Notes/granola-windows.md.",
-        denied: "Okay, nothing was written.",
-      };
-    default: return null;
+    queueMicrotask(() => this.deliverText(reply));
   }
-}
 
-function hilRequest(runId: string, gated: MockGatedCall): JsonObject {
-  const request: JsonObject = {
-    pid: SHIP_PID, requestId: `hil-${runId}`, runId, conversationId: CONVERSATION_ID, callId: `call-${runId}`,
-    toolName: gated.toolName, syscall: gated.syscall, target: gated.target, args: gated.args, createdAt: Date.now(),
-  };
-  if (gated.purpose) request.purpose = gated.purpose;
-  return request;
+  close(code = 1000, reason = ""): void {
+    if (this.readyState === this.CLOSED) return;
+    this.readyState = this.CLOSED;
+    world.sockets.delete(this);
+    this.dispatchEvent(new CloseEvent("close", { code, reason, wasClean: true }));
+  }
+
+  private deliverText(data: string): void {
+    if (this.readyState !== this.OPEN) return;
+    this.dispatchEvent(new MessageEvent("message", { data }));
+  }
 }
