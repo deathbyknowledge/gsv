@@ -127,6 +127,7 @@ export type PendingHilRecord = {
   toolName: string;
   syscall: SyscallName;
   args: JsonObject;
+  reason?: string;
   createdAt: number;
 };
 

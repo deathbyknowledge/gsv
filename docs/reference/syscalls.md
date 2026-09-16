@@ -867,6 +867,8 @@ type ProcHilRequest = {
   // Process-resolved approval scope (for example `gsv` or a connected target).
   target: string;
   args: Record<string, unknown>;
+  // Plain-language sentence the model wrote for the person, saying what this call does for them.
+  reason?: string;
   createdAt: number;
 };
 

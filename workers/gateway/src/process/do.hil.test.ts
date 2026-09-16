@@ -269,6 +269,52 @@ describe("proc.hil", () => {
     });
   });
 
+  it("carries the model's reason to the person and keeps it out of the syscall arguments", async () => {
+    const pid = "mech-hil-reason";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      process.runs.active = {
+        runId: "run-hil-reason",
+        approvalPolicy: {
+          default: "auto",
+          rules: [{ match: "shell.exec", action: "ask" }],
+        },
+      };
+      registerToolBlock(process, "run-hil-reason", [
+        {
+          type: "toolCall",
+          id: "call-hil-reason",
+          name: "Shell",
+          arguments: {
+            input: "pgrep -fl Granola",
+            target: "gsv",
+            reason: "  check whether Granola\n is running  ",
+          },
+        },
+      ]);
+      await process.tools.processToolCalls("run-hil-reason");
+    });
+
+    const history = await okProcessResponse(stub, makeReq("proc.history", {}));
+
+    expect(history.ok).toBe(true);
+    // SAFETY: test fixture is constructed with the asserted domain shape.
+    const pendingHil = (history.data as any).pendingHil;
+    expect(pendingHil).toMatchObject({
+      pid,
+      syscall: "shell.exec",
+      target: "gsv",
+      reason: "check whether Granola is running",
+    });
+    expect(pendingHil.args).toEqual({ input: "pgrep -fl Granola", target: "gsv" });
+
+    await runInProcess(stub, (process) => {
+      expect(process.store.tools.getPendingHilForRun("run-hil-reason")?.reason)
+        .toBe("check whether Granola is running");
+    });
+  });
+
   it("denies a pending confirmation with a synthetic tool result", async () => {
     const pid = "mech-hil-deny";
     const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -662,6 +708,7 @@ describe("proc.hil", () => {
         "fs.read",
         { path: "/private/input" },
         process.runs.active.approvalPolicy,
+        undefined,
       );
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.run.tool.started",

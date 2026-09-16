@@ -288,6 +288,18 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
+  it("offers a person-facing reason on every syscall tool", async () => {
+    const result = await handleAiTools(makeContext("ready"));
+    const withReason = result.tools.filter((tool) => JSON.stringify(tool.inputSchema).includes("\"reason\""));
+
+    expect(withReason.map((tool) => tool.name)).toEqual(expect.arrayContaining(["Shell", "Read", "Write", "CodeMode"]));
+    for (const tool of withReason) {
+      expect(JSON.stringify(tool.inputSchema)).toContain("bare verb phrase");
+      // SAFETY: the tool schema boundary always produces an object schema with a required array.
+      expect((tool.inputSchema as { required: string[] }).required).not.toContain("reason");
+    }
+  });
+
   it("keeps routable tool schemas stable as online targets change", async () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
       makeDevice({ target_id: `node-${String(index + 1).padStart(2, "0")}` })

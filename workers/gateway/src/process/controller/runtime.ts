@@ -1225,6 +1225,7 @@ export class ProcessController {
           pending.syscall,
           pending.args,
           this.host.tools.resolveToolApprovalPolicy(run),
+          pending.reason,
         );
       }
     } else {

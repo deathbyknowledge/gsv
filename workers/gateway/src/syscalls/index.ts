@@ -87,6 +87,34 @@ export function intoSyscallTool(
   };
 }
 
+export const APPROVAL_REASON_SCHEMA_DESCRIPTION = "One short sentence in the language the person writes in, as a bare verb phrase (no \"I want to\", no \"I will\") saying what this call does for them, for example \"check whether Granola is running and list its windows\". When the call needs the person's approval, this sentence is what they read before deciding, so always include it.";
+
+/**
+ * Add the person-facing `reason` property to a syscall tool. The Process lifts it
+ * off the arguments before dispatch and shows it wherever the call waits for approval.
+ */
+export function withApprovalReason(tool: ToolDefinition): ToolDefinition {
+  const { required, properties } = parseSyscallInputSchema(tool.inputSchema);
+  if (Object.keys(properties).includes("reason")) {
+    throw new Error(`Tool ${tool.name} already has a 'reason' property.`);
+  }
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...properties,
+        reason: {
+          type: "string",
+          description: APPROVAL_REASON_SCHEMA_DESCRIPTION,
+        },
+      },
+      required,
+    },
+  };
+}
+
 export function isRoutableSyscall(call: SyscallName): boolean {
   return ROUTABLE_DOMAINS.includes(domainOf(call));
 }

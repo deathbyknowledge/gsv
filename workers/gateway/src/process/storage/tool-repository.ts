@@ -214,8 +214,8 @@ export class ProcessToolRepository {
     this.store.sql.exec(
       `INSERT INTO pending_hil (
         request_id, run_id, owner_dispatch_id, tool_call_id,
-        tool_name, syscall, args_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        tool_name, syscall, args_json, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
       record.ownerDispatchId ?? null,
@@ -223,6 +223,7 @@ export class ProcessToolRepository {
       record.toolName,
       record.syscall,
       JSON.stringify(record.args),
+      record.reason ?? null,
       record.createdAt,
     );
     const dispatchId = record.ownerDispatchId ?? this.store.first<{ dispatch_id: string }>(
@@ -259,6 +260,7 @@ export class ProcessToolRepository {
         tool_name: string;
         syscall: string;
         args_json: string;
+        reason: string | null;
         created_at: number;
       }>(
         requestId
@@ -282,6 +284,9 @@ export class ProcessToolRepository {
     };
     if (row.owner_dispatch_id) {
       record.ownerDispatchId = row.owner_dispatch_id;
+    }
+    if (row.reason) {
+      record.reason = row.reason;
     }
     return record;
   }

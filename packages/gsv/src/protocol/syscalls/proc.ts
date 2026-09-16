@@ -125,6 +125,8 @@ export type ProcHilRequest = {
   /** Authoritative normalized execution target resolved by the Process approval policy. */
   target: string;
   args: JsonObject;
+  /** Plain-language sentence the model wrote for the person, saying what this call does for them. */
+  reason?: string;
   createdAt: number;
 };
 
@@ -138,6 +140,7 @@ export const procHilRequestSchema = z.strictObject({
   syscall: z.string(),
   target: z.string(),
   args: z.record(z.string(), jsonValueSchema),
+  reason: z.optional(z.string()),
   createdAt: z.number(),
 });
 
