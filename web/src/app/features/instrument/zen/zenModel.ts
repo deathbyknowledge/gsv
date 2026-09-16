@@ -627,6 +627,20 @@ export function resolveTail(text: string, random: () => number, tail = RESOLVE_T
   return { head: glyphs.slice(0, cut).join(""), tail: chars };
 }
 
+/* ---------- typing anywhere ---------- */
+
+export type KeyPress = { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean };
+
+/**
+ * Whether a key pressed outside any text field is the start of writing: one printable character with
+ * no command modifier (Shift is how capitals are typed) that no shortcut has claimed. Whitespace never starts it.
+ */
+export function startsWriting(press: KeyPress, claimed: ReadonlySet<string>): boolean {
+  if (press.ctrlKey || press.metaKey || press.altKey) return false;
+  if (claimed.has(press.key)) return false;
+  return Array.from(press.key).length === 1 && !/\s/u.test(press.key);
+}
+
 /* ---------- references to places inside ship text ---------- */
 
 /** Replace `@name` mentions of known places with markdown links the renderer turns into fleet references. */

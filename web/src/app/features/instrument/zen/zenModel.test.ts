@@ -28,6 +28,8 @@ import {
   receiptSteps,
   resolvePlace,
   resolveTail,
+  startsWriting,
+  type KeyPress,
   trimOutput,
   noteSummary,
   type AnswerHistoryEntry,
@@ -974,5 +976,25 @@ describe("conversation attachments", () => {
     expect(moments).toHaveLength(2);
     expect(moments.map((moment) => moment.media)).toEqual([media, media]);
     expect(answerAttribution(moments[1], [{ runId: "r1", timestamp: 150, metadata: { provider: { provider: "test", model: "image-model" } } }], 200)?.model).toBe("image-model");
+  });
+});
+
+describe("startsWriting", () => {
+  const claimed = new Set(["j", "k", "g", "G", "o", "z", "m", ",", "l", "x", "?"]);
+  const press = (key: string, held: Partial<Omit<KeyPress, "key">> = {}): KeyPress => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...held });
+
+  it("starts on a plain printable character, capitals and symbols included", () => {
+    for (const key of ["a", "A", "1", "@", "$", "/", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
+  });
+
+  it("leaves claimed shortcut keys to their owners", () => {
+    for (const key of ["j", "G", "?", "z", ","]) expect(startsWriting(press(key), claimed)).toBe(false);
+  });
+
+  it("ignores command modifiers, whitespace and named keys", () => {
+    expect(startsWriting(press("a", { ctrlKey: true }), claimed)).toBe(false);
+    expect(startsWriting(press("k", { metaKey: true }), claimed)).toBe(false);
+    expect(startsWriting(press("e", { altKey: true }), claimed)).toBe(false);
+    for (const key of [" ", "Enter", "Tab", "Escape", "ArrowDown", "Dead", "Shift", "Backspace"]) expect(startsWriting(press(key), claimed)).toBe(false);
   });
 });

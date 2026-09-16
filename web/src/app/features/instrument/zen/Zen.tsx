@@ -24,6 +24,7 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
+import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { FirstDay } from "../firstday/FirstDay";
 import { useFirstDay } from "../firstday/useFirstDay";
@@ -34,6 +35,7 @@ import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
+import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
@@ -56,6 +58,7 @@ import {
   receiptDuration,
   receiptTargets,
   receiptSteps,
+  startsWriting,
   CLOUD_PLACE_ID,
   type Activity,
   type Moment,
@@ -85,6 +88,15 @@ function settleDuration(length: number): number {
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
+/** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
+const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
+const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
+
+/** The element a key or paste would already edit, or null when it would reach nothing. */
+function editableElement(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof HTMLElement)) return null;
+  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable ? target : null;
+}
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -433,12 +445,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const streaming = runtime.rows.some((row) => row.streaming);
   /* a message that arrives whole settles out of noise on arrival; a streamed one already did, character by character */
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const animating = streaming || settling.size > 0;
-  useEffect(() => {
-    if (!animating || reducedMotion()) return undefined;
-    const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
-    return () => window.clearInterval(interval);
-  }, [animating]);
 
   /* moments: the runtime's, plus the commands run by hand */
   const moments = useMemo(() => {
@@ -477,6 +483,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     }));
     return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
+
+  /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
+  const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
+  const animating = streaming || settling.size > 0 || marking;
+  useEffect(() => {
+    if (!animating || reducedMotion()) return undefined;
+    const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
+    return () => window.clearInterval(interval);
+  }, [animating]);
 
   const loadOlder = useCallback(async () => {
     await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
@@ -696,9 +711,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     onPrefillUsed?.();
   }, [prefill, onPrefillUsed, connected, pid]);
 
-  const focusPrompt = useCallback(() => {
-    promptRef.current?.focus();
-  }, []);
   const onPromptFocus = useCallback(
     (focused: boolean) => {
       setPromptFocused(focused);
@@ -709,12 +721,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      const target = event.target;
-      const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (typing && event.key === "Escape") {
+      const editing = editableElement(event.target);
+      const typing = editing !== null;
+      if (editing && event.key === "Escape") {
         // Escape leaves the prompt even if the input's own handler did not run.
         event.preventDefault();
-        target.blur();
+        editing.blur();
         return;
       }
       if (event.metaKey || event.altKey) return;
@@ -765,14 +777,32 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         scrolling.select(Math.max(0, browse - 1));
         return;
       }
-      if (event.key === "i") {
-        event.preventDefault();
-        focusPrompt();
-      }
+      // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
+      // A pending approval keeps the keys, and shortcut letters keep their meaning.
+      if (pendingHil || !startsWriting(event, CLAIMED_KEYS)) return;
+      const input = promptRef.current;
+      if (input && !input.disabled) input.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, focusPrompt, latest, moments, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [browse, decide, latest, moments, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+
+  /* a paste outside the prompt lands in it too: files attach, text joins the draft */
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || editableElement(event.target) || pendingHil) return;
+      const input = promptRef.current;
+      if (!input || input.disabled) return;
+      const files = Array.from(event.clipboardData?.files ?? []);
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (files.length === 0 && !text) return;
+      event.preventDefault();
+      if (files.length > 0) addFiles(files);
+      else input.append(text);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFiles, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -899,10 +929,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
                     ) : moment.text ? (
                       <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
-                    ) : moment.thinking ? (
-                      <div class="text">
-                        <span class="zen-caret blink" />
-                      </div>
+                    ) : moment.thinking || moment.streaming ? (
+                      <div class="text"><ThinkingMark tick={tick} /></div>
                     ) : null}
                     {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
                     {isLatest && pendingHil ? (
@@ -979,7 +1007,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               pendingHil
                 ? "answer the approval first"
                 : !promptFocused
-                  ? "Press i or click here to write"
+                  ? "Start typing, or click here to write"
                   : currentPlace.online
                     ? "Ask in plain words, or start with $ to run a command yourself"
                     : `Ask in plain words; ${currentPlace.label} will run it when it's back`

@@ -141,6 +141,22 @@
   margin-left: 2px;
   box-shadow: 0 0 8px var(--accent);
 }
+/* a reply with no words yet: a mark that is not a caret, so nobody types at it (ThinkingMark chooses which) */
+.zen-thinking { display: inline-flex; align-items: center; min-height: 1.28em; vertical-align: top; }
+.zen-thinking.is-glyphs { color: var(--glyph); }
+.zen-thinking.is-glyphs i { display: inline-block; width: 0.6em; text-align: center; font-style: normal; }
+.zen-thinking.is-dot .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: zen-breathe 2.4s ease-in-out infinite;
+}
+@keyframes zen-breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .zen-thinking.is-dot .dot { animation: none; opacity: 0.7; }
+}
 
 /* activity along the target axis: collapsed by default, the raw run one click away */
 .activity {

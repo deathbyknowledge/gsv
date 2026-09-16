@@ -13,6 +13,7 @@ import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
 import "./instrument.css";
@@ -158,6 +159,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
       if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
       if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!SHELL_KEYS.has(event.key)) return;
       if (event.key === "z") {
         event.preventDefault();
         move(distance === "fleet" ? "zen" : "fleet");
@@ -218,11 +220,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           {distance === "zen" && <>
             <h4>Zen · browse</h4>
             <dl>
-              <dt>i</dt><dd>Start typing in the prompt</dd>
               <dt>j / k</dt><dd>Next / previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
+              <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
             </dl>
             <h4>Zen · input</h4>
             <dl>
