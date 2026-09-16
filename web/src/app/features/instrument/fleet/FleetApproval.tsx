@@ -3,6 +3,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
+import { hilRequestSentence } from "../../../services/chat/domain/hil";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
 
@@ -47,6 +48,7 @@ export function FleetApproval({ pid, requestId, runId }: { pid: string; requestI
       : pending.isError ? <p class="error" role="alert">Could not load this approval: {pending.error.message}</p>
       : !request ? <p class="note" role="status">{requestId ? "This approval is no longer pending." : "No approval is pending."}{pending.data && requestId ? " A different request is now waiting; open its approval from Zen." : ""}</p>
       : <>
+        <p class="ask">{hilRequestSentence(request, request.target)}</p>
         <p class="note">The process is held on <strong>{request.syscall}</strong> on <strong>{request.target}</strong>. Approving runs exactly what it asked for, nothing else.</p>
         <pre class="line-detail">{JSON.stringify(request.args, null, 2)}</pre>
         <div class="fleet-actions">

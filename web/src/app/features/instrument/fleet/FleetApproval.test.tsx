@@ -15,7 +15,7 @@ describe("pending child approval controls", () => {
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
     vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
     const original = { pid: "child", runId: "child-run", requestId: "child-request", callId: "fetch", toolName: "net.fetch",
-      syscall: "net.fetch", target: "gsv", args: { url: "https://example.com" }, createdAt: 1 };
+      syscall: "net.fetch", target: "gsv", args: { url: "https://example.com" }, reason: "fetch the example page", createdAt: 1 };
     let pending: typeof original | null = original;
     const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
       if (call === "proc.history") return { data: { ok: true, pid: "child", format: 2, messages: [], records: [], messageCount: 0,
@@ -38,6 +38,7 @@ describe("pending child approval controls", () => {
     }
     let view = await mount("child-run");
     await vi.waitFor(() => expect(view.text()).toContain("net.fetch"));
+    expect(view.text()).toContain("Fetch the example page");
     await view.close();
     view = await mount("child-run");
     try {

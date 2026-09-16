@@ -297,6 +297,7 @@
 .fleet-empty { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
 .fleet-invites { list-style: none; padding: 0; color: var(--text-dim); font-size: 12px; }
 .fleet-invites li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.fleet-approval .ask { margin: 12px 0 0; font-family: var(--gsv-font-prose); font-size: 16px; line-height: 1.4; color: var(--text-hi); text-wrap: pretty; }
 .fleet-setup, .fleet-approval .line-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 320px; overflow-y: auto; }
 .fleet-approval:focus { outline: 1px solid var(--border-focus); outline-offset: 5px; }
 @container instrument (max-width: 900px) {

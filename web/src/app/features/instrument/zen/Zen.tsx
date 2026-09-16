@@ -28,6 +28,7 @@ import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { FirstDay } from "../firstday/FirstDay";
 import { useFirstDay } from "../firstday/useFirstDay";
 import { ActivityWorking } from "./ActivityWorking";
+import { ApprovalCard } from "./ApprovalCard";
 import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
@@ -41,7 +42,6 @@ import {
   answerHistorySnapshot,
   countLabel,
   defaultPlace,
-  isStringValue,
   linkPlaceReferences,
   momentsFromConversation,
   momentTime,
@@ -906,28 +906,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                     ) : null}
                     {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
                     {isLatest && pendingHil ? (
-                      <div class="zen-approval">
-                        <div class="q">
-                          <button type="button" onClick={() => {
-                            if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                          }} title="Inspect this approval in Fleet">approval · {placeLabel(pendingHil.target, places)}</button>
-                        </div>
-                        <div class="machine-rail">
-                          <span class="cmd">
-                            <span class="who">{who}</span>@<span class="where">{pendingHil.target}</span> $ {pendingHil.syscall}{" "}
-                            {describeHilArgs(pendingHil)}
-                          </span>
-                        </div>
-                        <div class="keys">
-                          <button type="button" class="ibtn is-primary" onClick={() => void decide("approve")}>
-                            <kbd>y</kbd> run it
-                          </button>
-                          <button type="button" class="ibtn" onClick={() => void decide("deny")}>
-                            <kbd>n</kbd> don't
-                          </button>
-                          <span>nothing runs until you answer</span>
-                        </div>
-                      </div>
+                      <ApprovalCard
+                        request={pendingHil}
+                        who={who}
+                        place={placeLabel(pendingHil.target, places)}
+                        onInspect={() => {
+                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                        }}
+                        onDecide={(decision) => void decide(decision)}
+                      />
                     ) : null}
                   </div>
                 );
@@ -1020,11 +1007,3 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 }
 
-function describeHilArgs(request: ProcHilRequest): string {
-  const args = request.args;
-  const pick = (key: string): string | null => {
-    const value = args[key];
-    return isStringValue(value) ? value : null;
-  };
-  return pick("input") ?? pick("command") ?? pick("path") ?? pick("url") ?? request.toolName;
-}

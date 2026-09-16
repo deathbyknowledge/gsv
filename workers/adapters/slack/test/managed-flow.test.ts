@@ -522,7 +522,7 @@ async function sendApproval(
   const messageId = approvalPost?.result?.ts;
   const sourceText = approvalPost?.body.text;
   expect(messageId).toBeTruthy();
-  expect(sourceText).toContain("Requested action: run \"date\".");
+  expect(sourceText).toContain("Run a command in your cloud home.\n\"date\"");
   expect(sourceText).not.toContain("managed-request-1");
   expect(sourceText).not.toContain("hil[");
   return { messageId: messageId!, sourceText: sourceText!, approveValue: approveValue! };
@@ -1047,7 +1047,7 @@ describe("managed Slack clean-instance flow", () => {
         call.method === "chat.update"
         && call.body.ts === approval.messageId
       ));
-      expect(update?.body.text).toContain("Requested action: run \"date\".");
+      expect(update?.body.text).toContain("Run a command in your cloud home.\n\"date\"");
       expect(update?.body.text).not.toContain("I need your confirmation");
       expect(update?.body.text).not.toContain("hil[");
     });
