@@ -783,7 +783,7 @@ describe("momentsFromConversation", () => {
     const done = shell("df", "df -h", 8, 10);
     const running = shell("ls", "ls -lt", 20, 20, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, isError: undefined });
     const [busy] = momentsFromConversation([], [note("n1", "Look.", 5), done, running], "run");
-    expect(summaryText(busy, 30_005)).toBe(`step 2 · using MacBook 16 · ${formatSeconds(30_000)}`);
+    expect(summaryText(busy, 30_005)).toBe(`step 2 · run a command · MacBook 16 · ${formatSeconds(30_000)}`);
     const [between] = momentsFromConversation([], [note("n1", "Look.", 5), done], "run");
     expect(summaryText(between, 1_005)).toBe(`1 step · thinking · ${formatSeconds(1_000)}`);
     const [failedOnly] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, { toolOutcome: "failed", isError: true, status: "error" })], null);
@@ -795,6 +795,23 @@ describe("momentsFromConversation", () => {
     expect(offsetLabel(65_000, 0)).toBe("+1m 05s");
     expect(offsetLabel(10, 40)).toBe("+0.0s");
     expect(offsetLabel(null, 0)).toBe("");
+  });
+
+  it("uses the purpose in the live receipt and preserves it when a separate result lands", () => {
+    const running = shell("disk", "df -h", 10, 10, {
+      role: "tool", status: "running", toolPurpose: "  check\n free disk space  ", toolOutput: undefined, toolOutcome: undefined,
+    });
+    const [busy] = momentsFromConversation([], [running], "run");
+    expect(summaryText(busy, 2_010)).toBe(`step 1 · check free disk space · MacBook 16 · ${formatSeconds(2_000)}`);
+    const result = { ...running, role: "toolResult" as const, status: "done" as const, timestamp: 100,
+      toolPurpose: undefined, toolArgs: undefined, toolOutcome: "completed" as const, toolOutput: "96 GB free" };
+    const [done] = momentsFromConversation([sent("reply", 110)], [running, result], null);
+    expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", request: "df -h", finished: true } });
+  });
+
+  it.each([undefined, " \n "])("describes a legacy call with purpose %j without using the raw command as prose", (toolPurpose) => {
+    const [moment] = momentsFromConversation([], [shell("disk", "df -h", 10, 20, { toolPurpose })], null);
+    expect(moment.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "run a command", request: "df -h" } });
   });
 });
 

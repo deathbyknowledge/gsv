@@ -14,7 +14,7 @@ inspector shows the sentence above the syscall, target and arguments.
 
 Zen owns the conversation. A fresh conversation shows the first-day introduction inline, with its original four connection rows and inline panels. Background replies and machine events keep that setup experience open. Meet your Ship sends a visible introduction request through ordinary chat; an accepted message, a direct command or opening the conversation leaves setup. A quiet setup action returns to it. The choice follows the owner and canonical conversation through reload and Process replacement; older paginated conversations default to chat. Helpers have a simple empty conversation state. There is no first-day navigation destination. A reply that has no words yet shows a thinking mark where its text will be; the mark is never a caret, so nothing there invites typing.
 
-The receipt under a Ship message is one line while folded: live, which step is running on which place and for how long, or that Ship is thinking; done, how many steps ran on which places, how many failed and whether they were retried, and the total time. Memory references and the model attribution stay on that line. Open, it lists the run in the order it happened: each note the model wrote where it wrote it, in the prose face and dimmed, and each call with a dot for its state, the place named inline, the command or path, its duration, and its output folded to a first line. A call that repeats a failed one on the same place is shown as its retry, and the reply itself is not part of the receipt. The earlier layout, grouped by place with the narration apart, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
+The receipt under a Ship message is one line while folded: live, which step is running on which place and for how long, or that Ship is thinking; done, how many steps ran on which places, how many failed and whether they were retried, and the total time. Memory references and the model attribution stay on that line. Open, it lists the run in the order it happened: each note the model wrote where it wrote it, in the prose face and dimmed, and each call with a dot for its state, its purpose, the place named inline, its duration, and its output folded to a first line. Calls without a purpose use the same generated wording as approvals. The raw command or arguments stay behind a disclosure. Live updates, result deltas and reloaded history retain that purpose separately from execution arguments. A call that repeats a failed one on the same place is shown as its retry, and the reply itself is not part of the receipt. The earlier layout, grouped by place with the narration apart, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
 Fleet owns places, contacts, processes, activity, and their inspectors. Places always offers Connect, and Contacts always offers Add contact, subject to the signed-in account's permissions. A new place can be a computer or browser. A contact is another Ship and has its own list and inspector, separate from execution targets. Opening a connection form never creates a credential or invitation.
 
@@ -58,6 +58,21 @@ Responsibilities use the existing table/inspector layout. Current work and histo
 Memory has one quiet new-page action. It reuses the correction editor, refuses a name already in use, and fences page/index writes with the repository head. Existing-page corrections compare the editor baseline before saving. Navigation and reload protect unsaved drafts.
 
 Files keep their small preview and expand into a full-width reader/editor. Immutable references identify the exact bytes being read or downloaded. Text up to 1 MiB can be edited; larger files open as downloads (currently the shared 25 MiB resource limit). Saves check for observed target changes and retain the draft on conflict. Delete is a contextual, explicitly confirmed action. Returning restores Fleet's selection, folders and scroll. The ledger inspector shows the response's bounded failure reason, duration and request details; full tool output remains in Zen.
+
+## Development mock
+
+Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1`). The mock signs in automatically and runs the real browser client over an in-memory WebSocket. The choice stays in that tab; `?mock=0` clears it. Reloading resets the mock conversation. Nothing in these scenarios executes a command, sends mail or writes a file outside the mock.
+
+| Prompt | Scenario |
+| --- | --- |
+| `/run` | Three steps with purposes, notes, outputs and a reply. |
+| `/run-long` | Nine steps across two places, including a failure and retry. |
+| `/run-old` | The short run without purposes, using generated descriptions. |
+| `/think`, then `/reply` or `/stream` | Hold a tool open, then finish with a plain or streamed reply. |
+| `/approve` / `/approve-old` | The same shell approval with or without a purpose. |
+| `/approve-mail` / `/approve-file` | Email and file approvals. |
+
+Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
 
 ## Buttons
 

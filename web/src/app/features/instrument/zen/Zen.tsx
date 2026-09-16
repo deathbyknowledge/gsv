@@ -475,6 +475,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {
               callId: run.id,
               syscall: "shell.exec",
+              description: "run a command",
+              request: run.command,
               summary: run.command,
               output: run.output,
               finished: terminalFinished(run),
@@ -1042,4 +1044,3 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     </main>
   );
 }
-

@@ -2,6 +2,7 @@ import type { TerminalSession } from "../../../services/terminal/terminalSession
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import { describeCall, normalizeCallPurpose } from "../../../services/chat/domain/callDescription";
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import type { MemoryPageRef } from "../shared/navigation";
@@ -65,6 +66,9 @@ export function defaultPlace(places: readonly Place[]): string {
 export type ActivityCall = {
   callId: string;
   syscall: string;
+  purpose?: string;
+  description: string;
+  request: string;
   summary: string;
   output: string;
   finished: boolean;
@@ -305,9 +309,13 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? (row.toolName === "CodeMode" ? "codemode.exec" : row.toolName ?? "call");
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
   const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
+  const purpose = normalizeCallPurpose(row.toolPurpose);
   const call: ActivityCall = {
     callId: row.toolCallId ?? row.id,
     syscall,
+    purpose,
+    description: purpose ?? describeCall({ toolName: row.toolName ?? syscall, syscall, args: row.toolArgs }),
+    request: syscall === "shell.exec" || syscall.startsWith("codemode.") ? summary : JSON.stringify(row.toolArgs ?? {}, null, 2),
     summary,
     filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
     output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
@@ -375,6 +383,11 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
         if (call.operation && !call.operation.subject && row.toolArgs === undefined) {
           call.operation.subject = existing.calls[index].operation?.subject ?? "";
         }
+        if (row.toolPurpose === undefined && existing.calls[index].purpose) {
+          call.purpose = existing.calls[index].purpose;
+          call.description = existing.calls[index].description;
+        }
+        if (row.toolArgs === undefined) call.request = existing.calls[index].request;
         existing.calls[index] = call;
       }
       else existing.calls.push(call);
@@ -829,6 +842,7 @@ function toolRowOf(entry: WorkEntry): ChatTranscriptRow {
   return {
     ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
     toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.at,
+    toolPurpose: result.toolPurpose ?? call.toolPurpose,
   };
 }
 
@@ -915,7 +929,7 @@ export function receiptSummary(moment: Moment, places: readonly Place[], now: nu
   if (moment.thinking) {
     const elapsed = formatSeconds(now - (receiptFirstAt(moment) ?? now));
     const running = calls.find((event) => !event.call.finished);
-    if (running) return [{ text: `step ${calls.indexOf(running) + 1} · using ` }, { text: label(running.target), tone: "place" }, { text: ` · ${elapsed}` }];
+    if (running) return [{ text: `step ${calls.indexOf(running) + 1} · ${running.call.description} · ` }, { text: label(running.target), tone: "place" }, { text: ` · ${elapsed}` }];
     return [{ text: `${countLabel(calls.length, "step")} · thinking · ${elapsed}` }];
   }
   const named = [...new Set(calls.map((event) => event.target))].map(label);

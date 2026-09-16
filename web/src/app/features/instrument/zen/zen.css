@@ -254,8 +254,10 @@
 .tl-body { min-width: 0; }
 .tl-head { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: baseline; color: var(--text); line-height: 1.6; }
 .receipt .tl-place { color: var(--target); }
-.tl-what { color: var(--text-hi); white-space: pre-wrap; overflow-wrap: anywhere; letter-spacing: 0; }
-.tl-what .tl-subject { color: var(--path); }
+.tl-purpose { color: var(--text-hi); font-family: var(--gsv-font-prose); font-size: 14px; overflow-wrap: anywhere; letter-spacing: 0; }
+.tl-request { margin: 2px 0; }
+.tl-request > summary { width: fit-content; color: var(--text-dim); cursor: pointer; }
+.tl-request > summary:hover, .tl-request > summary:focus-visible { color: var(--text-hi); }
 .tl-meta { color: var(--text-dim); }
 .tl-row.is-running .tl-meta { color: var(--live); }
 .tl-row.is-failed .tl-meta, .tl-row.is-failed .work-output { color: var(--error); }

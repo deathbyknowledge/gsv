@@ -821,6 +821,19 @@ describe("chat transcript rows", () => {
     ]);
   });
 
+  it("lifts streamed purpose into metadata without changing the provider's arguments", () => {
+    const args = { purpose: "check free disk space", input: "df -h", target: "studio" };
+    const state = applyChatSignal(emptyChatRuntimeState("pid-1"), "proc.run.stream", {
+      pid: "pid-1", runId: "run-1",
+      event: { type: "toolcall_end", contentIndex: 0, toolCall: { id: "disk", name: "Shell", arguments: args } },
+    }, { pid: "pid-1" }).state;
+    expect(state.rows.find((row) => row.toolCallId === "disk")).toMatchObject({
+      toolPurpose: "check free disk space", toolArgs: { input: "df -h", target: "studio" },
+    });
+    expect(state.rows.find((row) => row.toolCallId === "disk")?.toolArgs).not.toHaveProperty("purpose");
+    expect(args.purpose).toBe("check free disk space");
+  });
+
   it("applies live stream, tool, and HIL signals for the active process", () => {
     let state = emptyChatRuntimeState("pid-1");
 
@@ -842,6 +855,7 @@ describe("chat transcript rows", () => {
       name: "Shell",
       syscall: "shell.exec",
       args: { input: "ls" },
+      purpose: "list the current directory",
     }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.hil.requested", {
@@ -857,6 +871,7 @@ describe("chat transcript rows", () => {
     }, { pid: "pid-1" }).state;
 
     expect(state.runState).toBe("awaiting_hil");
+    expect(state.rows.find((row) => row.toolCallId === "call-1")?.toolPurpose).toBe("list the current directory");
     expect(state.pendingHil).toMatchObject({
       pid: "pid-1",
       requestId: "hil-1",

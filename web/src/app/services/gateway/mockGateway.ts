@@ -14,9 +14,12 @@
  *   /run       a scripted run: Ship thinks, checks the studio disk, reads your backup notes, dry-runs
  *              the sync, then streams a reply about what it found (one to three seconds a step)
  *   /run-long  nine steps across both places, one of them failing and retried, then the reply
+ *   /run-old   the short run with no recorded purposes, to compare the generated descriptions
  *   /think     Ship starts the first step and holds it, with no words yet, until /reply or /stream
  *   /stream    a multi-paragraph answer streams in, word by word (finishing an open step first)
  *   /reply     a plain reply is committed (finishing an open step first)
+ *   /approve, /approve-old   a shell approval, with and without a purpose
+ *   /approve-mail, /approve-file   an email or file approval; y/n decides, Escape interrupts
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
@@ -32,6 +35,7 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
+  type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,
   type ProcHistoryRecordsResult,
@@ -131,9 +135,10 @@ type Step = {
   /** Hidden reasoning, a thinking block on the note record. */
   thought: string;
   place: "studio" | "gsv";
-  tool: "Shell" | "Read" | "Write" | "Search";
-  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search";
+  tool: "Shell" | "Read" | "Write" | "Search" | "mail.send";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send";
   args: JsonObject;
+  purpose?: string;
   /** How long the tool runs, before a little jitter. */
   ms: number;
   output: JsonValue;
@@ -152,9 +157,9 @@ function shell(command: string, output: string, exitCode = 0): JsonValue {
 }
 
 const RUN: Step[] = [
-  { think: "The backup complaint mentions the drive; check how full it is first.", thought: "df on the studio volume tells me whether space is the problem before I read anything.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "df -h /Volumes/Studio", target: "studio" }, ms: 1600, output: shell("df -h /Volumes/Studio", DF) },
-  { think: "Your notes describe the backup layout; read them before touching anything.", thought: "The notes say where the nightly sync writes and what is excluded.", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/backups.md" }, ms: 1100, output: { ok: true, path: "/home/esteve/notes/backups.md", kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length, content: NOTES } },
-  { think: "A dry run of the sync shows what the next real run would move.", thought: "Dry-run with --stats to size the pending transfer without writing.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3100, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
+  { think: "The backup complaint mentions the drive; check how full it is first.", thought: "df on the studio volume tells me whether space is the problem before I read anything.", purpose: "check how much free space is left on the studio drive", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "df -h /Volumes/Studio", target: "studio" }, ms: 1600, output: shell("df -h /Volumes/Studio", DF) },
+  { think: "Your notes describe the backup layout; read them before touching anything.", thought: "The notes say where the nightly sync writes and what is excluded.", purpose: "read your notes about the nightly backup", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/backups.md" }, ms: 1100, output: { ok: true, path: "/home/esteve/notes/backups.md", kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length, content: NOTES } },
+  { think: "A dry run of the sync shows what the next real run would move.", thought: "Dry-run with --stats to size the pending transfer without writing.", purpose: "estimate the next backup without copying any files", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3100, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
 ];
 const RUN_REPLY = [
   "The studio drive is the problem: /Volumes/Studio is at 95%, with 96 GB free of 1.8 TB, which is why the nightly sync has been dying before it finishes.",
@@ -165,13 +170,13 @@ const RUN_REPLY = [
 const RUN_LONG: Step[] = [
   RUN[0],
   { ...RUN[1], think: "" },
-  { think: "See what the last backups looked like before deciding anything.", thought: "Newest first; the dates show when it stopped landing.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "ls -lt /Volumes/Backups | head -5", target: "studio" }, ms: 1200, output: shell("ls -lt /Volumes/Backups | head -5", "total 0\ndrwxr-xr-x  14 esteve  staff  448 Sep 12 02:41 Work\ndrwxr-xr-x   9 esteve  staff  288 Sep 12 02:03 Photos\ndrwxr-xr-x   6 esteve  staff  192 Sep 11 02:12 Music\ndrwxr-xr-x   3 esteve  staff   96 Sep  9 02:00 Archive") },
-  { think: "", thought: "Any other note about rsync exclusions.", place: "gsv", tool: "Search", syscall: "fs.search", args: { query: "rsync", path: "/home/esteve/notes" }, ms: 1000, output: { ok: true, matches: [{ path: "/home/esteve/notes/backups.md", line: 4, content: "Nightly rsync to /Volumes/Backups at 02:00 (launchd)." }, { path: "/home/esteve/notes/backups.md", line: 7, content: "Failing since Monday: drive at 95%, rsync exits before finishing." }, { path: "/home/esteve/notes/studio-setup.md", line: 22, content: "rsync excludes: Library/Caches, node_modules, *.tmp" }], count: 3 } },
-  { think: "Dry-run the sync to size what is pending.", thought: "Same flags as the nightly job.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", target: "studio" }, ms: 1300, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", RSYNC_MISSING, 23), failure: "shell.exec exited with code 23" },
-  { think: "The projects live under Work, not Projects. Again with the right path.", thought: "The ls above showed Work; Projects was the old name.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3400, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
-  { think: "", thought: "How much the caches take.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "du -sh /Volumes/Studio/Library/Caches/Builds", target: "studio" }, ms: 1500, output: shell("du -sh /Volumes/Studio/Library/Caches/Builds", "141G\t/Volumes/Studio/Library/Caches/Builds") },
-  { think: "Note what I found so next time is faster.", thought: "Append today's numbers to the backup notes.", place: "gsv", tool: "Write", syscall: "fs.write", args: { path: "/home/esteve/notes/backups.md", content: `${NOTES}\n## 16 Sep\n\nDrive 95% (96 GB free). Pending sync 2,140 files / 38 GB. Build caches 141 GB, not backed up.\n` }, ms: 800, output: { ok: true, path: "/home/esteve/notes/backups.md", size: 812 } },
-  { think: "", thought: "Whether a routine already covers cache cleaning.", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/routines.md" }, ms: 900, output: { ok: true, path: "/home/esteve/notes/routines.md", kind: "text", contentType: "text/markdown", lines: 5, size: 188, content: "# Routines\n\n- Monday 08:00: week plan\n- Daily 02:00: studio backup (launchd on studio)\n- Friday 17:00: inbox sweep\n" } },
+  { think: "See what the last backups looked like before deciding anything.", thought: "Newest first; the dates show when it stopped landing.", purpose: "check when the last successful backups finished", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "ls -lt /Volumes/Backups | head -5", target: "studio" }, ms: 1200, output: shell("ls -lt /Volumes/Backups | head -5", "total 0\ndrwxr-xr-x  14 esteve  staff  448 Sep 12 02:41 Work\ndrwxr-xr-x   9 esteve  staff  288 Sep 12 02:03 Photos\ndrwxr-xr-x   6 esteve  staff  192 Sep 11 02:12 Music\ndrwxr-xr-x   3 esteve  staff   96 Sep  9 02:00 Archive") },
+  { think: "", thought: "Any other note about rsync exclusions.", purpose: "find your notes about backup exclusions", place: "gsv", tool: "Search", syscall: "fs.search", args: { query: "rsync", path: "/home/esteve/notes" }, ms: 1000, output: { ok: true, matches: [{ path: "/home/esteve/notes/backups.md", line: 4, content: "Nightly rsync to /Volumes/Backups at 02:00 (launchd)." }, { path: "/home/esteve/notes/backups.md", line: 7, content: "Failing since Monday: drive at 95%, rsync exits before finishing." }, { path: "/home/esteve/notes/studio-setup.md", line: 22, content: "rsync excludes: Library/Caches, node_modules, *.tmp" }], count: 3 } },
+  { think: "Dry-run the sync to size what is pending.", thought: "Same flags as the nightly job.", purpose: "estimate the pending backup for your projects", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", target: "studio" }, ms: 1300, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", RSYNC_MISSING, 23), failure: "shell.exec exited with code 23" },
+  { think: "The projects live under Work, not Projects. Again with the right path.", thought: "The ls above showed Work; Projects was the old name.", purpose: "retry the backup estimate using the current Work folder", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3400, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
+  { think: "", thought: "How much the caches take.", purpose: "measure how much space the build caches use", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "du -sh /Volumes/Studio/Library/Caches/Builds", target: "studio" }, ms: 1500, output: shell("du -sh /Volumes/Studio/Library/Caches/Builds", "141G\t/Volumes/Studio/Library/Caches/Builds") },
+  { think: "Note what I found so next time is faster.", thought: "Append today's numbers to the backup notes.", purpose: "save these findings in your backup notes", place: "gsv", tool: "Write", syscall: "fs.write", args: { path: "/home/esteve/notes/backups.md", content: `${NOTES}\n## 16 Sep\n\nDrive 95% (96 GB free). Pending sync 2,140 files / 38 GB. Build caches 141 GB, not backed up.\n` }, ms: 800, output: { ok: true, path: "/home/esteve/notes/backups.md", size: 812 } },
+  { think: "", thought: "Whether a routine already covers cache cleaning.", purpose: "check whether you already have a cache-cleaning routine", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/routines.md" }, ms: 900, output: { ok: true, path: "/home/esteve/notes/routines.md", kind: "text", contentType: "text/markdown", lines: 5, size: 188, content: "# Routines\n\n- Monday 08:00: week plan\n- Daily 02:00: studio backup (launchd on studio)\n- Friday 17:00: inbox sweep\n" } },
 ];
 const RUN_LONG_REPLY = [
   "The backup is failing for a simple reason: /Volumes/Studio is at 95%, with 96 GB free, and the build caches alone take 141 GB that the backup never copies.",
@@ -179,10 +184,53 @@ const RUN_LONG_REPLY = [
   "There is no routine for cache cleaning yet. I can clear caches older than a week tonight and add a weekly clean next to the backup entry, which should keep the drive under 80%. Say the word.",
 ].join("\n\n");
 
+const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
+
+function approvalFor(trigger: string): ApprovalScenario | null {
+  if (trigger === "/approve" || trigger === "/approve-old") {
+    return {
+      step: {
+        think: "", thought: "Ask before inspecting the windows on your Mac.", place: "studio", tool: "Shell", syscall: "shell.exec",
+        args: { input: GRANOLA_COMMAND, target: "studio" },
+        ...(trigger === "/approve" ? { purpose: "check whether Granola is running and list its windows" } : {}),
+        ms: 900, output: shell(GRANOLA_COMMAND, '48213 Granola\n---\nWeekly sync, Untitled note'),
+      },
+      approved: 'Granola is running (pid 48213) with two windows open: "Weekly sync" and "Untitled note".',
+      denied: "Okay, I left Granola alone.",
+    };
+  }
+  if (trigger === "/approve-mail") {
+    return {
+      step: {
+        think: "", thought: "Ask before sending the follow-up.", place: "gsv", tool: "mail.send", syscall: "mail.send",
+        purpose: "email Mike to follow up on the contract",
+        args: { to: "mike@example.com", subject: "Contract follow-up", text: "Hi Mike, checking in on the contract we discussed. Let me know if you need anything from me." },
+        ms: 900, output: { ok: true, messageId: "mock-mail-1" },
+      },
+      approved: "Sent Mike the contract follow-up.", denied: "Not sent. The draft is still here if you want to change it.",
+    };
+  }
+  if (trigger === "/approve-file") {
+    const path = "/Users/esteve/Notes/granola-windows.md";
+    const content = "# Granola windows\n\n- Weekly sync\n- Untitled note\n";
+    return {
+      step: {
+        think: "", thought: "Ask before saving the window list.", place: "studio", tool: "Write", syscall: "fs.write",
+        purpose: "save the Granola window list in your notes", args: { path, content, target: "studio" },
+        ms: 700, output: { ok: true, path, size: content.length },
+      },
+      approved: "Saved the window list in your Notes folder.", denied: "Okay, I left your notes unchanged.",
+    };
+  }
+  return null;
+}
+
 /* ---------- the world the fixtures live in ---------- */
 
 type OpenStep = { step: Step; callId: string; executionId: string; startedAt: number; seq: number };
-type OpenRun = { runId: string; question: ConversationMessage; open: OpenStep | null; superseded: boolean };
+type ApprovalScenario = { step: Step; approved: string; denied: string };
+type PendingApproval = ApprovalScenario & { request: ProcHilRequest };
+type OpenRun = { runId: string; question: ConversationMessage; open: OpenStep | null; approval: PendingApproval | null; superseded: boolean };
 type Revised = { revision: number; record: ProcHistoryRecord };
 type World = {
   messages: ConversationMessage[]; sequence: number;
@@ -226,7 +274,7 @@ function appendGroup(runId: string, data: ProcHistoryRecordData[], metadata?: Pr
 
 function processes(): ProcListEntry[] {
   return [
-    { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? (world.run.open ? "waiting_tool" : "running") : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
+    { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? (world.run.approval ? "waiting_hil" : world.run.open ? "waiting_tool" : "running") : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
     { pid: HELPER.pid, uid: OWNER.uid, username: SHIP.username, interactive: false, personal: false, parentPid: SHIP.pid, state: "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() - 40_000, label: HELPER.label, createdAt: at(0, 7, 58), cwd: SHIP.home },
   ];
 }
@@ -243,7 +291,7 @@ function history(pid: string, since: string | undefined): ProcHistoryRecordsResu
   return {
     ok: true, pid, format: 2, records, messages: [], messageCount: pid === SHIP.pid ? world.messageId : 0,
     hasMoreBefore: false, hasMoreAfter: false, activeRunId: pid === SHIP.pid ? world.run?.runId ?? null : null,
-    pendingHil: null, context: pid === SHIP.pid ? world.context : null, contextRevision: world.context?.revision ?? 0,
+    pendingHil: pid === SHIP.pid ? world.run?.approval?.request ?? null : null, context: pid === SHIP.pid ? world.context : null, contextRevision: world.context?.revision ?? 0,
     historyRevision: world.revision, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: `mock:${world.revision}`,
   };
 }
@@ -276,7 +324,7 @@ function jitter(ms: number): number {
   return Math.round(ms * (0.8 + Math.random() * 0.4));
 }
 
-type ShipRuntime = { state: "running" | "waiting_tool" | "idle"; activeRunId: string | null; queuedCount: number; lastActiveAt: number };
+type ShipRuntime = { state: "running" | "waiting_tool" | "waiting_hil" | "idle"; activeRunId: string | null; queuedCount: number; lastActiveAt: number };
 /** The Kernel's registry patch, as notifyProcessChanged sends it: no history fields, so only process lists move. */
 function announce(state: ShipRuntime["state"], runId: string | null): void {
   const runtime: ShipRuntime = { state, activeRunId: runId, queuedCount: 0, lastActiveAt: Date.now() };
@@ -316,7 +364,7 @@ function live(run: OpenRun): boolean {
 }
 
 function startRun(question: ConversationMessage): OpenRun {
-  const run: OpenRun = { runId: `run-${question.sequence}`, question, open: null, superseded: false };
+  const run: OpenRun = { runId: `run-${question.sequence}`, question, open: null, approval: null, superseded: false };
   world.run = run;
   announce("running", run.runId);
   broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, reason: "message", queuedCount: 0, timestamp: Date.now() });
@@ -330,7 +378,7 @@ const textBlock = z.object({ text: z.string() });
 
 /** One generation tick that ends in a tool call: the model streams, its output is announced, the note and call are recorded. */
 async function think(run: OpenRun, step: Step, callId: string): Promise<void> {
-  const call: AiToolCall = { type: "toolCall", id: callId, name: step.tool, arguments: step.args };
+  const call: AiToolCall = { type: "toolCall", id: callId, name: step.tool, arguments: { ...(step.purpose ? { purpose: step.purpose } : {}), ...step.args } };
   const content: AssistantContent[] = [{ type: "thinking", thinking: "" }];
   stream(run, { type: "thinking_start", contentIndex: 0, partial: partial(content) });
   for (const piece of step.thought.split(/(?<=[,.;] )/)) {
@@ -357,13 +405,13 @@ async function think(run: OpenRun, step: Step, callId: string): Promise<void> {
   await wait(jitter(260));
   if (!live(run)) return;
   content[index] = call;
-  stream(run, { type: "toolcall_delta", contentIndex: index, delta: JSON.stringify(step.args), partial: partial(content) });
+  stream(run, { type: "toolcall_delta", contentIndex: index, delta: JSON.stringify(call.arguments), partial: partial(content) });
   stream(run, { type: "toolcall_end", contentIndex: index, toolCall: call, partial: partial(content) });
   stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
   if (step.think) broadcast("proc.run.output", { text: step.think, thinking: [step.thought], pid: SHIP.pid, runId: run.runId });
   appendGroup(run.runId, [
     { kind: "note", payload: { text: step.think, thinking: [{ type: "thinking", thinking: step.thought }] } },
-    { kind: "call", payload: { callId, tool: step.tool, syscall: step.syscall, args: step.args, target: step.place, runId: run.runId } },
+    { kind: "call", payload: { callId, tool: step.tool, syscall: step.syscall, args: step.args, target: step.place, runId: run.runId, ...(step.purpose ? { purpose: step.purpose } : {}) } },
   ], { provider: MODEL });
   changed(["context"], { context: contextState(run) });
 }
@@ -375,6 +423,7 @@ function ledgerLine(open: OpenStep, runId: string, outcome: SysLedgerLine["outco
   const line: SysLedgerLine = {
     seq, timestamp: open.startedAt, principalKind: "process", uid: SHIP.uid, pid: SHIP.pid, runId,
     target: open.step.place, call: open.step.syscall, args: JSON.stringify(open.step.args), outcome, error,
+    purpose: open.step.purpose ?? null,
     durationMs: outcome === null ? null : Date.now() - open.startedAt, tokens: null, costNanoUsd: null,
   };
   world.ledger[seq - 1] = line;
@@ -385,22 +434,23 @@ function ledgerLine(open: OpenStep, runId: string, outcome: SysLedgerLine["outco
 function startTool(run: OpenRun, step: Step, callId: string): void {
   const open: OpenStep = { step, callId, executionId: `exec-${callId}`, startedAt: Date.now(), seq: 0 };
   run.open = open;
-  broadcast("proc.run.tool.started", { name: step.tool, syscall: step.syscall, args: step.args, callId, executionId: open.executionId, pid: SHIP.pid, runId: run.runId });
+  broadcast("proc.run.tool.started", { name: step.tool, syscall: step.syscall, args: step.args, purpose: step.purpose, callId, executionId: open.executionId, pid: SHIP.pid, runId: run.runId });
   announce("waiting_tool", run.runId);
   broadcast("ledger.changed", { lines: [ledgerLine(open, run.runId, null, null)] });
 }
 
 /** The tool ends: the result is recorded, then announced, then the changed history is pointed at, and the ledger row closes. */
-function finishTool(run: OpenRun): void {
+function finishTool(run: OpenRun, cancelled = false): void {
   const open = run.open;
   if (!open) return;
   run.open = null;
   const { step } = open;
-  const outcome = step.failure ? "failed" : "completed";
-  appendGroup(run.runId, [{ kind: "result", payload: { callId: open.callId, tool: step.tool, outcome, output: step.output, media: [], resources: [], ...(step.failure ? { error: { message: step.failure } } : undefined) } }]);
+  const outcome = cancelled ? "cancelled" : step.failure ? "failed" : "completed";
+  const error = cancelled ? "Interrupted by user" : step.failure;
+  appendGroup(run.runId, [{ kind: "result", payload: { callId: open.callId, tool: step.tool, outcome, output: cancelled ? null : step.output, media: [], resources: [], ...(error ? { error: { message: error } } : undefined) } }]);
   broadcast("proc.run.tool.finished", { pid: SHIP.pid, runId: run.runId, executionId: open.executionId, callId: open.callId, outcome, timestamp: Date.now() });
   changed(["messages"], { runId: run.runId, messageId: world.messageId });
-  broadcast("ledger.changed", { lines: [ledgerLine(open, run.runId, step.failure ? "failed" : "ok", step.failure ?? null)] });
+  broadcast("ledger.changed", { lines: [ledgerLine(open, run.runId, cancelled ? "cancelled" : step.failure ? "failed" : "ok", error ?? null)] });
 }
 
 /** A whole step: think, run the tool for its time, record the result. */
@@ -414,6 +464,57 @@ async function play(run: OpenRun, step: Step): Promise<void> {
   finishTool(run);
   announce("running", run.runId);
   await wait(jitter(350));
+}
+
+async function askApproval(run: OpenRun, scenario: ApprovalScenario): Promise<void> {
+  const callId = `call-${run.runId}-${world.recordId + 1}`;
+  await think(run, scenario.step, callId);
+  if (!live(run)) return;
+  const step = scenario.step;
+  const request: ProcHilRequest = {
+    pid: SHIP.pid, requestId: `hil-${callId}`, runId: run.runId, conversationId: SHIP_CONVERSATION,
+    callId, toolName: step.tool, syscall: step.syscall, target: step.place, args: step.args, createdAt: Date.now(),
+    ...(step.purpose ? { purpose: step.purpose } : {}),
+  };
+  run.approval = { ...scenario, request };
+  announce("waiting_hil", run.runId);
+  changed(["hil"], { runId: run.runId, pendingHil: request });
+  broadcast("proc.run.hil.requested", request);
+}
+
+/** A denied or interrupted approval records an outcome without dispatching the call. */
+function declineApproval(run: OpenRun, approval: PendingApproval, outcome: "denied" | "cancelled"): void {
+  const message = outcome === "denied" ? "Denied by user" : "Interrupted by user";
+  appendGroup(run.runId, [{ kind: "result", payload: {
+    callId: approval.request.callId, tool: approval.step.tool, outcome, output: null,
+    media: [], resources: [], error: { message },
+  } }]);
+  changed(["messages", "hil"], { runId: run.runId, pendingHil: null });
+}
+
+async function resumeApproval(run: OpenRun, approval: PendingApproval, decision: "approve" | "deny"): Promise<void> {
+  if (!live(run)) return;
+  if (decision === "approve") {
+    startTool(run, approval.step, approval.request.callId);
+    await wait(jitter(approval.step.ms));
+    if (!live(run)) return;
+    finishTool(run);
+    announce("running", run.runId);
+  } else {
+    declineApproval(run, approval, "denied");
+  }
+  await send(run, decision === "approve" ? approval.approved : approval.denied, true);
+}
+
+function interrupt(run: OpenRun): void {
+  run.superseded = true;
+  if (run.approval) {
+    const approval = run.approval;
+    run.approval = null;
+    declineApproval(run, approval, "cancelled");
+  }
+  finishTool(run, true);
+  finishRun(run, null);
 }
 
 /** The reply is a Send: its text streams to the conversation while the tool call streams to observers; the commit records both. */
@@ -439,6 +540,7 @@ async function send(run: OpenRun, text: string, streamed: boolean): Promise<void
     if (!live(run)) return;
     broadcast("message.delta", { ...started, delta: text });
   }
+  if (!live(run)) return;
   const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text } };
   content[0] = call;
   stream(run, { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: partial(content) });
@@ -465,18 +567,25 @@ function finishRun(run: OpenRun, text: string | null): void {
 
 async function answer(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
+  if (!live(run)) return;
+  const approval = approvalFor(trigger);
+  if (approval) {
+    await askApproval(run, approval);
+    return;
+  }
   if (trigger === "/think") {
     const callId = `call-${run.runId}-${world.recordId + 1}`;
     await think(run, RUN[0], callId);
     if (live(run)) startTool(run, RUN[0], callId);
     return; // held until /reply or /stream
   }
-  if (trigger === "/run" || trigger === "/run-long") {
-    for (const step of trigger === "/run" ? RUN : RUN_LONG) {
+  if (trigger === "/run" || trigger === "/run-long" || trigger === "/run-old") {
+    const steps = trigger === "/run-long" ? RUN_LONG : trigger === "/run-old" ? RUN.map((step) => ({ ...step, purpose: undefined })) : RUN;
+    for (const step of steps) {
       if (!live(run)) return;
       await play(run, step);
     }
-    if (live(run)) await send(run, trigger === "/run" ? RUN_REPLY : RUN_LONG_REPLY, true);
+    if (live(run)) await send(run, trigger === "/run-long" ? RUN_LONG_REPLY : RUN_REPLY, true);
     return;
   }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
@@ -487,6 +596,7 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
 /** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */
 async function resolve(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
+  if (!live(run)) return;
   finishTool(run);
   await send(run, trigger === "/stream" ? LONG_REPLY : SHORT_REPLY, trigger === "/stream");
 }
@@ -496,7 +606,7 @@ type Sent = { message: ConversationMessage; runId: string };
 function receive(text: string): Sent {
   const trigger = text.trim().toLowerCase();
   const open = world.run;
-  if (open && (trigger === "/reply" || trigger === "/stream")) {
+  if (open && !open.approval && (trigger === "/reply" || trigger === "/stream")) {
     // The script stops at its next check; a continuation of the same run answers instead.
     const tail: OpenRun = { ...open, superseded: false };
     open.superseded = true;
@@ -506,9 +616,7 @@ function receive(text: string): Sent {
   }
   if (open) {
     // A new message while Ship is busy: the open run yields without a word, then the new one starts.
-    open.superseded = true;
-    finishTool(open);
-    finishRun(open, null);
+    interrupt(open);
   }
   const question = record("you", text, Date.now(), "");
   const runId = `run-${question.sequence}`;
@@ -527,6 +635,8 @@ const conversationArgs = z.object({ conversationId: z.string() });
 const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
+const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
+const abortArgs = z.object({ pid: z.string().optional() });
 
 function respond<T>(id: string, data: T): string {
   return JSON.stringify({ type: "res", id, ok: true, data });
@@ -558,6 +668,26 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const { pid, since } = historyArgs.parse(args);
       return respond(id, history(pid, since));
     }
+    case "proc.hil": {
+      const { pid = SHIP.pid, requestId, decision } = hilArgs.parse(args);
+      const run = world.run;
+      const approval = run?.approval;
+      if (pid !== SHIP.pid || !run || !approval || approval.request.requestId !== requestId) {
+        return respond(id, { ok: false, error: "That approval is no longer pending." });
+      }
+      run.approval = null;
+      announce("running", run.runId);
+      changed(["hil"], { runId: run.runId, pendingHil: null });
+      void resumeApproval(run, approval, decision);
+      return respond(id, { ok: true, pid, requestId, decision, resumed: true, pendingHil: null });
+    }
+    case "proc.abort": {
+      const { pid = SHIP.pid } = abortArgs.parse(args);
+      if (pid !== SHIP.pid) return respond(id, { ok: false, error: "Only Ship runs are scripted in this mock." });
+      const run = world.run;
+      if (run) interrupt(run);
+      return respond(id, { ok: true, pid, aborted: run !== null, ...(run ? { runId: run.runId } : {}) });
+    }
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const ship = conversationArgs.parse(args).conversationId === SHIP_CONVERSATION;
@@ -568,6 +698,14 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
+    case "contact.invite.list": return respond(id, { invites: [] });
+    case "contact.request.list": return respond(id, { requests: [] });
+    case "sys.link.list": return respond(id, { links: [] });
+    case "r12y.list": return respond(id, { responsibilities: [], count: 0, revision: 0 });
+    case "r12y.source.list": return respond(id, { sources: [] });
+    case "sched.list": return respond(id, { schedules: [], count: 0 });
+    case "sys.mcp.list": return respond(id, { servers: [] });
+    case "repo.list": return respond(id, { repos: [] });
     default: return refuse(id, 501, `The mock gateway does not implement ${call}.`);
   }
 }

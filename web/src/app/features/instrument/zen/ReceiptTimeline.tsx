@@ -55,9 +55,7 @@ function CallRow({ event, base, places, live, now, onFleet, retryOf, retriedAt }
   const [all, setAll] = useState(false);
   const { call } = event;
   const state = call.failed ? "failed" : call.finished ? "done" : live ? "running" : "unfinished";
-  const code = call.syscall === "codemode.exec" || call.syscall === "codemode.run" || call.syscall === "CodeMode";
   const shell = call.syscall === "shell.exec";
-  const subject = call.operation?.subject ?? (call.summary === call.syscall ? "" : call.summary);
   const duration = call.finished && event.startedAt !== null && event.endedAt !== null && event.endedAt > event.startedAt
     ? formatSeconds(event.endedAt - event.startedAt)
     : state === "running" && event.startedAt !== null ? formatSeconds(now - event.startedAt) : null;
@@ -67,6 +65,7 @@ function CallRow({ event, base, places, live, now, onFleet, retryOf, retriedAt }
   const meta = [
     state === "running" ? "running…" : state === "failed" ? "failed" : state === "unfinished" ? "unfinished" : null,
     duration,
+    call.operation?.detail ?? null,
     retryOf ? `again, after the failure at ${retryOf}` : null,
     retriedAt !== null ? `retried at ${offsetLabel(retriedAt, base)}` : null,
   ].filter((part): part is string => part !== null);
@@ -76,19 +75,16 @@ function CallRow({ event, base, places, live, now, onFleet, retryOf, retriedAt }
       <span class={`dot is-${state}${state === "running" ? " blink" : ""}`} aria-hidden="true" />
       <div class="tl-body">
         <div class="tl-head">
+          <span class="tl-purpose">{call.description}</span>
           {event.target !== null ? (
             <button type="button" class="work-link tl-place" onClick={() => onFleet(`target:${event.target}`)}>{placeLabel(event.target, places)}</button>
           ) : <span class="tl-place">the process</span>}
-          {shell ? (
-            <span class="tl-what"><span class="shell-prompt">$</span> {call.summary}</span>
-          ) : code ? (
-            <span class="tl-what">CodeMode</span>
-          ) : (
-            <span class="tl-what">{call.operation?.label ?? call.syscall}{subject ? <> <span class="tl-subject">{subject}</span></> : null}{call.operation?.detail ? <span class="n"> · {call.operation.detail}</span> : null}</span>
-          )}
           {meta.length > 0 ? <span class="tl-meta">{meta.join(" · ")}</span> : null}
         </div>
-        {code && call.summary ? <pre class="work-source"><code>{call.summary}</code></pre> : null}
+        <details class="tl-request">
+          <summary class="work-link">{shell ? "show the command" : "show the details"}</summary>
+          <pre class="work-source"><code>{call.request}</code></pre>
+        </details>
         {call.output ? (
           <div class="tl-result">
             <pre class="work-output">{all ? call.output : preview}</pre>

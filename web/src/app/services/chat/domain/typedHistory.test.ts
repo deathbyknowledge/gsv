@@ -6,6 +6,28 @@ import { momentsFromConversation, activitiesForRows, receiptTargets, placesUsed 
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
+  it("retains purpose through result deltas, late call records and a history reload", () => {
+    const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
+      runId: "r", callId: "disk", tool: "Shell", syscall: "shell.exec", target: "studio",
+      args: { input: "df -h" }, purpose: "check free disk space",
+    } });
+    const result = procHistoryRecordSchema.parse({ ...identity, id: 2, messageId: 2, createdAt: 2, kind: "result", payload: {
+      callId: "disk", tool: "Shell", outcome: "completed", output: "96 GB free", media: [], resources: [],
+    } });
+    const started = transcriptRowsFromRecords([call]).map((row) => ({ ...row, status: "running" as const }));
+    for (const rows of [
+      started,
+      mergeTranscriptRows(started, transcriptRowsFromRecords([result])),
+      mergeTranscriptRows(transcriptRowsFromRecords([result]), transcriptRowsFromRecords([call])),
+      transcriptRowsFromRecords([call, result]),
+    ]) {
+      expect(rows[0]).toMatchObject({ toolPurpose: "check free disk space", toolArgs: { input: "df -h" } });
+      expect(momentsFromConversation([], rows, "r")[0].timeline?.[0]).toMatchObject({
+        kind: "call", call: { description: "check free disk space", request: "df -h" },
+      });
+    }
+  });
+
   it.each(["completed", "failed"] as const)("retains %s CodeMode output without inventing a target", (outcome) => {
     const code = 'console.log("started"); return 0;';
     const output = outcome === "completed"
