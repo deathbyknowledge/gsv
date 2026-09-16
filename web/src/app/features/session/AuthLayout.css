@@ -2,6 +2,8 @@
    flex container, so a relative/auto-width child would shrink and let the
    parent wallpaper show through). Tokens come from .gsv-auth-theme. */
 .gsv-auth-surface {
+  --gsv-auth-pad-y: 48px;
+  --gsv-auth-pad-x: 24px;
   /* inset:0 sizes the surface to its container (the session screen full-bleed,
      or a framed catalog story); no fixed 100vh so it never overflows a frame. */
   position: absolute;
@@ -12,6 +14,13 @@
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
+.gsv-auth-header {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 61;
+  height: var(--instrument-header-height);
+}
+.gsv-auth-header button { min-height: 36px; padding-inline: 8px; }
 .gsv-auth-scene .session-screen,
 .gsv-auth-surface-shared {
   background: transparent;
@@ -31,25 +40,13 @@
   height: 100%;
   display: flex;
   align-items: safe center;
-  justify-content: flex-end;
-  padding: var(--gsv-auth-pad-y) var(--gsv-auth-pad-x);
+  justify-content: center;
+  padding: calc(var(--instrument-header-height, 44px) + var(--gsv-auth-pad-y)) var(--gsv-auth-pad-x) 80px;
 }
 
-/* Tablet / large phone: the wide Setup surface reserves a lot of room for the
-   galaxy (760px). As the viewport narrows, shrink that reserve step by step so
-   the panel keeps breathing room and the galaxy stays visible instead of
-   collapsing to a sliver before the center switch at 760px. */
-@media (max-width: 1100px) {
-  .gsv-auth-surface-setup {
-    --gsv-galaxy-reserve: 480px;
-  }
-}
 @media (max-width: 900px) {
   .gsv-auth-content {
     --gsv-auth-pad-x: clamp(20px, 5vw, 48px);
-  }
-  .gsv-auth-surface-setup {
-    --gsv-galaxy-reserve: 320px;
   }
 }
 

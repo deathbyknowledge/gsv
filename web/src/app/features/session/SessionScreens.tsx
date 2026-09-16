@@ -1,7 +1,5 @@
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { LoginScreen } from "./LoginScreen";
-import { ProvisioningScreen } from "./ProvisioningScreen";
-import { SetupCompleteScreen } from "./SetupCompleteScreen";
 import { SetupScreen } from "./SetupScreen";
 import { useSessionScreensState } from "./useSessionScreensState";
 
@@ -12,56 +10,12 @@ type SessionScreensProps = {
 
 export function SessionScreens({ session, snapshot }: SessionScreensProps) {
   const state = useSessionScreensState({ session, snapshot });
-  const { refs, visibleView } = state;
-
-  return (
-    <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "desktop"} ref={refs.screenRef}>
-      <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
-        <LoginScreen
-          visible={visibleView === "login" || visibleView === "booting"}
-          loading={visibleView === "booting"}
-          busy={state.busy}
-          error={state.login.error}
-          username={state.login.username}
-          password={state.login.password}
-          onUsername={state.login.onUsername}
-          onPassword={state.login.onPassword}
-          onSubmit={state.login.onSubmit}
-        />
-        <SetupScreen
-          snapshot={snapshot}
-          onboardingSnapshot={state.onboardingSnapshot}
-          setupError={state.setup.error}
-          guideMessage={state.setup.guideMessage}
-          guideInputRef={refs.guideInputRef}
-          guideLogRef={refs.guideLogRef}
-          timezoneOptions={state.setup.timezoneOptions}
-          onLane={state.setup.onLane}
-          onBack={state.setup.onBack}
-          onNext={state.setup.onNext}
-          onStep={state.setup.onStep}
-          onSubmit={state.setup.onSubmit}
-          onGuideToggle={state.setup.onGuideToggle}
-          onGuideMessage={state.setup.onGuideMessage}
-          onGuideSend={state.setup.onGuideSend}
-          onGuideKeyDown={state.setup.onGuideKeyDown}
-          updateDraft={state.setup.updateDraft}
-        />
-        <ProvisioningScreen visible={visibleView === "provisioning"} pendingAction={state.provisioning.pendingAction} />
-        <SetupCompleteScreen
-          visible={visibleView === "complete"}
-          snapshot={snapshot}
-          adminMode={state.complete.adminMode}
-          completeError={state.complete.error}
-          busy={state.busy}
-          continueButtonRef={refs.continueButtonRef}
-          cliCommandRef={refs.cliCommandRef}
-          nodeCommandRef={refs.nodeCommandRef}
-          onContinue={state.complete.onContinue}
-          onCopyCli={state.complete.onCopyCli}
-          onCopyToken={state.complete.onCopyToken}
-        />
-      </div>
-    </section>
-  );
+  const { visibleView } = state;
+  return <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "ready"} ref={state.screenRef}>
+    <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
+      <LoginScreen visible={visibleView === "login" || visibleView === "booting"} loading={visibleView === "booting"}
+        busy={state.busy} {...state.login} />
+      <SetupScreen visible={visibleView === "setup"} busy={state.busy} space={new URL(snapshot.url).host} {...state.setup} />
+    </div>
+  </section>;
 }

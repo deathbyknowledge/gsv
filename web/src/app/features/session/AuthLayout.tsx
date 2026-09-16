@@ -2,7 +2,10 @@ import { createContext, type ComponentChildren } from "preact";
 import { useContext } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
+import { InstrumentBackdrop } from "../instrument/shared/InstrumentBackdrop";
+import { Wordmark } from "../instrument/shared/Wordmark";
 import "../../../styles/gsv-fonts.css";
+import "../instrument/instrument.css";
 import "./session-theme.css";
 import "./AuthLayout.css";
 
@@ -10,10 +13,16 @@ const SharedAuthScene = createContext(false);
 
 /** Keep one animation alive while local sign-in, recovery, and setup panels change. */
 export function AuthScene({ children, setup = false }: { children: ComponentChildren; setup?: boolean }) {
-  const { theme } = useColorTheme();
+  const { theme, toggleTheme } = useColorTheme();
   return (
-    <div class={`gsv-auth-theme gsv-auth-surface gsv-auth-scene${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
-      <AuthBackground variant="galaxy" palette={theme} />
+    <div class={`instrument gsv-auth-surface gsv-auth-scene${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
+      <InstrumentBackdrop />
+      <header class="instrument-top gsv-auth-header">
+        <Wordmark />
+        <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
+          {theme === "light" ? "Dark" : "Light"}
+        </button>
+      </header>
       <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
     </div>
   );
@@ -40,7 +49,7 @@ export function AuthLayout({ background = "galaxy", visible = true, surfaceClass
   const { theme } = useColorTheme();
   const sharedScene = useContext(SharedAuthScene);
   return (
-    <div class={`gsv-auth-theme gsv-auth-surface${sharedScene ? " gsv-auth-surface-shared" : ""}${theme === "light" ? " is-light" : ""}${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>
+    <div class={`${sharedScene ? "gsv-auth-surface gsv-auth-surface-shared" : "gsv-auth-theme gsv-auth-surface"}${theme === "light" ? " is-light" : ""}${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>
       {visible && !sharedScene && background !== "none" ? <AuthBackground variant={background} palette={theme} /> : null}
       <div class="gsv-auth-content">{children}</div>
     </div>

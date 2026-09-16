@@ -2,21 +2,29 @@
 
 Instrument is the default web UI at `/`. Its views use `/zen`, `/fleet`, `/memory` and `/zen/settings`. The former desktop shell, console and standalone workspaces are retired; old deep links have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
+Login, recovery and installation setup share Instrument's star field, wordmark,
+typefaces and light/dark preference. Setup identifies the current space and asks
+for one local username and password. The browser supplies its timezone; optional
+configuration stays in Settings and Fleet. The session service owns the
+installation capability and signs in immediately after creating the account.
+Failed account creation keeps the form available for retry. If only sign-in
+fails, the ordinary login form shows the error with the created username filled.
+
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list
 supplies owner and run identity; each control reads the original child request
 and sends its decision to that child. Registry signals remove completed work,
 and reload or reconnect recovers pending approvals from durable Process state.
 
-Zen owns the conversation. A fresh conversation shows the first-day introduction inline, with its original four connection rows and inline panels. Background replies and machine events keep that setup experience open. Meet your Ship sends a visible introduction request through ordinary chat; an accepted message, a direct command or opening the conversation leaves setup. A quiet setup action returns to it. The choice follows the owner and canonical conversation through reload and Process replacement; older paginated conversations default to chat. Helpers have a simple empty conversation state. There is no first-day navigation destination.
+Zen owns the conversation. A fresh conversation shows a brief welcome and the ordinary composer. The person's first question or task goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns any guidance after that first message. Helpers have a simple empty conversation state.
 
 Fleet owns places, contacts, processes, activity, and their inspectors. Places always offers Connect, and Contacts always offers Add contact, subject to the signed-in account's permissions. A new place can be a computer or browser. A contact is another Ship and has its own list and inspector, separate from execution targets. Opening a connection form never creates a credential or invitation.
 
 The place flow creates a ten-minute invitation and provides install/connection instructions for the active gateway. The name derives the target ID until it is customized. The invitation survives panel closure, navigation, reload and changes to the installation platform. Explicit cancellation invalidates an unused invitation without revoking a paired device. The CLI and extension persist their receiving credential before redemption, so a lost reply can be recovered without issuing another key. Connected places remain visible while adding another; existing device IDs require the explicit pair-again action.
 
-Contacts supports creating and accepting invitations, pending invitation cancellation, aliases, and revocation. The gateway sends owner-scoped `contact.changed` and `contact.invite.changed` notifications after saved changes, including remote acceptance and revocation. WireSync rereads only the affected list; closed lists are marked stale until opened. Fleet and the first-day introduction share the contact cache. Neither polls, and reconnect reloads missed changes. Invitation expiry uses a local deadline. External alias updates preserve an unsaved local draft.
+Contacts supports creating and accepting invitations, pending invitation cancellation, aliases, and revocation. The gateway sends owner-scoped `contact.changed` and `contact.invite.changed` notifications after saved changes, including remote acceptance and revocation. WireSync rereads only the affected list; closed lists are marked stale until opened. Fleet uses the shared contact cache without polling, and reconnect reloads missed changes. Invitation expiry uses a local deadline. External alias updates preserve an unsaved local draft.
 
-Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). The first-day panels preserve the existing introduction. Fleet keeps connection actions available after those rows become connected.
+Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Fleet keeps connection actions available for adding computers, browsers and contacts whenever the person needs them.
 
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.
 

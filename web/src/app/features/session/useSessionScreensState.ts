@@ -1,320 +1,97 @@
-import type { RefObject } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { OnboardingDraft, OnboardingLane } from "@humansandmachines/gsv/protocol";
-import { createOnboardingService, type OnboardingSnapshot } from "../../services/session/onboardingService";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
-import {
-  buildSetupPayload,
-  currentDetailStep,
-  detailStepsForLane,
-  guideShortcutReady,
-  resolveVisibleView,
-  setupResultViewModel,
-  timeZoneOptions,
-  validateSetupDetails,
-  type AdminMode,
-  type PendingAction,
-} from "./sessionDomain";
-import { useSessionFocus } from "./useSessionFocus";
+import { validateSetupAccount } from "./sessionDomain";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
   snapshot: SessionSnapshot;
 };
 
-function copyText(
-  value: string,
-  fallbackRef: RefObject<HTMLTextAreaElement>,
-): void {
-  if (!value) {
-    return;
-  }
-
-  void navigator.clipboard.writeText(value).catch(() => {
-    fallbackRef.current?.select();
-  });
-}
-
-export function useSessionScreensState({
-  session,
-  snapshot,
-}: UseSessionScreensStateOptions) {
-  const [onboarding] = useState(() => createOnboardingService(session.client, snapshot.username));
-  const [onboardingSnapshot, setOnboardingSnapshot] = useState<OnboardingSnapshot>(() => onboarding.snapshot());
-  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const [lastAdminMode, setLastAdminMode] = useState<AdminMode>(onboardingSnapshot.draft.admin.mode);
+export function useSessionScreensState({ session, snapshot }: UseSessionScreensStateOptions) {
+  const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
   const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
   const [setupValidationError, setSetupValidationError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
   const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
-  const [guideMessage, setGuideMessage] = useState("");
+  const [setupUsername, setSetupUsername] = useState(snapshot.username);
+  const [setupPassword, setSetupPassword] = useState("");
   const screenRef = useRef<HTMLElement>(null);
-  const guideInputRef = useRef<HTMLTextAreaElement>(null);
-  const guideLogRef = useRef<HTMLDivElement>(null);
-  const continueButtonRef = useRef<HTMLButtonElement>(null);
-  const cliCommandRef = useRef<HTMLTextAreaElement>(null);
-  const nodeCommandRef = useRef<HTMLTextAreaElement>(null);
-  const zones = useMemo(timeZoneOptions, []);
-  const visibleView = resolveVisibleView(snapshot, pendingAction);
   const busy = snapshot.phase === "authenticating";
-  const { draft } = onboardingSnapshot;
-  const setupError = snapshot.phase === "setup" && snapshot.message ? snapshot.message : setupValidationError;
-  const loginError = loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null);
-  const completeError = snapshot.phase === "setup-complete" && snapshot.message ? snapshot.message : null;
-  const setupResult = setupResultViewModel(snapshot, lastAdminMode);
-
-  useSessionFocus(screenRef, visibleView, draft, continueButtonRef);
-
-  useEffect(() => onboarding.subscribe(setOnboardingSnapshot), [onboarding]);
-
-  useEffect(() => {
-    if (!snapshot.username || onboardingSnapshot.draft.account.username.trim()) {
-      return;
-    }
-    onboarding.updateDraft((current) => ({
-      ...current,
-      account: {
-        ...current.account,
-        username: snapshot.username,
-      },
-    }));
-  }, [onboarding, onboardingSnapshot.draft.account.username, snapshot.username]);
-
-
-
-  useEffect(() => {
-    if (snapshot.phase === "setup-complete" || snapshot.phase === "ready") {
-      setPendingAction(null);
-    }
-    if (snapshot.phase === "ready") {
-      setLoginPassword("");
-    }
-  }, [snapshot.phase]);
+  const visibleView = snapshot.phase === "ready" ? "ready"
+    : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
+    : snapshot.phase === "booting" ? "booting" : "login";
 
   // Sync login username from snapshot (e.g. after first-boot setup creates the
   // account) but only if the user hasn't manually edited or cleared the field.
   useEffect(() => {
-    if (!loginUsernameTouched && snapshot.username) {
-      setLoginUsername(snapshot.username);
-    }
+    if (!loginUsernameTouched && snapshot.username) setLoginUsername(snapshot.username);
   }, [snapshot.username, loginUsernameTouched]);
 
   useEffect(() => {
-    if (!guideLogRef.current) {
-      return;
-    }
-    guideLogRef.current.scrollTop = guideLogRef.current.scrollHeight;
-  }, [onboardingSnapshot.busy, onboardingSnapshot.messages]);
+    if (busy) return;
+    const root = screenRef.current;
+    if (!root || visibleView === "ready" || visibleView === "booting") return;
+    const prefix = visibleView === "setup" ? "setup" : "session";
+    const username = root.querySelector<HTMLInputElement>(`[data-${prefix}-username]`);
+    if (username && !username.value) username.focus({ preventScroll: true });
+    else root.querySelector<HTMLInputElement>(`[data-${prefix}-password]`)?.focus({ preventScroll: true });
+  }, [busy, visibleView]);
 
-  const updateDraft = (updater: (current: OnboardingDraft) => OnboardingDraft): void => {
-    setSetupValidationError(null);
-    onboarding.updateDraft(updater);
-  };
+  useEffect(() => {
+    if (snapshot.phase !== "authenticating") setPendingAction(null);
+    if (snapshot.phase === "ready" || snapshot.phase === "locked") setSetupPassword("");
+    if (snapshot.phase === "ready") setLoginPassword("");
+  }, [snapshot.phase]);
 
   const submitLogin = (event: Event): void => {
     event.preventDefault();
     if (busy) return;
-
     const username = loginUsername.trim();
-    const password = loginPassword;
-
-    if (!username) {
-      setLoginValidationError("Username is required.");
-      return;
-    }
-    if (!password) {
-      setLoginValidationError("Password is required.");
-      return;
-    }
-
+    if (!username) { setLoginValidationError("Username is required."); return; }
+    if (!loginPassword) { setLoginValidationError("Password is required."); return; }
     setLoginValidationError(null);
     setPendingAction("login");
-    void session.login({
-      username,
-      password,
-    }).catch(() => {
+    void session.login({ username, password: loginPassword }).catch(() => {
       // Error is reflected through session snapshot.
     });
-  };
-
-  const selectLane = (lane: OnboardingLane): void => {
-    setSetupValidationError(null);
-    onboarding.setLane(lane);
-  };
-
-  const back = (): void => {
-    setSetupValidationError(null);
-    if (draft.stage === "review") {
-      onboarding.setStage("details");
-      return;
-    }
-
-    const steps = detailStepsForLane(draft.lane);
-    const currentIndex = steps.indexOf(currentDetailStep(draft));
-    if (currentIndex > 0) {
-      onboarding.setDetailStep(steps[currentIndex - 1] ?? "account");
-    } else {
-      onboarding.setStage("welcome");
-    }
-  };
-
-  // Jump straight to an earlier step by clicking its stepper dot. The Stepper
-  // only enables completed steps, so this is always a backwards move — no
-  // forward validation needed. Steps: 0 = account · 1 = system · 2 = review.
-  const goToStep = (index: number): void => {
-    setSetupValidationError(null);
-    if (index >= 2) {
-      onboarding.setStage("review");
-      return;
-    }
-    onboarding.setStage("details");
-    const steps = detailStepsForLane(draft.lane);
-    onboarding.setDetailStep(
-      index <= 0 ? "account" : steps[1] ?? steps[steps.length - 1] ?? "account",
-    );
-  };
-
-  const next = (): void => {
-    const jumpToReview = guideShortcutReady(draft, onboardingSnapshot.reviewReady);
-    const validation = validateSetupDetails(draft, jumpToReview);
-    if (validation.message) {
-      setSetupValidationError(validation.message);
-      if (validation.step && validation.step !== currentDetailStep(draft)) {
-        onboarding.setDetailStep(validation.step);
-      }
-      return;
-    }
-
-    setSetupValidationError(null);
-    const steps = detailStepsForLane(draft.lane);
-    const currentIndex = steps.indexOf(currentDetailStep(draft));
-    const lastIndex = steps.length - 1;
-    if (jumpToReview || currentIndex >= lastIndex) {
-      onboarding.setStage("review");
-    } else {
-      onboarding.setDetailStep(steps[currentIndex + 1] ?? steps[lastIndex] ?? "account");
-    }
   };
 
   const submitSetup = (event: Event): void => {
     event.preventDefault();
-
-    const validation = validateSetupDetails(draft, true);
-    if (validation.message) {
-      setSetupValidationError(validation.message);
-      onboarding.setStage("details");
-      if (validation.step) {
-        onboarding.setDetailStep(validation.step);
-      }
-      return;
-    }
-
-    if (draft.stage !== "review") {
-      setSetupValidationError(null);
-      onboarding.setStage("review");
-      return;
-    }
-
-    setPendingAction("setup");
-    setLastAdminMode(draft.admin.mode);
-    void session.setup(buildSetupPayload(draft)).catch(() => {
-      setPendingAction(null);
-      // Error is reflected through session snapshot.
-    });
-  };
-
-  const continueFromSetup = (): void => {
-    setPendingAction("continue");
-    void session.continueFromSetup().catch(() => {
-      setPendingAction(null);
-      // Error is reflected through session snapshot.
-    });
-  };
-
-  const toggleGuide = (): void => {
+    if (busy) return;
+    const account = { username: setupUsername, password: setupPassword };
+    const error = validateSetupAccount(account);
+    if (error) { setSetupValidationError(error); return; }
     setSetupValidationError(null);
-    const nextMode = draft.mode === "guided" ? "manual" : "guided";
-    onboarding.setMode(nextMode);
-    if (nextMode === "guided") {
-      window.setTimeout(() => guideInputRef.current?.focus(), 0);
-    }
-  };
-
-  const sendGuideMessage = (): void => {
-    const message = guideMessage.trim();
-    if (!message || onboardingSnapshot.busy) {
-      return;
-    }
-    setGuideMessage("");
-    void onboarding.assist(message).finally(() => {
-      guideInputRef.current?.focus();
+    setLoginValidationError(null);
+    setLoginUsername(account.username);
+    setLoginUsernameTouched(false);
+    setPendingAction("setup");
+    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+      // Error is reflected through session snapshot.
     });
-  };
-
-  const onGuideKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== "Enter" || event.shiftKey) {
-      return;
-    }
-    event.preventDefault();
-    sendGuideMessage();
   };
 
   return {
-    refs: {
-      screenRef,
-      guideInputRef,
-      guideLogRef,
-      continueButtonRef,
-      cliCommandRef,
-      nodeCommandRef,
-    },
+    screenRef,
     visibleView,
     busy,
-    onboardingSnapshot,
-    boot: {
-      message: snapshot.message,
-    },
     login: {
-      error: loginError,
+      error: loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null),
       username: loginUsername,
       password: loginPassword,
-      onUsername: (value: string) => {
-        setLoginValidationError(null);
-        setLoginUsername(value);
-        setLoginUsernameTouched(true);
-      },
-      onPassword: (value: string) => {
-        setLoginValidationError(null);
-        setLoginPassword(value);
-      },
+      onUsername: (value: string) => { setLoginValidationError(null); setLoginUsername(value); setLoginUsernameTouched(true); },
+      onPassword: (value: string) => { setLoginValidationError(null); setLoginPassword(value); },
       onSubmit: submitLogin,
     },
     setup: {
-      error: setupError,
-      guideMessage,
-      timezoneOptions: zones,
-      onLane: selectLane,
-      onBack: back,
-      onNext: next,
-      onStep: goToStep,
+      error: setupValidationError ?? (snapshot.phase === "setup" ? snapshot.message : null),
+      username: setupUsername,
+      password: setupPassword,
+      onUsername: (value: string) => { setSetupValidationError(null); setSetupUsername(value.toLowerCase()); },
+      onPassword: (value: string) => { setSetupValidationError(null); setSetupPassword(value); },
       onSubmit: submitSetup,
-      onGuideToggle: toggleGuide,
-      onGuideMessage: setGuideMessage,
-      onGuideSend: sendGuideMessage,
-      onGuideKeyDown,
-      updateDraft,
-    },
-    provisioning: {
-      pendingAction,
-    },
-    complete: {
-      adminMode: lastAdminMode,
-      error: completeError,
-      setupResult,
-      onContinue: continueFromSetup,
-      onCopyCli: () => copyText(setupResult.cliCommand, cliCommandRef),
-      onCopyToken: () => copyText(setupResult.node.command, nodeCommandRef),
     },
   };
 }

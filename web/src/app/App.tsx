@@ -14,7 +14,7 @@ function AppRoutes() {
     : pathname === "/recover" ? <AccountRecoveryScreen key={revision} />
     : pathname === "/join" ? <HumanInvitationScreen key={revision} /> : null;
   if (recovery || snapshot.phase !== "ready") {
-    return <AuthScene setup={!recovery && (snapshot.phase === "setup" || snapshot.phase === "setup-complete")}>
+    return <AuthScene setup={!recovery && snapshot.phase === "setup"}>
       {recovery ?? <Instrument initialPath={pathname} />}
     </AuthScene>;
   }

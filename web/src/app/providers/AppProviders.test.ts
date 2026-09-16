@@ -70,7 +70,6 @@ function session(phase: SessionPhase, username: string): SessionSnapshot {
     connectionId: phase === "ready" ? `connection:${username}` : null,
     server: null,
     message: null,
-    setupResult: null,
   };
 }
 

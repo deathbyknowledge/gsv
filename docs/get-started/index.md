@@ -5,14 +5,16 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 
 ## Get a space
 
-If an operator has created a space for you, open its setup invitation. Choose
-your local username and password, review your preferences and finish setup.
-Your initial personal agent is Algo. The first-day page helps you connect a
-machine and start a conversation; you can add more machines later from Fleet.
+If an operator has created a space for you, open its setup invitation and choose
+the username and password you'll use inside that space. Creating your account
+signs you in and opens **Ship**, your conversation with your personal agent.
+Start with what you want to do. You can connect devices from **Fleet** and
+configure models and other connections from **Settings** when you need them.
 
-Owner sign-in on **My spaces** lists spaces you own. Signing in alone does not
-create one or grant operator administration rights. The operator creates spaces
-explicitly and issues their setup invitations.
+Owner sign-in on **My spaces** lists spaces you own. It is separate from your
+account inside each space. Signing in alone does not create a space or grant
+operator administration rights. The operator creates spaces explicitly and
+issues their setup invitations.
 
 ## Run your own operator
 

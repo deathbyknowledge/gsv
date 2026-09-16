@@ -1,185 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
-import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
-import {
-  buildAiSummary,
-  buildNodeBootstrapCommand,
-  buildSetupPayload,
-  resolveVisibleView,
-  validateSetupDetails,
-} from "./sessionDomain";
+import { USERNAME_FORMAT_DESCRIPTION, validateSetupAccount } from "./sessionDomain";
 
-function snapshot(phase: SessionPhase): SessionSnapshot {
-  return {
-    phase,
-    url: "ws://localhost/ws",
-    username: "root",
-    connectionId: phase === "ready" ? "connection-id" : null,
-    server: null,
-    message: null,
-    setupResult: null,
-  };
-}
-
-function setupDraft(account: Partial<OnboardingDraft["account"]> = {}): OnboardingDraft {
-  return {
-    lane: "quick",
-    mode: "manual",
-    stage: "details",
-    detailStep: "account",
-    account: {
-      username: "hank",
-      agentName: "algo",
-      password: "password123",
-      passwordConfirm: "password123",
-      ...account,
-    },
-    admin: {
-      mode: "same",
-      password: "",
-      passwordConfirm: "",
-    },
-    system: {
-      timezone: "UTC",
-    },
-    ai: {
-      enabled: false,
-      provider: "",
-      model: "",
-      apiKey: "",
-    },
-    device: {
-      enabled: false,
-      deviceId: "",
-      label: "",
-      expiryDays: "",
-    },
-  };
-}
-
-describe("resolveVisibleView", () => {
-  it("keeps booting separate from login and desktop", () => {
-    expect(resolveVisibleView(snapshot("booting"), null)).toBe("booting");
+describe("setup account validation", () => {
+  it("accepts local credentials without optional configuration", () => {
+    expect(validateSetupAccount({ username: "alice", password: "password123" })).toBeNull();
   });
 
-  it("shows the desktop only after the session is ready", () => {
-    expect(resolveVisibleView(snapshot("ready"), null)).toBe("desktop");
+  it.each(["Alice", " alice", "alice ", "1alice", "alice!", "a".repeat(33)])("explains invalid username %j", (username) => {
+    expect(validateSetupAccount({ username, password: "password123" })).toBe(USERNAME_FORMAT_DESCRIPTION);
   });
 
-  it("keeps manual authentication on the login view", () => {
-    expect(resolveVisibleView(snapshot("authenticating"), "login")).toBe("login");
+  it("requires a username and reserves the Ship account name", () => {
+    expect(validateSetupAccount({ username: "", password: "password123" })).toBe("Username is required.");
+    expect(validateSetupAccount({ username: "algo", password: "password123" })).toBe("Choose a different username. This name belongs to your Ship.");
   });
 
-  it("shows provisioning while setup is being submitted", () => {
-    expect(resolveVisibleView(snapshot("authenticating"), "setup")).toBe("provisioning");
-  });
-
-  it("routes setup and setup-complete phases to their dedicated views", () => {
-    expect(resolveVisibleView(snapshot("setup"), null)).toBe("setup");
-    expect(resolveVisibleView(snapshot("setup-complete"), null)).toBe("complete");
-  });
-});
-
-describe("validateSetupDetails", () => {
-  it("explains invalid desktop usernames without exposing the regex", () => {
-    const result = validateSetupDetails(setupDraft({ username: "Hank" }), true);
-
-    expect(result).toEqual({
-      message: "Username must be 1-32 characters, start with a lowercase letter or underscore, and use only lowercase letters, numbers, underscores, or hyphens.",
-      step: "account",
-    });
-    expect(result.message).not.toContain("^[a-z_]");
-  });
-
-  it("reserves algo for the initial personal agent", () => {
-    expect(validateSetupDetails(setupDraft({ username: "algo" }), true)).toEqual({
-      message: "algo is reserved for your personal agent. Choose a different username.",
-      step: "account",
-    });
-  });
-
-  it.each(["", "friday", "Friday!", "hank"])("replaces a saved agent name of %j with algo", (agentName) => {
-    const draft = setupDraft({ agentName });
-
-    expect(validateSetupDetails(draft, true)).toEqual({ message: null });
-    expect(buildSetupPayload(draft)).toMatchObject({ username: "hank", agentName: "algo" });
-  });
-
-  it("rejects unsafe device ids", () => {
-    const draft = setupDraft();
-    draft.lane = "advanced";
-    draft.detailStep = "system";
-    draft.device.enabled = true;
-    draft.device.deviceId = "node-$(touch-pwned)";
-
-    expect(validateSetupDetails(draft, true)).toEqual({
-      message: "Invalid device ID. Use 1-48 lowercase letters, numbers, underscores, or hyphens, starting with a letter or number.",
-      step: "system",
-    });
-  });
-
-  it("does not ask for a model id when GSV owns model selection", () => {
-    const draft = setupDraft();
-    draft.lane = "customize";
-    draft.detailStep = "system";
-    draft.ai = {
-      enabled: true,
-      provider: "gsv",
-      model: "",
-      apiKey: "",
-    };
-
-    expect(validateSetupDetails(draft, true)).toEqual({ message: null });
-    expect(buildSetupPayload(draft).ai).toEqual({
-      provider: "gsv",
-      model: "default",
-    });
-  });
-});
-
-describe("buildAiSummary", () => {
-  it("describes managed defaults without exposing the internal model alias", () => {
-    const draft = setupDraft();
-
-    expect(buildAiSummary(draft, true)).toBe("GSV included");
-    draft.lane = "customize";
-    draft.ai = {
-      enabled: true,
-      provider: "gsv",
-      model: "default",
-      apiKey: "",
-    };
-    expect(buildAiSummary(draft, true)).toBe("GSV included");
-  });
-});
-
-describe("buildNodeBootstrapCommand", () => {
-  it("uses gsv.exe for Windows follow-up commands", () => {
-    expect(buildNodeBootstrapCommand({
-      origin: "https://gsv.example.com",
-      platform: "windows",
-      username: "hank",
-      deviceId: "studio-pc",
-      token: "tok",
-      release: "dev",
-    })).toBe([
-      "$env:GSV_CHANNEL='dev'; irm https://install.gsv.space/install.ps1 | iex",
-      "gsv.exe config --local set gateway.url \"wss://gsv.example.com/ws\"",
-      "gsv.exe config --local set gateway.username \"hank\"",
-      "gsv.exe config --local set node.id \"studio-pc\"",
-      "gsv.exe config --local set node.token \"tok\"",
-      "gsv.exe daemon install --id \"studio-pc\" --workspace \"$HOME\"",
-    ].join("\n"));
-  });
-
-  it("refuses unsafe device ids in copied commands", () => {
-    expect(() => buildNodeBootstrapCommand({
-      origin: "https://gsv.example.com",
-      platform: "linux",
-      username: "hank",
-      deviceId: "node-`whoami`",
-      token: "tok",
-      release: "dev",
-    })).toThrow("Invalid device ID");
+  it("applies the setup service's password length after trimming", () => {
+    expect(validateSetupAccount({ username: "alice", password: " short   " })).toBe("Password must be at least 8 characters.");
+    expect(validateSetupAccount({ username: "alice", password: " password123 " })).toBeNull();
   });
 });

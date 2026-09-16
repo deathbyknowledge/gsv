@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
-import { GlyphStars } from "../session/backgrounds/GlyphStars";
+import { InstrumentBackdrop } from "./shared/InstrumentBackdrop";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
@@ -48,7 +48,6 @@ function storedScale(): Scale {
     return 1;
   }
 }
-const STAR_DENSITY = 0.013;
 const MOVE_MS = 150;
 
 function reducedMotion(): boolean {
@@ -191,12 +190,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
 
   return (
     <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
-      <div class="instrument-field">
-        <GlyphStars density={STAR_DENSITY} />
-      </div>
-      <div class="instrument-scan" aria-hidden="true" />
+      <InstrumentBackdrop />
       <WireSync />
-      <div class="instrument-vignette" aria-hidden="true" />
       <div class="instrument-scaled">
       <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
