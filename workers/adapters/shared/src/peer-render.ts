@@ -106,8 +106,8 @@ function processModePrefix(context: AdapterDeliveryContext): string {
  * otherwise a sentence built from the request shape with the raw detail on a second line.
  */
 function summarizeAdapterHilRequest(request: ProcHilRequest): string {
-  const reason = safePlainDetail(request.reason, 400);
-  if (reason) return asSentence(reason);
+  const purpose = safePlainDetail(request.purpose, 400);
+  if (purpose) return asSentence(purpose);
   const summary = asSentence(describeAdapterHilRequest(request));
   const detail = adapterHilRequestDetail(request);
   return detail ? `${summary}\n${detail}` : summary;

@@ -1664,6 +1664,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         target: ledgerTargetOf(args, (sessionId) => this.shellSessions.get(sessionId)?.targetId ?? null),
         call: frame.call,
         args: argsText(args),
+        purpose: frame.purpose ?? null,
       });
       void this.armLedgerRotation(seq);
     } catch (error) {

@@ -25,7 +25,8 @@ import {
   type ProcAbortArgs, type ProcAbortResult, type ProcHilArgs, type ProcHilResult, type ProcHistoryArgs,
   type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent, type ProcIpcDeliverArgs,
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
-  type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type InteractionOrigin, type JsonObject,
+  type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
+  type InteractionOrigin, type JsonObject,
   type ProcHistoryEvent, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
@@ -1205,7 +1206,7 @@ export class ProcessController {
         toolCall.dispatchId,
       );
       if (dispatchReady) {
-        await this.host.signals.toolStarted({
+        const started: ProcRunToolStartedSignal = {
           name: pending.toolName,
           syscall: pending.syscall,
           args: pending.args,
@@ -1213,7 +1214,9 @@ export class ProcessController {
           executionId: toolCall.dispatchId,
           pid: this.host.pid,
           runId: pending.runId,
-        });
+        };
+        if (pending.purpose) started.purpose = pending.purpose;
+        await this.host.signals.toolStarted(started);
       }
       if (this.host.handleRunStopped(pending.runId)) {
         return successfulHilResult(this.host.pid, args, remembered, false);
@@ -1225,7 +1228,7 @@ export class ProcessController {
           pending.syscall,
           pending.args,
           this.host.tools.resolveToolApprovalPolicy(run),
-          pending.reason,
+          pending.purpose,
         );
       }
     } else {

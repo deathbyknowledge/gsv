@@ -288,15 +288,17 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
-  it("offers a person-facing reason on every syscall tool", async () => {
+  it("puts a person-facing purpose first on every syscall tool", async () => {
     const result = await handleAiTools(makeContext("ready"));
-    const withReason = result.tools.filter((tool) => JSON.stringify(tool.inputSchema).includes("\"reason\""));
+    const withPurpose = result.tools.filter((tool) => JSON.stringify(tool.inputSchema).includes("\"purpose\""));
 
-    expect(withReason.map((tool) => tool.name)).toEqual(expect.arrayContaining(["Shell", "Read", "Write", "CodeMode"]));
-    for (const tool of withReason) {
-      expect(JSON.stringify(tool.inputSchema)).toContain("bare verb phrase");
-      // SAFETY: the tool schema boundary always produces an object schema with a required array.
-      expect((tool.inputSchema as { required: string[] }).required).not.toContain("reason");
+    expect(withPurpose.map((tool) => tool.name)).toEqual(expect.arrayContaining(["Shell", "Read", "Write", "CodeMode"]));
+    for (const tool of withPurpose) {
+      // SAFETY: the tool schema boundary always produces an object schema with properties and a required array.
+      const schema = tool.inputSchema as { properties: Record<string, { description?: string }>; required: string[] };
+      expect(Object.keys(schema.properties)[0]).toBe("purpose");
+      expect(schema.properties.purpose?.description).toContain("receipt of the run");
+      expect(schema.required).not.toContain("purpose");
     }
   });
 

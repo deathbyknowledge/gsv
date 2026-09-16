@@ -11,6 +11,7 @@ import type {
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
+import { takePurpose } from "./approval";
 import type { Process } from "./do";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
@@ -164,7 +165,7 @@ export function registerToolBlock(
       runId,
       syscall ?? toolCall.name,
       args,
-      "default",
+      takePurpose(args).purpose,
     );
   }
 }

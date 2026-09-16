@@ -9,8 +9,8 @@ const request = {
 const props = { who: "jessicat", place: "my mac", onInspect: () => {}, onDecide: () => {} };
 
 describe("approval card", () => {
-  it("leads with the model's reason and folds the command away", () => {
-    const tree = ApprovalCard({ ...props, request: { ...request, reason: "check whether Granola is running" } });
+  it("leads with the model's purpose and folds the command away", () => {
+    const tree = ApprovalCard({ ...props, request: { ...request, purpose: "check whether Granola is running" } });
     const text = collectText(tree);
     expect(text).toContain("Check whether Granola is running");
     expect(text).toContain("show the command");
@@ -22,7 +22,7 @@ describe("approval card", () => {
     expect(foldText).not.toContain("shell.exec");
   });
 
-  it("describes the request in the same shape when no reason was given", () => {
+  it("describes the request in the same shape when no purpose was given", () => {
     const text = collectText(ApprovalCard({ ...props, request }));
     expect(text).toContain("Run a command on my mac");
     expect(text).toContain("show the command");

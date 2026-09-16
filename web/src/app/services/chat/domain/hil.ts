@@ -20,7 +20,7 @@ const hilRequestSchema = z.object({
   syscall: z.string(),
   target: z.string(),
   args: z.record(z.string(), hilWireValueSchema).optional(),
-  reason: z.string().optional(),
+  purpose: z.string().optional(),
   createdAt: z.number().finite().optional(),
 });
 
@@ -46,21 +46,21 @@ export function normalizeHilRequest<T>(value: T): ProcHilRequest | null {
     args: request.args ?? {},
     createdAt: request.createdAt ?? Date.now(),
   };
-  const reason = request.reason?.replace(/\s+/g, " ").trim();
-  if (reason) {
-    normalized.reason = reason;
+  const purpose = request.purpose?.replace(/\s+/g, " ").trim();
+  if (purpose) {
+    normalized.purpose = purpose;
   }
   return normalized;
 }
 
-/** The sentence a person reads before deciding: the model's reason, or one built from the request shape. */
+/** The sentence a person reads before deciding: the model's purpose, or one built from the request shape. */
 export function hilRequestSentence(request: ProcHilRequest, place: string): string {
-  const text = request.reason ?? describeHilRequest(request, place);
+  const text = request.purpose ?? describeHilRequest(request, place);
   const first = Array.from(text)[0] ?? "";
   return `${first.toLocaleUpperCase()}${text.slice(first.length)}`;
 }
 
-/** A bare verb phrase for a request the model did not explain, in the shape the reason would take. */
+/** A bare verb phrase for a request the model did not explain, in the shape the purpose would take. */
 export function describeHilRequest(request: ProcHilRequest, place: string): string {
   const where = request.target === "gsv" ? `in ${place}` : `on ${place}`;
   switch (request.syscall) {

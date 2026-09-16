@@ -22,25 +22,25 @@ export type ToolApprovalResolution = {
   matchedRule?: string;
 };
 
-/** Syscall arguments with the model's sentence for the person lifted off them. */
-export type ApprovalReasonSplit = {
+/** Syscall arguments with the model's one-sentence purpose for the person lifted off them. */
+export type ToolArgsWithPurpose = {
   args: JsonObject;
-  reason?: string;
+  purpose?: string;
 };
 
-const APPROVAL_REASON_MAX_CHARACTERS = 400;
+const PURPOSE_MAX_CHARACTERS = 400;
 
-/** Every syscall tool offers a `reason` written for the person; it never reaches the syscall. */
-export function takeApprovalReason(args: JsonObject): ApprovalReasonSplit {
-  if (!("reason" in args)) {
+/** Every syscall tool takes a `purpose` written for the person; it never reaches the syscall. */
+export function takePurpose(args: JsonObject): ToolArgsWithPurpose {
+  if (!("purpose" in args)) {
     return { args };
   }
-  const { reason, ...rest } = args;
-  const text = z.string().safeParse(reason).data?.replace(/\s+/g, " ").trim() ?? "";
+  const { purpose, ...rest } = args;
+  const text = z.string().safeParse(purpose).data?.replace(/\s+/g, " ").trim() ?? "";
   if (!text) {
     return { args: rest };
   }
-  return { args: rest, reason: Array.from(text).slice(0, APPROVAL_REASON_MAX_CHARACTERS).join("") };
+  return { args: rest, purpose: Array.from(text).slice(0, PURPOSE_MAX_CHARACTERS).join("") };
 }
 
 export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {

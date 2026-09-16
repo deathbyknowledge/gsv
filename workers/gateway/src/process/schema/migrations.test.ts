@@ -9,7 +9,7 @@ import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_histo
 import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
 import { PROCESS_V012_ADD_PROCESS_TRACE } from "./v012_add_process_trace";
-import { PROCESS_V016_PENDING_HIL_REASON } from "./v016_pending_hil_reason";
+import { PROCESS_V016_CALL_PURPOSE } from "./v016_call_purpose";
 import { PROCESS_V013_ADD_CONTEXT_PROJECTIONS } from "./v013_add_context_projections";
 
 function normalizedStatements(): string[] {
@@ -266,10 +266,11 @@ describe("process schema migrations", () => {
     );
   });
 
-  it("keeps the person's reason beside a pending approval in v16", () => {
-    expect(PROCESS_V016_PENDING_HIL_REASON).toMatchObject({ id: 16, name: "pending_hil_reason" });
-    expect(PROCESS_V016_PENDING_HIL_REASON.statements).toEqual([
-      "ALTER TABLE pending_hil ADD COLUMN reason TEXT",
+  it("keeps the model's purpose beside each tool call and pending approval in v16", () => {
+    expect(PROCESS_V016_CALL_PURPOSE).toMatchObject({ id: 16, name: "call_purpose" });
+    expect(PROCESS_V016_CALL_PURPOSE.statements).toEqual([
+      "ALTER TABLE pending_tool_calls ADD COLUMN purpose TEXT",
+      "ALTER TABLE pending_hil ADD COLUMN purpose TEXT",
     ]);
   });
 

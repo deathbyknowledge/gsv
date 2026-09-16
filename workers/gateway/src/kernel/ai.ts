@@ -54,7 +54,7 @@ import type {
   ContextFile,
 } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
-import { intoSyscallTool, isRoutableSyscall, withApprovalReason } from "../syscalls";
+import { intoSyscallTool, isRoutableSyscall, withPurpose } from "../syscalls";
 import { hasCapability } from "./capabilities";
 import { hasStoredAiProviderOAuthAccount, resolveAiProviderOAuthApiKey } from "./ai-oauth";
 
@@ -169,7 +169,7 @@ export async function handleAiTools(
     if (!hasCapability(capabilities, syscall)) continue;
     if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
 
-    tools.push(withApprovalReason(
+    tools.push(withPurpose(
       isRoutableSyscall(syscall) ? intoSyscallTool(definition) : definition,
     ));
   }

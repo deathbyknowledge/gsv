@@ -867,8 +867,8 @@ type ProcHilRequest = {
   // Process-resolved approval scope (for example `gsv` or a connected target).
   target: string;
   args: Record<string, unknown>;
-  // Plain-language sentence the model wrote for the person, saying what this call does for them.
-  reason?: string;
+  // The model's one-sentence purpose for the person: what this call does for them.
+  purpose?: string;
   createdAt: number;
 };
 
@@ -1469,7 +1469,7 @@ type SystemSyscalls = {
 
   "sys.ledger.list": {
     args: { pid?: string; target?: string; callPrefix?: string; since?: number; until?: number; limit?: number; cursor?: string };
-    result: { lines: Array<{ seq: number; timestamp: number; principalKind: string; uid: number; pid: string | null; runId: string | null; target: string; call: string; args: string; outcome: ("ok" | "failed" | "denied" | "cancelled") | null; durationMs: number | null; tokens?: number | null; costNanoUsd?: number | null }>; nextCursor: string | null };
+    result: { lines: Array<{ seq: number; timestamp: number; principalKind: string; uid: number; pid: string | null; runId: string | null; target: string; call: string; args: string; purpose?: string | null; outcome: ("ok" | "failed" | "denied" | "cancelled") | null; durationMs: number | null; tokens?: number | null; costNanoUsd?: number | null }>; nextCursor: string | null };
   };
 
   "sys.oauth.start": {

@@ -6,10 +6,10 @@
  * The import site is gated by `import.meta.env.DEV`, so none of this reaches a production bundle.
  *
  * Type into the prompt to drive states:
- *   /approve        Ship asks before a shell.exec on my-mac, with a reason
- *   /approve-old    the same request without a reason, so the fallback sentence shows
- *   /approve-mail   a mail.send approval with recipient, subject and a reason
- *   /approve-file   an fs.write approval on my-mac with a reason
+ *   /approve        Ship asks before a shell.exec on my-mac, with a purpose
+ *   /approve-old    the same request without a purpose, so the fallback sentence shows
+ *   /approve-mail   a mail.send approval with recipient, subject and a purpose
+ *   /approve-file   an fs.write approval on my-mac with a purpose
  *   y / n            (or the card's buttons) answer the pending approval; Ship replies in one line
  *   anything else   Ship replies in one line
  *
@@ -71,7 +71,7 @@ type MockGatedCall = {
   syscall: string;
   target: string;
   args: JsonObject;
-  reason?: string;
+  purpose?: string;
 };
 
 type SignalListener = (signal: string, payload: JsonValue | undefined) => void;
@@ -310,7 +310,7 @@ function approvalFor(trigger: string, runId: string): MockApproval | null {
     case "/approve":
     case "/approve-old": {
       const gated: MockGatedCall = { toolName: "Shell", syscall: "shell.exec", target: MAC, args: { input: GRANOLA_COMMAND, target: MAC } };
-      if (trigger === "/approve") gated.reason = "check whether Granola is running and list its windows";
+      if (trigger === "/approve") gated.purpose = "check whether Granola is running and list its windows";
       return {
         request: hilRequest(runId, gated),
         approved: "Granola is running (pid 48213) with two windows open: \"Weekly sync\" and \"Untitled note\".",
@@ -322,7 +322,7 @@ function approvalFor(trigger: string, runId: string): MockApproval | null {
         request: hilRequest(runId, {
           toolName: "mail.send", syscall: "mail.send", target: "gsv",
           args: { to: "mike@example.com", subject: "Contract follow-up", text: "Hi Mike, as promised, here is the follow-up on the contract…" },
-          reason: "email Mike the contract follow-up you asked for",
+          purpose: "email Mike the contract follow-up you asked for",
         }),
         approved: "Sent. Mike has the contract follow-up.",
         denied: "Not sent. The draft is still here if you change your mind.",
@@ -332,7 +332,7 @@ function approvalFor(trigger: string, runId: string): MockApproval | null {
         request: hilRequest(runId, {
           toolName: "Write", syscall: "fs.write", target: MAC,
           args: { path: `/Users/${PERSON}/Notes/granola-windows.md`, content: "# Granola windows\n\n- Weekly sync\n- Untitled note\n", target: MAC },
-          reason: "save the list of Granola windows to your Notes folder",
+          purpose: "save the list of Granola windows to your Notes folder",
         }),
         approved: "Saved to Notes/granola-windows.md.",
         denied: "Okay, nothing was written.",
@@ -346,6 +346,6 @@ function hilRequest(runId: string, gated: MockGatedCall): JsonObject {
     pid: SHIP_PID, requestId: `hil-${runId}`, runId, conversationId: CONVERSATION_ID, callId: `call-${runId}`,
     toolName: gated.toolName, syscall: gated.syscall, target: gated.target, args: gated.args, createdAt: Date.now(),
   };
-  if (gated.reason) request.reason = gated.reason;
+  if (gated.purpose) request.purpose = gated.purpose;
   return request;
 }

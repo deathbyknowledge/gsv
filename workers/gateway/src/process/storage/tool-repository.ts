@@ -22,17 +22,19 @@ export class ProcessToolRepository {
     runId: string,
     call: string,
     args: JsonValue,
+    purpose?: string,
   ): void {
     const createdAt = Date.now();
     this.store.sql.exec(
       `INSERT INTO pending_tool_calls (
-        dispatch_id, id, run_id, call, args_json, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'registered', ?)`,
+        dispatch_id, id, run_id, call, args_json, purpose, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'registered', ?)`,
       dispatchId,
       id,
       runId,
       call,
       JSON.stringify(args),
+      purpose ?? null,
       createdAt,
     );
     this.store.traces.startTraceSpan({
@@ -177,28 +179,35 @@ export class ProcessToolRepository {
       dispatch_id: string;
       call: string;
       args_json: string;
+      purpose: string | null;
       status: string;
       result_json: string | null;
       error: string | null;
       outcome: string | null;
     }>(
-      `SELECT id, dispatch_id, call, args_json, status, result_json, error, outcome
+      `SELECT id, dispatch_id, call, args_json, purpose, status, result_json, error, outcome
          FROM pending_tool_calls
         WHERE run_id = ?
         ORDER BY created_at ASC, rowid ASC`,
       runId,
-    )].map((row) => ({
-      id: row.id,
-      dispatchId: row.dispatch_id,
-      call: row.call,
-      args: jsonValueSchema.parse(JSON.parse(row.args_json)),
-      status: toolCallStatusSchema.parse(row.status),
-      result: row.result_json
-        ? jsonValueSchema.parse(JSON.parse(row.result_json))
-        : null,
-      error: row.error,
-      outcome: normalizeStoredToolResultOutcome(row.outcome),
-    }));
+    )].map((row) => {
+      const record: ToolCallRecord = {
+        id: row.id,
+        dispatchId: row.dispatch_id,
+        call: row.call,
+        args: jsonValueSchema.parse(JSON.parse(row.args_json)),
+        status: toolCallStatusSchema.parse(row.status),
+        result: row.result_json
+          ? jsonValueSchema.parse(JSON.parse(row.result_json))
+          : null,
+        error: row.error,
+        outcome: normalizeStoredToolResultOutcome(row.outcome),
+      };
+      if (row.purpose) {
+        record.purpose = row.purpose;
+      }
+      return record;
+    });
   }
 
   clearRun(runId: string): void {
@@ -214,7 +223,7 @@ export class ProcessToolRepository {
     this.store.sql.exec(
       `INSERT INTO pending_hil (
         request_id, run_id, owner_dispatch_id, tool_call_id,
-        tool_name, syscall, args_json, reason, created_at
+        tool_name, syscall, args_json, purpose, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
@@ -223,7 +232,7 @@ export class ProcessToolRepository {
       record.toolName,
       record.syscall,
       JSON.stringify(record.args),
-      record.reason ?? null,
+      record.purpose ?? null,
       record.createdAt,
     );
     const dispatchId = record.ownerDispatchId ?? this.store.first<{ dispatch_id: string }>(
@@ -260,7 +269,7 @@ export class ProcessToolRepository {
         tool_name: string;
         syscall: string;
         args_json: string;
-        reason: string | null;
+        purpose: string | null;
         created_at: number;
       }>(
         requestId
@@ -285,8 +294,8 @@ export class ProcessToolRepository {
     if (row.owner_dispatch_id) {
       record.ownerDispatchId = row.owner_dispatch_id;
     }
-    if (row.reason) {
-      record.reason = row.reason;
+    if (row.purpose) {
+      record.purpose = row.purpose;
     }
     return record;
   }

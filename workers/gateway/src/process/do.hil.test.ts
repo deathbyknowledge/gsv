@@ -57,6 +57,7 @@ describe("proc.hil", () => {
         "dispatch-offered-read",
         "fs.read",
         { path: "/root/allowed.txt" },
+        undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
         {
@@ -138,6 +139,7 @@ describe("proc.hil", () => {
         "dispatch-offered-read-after-codemode",
         "fs.read",
         { path: "/root/allowed.txt" },
+        undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
         {
@@ -269,31 +271,31 @@ describe("proc.hil", () => {
     });
   });
 
-  it("carries the model's reason to the person and keeps it out of the syscall arguments", async () => {
-    const pid = "mech-hil-reason";
+  it("carries the model's purpose to the person and keeps it out of the syscall arguments", async () => {
+    const pid = "mech-hil-purpose";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
       process.runs.active = {
-        runId: "run-hil-reason",
+        runId: "run-hil-purpose",
         approvalPolicy: {
           default: "auto",
           rules: [{ match: "shell.exec", action: "ask" }],
         },
       };
-      registerToolBlock(process, "run-hil-reason", [
+      registerToolBlock(process, "run-hil-purpose", [
         {
           type: "toolCall",
-          id: "call-hil-reason",
+          id: "call-hil-purpose",
           name: "Shell",
           arguments: {
             input: "pgrep -fl Granola",
             target: "gsv",
-            reason: "  check whether Granola\n is running  ",
+            purpose: "  check whether Granola\n is running  ",
           },
         },
       ]);
-      await process.tools.processToolCalls("run-hil-reason");
+      await process.tools.processToolCalls("run-hil-purpose");
     });
 
     const history = await okProcessResponse(stub, makeReq("proc.history", {}));
@@ -305,13 +307,15 @@ describe("proc.hil", () => {
       pid,
       syscall: "shell.exec",
       target: "gsv",
-      reason: "check whether Granola is running",
+      purpose: "check whether Granola is running",
     });
     expect(pendingHil.args).toEqual({ input: "pgrep -fl Granola", target: "gsv" });
 
     await runInProcess(stub, (process) => {
-      expect(process.store.tools.getPendingHilForRun("run-hil-reason")?.reason)
+      expect(process.store.tools.getPendingHilForRun("run-hil-purpose")?.purpose)
         .toBe("check whether Granola is running");
+      expect(process.store.tools.getResults("run-hil-purpose").map((call) => call.purpose))
+        .toEqual(["check whether Granola is running"]);
     });
   });
 

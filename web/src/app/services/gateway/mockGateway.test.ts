@@ -3,7 +3,7 @@ import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { createMockGateway, mockGatewayRequested } from "./mockGateway";
 
-const hilSchema = z.object({ requestId: z.string(), syscall: z.string(), target: z.string(), reason: z.string().optional(), args: z.object({ input: z.string().optional() }) });
+const hilSchema = z.object({ requestId: z.string(), syscall: z.string(), target: z.string(), purpose: z.string().optional(), args: z.object({ input: z.string().optional() }) });
 const committedSchema = z.object({ message: z.object({ text: z.string(), author: z.object({ kind: z.string() }) }) });
 const historySchema = z.object({ pendingHil: z.object({ requestId: z.string() }).nullable() });
 
@@ -24,7 +24,7 @@ describe("mock gateway", () => {
     expect(mockGatewayRequested()).toBe(true);
   });
 
-  it("raises an approval with a reason on /approve and resolves it with one reply", async () => {
+  it("raises an approval with a purpose on /approve and resolves it with one reply", async () => {
     const client = createMockGateway();
     const signals: Array<[string, JsonValue | undefined]> = [];
     client.onSignal((signal, payload) => signals.push([signal, payload]));
@@ -36,7 +36,7 @@ describe("mock gateway", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     const raised = signals.find(([signal]) => signal === "proc.run.hil.requested");
     const request = hilSchema.parse(raised?.[1]);
-    expect(request).toMatchObject({ syscall: "shell.exec", target: "my-mac", reason: "check whether Granola is running and list its windows" });
+    expect(request).toMatchObject({ syscall: "shell.exec", target: "my-mac", purpose: "check whether Granola is running and list its windows" });
     expect(request.args.input).toContain("Granola");
     const history = await client.request("proc.history", { pid: "ship", format: 2, tail: true, limit: 50 });
     expect(historySchema.parse(history.data).pendingHil).toMatchObject({ requestId: request.requestId });
@@ -52,7 +52,7 @@ describe("mock gateway", () => {
     expect(historySchema.parse(after.data).pendingHil).toBeNull();
   });
 
-  it("raises the other approval shapes without a reason where the trigger says so", async () => {
+  it("raises the other approval shapes without a purpose where the trigger says so", async () => {
     const client = createMockGateway();
     const raised: JsonValue[] = [];
     client.onSignal((signal, payload) => { if (signal === "proc.run.hil.requested" && payload !== undefined) raised.push(payload); });
@@ -65,9 +65,9 @@ describe("mock gateway", () => {
     }
     expect(raised.map((payload) => hilSchema.parse(payload))).toMatchObject([
       { syscall: "shell.exec", target: "my-mac" },
-      { syscall: "mail.send", reason: expect.stringContaining("Mike") },
-      { syscall: "fs.write", target: "my-mac", reason: expect.stringContaining("Notes") },
+      { syscall: "mail.send", purpose: expect.stringContaining("Mike") },
+      { syscall: "fs.write", target: "my-mac", purpose: expect.stringContaining("Notes") },
     ]);
-    expect(hilSchema.parse(raised[0])).not.toHaveProperty("reason");
+    expect(hilSchema.parse(raised[0])).not.toHaveProperty("purpose");
   });
 });

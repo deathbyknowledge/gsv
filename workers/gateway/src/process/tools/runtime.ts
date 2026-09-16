@@ -2,8 +2,8 @@ import { renderToolExecutionError, renderToolResultOutput } from "../history/eve
 /** Owns Process tool policy, dispatch, results, and CodeMode execution. */
 
 import {
-  jsonObjectSchema, jsonValueSchema, type JsonObject, type ProcHilRequest, type ProcToolResultOutcome,
-  type JsonValue,
+  jsonObjectSchema, jsonValueSchema, type JsonObject, type ProcHilRequest, type ProcRunToolStartedSignal,
+  type ProcToolResultOutcome, type JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
   ProcessStore, resolvedToolResultOutcome, type PendingHilRecord, type PendingToolCallRecord,
@@ -18,7 +18,7 @@ import {
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
 } from "../internal/lifecycle";
 import {
-  parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takeApprovalReason,
+  parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
   type ToolApprovalPolicy, type ToolApprovalResolution, type ToolApprovalRule,
 } from "../approval";
 import { approvalRuleKey } from "../context/formatters";
@@ -65,8 +65,8 @@ type CodeModeSyscallContext = {
   dispatchId: string;
   approvalPolicy: ToolApprovalPolicy;
   capabilities: string[];
-  /** The CodeMode call's sentence for the person; nested approvals show it. */
-  reason?: string;
+  /** The CodeMode call's purpose for the person; nested approvals show it. */
+  purpose?: string;
 };
 
 type AdmittedToolCall = {
@@ -76,8 +76,8 @@ type AdmittedToolCall = {
   toolName: string;
   args: JsonObject;
   approval: ToolApprovalResolution;
-  /** The model's sentence for the person, lifted off the syscall arguments. */
-  reason?: string;
+  /** The model's one-sentence purpose for the person, lifted off the syscall arguments. */
+  purpose?: string;
 };
 
 export class ProcessTools {
@@ -245,8 +245,8 @@ export class ProcessTools {
       args: record.args,
       createdAt: record.createdAt,
     };
-    if (record.reason) {
-      request.reason = record.reason;
+    if (record.purpose) {
+      request.purpose = record.purpose;
     }
     if (this.host.runs.active?.runId === record.runId && this.host.runs.active.conversationId) {
       request.conversationId = this.host.runs.active.conversationId;
@@ -498,7 +498,7 @@ export class ProcessTools {
       return null;
     }
 
-    const { args, reason } = takeApprovalReason(jsonObjectSchema.parse(toolCall.args));
+    const { args, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
     const approval = resolveToolApproval(approvalPolicy, syscall, args);
     if (approval.action === "deny") {
       this.host.store.tools.fail(toolCall.dispatchId, "Tool execution denied by policy");
@@ -512,8 +512,8 @@ export class ProcessTools {
       args,
       approval,
     };
-    if (reason) {
-      admitted.reason = reason;
+    if (purpose) {
+      admitted.purpose = purpose;
     }
     return admitted;
   }
@@ -542,7 +542,7 @@ export class ProcessTools {
       }
       const admitted = this.admitRegisteredToolCall(run, toolCall, approvalPolicy);
       if (!admitted) continue;
-      const { callId, dispatchId, syscall, toolName, args, approval, reason } = admitted;
+      const { callId, dispatchId, syscall, toolName, args, approval, purpose } = admitted;
 
       if (approval.action === "ask") {
         const pendingHil: PendingHilRecord = {
@@ -554,8 +554,8 @@ export class ProcessTools {
           args,
           createdAt: Date.now(),
         };
-        if (reason) {
-          pendingHil.reason = reason;
+        if (purpose) {
+          pendingHil.purpose = purpose;
         }
         this.host.store.tools.setPendingHil(pendingHil);
         await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
@@ -568,7 +568,7 @@ export class ProcessTools {
         }
         continue;
       }
-      await this.host.signals.toolStarted({
+      const started: ProcRunToolStartedSignal = {
         name: toolName,
         syscall,
         args,
@@ -576,11 +576,15 @@ export class ProcessTools {
         executionId: dispatchId,
         pid: this.host.pid,
         runId,
-      });
+      };
+      if (purpose) {
+        started.purpose = purpose;
+      }
+      await this.host.signals.toolStarted(started);
       if (this.host.handleRunStopped(runId)) {
         return null;
       }
-      this.launchToolDispatch(runId, dispatchId, syscall, args, approvalPolicy, reason);
+      this.launchToolDispatch(runId, dispatchId, syscall, args, approvalPolicy, purpose);
     }
 
     return null;
@@ -597,12 +601,12 @@ export class ProcessTools {
     syscall: SyscallName,
     args: JsonObject,
     approvalPolicy: ToolApprovalPolicy,
-    reason?: string,
+    purpose?: string,
   ): void {
     const execution =
       syscall === CODEMODE_EXEC
-        ? this.executeCodeModeTool(runId, dispatchId, args, approvalPolicy, reason)
-        : this.host.kernel.dispatchSyscall(runId, dispatchId, syscall, args);
+        ? this.executeCodeModeTool(runId, dispatchId, args, approvalPolicy, purpose)
+        : this.host.kernel.dispatchSyscall(runId, dispatchId, syscall, args, purpose);
     this.host.startBackground(
       `tool dispatch ${dispatchId}`,
       execution.catch((error) => {
@@ -711,7 +715,7 @@ export class ProcessTools {
     dispatchId: string,
     rawArgs: JsonObject,
     approvalPolicy: ToolApprovalPolicy,
-    reason?: string,
+    purpose?: string,
   ): Promise<void> {
     if (this.host.handleRunStopped(runId) || !this.host.store.tools.getPending(dispatchId)) {
       return;
@@ -735,8 +739,8 @@ export class ProcessTools {
       const signal = this.host.run.runAbortSignal(runId);
       const capabilities = this.host.runs.active?.config?.capabilities ?? [];
       const context: CodeModeSyscallContext = { runId, dispatchId, approvalPolicy, capabilities };
-      if (reason) {
-        context.reason = reason;
+      if (purpose) {
+        context.purpose = purpose;
       }
       const result = await executeCodeMode(
         this.host.env,
@@ -822,7 +826,7 @@ export class ProcessTools {
           syscallToolName(call) ?? call,
           call,
           toolArgs,
-          context.reason,
+          context.purpose,
         );
         if (!approved) {
           throw new Error(`Tool execution was not approved: ${call}`);
@@ -867,7 +871,7 @@ export class ProcessTools {
     toolName: string,
     call: SyscallName,
     args: JsonObject,
-    reason?: string,
+    purpose?: string,
   ): Promise<boolean> {
     const requestId = crypto.randomUUID();
     const approved = new Promise<boolean>((resolve) => {
@@ -896,8 +900,8 @@ export class ProcessTools {
       args,
       createdAt: Date.now(),
     };
-    if (reason) {
-      pendingHil.reason = reason;
+    if (purpose) {
+      pendingHil.purpose = purpose;
     }
     this.host.store.tools.setPendingHil(pendingHil);
     await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));

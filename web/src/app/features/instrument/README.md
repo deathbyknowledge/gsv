@@ -8,7 +8,7 @@ supplies owner and run identity; each control reads the original child request
 and sends its decision to that child. Registry signals remove completed work,
 and reload or reconnect recovers pending approvals from durable Process state.
 An approval card leads with what Ship wants to do in the person's words: the
-request's `reason` when the model wrote one, otherwise a sentence built from the
+request's `purpose` when the model wrote one, otherwise a sentence built from the
 request shape. The raw command or path stays under a closed fold; Fleet's
 inspector shows the sentence above the syscall, target and arguments.
 

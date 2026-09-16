@@ -21,7 +21,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
-import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../approval";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval, takePurpose } from "../approval";
 import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
@@ -1657,6 +1657,7 @@ export class ProcessRun {
         runId,
         syscall ?? toolCall.name,
         prepared.args,
+        takePurpose(prepared.args).purpose,
       );
       if (prepared.missingShellSessionTarget) {
         this.host.store.tools.fail(dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);

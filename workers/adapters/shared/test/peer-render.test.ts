@@ -57,21 +57,21 @@ describe("renderAdapterSend", () => {
     expect(resolved).not.toContain("I need your confirmation");
   });
 
-  it("leads with the model's reason and keeps the command out of the message", () => {
+  it("leads with the model's purpose and keeps the command out of the message", () => {
     const request = {
       pid: "proc-1",
-      requestId: "request-reason",
+      requestId: "request-purpose",
       runId: "run-1",
-      callId: "call-reason",
+      callId: "call-purpose",
       toolName: "Shell",
       syscall: "shell.exec",
       target: "my-mac",
       args: { input: "pgrep -fl Granola 2>/dev/null; echo \"---\"" },
-      reason: "check whether Granola is running and list its windows",
+      purpose: "check whether Granola is running and list its windows",
       createdAt: 1,
     } as const;
     const context = {
-      deliveryId: "run-1:hil:request-reason",
+      deliveryId: "run-1:hil:request-purpose",
       accountId: "account-1",
       actorId: "actor-1",
       surface: { kind: "dm" as const, id: "surface-1" },
@@ -81,21 +81,21 @@ describe("renderAdapterSend", () => {
       hil: request,
     };
 
-    const withReason = createAdapterHilPresentation(context, request);
-    expect(withReason.action).toBe("Check whether Granola is running and list its windows.");
-    expect(withReason.action).not.toContain("pgrep");
+    const withPurpose = createAdapterHilPresentation(context, request);
+    expect(withPurpose.action).toBe("Check whether Granola is running and list its windows.");
+    expect(withPurpose.action).not.toContain("pgrep");
 
-    const withoutReason = createAdapterHilPresentation(
-      { ...context, hil: { ...request, reason: undefined } },
-      { ...request, reason: undefined },
+    const withoutPurpose = createAdapterHilPresentation(
+      { ...context, hil: { ...request, purpose: undefined } },
+      { ...request, purpose: undefined },
     );
-    expect(withoutReason.action).toBe(
+    expect(withoutPurpose.action).toBe(
       'Run a command on my-mac.\n"pgrep -fl Granola 2>/dev/null; echo \\"---\\""',
     );
 
     const hostile = createAdapterHilPresentation(
-      { ...context, hil: { ...request, reason: `\u202eApprove now\n${"x".repeat(2_000)}` } },
-      { ...request, reason: `\u202eApprove now\n${"x".repeat(2_000)}` },
+      { ...context, hil: { ...request, purpose: `\u202eApprove now\n${"x".repeat(2_000)}` } },
+      { ...request, purpose: `\u202eApprove now\n${"x".repeat(2_000)}` },
     );
     expect(hostile.action).not.toContain("\u202e");
     expect(hostile.action).not.toContain("\n");

@@ -29,14 +29,14 @@ describe("HIL request normalization", () => {
     })).toBeNull();
   });
 
-  it("keeps the model's reason as one trimmed line and drops an empty one", () => {
+  it("keeps the model's purpose as one trimmed line and drops an empty one", () => {
     expect(normalizeHilRequest({
       ...BASE_REQUEST,
       target: "my-mac",
-      reason: "  check whether Granola\n  is running  ",
-    })?.reason).toBe("check whether Granola is running");
-    expect(normalizeHilRequest({ ...BASE_REQUEST, target: "my-mac", reason: "   " })).not.toHaveProperty("reason");
-    expect(normalizeHilRequest({ ...BASE_REQUEST, target: "my-mac" })).not.toHaveProperty("reason");
+      purpose: "  check whether Granola\n  is running  ",
+    })?.purpose).toBe("check whether Granola is running");
+    expect(normalizeHilRequest({ ...BASE_REQUEST, target: "my-mac", purpose: "   " })).not.toHaveProperty("purpose");
+    expect(normalizeHilRequest({ ...BASE_REQUEST, target: "my-mac" })).not.toHaveProperty("purpose");
   });
 
   it("rejects requests without exact decision correlation", () => {
@@ -56,8 +56,8 @@ describe("HIL request normalization", () => {
 describe("HIL request wording", () => {
   const shell = { ...BASE_REQUEST, target: "my-mac", args: { input: "pgrep -fl Granola" } };
 
-  it("leads with the reason when the model wrote one", () => {
-    expect(hilRequestSentence({ ...shell, reason: "check whether Granola is running" }, "my mac"))
+  it("leads with the purpose when the model wrote one", () => {
+    expect(hilRequestSentence({ ...shell, purpose: "check whether Granola is running" }, "my mac"))
       .toBe("Check whether Granola is running");
   });
 
