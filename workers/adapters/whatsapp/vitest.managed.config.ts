@@ -79,6 +79,10 @@ export default defineConfig({
               // so tests can tell an attempt from a delivery.
               const rejected = [];
               let throttledText = null;
+              let pausedSend = null;
+              let resumeSend = null;
+              let blockedSend = null;
+              const windowRejections = new Set();
               let nextId = 100;
               export default {
                 async fetch(request) {
@@ -88,6 +92,20 @@ export default defineConfig({
                   }
                   if (request.method === "GET" && url.pathname === "/rejected") {
                     return Response.json(rejected);
+                  }
+                  if (request.method === "POST" && url.pathname === "/pause-send") {
+                    const kind = await request.text();
+                    pausedSend = { kind, promise: new Promise((resolve) => { resumeSend = resolve; }) };
+                    return Response.json({ ok: true });
+                  }
+                  if (request.method === "GET" && url.pathname === "/paused-send") {
+                    return Response.json(blockedSend);
+                  }
+                  if (request.method === "POST" && url.pathname === "/resume-send") {
+                    resumeSend?.();
+                    pausedSend = null;
+                    resumeSend = null;
+                    return Response.json({ ok: true });
                   }
                   // Text messages containing the posted marker are answered 429
                   // until the marker is cleared with an empty body.
@@ -142,6 +160,29 @@ export default defineConfig({
                     if (body.status === "read") {
                       records.push({ kind: "read", version, phoneNumberId: segments[1], body, result: { success: true } });
                       return Response.json({ success: true });
+                    }
+                    const windowRejection = body.text?.body?.includes("reopen before template admission")
+                      && !windowRejections.has(body.text.body);
+                    const pause = pausedSend;
+                    if (pause && (
+                      (pause.kind === "template" && body.type === "template")
+                      || (pause.kind === "window-rejection" && windowRejection)
+                    )) {
+                      blockedSend = body;
+                      await pause.promise;
+                      blockedSend = null;
+                    }
+                    if (windowRejection) {
+                      windowRejections.add(body.text.body);
+                      return Response.json(
+                        { error: { message: "Re-engagement message", type: "OAuthException", code: 131047 } },
+                        { status: 400 },
+                      );
+                    }
+                    const templateText = body.template?.components?.find((component) => component.type === "body")?.parameters?.[0]?.text;
+                    if (templateText?.includes("template outcome unknown")) {
+                      rejected.push({ kind: "message", status: 500, body });
+                      return Response.json({ error: { message: "unknown", type: "OAuthException", code: 2 } }, { status: 500 });
                     }
                     if (body.text?.body === "graph rejects this") {
                       return Response.json({ error: { message: "rejected", type: "OAuthException", code: 131026 } }, { status: 400 });

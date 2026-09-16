@@ -140,6 +140,11 @@ type ManagedPeerStub = {
     active: boolean,
   ): Promise<{ accepted: boolean }>;
 };
+type LinkedPeerFixture = {
+  stub: DurableObjectStub<ManagedWhatsAppPeer>;
+  peer: ManagedPeerStub;
+  route: NonNullable<ManagedWhatsAppPeerState["activeRoute"]>;
+};
 
 type RejectedRecord = {
   kind: string;
@@ -229,6 +234,40 @@ async function heldKeys(stub: DurableObjectStub<ManagedWhatsAppPeer>): Promise<s
   return await runInDurableObject(stub, async (_instance, context) => (
     [...(await context.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).keys()]
   ));
+}
+
+async function linkedPeer(window: "open" | "closed"): Promise<LinkedPeerFixture> {
+  // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+  const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
+  const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
+  const route = await runInDurableObject(stub, async (_instance, context) => {
+    const state = await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY);
+    if (!state?.activeRoute) throw new Error("The managed flow must pair the peer first");
+    await context.storage.put(STATE_KEY, {
+      ...state,
+      lastInboundAt: Date.now() - (window === "closed" ? 25 * 60 * 60 * 1000 : 1_000),
+    });
+    return state.activeRoute;
+  });
+  return { stub, peer: typedStub<ManagedPeerStub>(stub), route };
+}
+
+async function pauseGraphSend(kind: "template" | "window-rejection"): Promise<void> {
+  // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+  const binding = env.WHATSAPP_API as Fetcher;
+  await binding.fetch("https://graph.test/pause-send", { method: "POST", body: kind });
+}
+
+async function pausedGraphSend(): Promise<GraphRecord["body"] | null> {
+  // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+  const binding = env.WHATSAPP_API as Fetcher;
+  return await (await binding.fetch("https://graph.test/paused-send")).json();
+}
+
+async function resumeGraphSend(): Promise<void> {
+  // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+  const binding = env.WHATSAPP_API as Fetcher;
+  await binding.fetch("https://graph.test/resume-send", { method: "POST" });
 }
 
 async function gatewayCalls(): Promise<GatewayCall[]> {
@@ -927,6 +966,145 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
     });
     expect((await sentMessages()).some((record) => record.body.context?.message_id === "wamid.in.13")).toBe(false);
+  });
+
+  it("releases held messages before answering an unsupported inbound reply", async () => {
+    const { stub, peer, route } = await linkedPeer("closed");
+    const marker = "Held after reaction";
+    const deliveryId = "outbound-unsupported-release";
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId,
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: `${marker} ${"word ".repeat(300).trimEnd()}`,
+    })).resolves.toMatchObject({ ok: true });
+    expect(await heldKeys(stub)).toContain(`managed_whatsapp_peer:v1:held:${deliveryId}`);
+
+    const before = (await sentMessages()).length;
+    expect((await SELF.fetch(await notification("wamid.in.unsupported-release", {
+      type: "reaction",
+      reaction: { message_id: "wamid.in.15", emoji: "👍" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.unsupported-release");
+    });
+    const released = (await sentMessages()).slice(before);
+    expect(released[0]?.body.text?.body).toMatch(/^Held after reaction /);
+    expect(released.at(-1)?.body.text?.body).toContain("could not receive that message type");
+    expect(await heldKeys(stub)).not.toContain(`managed_whatsapp_peer:v1:held:${deliveryId}`);
+  });
+
+  it("keeps an ambiguous template pending and holds later output until an inbound reply", async () => {
+    const { stub, peer, route } = await linkedPeer("closed");
+    const templatesBefore = (await templateMessages()).length;
+    const rejectedBefore = (await rejectedSends()).length;
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-template-ambiguous",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "template outcome unknown",
+    })).resolves.toMatchObject({ ok: false, ambiguous: true });
+    const pending = await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
+    ));
+    expect(pending).toMatchObject({ sentAt: expect.any(Number), expiresAt: expect.any(Number) });
+
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-after-template-ambiguous",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "Held after ambiguous template",
+    })).resolves.toEqual({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore);
+    expect(await rejectedSends()).toHaveLength(rejectedBefore + 1);
+
+    expect((await SELF.fetch(await notification("wamid.in.ambiguous-template-reply", {
+      type: "reaction",
+      reaction: { message_id: "wamid.in.unsupported-release", emoji: "👍" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.ambiguous-template-reply");
+    });
+    expect((await sentMessages()).some((record) => record.body.text?.body === "Held after ambiguous template")).toBe(true);
+    expect((await sentMessages()).some((record) => record.body.text?.body === "template outcome unknown")).toBe(false);
+    expect(await runInDurableObject(stub, async (_instance, context) => (
+      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
+    ))).toBeUndefined();
+  });
+
+  it("admits inbound replies while an active template settles before releasing held output", async () => {
+    const { stub, peer, route } = await linkedPeer("closed");
+    await pauseGraphSend("template");
+    const sending = peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-template-in-flight",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: `Held during template send ${"word ".repeat(300).trimEnd()}`,
+    });
+    try {
+      await vi.waitFor(async () => {
+        expect(await pausedGraphSend()).toMatchObject({ type: "template" });
+      });
+      expect((await SELF.fetch(await notification("wamid.in.template-in-flight", {
+        type: "reaction",
+        reaction: { message_id: "wamid.in.ambiguous-template-reply", emoji: "👍" },
+      }))).status).toBe(200);
+      await vi.waitFor(async () => {
+        expect(await graphRecords()).toContainEqual(expect.objectContaining({
+          kind: "read",
+          body: expect.objectContaining({ message_id: "wamid.in.template-in-flight" }),
+        }));
+      });
+      expect(await runInDurableObject(stub, async (_instance, context) => (
+        (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.lastInboundMessageId
+      ))).toBe("wamid.in.template-in-flight");
+      expect((await sentMessages()).some((record) => record.body.text?.body?.startsWith("Held during template send"))).toBe(false);
+    } finally {
+      await resumeGraphSend();
+    }
+    await expect(sending).resolves.toMatchObject({ ok: true });
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.template-in-flight");
+    });
+    const messages = await sentMessages();
+    const templateIndex = messages.findIndex((record) => templateParameter(record)?.startsWith("Held during template send"));
+    const heldIndex = messages.findIndex((record) => record.body.text?.body?.startsWith("Held during template send"));
+    expect(templateIndex).toBeGreaterThanOrEqual(0);
+    expect(heldIndex).toBeGreaterThan(templateIndex);
+  });
+
+  it("uses a newer inbound receipt instead of sending a template after a delayed window rejection", async () => {
+    const { peer, route } = await linkedPeer("open");
+    const templatesBefore = (await templateMessages()).length;
+    await pauseGraphSend("window-rejection");
+    const sending = peer.sendMessage(route.installationId, {
+      deliveryId: "outbound-window-reopened",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "reopen before template admission",
+    });
+    try {
+      await vi.waitFor(async () => {
+        expect(await pausedGraphSend()).toMatchObject({ type: "text" });
+      });
+      expect((await SELF.fetch(await notification("wamid.in.window-reopened", {
+        type: "reaction",
+        reaction: { message_id: "wamid.in.template-in-flight", emoji: "👍" },
+      }))).status).toBe(200);
+      await vi.waitFor(async () => {
+        expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.window-reopened");
+      });
+    } finally {
+      await resumeGraphSend();
+    }
+    await expect(sending).resolves.toMatchObject({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore);
+    expect((await sentMessages()).some((record) => record.body.text?.body === "reopen before template admission")).toBe(true);
   });
 });
 
