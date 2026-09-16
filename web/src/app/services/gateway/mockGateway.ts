@@ -6,24 +6,38 @@
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
- * are the ones the wire would carry. Fixtures are the plain objects below.
+ * are the ones the wire would carry, in the order the gateway emits them: stream events, run output,
+ * typed history records, tool signals, ledger rows and the message stream. Fixtures are the plain
+ * objects below.
  *
  * Typed into the prompt:
- *   /think    Ship starts working with a tool and has no words yet; held until /reply or /stream
- *   /stream   a multi-paragraph answer streams in, word by word
- *   /reply    a plain reply is committed, finishing an open /think first
+ *   /run       a scripted run: Ship thinks, checks the studio disk, reads your backup notes, dry-runs
+ *              the sync, then streams a reply about what it found (one to three seconds a step)
+ *   /run-long  nine steps across both places, one of them failing and retried, then the reply
+ *   /think     Ship starts the first step and holds it, with no words yet, until /reply or /stream
+ *   /stream    a multi-paragraph answer streams in, word by word (finishing an open step first)
+ *   /reply     a plain reply is committed (finishing an open step first)
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
   wireFrameSchemas,
   type AccountSummary,
+  type AiTextContent,
+  type AiThinkingContent,
+  type AiToolCall,
   type ConnectResult,
   type ConversationMessage,
   type ConversationSummary,
+  type JsonObject,
   type JsonValue,
+  type ProcContextState,
+  type ProcHistoryRecord,
+  type ProcHistoryRecordData,
   type ProcHistoryRecordsResult,
   type ProcListEntry,
+  type ProcMessageMetadata,
+  type SysLedgerLine,
   type SysTargetSummary,
   type SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
@@ -72,6 +86,7 @@ const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "algo", home: "/home/algo" };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
+const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
 
 /** A wall-clock instant some days back, so the conversation always spans yesterday and today. */
 function at(daysAgo: number, hour: number, minute: number): number {
@@ -108,11 +123,77 @@ const accounts: AccountSummary[] = [
   { uid: SHIP.uid, username: SHIP.username, displayName: "algo", relation: "personal-agent", runnable: true },
 ];
 
+/* ---------- the scripted runs: what Ship does, step by step ---------- */
+
+type Step = {
+  /** What Ship says to itself before the call; shown folded under the receipt. Empty when it goes straight to the tool. */
+  think: string;
+  /** Hidden reasoning, a thinking block on the note record. */
+  thought: string;
+  place: "studio" | "gsv";
+  tool: "Shell" | "Read" | "Write" | "Search";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search";
+  args: JsonObject;
+  /** How long the tool runs, before a little jitter. */
+  ms: number;
+  output: JsonValue;
+  /** When set the call fails with this message; the output is what the tool reported. */
+  failure?: string;
+};
+
+const NOTES = "# Backups\n\nStudio drive: /Volumes/Studio, 1.8 TB.\nNightly rsync to /Volumes/Backups at 02:00 (launchd).\nKeep 30 days; caches under Library/Caches/Builds are not backed up.\n\nFailing since Monday: drive at 95%, rsync exits before finishing.\n";
+
+const DF = "Filesystem      Size   Used  Avail Capacity  Mounted on\n/dev/disk4s1   1.8Ti  1.7Ti   96Gi    95%    /Volumes/Studio";
+const RSYNC_STATS = "Number of files: 48,211 (reg: 44,930, dir: 3,281)\nNumber of created files: 2,140\nNumber of regular files transferred: 2,140\nTotal file size: 1,412,377,190,144 bytes\nTotal transferred file size: 38,116,482,048 bytes\n\nsent 2,893,114 bytes  received 12,406 bytes  1,163,808.00 bytes/sec\ntotal size is 1,412,377,190,144  speedup is 486,150.03 (DRY RUN)";
+const RSYNC_MISSING = "rsync: [sender] link_stat \"/Volumes/Studio/Projects\" failed: No such file or directory (2)\nrsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender=3.2.7]";
+
+function shell(command: string, output: string, exitCode = 0): JsonValue {
+  return { status: "completed", output, exitCode, ok: true, stdout: exitCode === 0 ? output : "", stderr: exitCode === 0 ? "" : output, pid: 40_000 + Math.floor(Math.random() * 999), command };
+}
+
+const RUN: Step[] = [
+  { think: "The backup complaint mentions the drive; check how full it is first.", thought: "df on the studio volume tells me whether space is the problem before I read anything.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "df -h /Volumes/Studio", target: "studio" }, ms: 1600, output: shell("df -h /Volumes/Studio", DF) },
+  { think: "Your notes describe the backup layout; read them before touching anything.", thought: "The notes say where the nightly sync writes and what is excluded.", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/backups.md" }, ms: 1100, output: { ok: true, path: "/home/esteve/notes/backups.md", kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length, content: NOTES } },
+  { think: "A dry run of the sync shows what the next real run would move.", thought: "Dry-run with --stats to size the pending transfer without writing.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3100, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
+];
+const RUN_REPLY = [
+  "The studio drive is the problem: /Volumes/Studio is at 95%, with 96 GB free of 1.8 TB, which is why the nightly sync has been dying before it finishes.",
+  "Your backup notes say the nightly rsync goes to /Volumes/Backups at 02:00 and keeps 30 days, with the build caches deliberately left out. A dry run of the sync shows 2,140 files waiting to move, about 38 GB, so the backup itself is healthy; it just has nowhere to breathe.",
+  "The build caches under Library/Caches/Builds are the usual culprit and are not backed up anyway. I can clear the ones older than a week tonight, which should free well over 100 GB, and add a weekly clean so this does not come back. Say the word.",
+].join("\n\n");
+
+const RUN_LONG: Step[] = [
+  RUN[0],
+  { ...RUN[1], think: "" },
+  { think: "See what the last backups looked like before deciding anything.", thought: "Newest first; the dates show when it stopped landing.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "ls -lt /Volumes/Backups | head -5", target: "studio" }, ms: 1200, output: shell("ls -lt /Volumes/Backups | head -5", "total 0\ndrwxr-xr-x  14 esteve  staff  448 Sep 12 02:41 Work\ndrwxr-xr-x   9 esteve  staff  288 Sep 12 02:03 Photos\ndrwxr-xr-x   6 esteve  staff  192 Sep 11 02:12 Music\ndrwxr-xr-x   3 esteve  staff   96 Sep  9 02:00 Archive") },
+  { think: "", thought: "Any other note about rsync exclusions.", place: "gsv", tool: "Search", syscall: "fs.search", args: { query: "rsync", path: "/home/esteve/notes" }, ms: 1000, output: { ok: true, matches: [{ path: "/home/esteve/notes/backups.md", line: 4, content: "Nightly rsync to /Volumes/Backups at 02:00 (launchd)." }, { path: "/home/esteve/notes/backups.md", line: 7, content: "Failing since Monday: drive at 95%, rsync exits before finishing." }, { path: "/home/esteve/notes/studio-setup.md", line: 22, content: "rsync excludes: Library/Caches, node_modules, *.tmp" }], count: 3 } },
+  { think: "Dry-run the sync to size what is pending.", thought: "Same flags as the nightly job.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", target: "studio" }, ms: 1300, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Projects/ /Volumes/Backups/Projects/", RSYNC_MISSING, 23), failure: "shell.exec exited with code 23" },
+  { think: "The projects live under Work, not Projects. Again with the right path.", thought: "The ls above showed Work; Projects was the old name.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", target: "studio" }, ms: 3400, output: shell("rsync -a --dry-run --stats /Volumes/Studio/Work/ /Volumes/Backups/Work/", RSYNC_STATS) },
+  { think: "", thought: "How much the caches take.", place: "studio", tool: "Shell", syscall: "shell.exec", args: { command: "du -sh /Volumes/Studio/Library/Caches/Builds", target: "studio" }, ms: 1500, output: shell("du -sh /Volumes/Studio/Library/Caches/Builds", "141G\t/Volumes/Studio/Library/Caches/Builds") },
+  { think: "Note what I found so next time is faster.", thought: "Append today's numbers to the backup notes.", place: "gsv", tool: "Write", syscall: "fs.write", args: { path: "/home/esteve/notes/backups.md", content: `${NOTES}\n## 16 Sep\n\nDrive 95% (96 GB free). Pending sync 2,140 files / 38 GB. Build caches 141 GB, not backed up.\n` }, ms: 800, output: { ok: true, path: "/home/esteve/notes/backups.md", size: 812 } },
+  { think: "", thought: "Whether a routine already covers cache cleaning.", place: "gsv", tool: "Read", syscall: "fs.read", args: { path: "/home/esteve/notes/routines.md" }, ms: 900, output: { ok: true, path: "/home/esteve/notes/routines.md", kind: "text", contentType: "text/markdown", lines: 5, size: 188, content: "# Routines\n\n- Monday 08:00: week plan\n- Daily 02:00: studio backup (launchd on studio)\n- Friday 17:00: inbox sweep\n" } },
+];
+const RUN_LONG_REPLY = [
+  "The backup is failing for a simple reason: /Volumes/Studio is at 95%, with 96 GB free, and the build caches alone take 141 GB that the backup never copies.",
+  "The nightly sync itself is fine. The last complete runs landed on the 12th, the exclusions in your notes still match the job, and a dry run of Work shows 2,140 files, about 38 GB, waiting to move. My first dry run pointed at the old Projects path and failed; Work is the current name, and I have written today's numbers into backups.md.",
+  "There is no routine for cache cleaning yet. I can clear caches older than a week tonight and add a weekly clean next to the backup entry, which should keep the drive under 80%. Say the word.",
+].join("\n\n");
+
 /* ---------- the world the fixtures live in ---------- */
 
-type OpenRun = { runId: string; question: ConversationMessage; tool: { callId: string; executionId: string } | null };
-type World = { messages: ConversationMessage[]; sequence: number; run: OpenRun | null; connections: number; sockets: Set<MockSocket> };
-const world: World = { messages: [], sequence: 0, run: null, connections: 0, sockets: new Set() };
+type OpenStep = { step: Step; callId: string; executionId: string; startedAt: number; seq: number };
+type OpenRun = { runId: string; question: ConversationMessage; open: OpenStep | null; superseded: boolean };
+type Revised = { revision: number; record: ProcHistoryRecord };
+type World = {
+  messages: ConversationMessage[]; sequence: number;
+  records: Revised[]; revision: number; messageId: number; recordId: number;
+  ledger: SysLedgerLine[];
+  /** The last context the Process announced and its monotonic revision; history reads return it, as the gateway's do. */
+  context: ProcContextState | null; contextRevision: number;
+  run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
+};
+const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
   const sequence = ++world.sequence;
@@ -131,9 +212,21 @@ function record(who: "you" | "ship", text: string, createdAt: number, runId: str
 }
 for (const [who, createdAt, text] of LINES) record(who, text, createdAt, `run-${world.sequence + 1}`);
 
+/** One history group: the records share a messageId and land in one revision, the way a Process appends them. */
+function appendGroup(runId: string, data: ProcHistoryRecordData[], metadata?: ProcMessageMetadata): number {
+  const messageId = ++world.messageId;
+  const revision = ++world.revision;
+  const createdAt = Date.now();
+  data.forEach((entry, index) => {
+    const base = { id: ++world.recordId, messageId, index, generation: 1, runId, createdAt, source: "typed" as const, ...(metadata ? { metadata } : undefined) };
+    world.records.push({ revision, record: { ...base, ...entry } });
+  });
+  return messageId;
+}
+
 function processes(): ProcListEntry[] {
   return [
-    { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? "running" : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
+    { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? (world.run.open ? "waiting_tool" : "running") : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
     { pid: HELPER.pid, uid: OWNER.uid, username: SHIP.username, interactive: false, personal: false, parentPid: SHIP.pid, state: "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() - 40_000, label: HELPER.label, createdAt: at(0, 7, 58), cwd: SHIP.home },
   ];
 }
@@ -143,9 +236,16 @@ function conversation(pid: string): ConversationSummary {
   return { id: ship ? SHIP_CONVERSATION : `c-${pid}`, kind: "ship", ownerUid: OWNER.uid, title: ship ? null : HELPER.label, handlerPid: pid, latestSequence: ship ? world.sequence : 0, createdAt: at(6, 10, 0), updatedAt: Date.now() };
 }
 
-function history(pid: string): ProcHistoryRecordsResult {
-  const runId = pid === SHIP.pid ? world.run?.runId ?? null : null;
-  return { ok: true, pid, format: 2, records: [], messages: [], messageCount: 0, hasMoreBefore: false, hasMoreAfter: false, activeRunId: runId, pendingHil: null, context: null, contextRevision: 0, historyRevision: 1, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: "mock:1" };
+/** A tail snapshot, or the groups changed since a cursor; either way the head cursor is the current revision. */
+function history(pid: string, since: string | undefined): ProcHistoryRecordsResult {
+  const from = since ? Number(/^mock:(\d+)$/.exec(since)?.[1] ?? 0) : 0;
+  const records = pid === SHIP.pid ? world.records.filter((entry) => entry.revision > from).map((entry) => entry.record) : [];
+  return {
+    ok: true, pid, format: 2, records, messages: [], messageCount: pid === SHIP.pid ? world.messageId : 0,
+    hasMoreBefore: false, hasMoreAfter: false, activeRunId: pid === SHIP.pid ? world.run?.runId ?? null : null,
+    pendingHil: null, context: pid === SHIP.pid ? world.context : null, contextRevision: world.context?.revision ?? 0,
+    historyRevision: world.revision, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: `mock:${world.revision}`,
+  };
 }
 
 function connectResult(protocol: number): ConnectResult {
@@ -161,7 +261,7 @@ function connectResult(protocol: number): ConnectResult {
   };
 }
 
-/* ---------- what Ship does when spoken to ---------- */
+/* ---------- the signals, in the gateway's order ---------- */
 
 function broadcast<T>(signal: string, payload: T): void {
   for (const socket of world.sockets) socket.deliver({ type: "sig", signal, payload });
@@ -171,101 +271,258 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => { window.setTimeout(resolve, ms); });
 }
 
-type ShipRuntime = { state: "running" | "idle"; activeRunId: string | null; queuedCount: number; lastActiveAt: number };
+/** Realistic timing: the given duration, give or take a fifth. */
+function jitter(ms: number): number {
+  return Math.round(ms * (0.8 + Math.random() * 0.4));
+}
+
+type ShipRuntime = { state: "running" | "waiting_tool" | "idle"; activeRunId: string | null; queuedCount: number; lastActiveAt: number };
+/** The Kernel's registry patch, as notifyProcessChanged sends it: no history fields, so only process lists move. */
 function announce(state: ShipRuntime["state"], runId: string | null): void {
   const runtime: ShipRuntime = { state, activeRunId: runId, queuedCount: 0, lastActiveAt: Date.now() };
   broadcast("proc.changed", { pid: SHIP.pid, changes: ["state"], runtime });
 }
 
+/** The Process's own proc.changed, which always carries the history revision so clients read the delta. */
+function changed(changes: string[], payload: JsonObject): void {
+  broadcast("proc.changed", { pid: SHIP.pid, changes, queuedCount: 0, timestamp: Date.now(), ...payload, historyRevision: world.revision, historyGeneration: 1, historyResetRevision: 0 });
+}
+
+function contextState(run: OpenRun): ProcContextState {
+  const inputTokens = 14_200 + world.messageId * 310;
+  world.context = {
+    revision: ++world.contextRevision, runId: run.runId, messageCount: world.messageId, lastMessageId: world.messageId,
+    provider: MODEL.provider, model: MODEL.model, reasoning: "medium",
+    contextWindowTokens: 200_000, maxOutputTokens: 8_192,
+    estimatedInputTokens: inputTokens, inputTokens, confirmedInputTokens: inputTokens,
+    estimatedTrailingInputTokens: 0, inputBudgetTokens: 200_000 - 8_192, remainingInputTokens: 200_000 - 8_192 - inputTokens,
+    availableInputTokens: 200_000 - inputTokens, pressure: inputTokens / 200_000, level: "ok", source: "estimate", updatedAt: Date.now(),
+  };
+  return world.context;
+}
+
+type AssistantContent = AiTextContent | AiThinkingContent | AiToolCall;
+type Partial = { role: "assistant"; content: AssistantContent[]; stopReason: "pending" };
+function partial(content: AssistantContent[]): Partial {
+  return { role: "assistant", content, stopReason: "pending" };
+}
+
+function stream(run: OpenRun, event: JsonObject): void {
+  broadcast("proc.run.stream", { pid: SHIP.pid, runId: run.runId, seq: ++streamSeq, event, timestamp: Date.now() });
+}
+
+function live(run: OpenRun): boolean {
+  return world.run === run && !run.superseded;
+}
+
 function startRun(question: ConversationMessage): OpenRun {
-  const run: OpenRun = { runId: `run-${question.sequence}`, question, tool: null };
+  const run: OpenRun = { runId: `run-${question.sequence}`, question, open: null, superseded: false };
   world.run = run;
   announce("running", run.runId);
-  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, timestamp: Date.now() });
+  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, reason: "message", queuedCount: 0, timestamp: Date.now() });
+  appendGroup(run.runId, [{ kind: "message", payload: { direction: "in", text: question.text, media: [], origin: { kind: "conversation", provenance: { source: "conversation" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: question.id } }]);
+  changed(["context"], { context: contextState(run) });
   return run;
 }
 
-function startTool(run: OpenRun): void {
-  run.tool = { callId: `call-${run.runId}`, executionId: `exec-${run.runId}` };
-  broadcast("proc.run.tool.started", { pid: SHIP.pid, runId: run.runId, ...run.tool, name: "Shell", syscall: "shell.exec", target: "gsv", args: { command: "ls ~/notes/mara" } });
+const thinkingBlock = z.object({ thinking: z.string() });
+const textBlock = z.object({ text: z.string() });
+
+/** One generation tick that ends in a tool call: the model streams, its output is announced, the note and call are recorded. */
+async function think(run: OpenRun, step: Step, callId: string): Promise<void> {
+  const call: AiToolCall = { type: "toolCall", id: callId, name: step.tool, arguments: step.args };
+  const content: AssistantContent[] = [{ type: "thinking", thinking: "" }];
+  stream(run, { type: "thinking_start", contentIndex: 0, partial: partial(content) });
+  for (const piece of step.thought.split(/(?<=[,.;] )/)) {
+    await wait(jitter(140));
+    if (!live(run)) return;
+    content[0] = { type: "thinking", thinking: `${thinkingBlock.parse(content[0]).thinking}${piece}` };
+    stream(run, { type: "thinking_delta", contentIndex: 0, delta: piece, partial: partial(content) });
+  }
+  stream(run, { type: "thinking_end", contentIndex: 0, content: step.thought, partial: partial(content) });
+  if (step.think) {
+    content.push({ type: "text", text: "" });
+    stream(run, { type: "text_start", contentIndex: 1, partial: partial(content) });
+    for (const piece of step.think.split(/(?<=\s)/)) {
+      await wait(jitter(35));
+      if (!live(run)) return;
+      content[1] = { type: "text", text: `${textBlock.parse(content[1]).text}${piece}` };
+      stream(run, { type: "text_delta", contentIndex: 1, delta: piece, partial: partial(content) });
+    }
+    stream(run, { type: "text_end", contentIndex: 1, content: step.think, partial: partial(content) });
+  }
+  const index = content.length;
+  content.push({ type: "toolCall", id: callId, name: step.tool, arguments: {} });
+  stream(run, { type: "toolcall_start", contentIndex: index, partial: partial(content) });
+  await wait(jitter(260));
+  if (!live(run)) return;
+  content[index] = call;
+  stream(run, { type: "toolcall_delta", contentIndex: index, delta: JSON.stringify(step.args), partial: partial(content) });
+  stream(run, { type: "toolcall_end", contentIndex: index, toolCall: call, partial: partial(content) });
+  stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
+  if (step.think) broadcast("proc.run.output", { text: step.think, thinking: [step.thought], pid: SHIP.pid, runId: run.runId });
+  appendGroup(run.runId, [
+    { kind: "note", payload: { text: step.think, thinking: [{ type: "thinking", thinking: step.thought }] } },
+    { kind: "call", payload: { callId, tool: step.tool, syscall: step.syscall, args: step.args, target: step.place, runId: run.runId } },
+  ], { provider: MODEL });
+  changed(["context"], { context: contextState(run) });
 }
 
+/** The Kernel's ledger row for a call: open at dispatch, then the same seq closed with its outcome. */
+function ledgerLine(open: OpenStep, runId: string, outcome: SysLedgerLine["outcome"], error: string | null): SysLedgerLine {
+  const existing = world.ledger.findIndex((line) => line.runId === runId && line.args === JSON.stringify(open.step.args) && line.outcome === null);
+  const seq = existing >= 0 ? existing + 1 : world.ledger.length + 1;
+  const line: SysLedgerLine = {
+    seq, timestamp: open.startedAt, principalKind: "process", uid: SHIP.uid, pid: SHIP.pid, runId,
+    target: open.step.place, call: open.step.syscall, args: JSON.stringify(open.step.args), outcome, error,
+    durationMs: outcome === null ? null : Date.now() - open.startedAt, tokens: null, costNanoUsd: null,
+  };
+  world.ledger[seq - 1] = line;
+  return line;
+}
+
+/** The tool starts: the Process announces it (no target; that is on the call record), the Kernel notes the wait, the ledger opens a row. */
+function startTool(run: OpenRun, step: Step, callId: string): void {
+  const open: OpenStep = { step, callId, executionId: `exec-${callId}`, startedAt: Date.now(), seq: 0 };
+  run.open = open;
+  broadcast("proc.run.tool.started", { name: step.tool, syscall: step.syscall, args: step.args, callId, executionId: open.executionId, pid: SHIP.pid, runId: run.runId });
+  announce("waiting_tool", run.runId);
+  broadcast("ledger.changed", { lines: [ledgerLine(open, run.runId, null, null)] });
+}
+
+/** The tool ends: the result is recorded, then announced, then the changed history is pointed at, and the ledger row closes. */
 function finishTool(run: OpenRun): void {
-  if (!run.tool) return;
-  broadcast("proc.run.tool.finished", { pid: SHIP.pid, runId: run.runId, ...run.tool, outcome: "completed", timestamp: Date.now() });
-  run.tool = null;
+  const open = run.open;
+  if (!open) return;
+  run.open = null;
+  const { step } = open;
+  const outcome = step.failure ? "failed" : "completed";
+  appendGroup(run.runId, [{ kind: "result", payload: { callId: open.callId, tool: step.tool, outcome, output: step.output, media: [], resources: [], ...(step.failure ? { error: { message: step.failure } } : undefined) } }]);
+  broadcast("proc.run.tool.finished", { pid: SHIP.pid, runId: run.runId, executionId: open.executionId, callId: open.callId, outcome, timestamp: Date.now() });
+  changed(["messages"], { runId: run.runId, messageId: world.messageId });
+  broadcast("ledger.changed", { lines: [ledgerLine(open, run.runId, step.failure ? "failed" : "ok", step.failure ?? null)] });
 }
 
-function commitReply(run: OpenRun, text: string): void {
-  broadcast("message.committed", { message: record("ship", text, Date.now(), run.runId), directed: true });
+/** A whole step: think, run the tool for its time, record the result. */
+async function play(run: OpenRun, step: Step): Promise<void> {
+  const callId = `call-${run.runId}-${world.recordId + 1}`;
+  await think(run, step, callId);
+  if (!live(run)) return;
+  startTool(run, step, callId);
+  await wait(jitter(step.ms));
+  if (!live(run)) return;
+  finishTool(run);
+  announce("running", run.runId);
+  await wait(jitter(350));
 }
 
-function finishRun(run: OpenRun): void {
-  if (world.run === run) world.run = null;
-  broadcast("proc.run.finished", { pid: SHIP.pid, runId: run.runId, queuedCount: 0, timestamp: Date.now() });
-  announce("idle", null);
-}
-
-async function stream(run: OpenRun, text: string): Promise<void> {
+/** The reply is a Send: its text streams to the conversation while the tool call streams to observers; the commit records both. */
+async function send(run: OpenRun, text: string, streamed: boolean): Promise<void> {
+  const callId = `call-${run.runId}-send`;
+  const content: AssistantContent[] = [{ type: "toolCall", id: callId, name: "Send", arguments: {} }];
+  stream(run, { type: "toolcall_start", contentIndex: 0, partial: partial(content) });
   const started = { conversationId: SHIP_CONVERSATION, messageId: `draft-${run.runId}`, processId: SHIP.pid, runId: run.runId, timestamp: Date.now() };
   broadcast("message.started", started);
-  for (const word of text.split(/(?<=\s)/)) {
-    await wait(45);
-    if (world.run !== run) return;
-    broadcast("message.delta", { ...started, delta: word });
+  if (streamed) {
+    let written = "";
+    for (const piece of text.split(/(?<=\s)/)) {
+      await wait(jitter(45));
+      if (!live(run)) return;
+      written += piece;
+      content[0] = { type: "toolCall", id: callId, name: "Send", arguments: { text: written } };
+      stream(run, { type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(piece), partial: partial(content) });
+      broadcast("message.delta", { ...started, delta: piece });
+    }
+    await wait(200);
+  } else {
+    await wait(jitter(500));
+    if (!live(run)) return;
+    broadcast("message.delta", { ...started, delta: text });
   }
-  await wait(200);
-  commitReply(run, text);
+  const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text } };
+  content[0] = call;
+  stream(run, { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: partial(content) });
+  stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
+  appendGroup(run.runId, [
+    { kind: "note", payload: { text: "", thinking: [{ type: "thinking", thinking: "I have what I need; tell them plainly." }] } },
+    { kind: "call", payload: { callId, tool: "Send", syscall: null, args: { text }, target: null, runId: run.runId } },
+  ], { provider: MODEL });
+  const message = record("ship", text, Date.now(), run.runId);
+  broadcast("message.committed", { message, directed: true });
+  appendGroup(run.runId, [
+    { kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } },
+    { kind: "result", payload: { callId, tool: "Send", outcome: "completed", output: { ok: true, action: "message", delivered: true }, media: [], resources: [] } },
+  ]);
+  finishRun(run, text);
+}
+
+function finishRun(run: OpenRun, text: string | null): void {
+  if (world.run === run) world.run = null;
+  broadcast("proc.run.finished", { pid: SHIP.pid, runId: run.runId, status: "ok", result: { text }, delivery: { kind: "none" }, queuedCount: 0, timestamp: Date.now(), reason: "yield" });
+  changed(["messages"], { runId: run.runId, messageId: world.messageId });
+  announce("idle", null);
 }
 
 async function answer(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
   if (trigger === "/think") {
-    await wait(300);
-    startTool(run);
+    const callId = `call-${run.runId}-${world.recordId + 1}`;
+    await think(run, RUN[0], callId);
+    if (live(run)) startTool(run, RUN[0], callId);
+    return; // held until /reply or /stream
+  }
+  if (trigger === "/run" || trigger === "/run-long") {
+    for (const step of trigger === "/run" ? RUN : RUN_LONG) {
+      if (!live(run)) return;
+      await play(run, step);
+    }
+    if (live(run)) await send(run, trigger === "/run" ? RUN_REPLY : RUN_LONG_REPLY, true);
     return;
   }
-  if (trigger === "/stream") {
-    await wait(600);
-    await stream(run, LONG_REPLY);
-  } else {
-    await wait(trigger === "/reply" ? 600 : 1000);
-    commitReply(run, trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY);
-  }
-  finishRun(run);
+  await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
+  if (!live(run)) return;
+  await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
 }
 
+/** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */
 async function resolve(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
   finishTool(run);
-  if (trigger === "/stream") await stream(run, LONG_REPLY);
-  else commitReply(run, SHORT_REPLY);
-  finishRun(run);
+  await send(run, trigger === "/stream" ? LONG_REPLY : SHORT_REPLY, trigger === "/stream");
 }
 
 type Sent = { message: ConversationMessage; runId: string };
 
-/** A message from the prompt: a control trigger resolves an open run under the question that opened it; anything else asks anew. */
-function send(text: string): Sent {
+function receive(text: string): Sent {
   const trigger = text.trim().toLowerCase();
   const open = world.run;
   if (open && (trigger === "/reply" || trigger === "/stream")) {
-    void resolve(open, trigger);
+    // The script stops at its next check; a continuation of the same run answers instead.
+    const tail: OpenRun = { ...open, superseded: false };
+    open.superseded = true;
+    world.run = tail;
+    void resolve(tail, trigger);
     return { message: open.question, runId: open.runId };
   }
-  if (open) void resolve(open, "/reply");
+  if (open) {
+    // A new message while Ship is busy: the open run yields without a word, then the new one starts.
+    open.superseded = true;
+    finishTool(open);
+    finishRun(open, null);
+  }
   const question = record("you", text, Date.now(), "");
-  const run: OpenRun = { runId: `run-${question.sequence}`, question, tool: null };
+  const runId = `run-${question.sequence}`;
   window.setTimeout(() => {
     broadcast("message.committed", { message: question, directed: true });
     void answer(startRun(question), trigger);
   }, 0);
-  return { message: question, runId: run.runId };
+  return { message: question, runId };
 }
 
 /* ---------- the wire ---------- */
 
 const pidArgs = z.object({ pid: z.string() });
+const historyArgs = z.object({ pid: z.string(), since: z.string().optional() });
 const conversationArgs = z.object({ conversationId: z.string() });
 const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
@@ -293,17 +550,21 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "sys.config.get": return respond(id, { entries: [] });
     case "account.list": return respond(id, { accounts });
     case "sys.target.list": return respond(id, { targets });
+    case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
     case "proc.list": return respond(id, { processes: processes() });
     case "proc.observe":
     case "proc.unobserve": return respond(id, { ok: true, pid: pidArgs.parse(args).pid, observing: call === "proc.observe" });
-    case "proc.history": return respond(id, history(pidArgs.parse(args).pid));
+    case "proc.history": {
+      const { pid, since } = historyArgs.parse(args);
+      return respond(id, history(pid, since));
+    }
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const ship = conversationArgs.parse(args).conversationId === SHIP_CONVERSATION;
       return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), messages: ship ? world.messages : [], hasMore: false });
     }
     case "conversation.send": {
-      const sent = send(sendArgs.parse(args).text);
+      const sent = receive(sendArgs.parse(args).text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
@@ -340,8 +601,7 @@ class MockSocket extends EventTarget implements WebSocket {
 
   /** A frame from the gateway's side of the wire. */
   deliver<T>(frame: T): void {
-    if (this.readyState !== this.OPEN) return;
-    this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) }));
+    this.deliverText(JSON.stringify(frame));
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
