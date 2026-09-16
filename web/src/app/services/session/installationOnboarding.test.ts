@@ -85,14 +85,21 @@ describe("installation onboarding capability", () => {
       rootLocked: false,
     }));
     const client = {
-      connect: vi.fn(async () => ({
-        connectionId: "connection:alice",
-        server: { version: "0.4.1", release: "test" },
-        user: {
-          uid: 1000, gid: 1000, gids: [1000], username: "alice",
-          home: "/home/alice", cwd: "/home/alice",
+      connect: vi.fn<SessionClient["connect"]>().mockResolvedValue({
+        protocol: 4,
+        server: { version: "0.4.1", release: "test", connectionId: "connection:alice" },
+        peer: {
+          id: "web", sessionId: "connection:alice",
+          principal: {
+            kind: "human",
+            account: {
+              uid: 1000, gid: 1000, gids: [1000], username: "alice",
+              home: "/home/alice", cwd: "/home/alice",
+            },
+          },
+          grant: { calls: [], signals: [], implements: [] },
         },
-      })),
+      }),
       disconnect: vi.fn(),
       isConnected: () => false,
       onStatus: vi.fn(),
