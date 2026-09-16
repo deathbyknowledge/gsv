@@ -66,6 +66,8 @@ export const SEND_TOOL: Tool = {
 };
 
 export const sendToolArgsSchema = z.object({
+  /** Accepted and ignored: a model told to give every call a purpose adds one here too. */
+  purpose: z.string().optional(),
   text: z.string().optional(),
   yield: z.boolean().optional(),
   attach: z.array(z.string()).max(MAX_MESSAGE_MEDIA_ITEMS).optional(),

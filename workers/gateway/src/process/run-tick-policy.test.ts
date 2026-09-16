@@ -66,6 +66,30 @@ describe("run tick policy", () => {
     ).toMatchObject({ kind: "terminal", text: "done" });
   });
 
+  it("still classifies run control when the call carries a purpose for the person", () => {
+    const shell = (id: string, args: Record<string, string>) => ({
+      type: "toolCall" as const,
+      id,
+      name: "Shell",
+      arguments: args,
+    });
+    const purpose = "end the turn so you can read the reply";
+    const classify = (content: AssistantMessage["content"]) =>
+      classifyAssistantTurn(assistant(content), ["Read", "Send"]);
+
+    expect(classify([shell("y1", { purpose, input: "yield" })]).kind).toBe("run-control");
+    expect(classify([shell("y2", { purpose, input: "message send hi && yield" })]).runControlCalls[0]?.parsed)
+      .toEqual(classify([shell("y3", { input: "message send hi && yield" })]).runControlCalls[0]?.parsed);
+    expect(
+      classify([{
+        type: "toolCall" as const,
+        id: "s9",
+        name: "Send",
+        arguments: { purpose, text: "hello" },
+      }]).runControlCalls[0]?.parsed,
+    ).toEqual({ ok: true, command: { action: "message", text: "hello", finish: false } });
+  });
+
   it("classifies Send tool calls as the same run control as the commands", () => {
     const send = (id: string, args: Record<string, string | boolean | number>) => ({
       type: "toolCall" as const,
