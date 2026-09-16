@@ -28,6 +28,8 @@ import {
   receiptSteps,
   resolvePlace,
   resolveTail,
+  receiptSummary,
+  offsetLabel,
   startsWriting,
   type KeyPress,
   trimOutput,
@@ -742,6 +744,57 @@ describe("momentsFromConversation", () => {
     expect(callsOf(moments[0])).toEqual(["slow", "fast"]);
     expect(moments[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60 });
     expect(receiptDuration(moments[0])).toBe(formatSeconds(50));
+  });
+
+  const shell = (id: string, command: string, startedAt: number, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => call(id, timestamp, {
+    toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { command }, toolOutput: { status: "completed", output: `${id} output`, exitCode: 0 }, toolStartedAt: startedAt, ...overrides,
+  });
+  const note = (id: string, text: string, timestamp: number) => message({ id, runId: "run", processId: "ship", text, timestamp });
+  const summaryText = (moment: Moment, now = 0) => receiptSummary(moment, places, now).map((part) => part.text).join("");
+
+  it("lays the run out in order, notes between calls, and links a retry to the failure it repeats", () => {
+    const transcript = [
+      note("n1", "Check the disk first.", 5),
+      shell("df", "df -h /Volumes/Studio", 8, 10),
+      note("n2", "Now the notes.\n\nThen size the sync.", 12),
+      call("read", 20, { toolStartedAt: 18 }),
+      shell("sync-a", "rsync -a /Projects/ /B/", 25, 30, { toolOutcome: "failed", isError: true, status: "error", toolOutput: { status: "completed", output: "rsync: link_stat failed", exitCode: 23 } }),
+      shell("sync-b", "rsync -a /Work/ /B/", 35, 45),
+      shell("du", "du -sh /x", 48, 50),
+      call("send", 55, { toolName: "Send", toolSyscall: null }),
+    ];
+    const [moment] = momentsFromConversation([sent("reply", 60)], transcript, null);
+    expect(moment.timeline?.map((event) => event.kind === "thought" ? ["thought", event.text] : ["call", event.call.callId, event.target, event.retryOf])).toEqual([
+      ["thought", "Check the disk first."],
+      ["call", "df", "laptop", null],
+      ["thought", "Now the notes."],
+      ["thought", "Then size the sync."],
+      ["call", "read", "gsv", null],
+      ["call", "sync-a", "laptop", null],
+      ["call", "sync-b", "laptop", "sync-a"],
+      ["call", "du", "laptop", null],
+    ]);
+    expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
+    expect(summaryText(moment)).toBe(`5 steps on MacBook 16 and your cloud home · 1 failed and retried · ${formatSeconds(45)}`);
+    expect(receiptSummary(moment, places, 0).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud home"]);
+  });
+
+  it("summarises a live run by its running step, or by thinking between steps", () => {
+    const done = shell("df", "df -h", 8, 10);
+    const running = shell("ls", "ls -lt", 20, 20, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, isError: undefined });
+    const [busy] = momentsFromConversation([], [note("n1", "Look.", 5), done, running], "run");
+    expect(summaryText(busy, 30_005)).toBe(`step 2 · using MacBook 16 · ${formatSeconds(30_000)}`);
+    const [between] = momentsFromConversation([], [note("n1", "Look.", 5), done], "run");
+    expect(summaryText(between, 1_005)).toBe(`1 step · thinking · ${formatSeconds(1_000)}`);
+    const [failedOnly] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, { toolOutcome: "failed", isError: true, status: "error" })], null);
+    expect(summaryText(failedOnly)).toBe(`1 step on MacBook 16 · 1 failed · ${formatSeconds(5)}`);
+  });
+
+  it("labels row offsets from the run's first event", () => {
+    expect(offsetLabel(2_300, 0)).toBe("+2.3s");
+    expect(offsetLabel(65_000, 0)).toBe("+1m 05s");
+    expect(offsetLabel(10, 40)).toBe("+0.0s");
+    expect(offsetLabel(null, 0)).toBe("");
   });
 });
 

@@ -100,8 +100,16 @@ export type Moment = {
   activities: Activity[];
   /** The ship's working narration for this run: what it told itself, not what it sent. Folded by default. */
   narration: string;
+  /** The run in the order it happened, notes and calls interleaved; absent for moments that did no work. */
+  timeline?: MomentEvent[];
   attribution?: AnswerAttribution | null;
 };
+
+/** One thing that happened during a ship moment's run: a note the model wrote, or a call it made. */
+export type MomentEvent =
+  | { kind: "thought"; text: string; at: number | null }
+  | { kind: "call"; call: ActivityCall; target: string | null; startedAt: number | null; endedAt: number | null; retryOf: string | null };
+export type CallEvent = Extract<MomentEvent, { kind: "call" }>;
 
 export type AnswerHistoryEntry = {
   runId: string | null;
@@ -800,23 +808,131 @@ export function momentsFromConversation(
         }
         moments.push(moment);
       }
-      const tools = work.filter((entry) => isToolRow(entry.rows[0])).map((entry) => {
-        const terminal = entry.rows.filter((row) => row.role === "toolResult" || row.status === "done" || row.status === "error");
-        const result = terminal.at(-1) ?? entry.rows.at(-1)!;
-        const call = entry.rows.find((row) => row.role === "tool") ?? entry.rows[0];
-        return {
-          ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
-          toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.position.timestamp,
-        };
-      });
+      const entries: WorkEntry[] = work.map((entry) => ({ at: entry.position.timestamp, rows: entry.rows }));
+      const tools = entries.filter((entry) => isToolRow(entry.rows[0])).map(toolRowOf);
       moment.activities = activitiesForRows(tools, moment.id, active);
       moment.narration = work.filter((entry) => entry.rows[0].role === "assistant").map((entry) => entry.rows[0].text.trim()).join("\n\n");
+      moment.timeline = timelineForWork(entries, moment.id, active);
     }
   }
   return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }
 
+/** A run's work in position order: the rows of one call, or one note. */
+type WorkEntry = { at: number | null; rows: ChatTranscriptRow[] };
+
+/** One row for a call: its result over its request, started when the work began. */
+function toolRowOf(entry: WorkEntry): ChatTranscriptRow {
+  const terminal = entry.rows.filter((row) => row.role === "toolResult" || row.status === "done" || row.status === "error");
+  const result = terminal.at(-1) ?? entry.rows.at(-1)!;
+  const call = entry.rows.find((row) => row.role === "tool") ?? entry.rows[0];
+  return {
+    ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
+    toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.at,
+  };
+}
+
+/** What a call is about, for telling a retry from unrelated work: the command name, or the path. */
+function callHead(event: CallEvent): string {
+  return event.call.syscall.startsWith("shell.") ? event.call.summary.trim().split(/\s+/)[0] ?? "" : event.call.summary;
+}
+
+/**
+ * The run in order: each note as its paragraphs, each call with its place and timing. A call that repeats
+ * a failed one (same kind, same place, same command or path) is marked as its retry. Sends are the reply, not work.
+ */
+function timelineForWork(work: readonly WorkEntry[], runKey: string, active: boolean): MomentEvent[] {
+  const events: MomentEvent[] = [];
+  for (const entry of work) {
+    const first = entry.rows[0];
+    if (isToolRow(first)) {
+      if (isMessageSend(first)) continue;
+      const [activity] = activitiesForRows([toolRowOf(entry)], runKey, active);
+      if (!activity) continue;
+      events.push({ kind: "call", call: activity.calls[0], target: activity.target, startedAt: activity.startedAt, endedAt: activity.endedAt, retryOf: null });
+    } else if (first.role === "assistant" && first.text.trim()) {
+      for (const paragraph of first.text.trim().split(/\n\s*\n+/)) events.push({ kind: "thought", text: paragraph.trim(), at: entry.at });
+    }
+  }
+  const calls = events.filter((event): event is CallEvent => event.kind === "call");
+  calls.forEach((failed, index) => {
+    if (!failed.call.failed) return;
+    const retry = calls.slice(index + 1).find((later) => later.retryOf === null && later.call.syscall === failed.call.syscall
+      && later.target === failed.target && callHead(later) === callHead(failed));
+    if (retry) retry.retryOf = failed.call.callId;
+  });
+  return events;
+}
+
 /* the receipt: what a ship moment did, in plain words, generated from its calls */
+
+export function timelineCalls(moment: Moment): CallEvent[] {
+  return (moment.timeline ?? []).filter((event): event is CallEvent => event.kind === "call");
+}
+
+/** When the run's first note or call happened; offsets in the receipt count from here. */
+export function receiptFirstAt(moment: Moment): number | null {
+  return (moment.timeline ?? []).reduce<number | null>((first, event) => {
+    const at = event.kind === "thought" ? event.at : event.startedAt;
+    return at === null ? first : first === null ? at : Math.min(first, at);
+  }, null);
+}
+
+/** From the first note or call to the end of the last, as the receipt's total; calls alone when there is no timeline. */
+export function receiptSpan(moment: Moment): string {
+  const timeline = moment.timeline;
+  if (!timeline?.length) return receiptDuration(moment);
+  const start = receiptFirstAt(moment);
+  const end = timeline.reduce<number | null>((last, event) => {
+    const at = event.kind === "thought" ? event.at : event.endedAt ?? event.startedAt;
+    return at === null ? last : last === null ? at : Math.max(last, at);
+  }, null);
+  return start !== null && end !== null && end > start ? formatSeconds(end - start) : "";
+}
+
+/** A row's time in the receipt, counted from the run's first event: "+0.0s", "+2.3s", "+1m 05s". */
+export function offsetLabel(at: number | null, base: number | null): string {
+  if (at === null || base === null) return "";
+  const ms = Math.max(0, at - base);
+  if (ms < 60_000) return `+${(ms / 1000).toFixed(1)}s`;
+  return `+${Math.floor(ms / 60_000)}m ${String(Math.round((ms % 60_000) / 1000)).padStart(2, "0")}s`;
+}
+
+export type SummaryPart = { text: string; tone?: "place" | "failed" };
+
+/**
+ * The receipt's one line while folded. Live: which step is running where, or that Ship is thinking, and for how
+ * long. Done: how many steps, on which places, how many failed and whether they were retried, and the total time.
+ */
+export function receiptSummary(moment: Moment, places: readonly Place[], now: number): SummaryPart[] {
+  const calls = timelineCalls(moment);
+  if (calls.length === 0) {
+    const processWork = moment.activities.filter((activity) => !activity.you && activity.target === null);
+    if (processWork.length > 0) return [{ text: processWork.some((activity) => activity.live) ? "working" : "worked" }];
+    return [{ text: moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details" }];
+  }
+  const label = (target: string | null) => target === null ? "the process" : placeLabel(target, places);
+  if (moment.thinking) {
+    const elapsed = formatSeconds(now - (receiptFirstAt(moment) ?? now));
+    const running = calls.find((event) => !event.call.finished);
+    if (running) return [{ text: `step ${calls.indexOf(running) + 1} · using ` }, { text: label(running.target), tone: "place" }, { text: ` · ${elapsed}` }];
+    return [{ text: `${countLabel(calls.length, "step")} · thinking · ${elapsed}` }];
+  }
+  const named = [...new Set(calls.map((event) => event.target))].map(label);
+  const failed = calls.filter((event) => event.call.failed);
+  const retried = failed.filter((event) => calls.some((later) => later.retryOf === event.call.callId)).length;
+  const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "step")} on ` }];
+  named.forEach((name, index) => {
+    if (index > 0) parts.push({ text: index === named.length - 1 ? " and " : ", " });
+    parts.push({ text: name, tone: "place" });
+  });
+  if (failed.length > 0) {
+    parts.push({ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" });
+  }
+  const span = receiptSpan(moment);
+  if (span) parts.push({ text: ` · ${span}` });
+  return parts;
+}
 
 export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {
   return moment.activities.filter((activity): activity is Activity & { target: string } => !activity.you && activity.target !== null).map((activity) => ({

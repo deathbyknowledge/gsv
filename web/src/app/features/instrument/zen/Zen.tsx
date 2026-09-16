@@ -36,6 +36,7 @@ import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
+import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
@@ -55,8 +56,8 @@ import {
   placeLabel,
   resolvePlace,
   noteSummary,
-  receiptDuration,
-  receiptTargets,
+  receiptSpan,
+  receiptSummary,
   receiptSteps,
   startsWriting,
   CLOUD_PLACE_ID,
@@ -183,7 +184,7 @@ function ActivityLine({
   );
 }
 
-/** One line under a ship's message: what it did, generated from its calls; the working opens beneath. */
+/** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
 function Receipt({ moment, places, collections, open, onToggle, onMemory, onFleet }: {
   moment: Moment;
   places: readonly Place[];
@@ -193,27 +194,28 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
 }) {
-  const targets = receiptTargets(moment);
+  /* while the run is live the line counts time; a second is enough for a summary */
+  const live = moment.thinking;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [live]);
+  const summary = receiptSummary(moment, places, now);
+  const running = live && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const steps = receiptSteps(moment);
-  const duration = receiptDuration(moment);
+  const span = receiptSpan(moment);
   const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
   const worked = moment.activities.filter((activity) => !activity.you);
-  const processWork = worked.filter((activity) => activity.target === null);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   return (
     <div class={`receipt${open ? " is-open" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
-          {targets.map((target, index) => (
-            <span key={target.target} class={target.live ? "now" : target.failed ? "is-failed" : ""}>
-              {index > 0 ? " · " : ""}
-              {target.live ? <span class="pulse blink" /> : null}
-              {target.live ? "using" : "used"} <span class="place">{placeLabel(target.target, places)}</span>
-              {target.failed ? " · failed" : ""}
-            </span>
-          ))}
-          {targets.length === 0 ? (processWork.length > 0 ? (processWork.some((activity) => activity.live) ? "working" : "worked") : moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details") : null}
-          {processWork.some((activity) => activity.calls.some((call) => call.failed)) ? <span class="is-failed"> · work failed</span> : null}
+          {running ? <span class="pulse blink" /> : null}
+          {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
           {moment.attribution?.fallbacks.length ? <span class="is-failed"> · fallback used</span> : null}
           <span class="n"> · {open ? "close" : "open"}</span>
         </button>
@@ -230,7 +232,7 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
         <div class="detail">
           <div class="receipt-meta">
             {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}>answered by {moment.attribution.model}</span> : null}
-            {steps > 0 ? <span>{countLabel(steps, "step")}{duration ? ` · ${duration}` : ""}</span> : null}
+            {steps > 0 ? <span>{countLabel(steps, "step")}{span ? ` · ${span}` : ""}</span> : null}
             {notes > 0 ? <span>{countLabel(notes, "note")}</span> : null}
           </div>
           {moment.attribution?.fallbacks.length ? (
@@ -243,20 +245,26 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
               {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : ""}
             </div>
           ) : null}
-          {worked.map((activity) => (
-            <div key={activity.key} class="place-rail">
-              <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
-                <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
-              )}</>}</div>
-              <ActivityWorking activity={activity} />
-            </div>
-          ))}
-          {moment.narration ? (
-            <div class="place-rail">
-              <div class="ph">thought it through</div>
-              <div class="machine-rail narration">{moment.narration}</div>
-            </div>
-          ) : null}
+          {RECEIPT_LAYOUT === "timeline" ? (
+            <ReceiptTimeline moment={moment} places={places} now={now} onFleet={onFleet} />
+          ) : (
+            <>
+              {worked.map((activity) => (
+                <div key={activity.key} class="place-rail">
+                  <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
+                    <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
+                  )}</>}</div>
+                  <ActivityWorking activity={activity} />
+                </div>
+              ))}
+              {moment.narration ? (
+                <div class="place-rail">
+                  <div class="ph">thought it through</div>
+                  <div class="machine-rail narration">{moment.narration}</div>
+                </div>
+              ) : null}
+            </>
+          )}
           {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>view process</button> : null}
         </div>
       ) : null}
