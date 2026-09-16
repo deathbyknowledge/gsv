@@ -45,7 +45,7 @@ describe("WhatsApp approval buttons", () => {
   it("renders at most three short reply buttons bound to one persisted token", async () => {
     const controls = await prepareWhatsAppApproval(storage(), describeWhatsAppApproval(CONTEXT, REQUEST));
     expect(controls).not.toBeNull();
-    expect(controls!.text).toContain("Requested action: run \"date\".");
+    expect(controls!.text).toContain("Run a command in your cloud home.\n\"date\"");
     expect(controls!.buttons).toHaveLength(3);
     expect(controls!.buttons.every((button) => [...button.title].length <= 20)).toBe(true);
     expect(controls!.buttons.map((button) => button.id)).toEqual([
@@ -69,6 +69,16 @@ describe("WhatsApp approval buttons", () => {
       },
       context: { message_id: "wamid.in" },
     });
+  });
+
+  it("presents the purpose without the raw command when one is provided", async () => {
+    const request = { ...REQUEST, purpose: "check the current time" };
+    const source = describeWhatsAppApproval({ ...CONTEXT, hil: request }, request);
+    const controls = await prepareWhatsAppApproval(storage(), source);
+    expect(controls!.text).toContain("Check the current time.");
+    expect(controls!.text).not.toContain("\"date\"");
+    expect(source.presentation.action).toBe("Check the current time.");
+    expect(source.request).toEqual({ pid: "proc-1", requestId: "request-1", runId: "run-1" });
   });
 
   it("falls back to plain text when the prompt exceeds the interactive body limit", async () => {
@@ -101,7 +111,7 @@ describe("WhatsApp approval buttons", () => {
       data: `gsvh:${controls.token}:a`,
     });
     expect(status).toContain("Approved for this conversation.");
-    expect(status).toContain("Requested action: run \"date\".");
+    expect(status).toContain("Run a command in your cloud home.\n\"date\"");
     expect(linkedPeerFrame).toHaveBeenCalledWith(
       { installationId: "installation_test" },
       expect.objectContaining({ accountId: "managed", actorId: "34611111189", routeGeneration: "generation-1", interactionId: "wamid.reply" }),

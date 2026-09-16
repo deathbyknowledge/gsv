@@ -128,6 +128,7 @@ type ManagedPeerStub = {
         syscall: string;
         target: string;
         args: { input: string };
+        purpose?: string;
         createdAt: number;
       };
     },
@@ -368,6 +369,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       syscall: "shell.exec",
       target: "gsv",
       args: { input: "date" },
+      purpose: "check the current time",
       createdAt: 1_700_000_100_000,
     };
     const approvalContext = {
@@ -396,7 +398,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     const approvalMessage = (await sentMessages()).findLast((record) => record.body.type === "interactive");
     expect(approvalMessage).toBeDefined();
     const buttons = approvalMessage!.body.interactive!.action.buttons;
-    expect(approvalMessage!.body.interactive!.body.text).toContain("Requested action: run \"date\".");
+    expect(approvalMessage!.body.interactive!.body.text).toContain("Check the current time.");
+    expect(approvalMessage!.body.interactive!.body.text).not.toContain("\"date\"");
     expect(buttons.map((button) => button.reply.title)).toEqual(["Approve once", "Always approve", "Deny"]);
     const approveAlways = buttons[1]!.reply.id;
     expect(approveAlways).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:a$/);
@@ -432,7 +435,8 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
     });
     const resolution = (await sentMessages()).findLast((record) => record.body.context?.message_id === approvalMessageId);
-    expect(resolution?.body.text?.body).toContain("Requested action: run \"date\".");
+    expect(resolution?.body.text?.body).toContain("Check the current time.");
+    expect(resolution?.body.text?.body).not.toContain("\"date\"");
     expect(resolution?.body.text?.body).not.toContain("I need your confirmation");
     expect(resolution?.body.text?.body).not.toContain("hil[");
 
@@ -793,6 +797,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       syscall: "shell.exec",
       target: "gsv",
       args: { input: "uptime" },
+      purpose: "check how long your cloud home has been running",
       createdAt: 1_700_000_200_000,
     };
     const lateContext = {
@@ -836,7 +841,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     const released = (await graphRecords()).slice(recordsBeforeTap).filter((record) => record.kind === "message");
     expect(released[0]!.body.text?.body).toMatch(/^\*Report\*\n\nword word/);
     expect(released[1]!.body.text?.body).toBe("Anything else?");
-    expect(released[2]!.body.interactive?.body.text).toContain("Requested action: run \"uptime\".");
+    expect(released[2]!.body.interactive?.body.text).toContain("Check how long your cloud home has been running.");
+    expect(released[2]!.body.interactive?.body.text).not.toContain("\"uptime\"");
     expect(released[2]!.body.interactive?.action.buttons.map((button) => button.reply.title))
       .toEqual(["Approve once", "Always approve", "Deny"]);
     expect((await gatewayCalls()).some((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Show me")).toBe(false);
