@@ -1,0 +1,61 @@
+{
+  "version": 2,
+  "id": "whatsapp",
+  "displayName": "WhatsApp",
+  "description": "WhatsApp Business Platform adapter worker",
+  "deployOrder": 5,
+  "wranglerConfig": "wrangler.managed.jsonc",
+  "devStateDirectories": [
+    "gsv-managed-whatsapp-ManagedWhatsAppPeer",
+    "gsv-managed-whatsapp-ManagedWhatsAppPairing",
+    "gsv-managed-whatsapp-WhatsAppInstallation"
+  ],
+  "deployment": {
+    "main": "workers/adapters/whatsapp/src/managed.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "ManagedWhatsAppChannel",
+    "adapterEntrypoint": "ManagedWhatsAppChannel",
+    "durableObjects": [
+      {
+        "binding": "MANAGED_WHATSAPP_PEER",
+        "className": "ManagedWhatsAppPeer"
+      },
+      {
+        "binding": "MANAGED_WHATSAPP_PAIRING",
+        "className": "ManagedWhatsAppPairing"
+      },
+      {
+        "binding": "WHATSAPP_INSTALLATIONS",
+        "className": "WhatsAppInstallation"
+      }
+    ],
+    "requiredSecrets": [
+      "WHATSAPP_ACCESS_TOKEN",
+      "WHATSAPP_APP_SECRET",
+      "WHATSAPP_VERIFY_TOKEN"
+    ],
+    "lifecycle": {
+      "entrypoint": "WhatsAppLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "kind": "adapter-peer",
+          "className": "ManagedWhatsAppPeer"
+        },
+        {
+          "kind": "adapter-pairing",
+          "className": "ManagedWhatsAppPairing"
+        },
+        {
+          "kind": "adapter-installation",
+          "className": "WhatsAppInstallation"
+        }
+      ]
+    },
+    "requiredVariables": [
+      "WHATSAPP_PHONE_NUMBER_ID",
+      "WHATSAPP_BUSINESS_ACCOUNT_ID",
+      "WHATSAPP_WEBHOOK_BASE_URL",
+      "WHATSAPP_DISPLAY_NUMBER"
+    ]
+  }
+}

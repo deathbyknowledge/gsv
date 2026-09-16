@@ -23,8 +23,11 @@ type ManagedTelegramOnboardingFlowProps = {
   dependencies?: ManagedTelegramDependencies;
 };
 
+/** Messengers paired through the operator-owned application and a short-lived code. */
+export type ManagedMessengerId = "telegram" | "slack" | "discord" | "whatsapp";
+
 type ManagedMessengerOnboardingFlowProps = Omit<ManagedTelegramOnboardingFlowProps, "dependencies"> & {
-  adapterId: "telegram" | "slack" | "discord";
+  adapterId: ManagedMessengerId;
   dependencies: ManagedTelegramDependencies;
 };
 
@@ -84,6 +87,22 @@ export function SharedDiscordOnboardingFlow({ onBack, onConnected, dependencies 
   return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
 }
 
+export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+}
+
+/** The operator's WhatsApp number travels as a wa.me chat link; show it as a number. */
+function whatsAppNumberFromChatUrl(value: string | undefined): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    const digits = url.hostname === "wa.me" ? url.pathname.replace(/^\//, "") : "";
+    return /^[1-9][0-9]{4,14}$/.test(digits) ? `+${digits}` : "";
+  } catch {
+    return "";
+  }
+}
+
 function ManagedMessengerOnboardingFlow({
   adapterId,
   onBack,
@@ -102,15 +121,31 @@ function ManagedMessengerOnboardingFlow({
 
   const isSlack = adapterId === "slack";
   const isDiscord = adapterId === "discord";
+  const isWhatsApp = adapterId === "whatsapp";
   const installsApp = isSlack || isDiscord;
-  const platform = isSlack ? "Slack" : isDiscord ? "Discord" : "Telegram";
+  const platform = isSlack ? "Slack" : isDiscord ? "Discord" : isWhatsApp ? "WhatsApp" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
-  const launchUrl = installsApp
+  const chatNumber = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
+  const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
-  const displayIdentity = candidate?.actorHandle
-    || candidate?.actorName
-    || (candidate ? `${platform} user ${candidate.actorId}` : `${platform} identity`);
+  const displayIdentity = isWhatsApp
+    ? candidate?.actorName
+      || candidate?.actorHandle
+      || (candidate ? `WhatsApp number ${candidate.actorId}` : "WhatsApp identity")
+    : candidate?.actorHandle
+      || candidate?.actorName
+      || (candidate ? `${platform} user ${candidate.actorId}` : `${platform} identity`);
+  const identityDetail = candidate
+    ? isWhatsApp
+      ? `WhatsApp number ${candidate.actorHandle ?? candidate.actorId}`
+      : `${platform} ID ${candidate.actorId}${isDiscord ? ` · ${candidate.accountId}` : ""}`
+    : "No identity loaded";
+  const firstStepText = installsApp
+    ? `Install the GSV app in your ${isDiscord ? "server" : "workspace"}, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM.`
+    : isWhatsApp
+      ? `Send any message to the GSV WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another GSV, send /link to get a new code.`
+      : "Send the official GSV bot any private message. It will reply with a short-lived pairing code.";
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -151,16 +186,18 @@ function ManagedMessengerOnboardingFlow({
     key: `managed-${adapterId}`,
     navLabel: platform.toUpperCase(),
     parentLabel: "MESSENGERS",
-    icon: installsApp ? "chat" : "telegram",
+    icon: installsApp ? "chat" : isWhatsApp ? "whatsapp" : "telegram",
     title: `Connect ${platform}`,
     blurb: installsApp
       ? `Install the GSV app, mention it in ${platform}, then confirm your identity here.`
-      : "Message the official GSV bot, then confirm that Telegram identity here.",
+      : isWhatsApp
+        ? "Message the GSV WhatsApp number, then confirm that WhatsApp identity here."
+        : "Message the official GSV bot, then confirm that Telegram identity here.",
     steps: [
       {
         key: "message",
         label: installsApp ? "INSTALL & MENTION" : "MESSAGE GSV",
-        title: installsApp ? "Install and mention GSV" : "Message the GSV bot",
+        title: installsApp ? "Install and mention GSV" : isWhatsApp ? "Message the GSV number" : "Message the GSV bot",
         meta: `IN ${platform.toUpperCase()}`,
         status: paired ? "CONNECTED" : "NOT CONNECTED",
         tone: paired ? "online" : "idle",
@@ -169,9 +206,7 @@ function ManagedMessengerOnboardingFlow({
             <Alert
               variant="attention"
               title={`START IN ${platform.toUpperCase()}`}
-              text={installsApp
-                ? `Install the GSV app in your ${isDiscord ? "server" : "workspace"}, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM.`
-                : "Send the official GSV bot any private message. It will reply with a short-lived pairing code."}
+              text={firstStepText}
             />
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
@@ -183,7 +218,9 @@ function ManagedMessengerOnboardingFlow({
               <span class="gsv-cf-footer-spacer" />
               <Link href={launchUrl}>{installsApp
                 ? info.data?.installUrl ? `INSTALL GSV IN ${platform.toUpperCase()}` : `VIEW ${platform.toUpperCase()} SETUP`
-                : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
+                : isWhatsApp
+                  ? info.data?.installUrl ? "OPEN WHATSAPP" : "VIEW WHATSAPP SETUP"
+                  : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
               <Button
                 variant="primary"
                 label="I HAVE A CODE"
@@ -265,7 +302,7 @@ function ManagedMessengerOnboardingFlow({
             <div class="gsv-cf-framed">
               <ListRow
                 label={displayIdentity}
-                sub={candidate ? `${platform} ID ${candidate.actorId}${isDiscord ? ` · ${candidate.accountId}` : ""}` : "No identity loaded"}
+                sub={identityDetail}
                 status="none"
               />
             </div>

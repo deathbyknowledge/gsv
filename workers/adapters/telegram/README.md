@@ -12,6 +12,23 @@ one peer Durable Object per private Telegram identity and a separate short-lived
 pairing object per code. Telegram can have only one active webhook per bot, so
 staging and production require different BotFather bots and credentials.
 
+## Outbound Text
+
+- A reply goes out as paragraph messages: the Markdown is split at blank lines
+  by the shared splitter in `workers/adapters/shared/src/paragraph-messages.ts`,
+  fenced code blocks, lists and tables stay whole, and runs of short paragraphs
+  merge so a greeting and a one-line question stay in one bubble. Each message
+  fits Telegram's 4096 character limit both as Markdown and as the HTML the
+  formatting fallback renders, so no message is cut inside a tag or entity.
+- Messages are sent in order about one second apart, because Telegram
+  throttles a chat at roughly one message per second, with the typing indicator
+  covering the pause. Only the first message quotes the inbound message and
+  only the last carries the approval buttons.
+- Every accepted message is recorded in the delivery ledger before the next
+  one is sent, so a retry after a rate limit resumes at the first message the
+  person has not received; an interrupted delivery stays ambiguous and is
+  never replayed.
+
 ## Outbound Media
 
 - Supports outbound attachments for `image`, `video`, `audio`, and `document`.

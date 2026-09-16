@@ -92,6 +92,48 @@ describe("DeliveryLedger", () => {
     expect(retry.attemptId).not.toBe(first.attemptId);
   });
 
+  it("resumes a delivery of several provider messages after the parts already sent", async () => {
+    const ledger = memoryLedger();
+    const first = await ledger.claim("delivery-parts", REQUEST_FINGERPRINT);
+    if (!first.claimed) throw new Error("expected a delivery claim");
+    expect(first.progress).toEqual({ sent: 0 });
+
+    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 1, messageId: "part-1" });
+    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 2, messageId: "part-1" });
+    await ledger.releaseRetryable("delivery-parts", first.attemptId);
+
+    const retry = await ledger.claim("delivery-parts", REQUEST_FINGERPRINT);
+    if (!retry.claimed) throw new Error("expected a retry claim");
+    expect(retry.progress).toEqual({ sent: 2, messageId: "part-1" });
+    await ledger.recordProgress("delivery-parts", retry.attemptId, { sent: 3, messageId: "part-1" });
+    await ledger.succeed("delivery-parts", retry.attemptId, "part-1");
+    await expect(ledger.claim("delivery-parts", REQUEST_FINGERPRINT)).resolves.toEqual({
+      claimed: false,
+      result: { ok: true, messageId: "part-1", deduplicated: true },
+    });
+
+    // A stale attempt cannot record progress against the retry that replaced it.
+    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 9 });
+    await expect(ledger.claim("delivery-parts", REQUEST_FINGERPRINT)).resolves.toMatchObject({
+      claimed: false,
+      result: { ok: true, deduplicated: true },
+    });
+  });
+
+  it("keeps an interrupted delivery of several provider messages ambiguous", async () => {
+    const ledger = memoryLedger();
+    const first = await ledger.claim("delivery-interrupted", REQUEST_FINGERPRINT);
+    if (!first.claimed) throw new Error("expected a delivery claim");
+    await ledger.recordProgress("delivery-interrupted", first.attemptId, { sent: 1, messageId: "part-1" });
+
+    await expect(ledger.claim("delivery-interrupted", REQUEST_FINGERPRINT)).resolves.toMatchObject({
+      claimed: false,
+      result: { ok: false, ambiguous: true },
+    });
+    await expect(ledger.recordProgress("delivery-interrupted", first.attemptId, { sent: -1 }))
+      .rejects.toThrow("progress.sent");
+  });
+
   it("never reclaims an in-flight or ambiguous provider attempt", async () => {
     const ledger = memoryLedger();
     const first = await ledger.claim("delivery-3", REQUEST_FINGERPRINT);

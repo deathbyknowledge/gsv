@@ -11,6 +11,7 @@ type TelegramApiMessage = {
     caption?: string;
     audio?: { bytes?: number[] };
     message_id?: string | number;
+    reply_parameters?: { message_id: number };
     reply_markup?: {
       inline_keyboard?: Array<Array<{ text?: string; callback_data?: string }>>;
     };
@@ -107,7 +108,7 @@ type ManagedPeerStub = {
         createdAt: number;
       };
     },
-  ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
+  ): Promise<{ ok: boolean; messageId?: string; error?: string; retryable?: boolean }>;
   setTyping(
     installationId: string,
     surface: { kind: "dm"; id: string },
@@ -524,6 +525,65 @@ describe("managed Telegram clean-instance flow", () => {
     expect((await telegramMessages()).filter(
       (message) => message.method === "sendAudio",
     )).toHaveLength(sentAudioCount);
+
+    // A long reply goes out as paragraph messages in order: the greeting and
+    // intro stay with the paragraph they introduce, a paragraph past Telegram's
+    // limit is split, only the first message quotes the inbound, and the bot
+    // types between messages.
+    const isText = (message: TelegramApiMessage): boolean =>
+      message.method === "sendMessage" || message.method === "sendRichMessage";
+    const recordsBeforeParagraphs = (await telegramMessages()).length;
+    const longParagraph = "word ".repeat(1_000).trimEnd();
+    await expect(peer.sendMessage("installation_test", {
+      deliveryId: "outbound-paragraphs-1",
+      surface: { kind: "dm", id: "12345" },
+      actorId: "12345",
+      routeGeneration: relinked.route.generation,
+      text: `Hi Hank!\n\nHere is the report.\n\n${longParagraph}\n\nAnything else?`,
+      replyToId: "5",
+    })).resolves.toMatchObject({ ok: true, messageId: expect.any(String) });
+    const paragraphRecords = (await telegramMessages()).slice(recordsBeforeParagraphs);
+    expect(paragraphRecords.map((record) => record.method)).toEqual([
+      "sendRichMessage", "sendChatAction", "sendRichMessage", "sendChatAction", "sendRichMessage",
+    ]);
+    const paragraphMessages = paragraphRecords.filter(isText);
+    expect(paragraphMessages.map((message) => message.body.text)).toEqual([
+      expect.stringMatching(/^Hi Hank!\n\nHere is the report\.\n\nword word/),
+      expect.stringMatching(/^word word/),
+      "Anything else?",
+    ]);
+    expect(paragraphMessages.every((message) => [...message.body.text ?? ""].length <= 4096)).toBe(true);
+    expect(paragraphMessages[0]!.body.reply_parameters).toEqual({ message_id: 5 });
+    expect(paragraphMessages[1]!.body.reply_parameters).toBeUndefined();
+    expect(paragraphMessages[2]!.body.reply_parameters).toBeUndefined();
+
+    // A rate limit on the second message leaves the first delivered, reports a
+    // retryable failure, and the retry sends only the messages still missing.
+    const partA = "a".repeat(400);
+    const partB = `__rate_limit_once__ ${"b".repeat(400)}`;
+    const partC = "c".repeat(400);
+    const resumed = {
+      deliveryId: "outbound-resume-1",
+      surface: { kind: "dm" as const, id: "12345" },
+      actorId: "12345",
+      routeGeneration: relinked.route.generation,
+      text: `${partA}\n\n${partB}\n\n${partC}`,
+    };
+    await expect(peer.sendMessage("installation_test", resumed))
+      .resolves.toMatchObject({ ok: false, retryable: true });
+    const textsSent = async (): Promise<string[]> =>
+      (await telegramMessages()).filter(isText).map((message) => message.body.text ?? "");
+    expect((await textsSent()).filter((text) => text === partA)).toHaveLength(1);
+    expect((await textsSent()).filter((text) => text === partB)).toHaveLength(0);
+    expect((await textsSent()).filter((text) => text === partC)).toHaveLength(0);
+    const retry = await peer.sendMessage("installation_test", resumed);
+    expect(retry).toMatchObject({ ok: true, messageId: expect.any(String) });
+    expect((await textsSent()).filter((text) => text === partA)).toHaveLength(1);
+    expect((await textsSent()).filter((text) => text === partB)).toHaveLength(1);
+    expect((await textsSent()).filter((text) => text === partC)).toHaveLength(1);
+    // The delivery reports the first message's id, sent before the rate limit.
+    expect((await telegramMessages()).find((message) => message.body.text === partA))
+      .toMatchObject({ result: { message_id: Number(retry.messageId) } });
   });
 });
 
