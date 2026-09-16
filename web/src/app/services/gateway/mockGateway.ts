@@ -14,6 +14,7 @@
  *   /run       a scripted run: Ship thinks, checks the studio disk, reads your backup notes, dry-runs
  *              the sync, then streams a reply about what it found (one to three seconds a step)
  *   /run-long  nine steps across both places, one of them failing and retried, then the reply
+ *   /run-updates  the long run with two progress messages before the final reply, all in one run
  *   /run-old   the short run with no recorded purposes, to compare the generated descriptions
  *   /think     Ship starts the first step and holds it, with no words yet, until /reply or /stream
  *   /stream    a multi-paragraph answer streams in, word by word (finishing an open step first)
@@ -518,11 +519,11 @@ function interrupt(run: OpenRun): void {
 }
 
 /** The reply is a Send: its text streams to the conversation while the tool call streams to observers; the commit records both. */
-async function send(run: OpenRun, text: string, streamed: boolean): Promise<void> {
-  const callId = `call-${run.runId}-send`;
+async function send(run: OpenRun, text: string, streamed: boolean, finish = true): Promise<void> {
+  const callId = `call-${run.runId}-send-${world.recordId + 1}`;
   const content: AssistantContent[] = [{ type: "toolCall", id: callId, name: "Send", arguments: {} }];
   stream(run, { type: "toolcall_start", contentIndex: 0, partial: partial(content) });
-  const started = { conversationId: SHIP_CONVERSATION, messageId: `draft-${run.runId}`, processId: SHIP.pid, runId: run.runId, timestamp: Date.now() };
+  const started = { conversationId: SHIP_CONVERSATION, messageId: `draft-${callId}`, processId: SHIP.pid, runId: run.runId, timestamp: Date.now() };
   broadcast("message.started", started);
   if (streamed) {
     let written = "";
@@ -552,10 +553,11 @@ async function send(run: OpenRun, text: string, streamed: boolean): Promise<void
   const message = record("ship", text, Date.now(), run.runId);
   broadcast("message.committed", { message, directed: true });
   appendGroup(run.runId, [
-    { kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } },
+    { kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${callId}` } },
     { kind: "result", payload: { callId, tool: "Send", outcome: "completed", output: { ok: true, action: "message", delivered: true }, media: [], resources: [] } },
   ]);
-  finishRun(run, text);
+  if (finish) finishRun(run, text);
+  else changed(["messages"], { runId: run.runId, messageId: world.messageId });
 }
 
 function finishRun(run: OpenRun, text: string | null): void {
@@ -579,13 +581,19 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     if (live(run)) startTool(run, RUN[0], callId);
     return; // held until /reply or /stream
   }
-  if (trigger === "/run" || trigger === "/run-long" || trigger === "/run-old") {
-    const steps = trigger === "/run-long" ? RUN_LONG : trigger === "/run-old" ? RUN.map((step) => ({ ...step, purpose: undefined })) : RUN;
-    for (const step of steps) {
+  if (trigger === "/run" || trigger === "/run-long" || trigger === "/run-old" || trigger === "/run-updates") {
+    const long = trigger === "/run-long" || trigger === "/run-updates";
+    const steps = long ? RUN_LONG : trigger === "/run-old" ? RUN.map((step) => ({ ...step, purpose: undefined })) : RUN;
+    for (const [index, step] of steps.entries()) {
       if (!live(run)) return;
       await play(run, step);
+      if (live(run) && trigger === "/run-updates" && (index === 2 || index === 5)) {
+        await send(run, index === 2
+          ? "The drive is nearly full. I’m checking the backup layout before changing anything."
+          : "The dry run succeeded with the current Work folder. I’m checking the cache size and saving what I found.", true, false);
+      }
     }
-    if (live(run)) await send(run, trigger === "/run-long" ? RUN_LONG_REPLY : RUN_REPLY, true);
+    if (live(run)) await send(run, long ? RUN_LONG_REPLY : RUN_REPLY, true);
     return;
   }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));

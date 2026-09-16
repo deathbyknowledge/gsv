@@ -37,6 +37,7 @@ import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
+import { groupRunReceipts, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
@@ -56,9 +57,7 @@ import {
   placeLabel,
   resolvePlace,
   noteSummary,
-  receiptSpan,
   receiptSummary,
-  receiptSteps,
   startsWriting,
   CLOUD_PLACE_ID,
   type Activity,
@@ -185,15 +184,19 @@ function ActivityLine({
 }
 
 /** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
-function Receipt({ moment, places, collections, open, onToggle, onMemory, onFleet }: {
-  moment: Moment;
+function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
+  receipt: RunReceipt;
   places: readonly Place[];
   collections: readonly LibraryCollection[];
   open: boolean;
   onToggle: () => void;
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
+  expanded: ReadonlySet<string>;
+  onToggleDetail: (key: string) => void;
+  waitingCallId?: string;
 }) {
+  const moment = receipt.work;
   /* while the run is live the line counts time; a second is enough for a summary */
   const live = moment.thinking;
   const [now, setNow] = useState(Date.now);
@@ -203,50 +206,27 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [live]);
-  const summary = receiptSummary(moment, places, now);
-  const running = live && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
-  const steps = receiptSteps(moment);
-  const span = receiptSpan(moment);
-  const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
+  let summary = receiptSummary(moment, places, now);
+  if (waitingCallId) summary = [{ text: "waiting for your approval" }, ...summary.filter((part) => part.tone === "failed")];
+  const running = live && !waitingCallId && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
+  const replies = receipt.replies.filter((reply) => reply.attribution);
   return (
-    <div class={`receipt${open ? " is-open" : ""}`}>
+    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
+          <span class="receipt-chevron" aria-hidden="true">›</span>
           {running ? <span class="pulse blink" /> : null}
           {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-          {moment.attribution?.fallbacks.length ? <span class="is-failed"> · fallback used</span> : null}
-          <span class="n"> · {open ? "close" : "open"}</span>
+          {replies.some((reply) => reply.attribution?.fallbacks.length) ? <span class="is-failed"> · fallback used</span> : null}
         </button>
-        {pages.length > 0 ? (
-          <span class="memory-references"> · from your memory: {pages.map((page, index) => (
-            <span key={`${page.db}:${page.path}`}>
-              {index > 0 ? ", " : ""}
-              <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
-            </span>
-          ))}</span>
-        ) : null}
       </div>
       {open ? (
         <div class="detail">
-          <div class="receipt-meta">
-            {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}>answered by {moment.attribution.model}</span> : null}
-            {steps > 0 ? <span>{countLabel(steps, "step")}{span ? ` · ${span}` : ""}</span> : null}
-            {notes > 0 ? <span>{countLabel(notes, "note")}</span> : null}
-          </div>
-          {moment.attribution?.fallbacks.length ? (
-            <div class="zen-model-fallback">
-              {moment.attribution.fallbacks.map((fallback, index) => (
-                <span key={`${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
-                  {index ? " · " : "fallback: "}{fallback.from} → {fallback.to}
-                </span>
-              ))}
-              {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : ""}
-            </div>
-          ) : null}
           {RECEIPT_LAYOUT === "timeline" ? (
-            <ReceiptTimeline moment={moment} places={places} now={now} onFleet={onFleet} />
+            <ReceiptTimeline moment={moment} places={places} now={now} onFleet={onFleet}
+              scope={receipt.key} expanded={expanded} onToggle={onToggleDetail} waitingCallId={waitingCallId} />
           ) : (
             <>
               {worked.map((activity) => (
@@ -265,6 +245,30 @@ function Receipt({ moment, places, collections, open, onToggle, onMemory, onFlee
               ) : null}
             </>
           )}
+          {pages.length > 0 ? (
+            <div class="memory-references">from your memory: {pages.map((page, index) => (
+              <span key={`${page.db}:${page.path}`}>
+                {index > 0 ? ", " : ""}
+                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
+              </span>
+            ))}</div>
+          ) : null}
+          {replies.map((reply, index) => (
+            <div key={reply.id} class="receipt-reply">
+              {reply.attribution?.model ? <div class="receipt-meta" title={reply.text}>
+                {receipt.replies.length > 1 ? <span>reply {receipt.replies.indexOf(reply) + 1}</span> : null}
+                <span class="answer-model" title={reply.attribution.provider ?? undefined}>answered by {reply.attribution.model}</span>
+              </div> : null}
+              {reply.attribution?.fallbacks.length ? <div class="zen-model-fallback">
+                {reply.attribution.fallbacks.map((fallback, fallbackIndex) => (
+                  <span key={`${index}:${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
+                    {fallbackIndex ? " · " : "fallback: "}{fallback.from} → {fallback.to}
+                  </span>
+                ))}
+                {reply.attribution.omittedFallbacks ? ` · ${reply.attribution.omittedFallbacks} earlier` : ""}
+              </div> : null}
+            </div>
+          ))}
           {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>view process</button> : null}
         </div>
       ) : null}
@@ -455,7 +459,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   /* moments: the runtime's, plus the commands run by hand */
-  const moments = useMemo(() => {
+  const { moments, receipts } = useMemo(() => {
     const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     const fromLocal: Moment[] = localRuns.map((run) => ({
@@ -491,8 +495,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         },
       ],
     }));
-    return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
+    return groupRunReceipts([...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)), runtime.activeRunId, pid);
+  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -515,7 +519,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
   const { browse, viewport: momentsRef, content: contentRef } = scrolling;
-  const hasMemoryRead = moments.some((moment) => moment.activities.some((activity) =>
+  const hasMemoryRead = [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
     ),
@@ -769,12 +773,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         return;
       }
       const focused = browse !== null ? moments[browse] : latest;
-      if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
+      const focusedReceipt = focused ? receipts.get(focused.id) : undefined;
+      if (event.key === "o" && focused && (focusedReceipt || focused.activities.some((activity) => activity.you))) {
         event.preventDefault();
         scrolling.stopFollowing();
         const yours = focused.activities.filter((activity) => activity.you);
-        const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration || focused.attribution);
-        toggleActivity(worked ? `receipt:${focused.id}` : yours[yours.length - 1].key);
+        toggleActivity(focusedReceipt ? focusedReceipt.key : yours[yours.length - 1].key);
+        if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
       if (browse !== null && event.key === "j") {
@@ -795,7 +800,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, latest, moments, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
@@ -883,6 +888,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               </div>}
               {moments.map((moment, index) => {
                 const isLatest = index === moments.length - 1;
+                const receipt = receipts.get(moment.id);
                 const settleStart = settling.get(moment.id);
                 const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
                 const materialising = !cascadeUnset && settleStart !== undefined && !pending;
@@ -924,15 +930,18 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                           onFleet={onFleet}
                         />
                       ))}
-                    {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration || moment.attribution) ? (
+                    {receipt?.anchorId === moment.id ? (
                       <Receipt
-                        moment={moment}
+                        receipt={receipt}
                         places={places}
                         collections={memoryCollections.data ?? []}
                         onMemory={onMemory}
                         onFleet={onFleet}
-                        open={openActivities.has(`receipt:${moment.id}`)}
-                        onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                        open={openActivities.has(receipt.key)}
+                        onToggle={() => toggleActivity(receipt.key)}
+                        expanded={openActivities}
+                        onToggleDetail={toggleActivity}
+                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId ? pendingHil.callId : undefined}
                       />
                     ) : null}
                     {moment.role === "human" ? (

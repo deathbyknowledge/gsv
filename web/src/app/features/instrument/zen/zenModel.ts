@@ -868,6 +868,12 @@ function timelineForWork(work: readonly WorkEntry[], runKey: string, active: boo
       for (const paragraph of first.text.trim().split(/\n\s*\n+/)) events.push({ kind: "thought", text: paragraph.trim(), at: entry.at });
     }
   }
+  return linkReceiptRetries(events);
+}
+
+/** Retry links span the whole run, including calls separated by a committed reply. */
+export function linkReceiptRetries(source: readonly MomentEvent[]): MomentEvent[] {
+  const events: MomentEvent[] = source.map((event) => event.kind === "call" ? { ...event, retryOf: null } : event);
   const calls = events.filter((event): event is CallEvent => event.kind === "call");
   calls.forEach((failed, index) => {
     if (!failed.call.failed) return;
@@ -926,23 +932,24 @@ export function receiptSummary(moment: Moment, places: readonly Place[], now: nu
     return [{ text: moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details" }];
   }
   const label = (target: string | null) => target === null ? "the process" : placeLabel(target, places);
+  const failed = calls.filter((event) => event.call.failed);
+  const retried = failed.filter((event) => calls.some((later) => later.retryOf === event.call.callId)).length;
+  const failures: SummaryPart[] = failed.length > 0
+    ? [{ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" }]
+    : [];
   if (moment.thinking) {
     const elapsed = formatSeconds(now - (receiptFirstAt(moment) ?? now));
     const running = calls.find((event) => !event.call.finished);
-    if (running) return [{ text: `step ${calls.indexOf(running) + 1} · ${running.call.description} · ` }, { text: label(running.target), tone: "place" }, { text: ` · ${elapsed}` }];
-    return [{ text: `${countLabel(calls.length, "step")} · thinking · ${elapsed}` }];
+    if (running) return [{ text: `${running.call.description} · ${elapsed}` }, ...failures];
+    return [{ text: `${countLabel(calls.length, "action")} · thinking · ${elapsed}` }, ...failures];
   }
   const named = [...new Set(calls.map((event) => event.target))].map(label);
-  const failed = calls.filter((event) => event.call.failed);
-  const retried = failed.filter((event) => calls.some((later) => later.retryOf === event.call.callId)).length;
-  const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "step")} on ` }];
+  const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "action")} on ` }];
   named.forEach((name, index) => {
     if (index > 0) parts.push({ text: index === named.length - 1 ? " and " : ", " });
     parts.push({ text: name, tone: "place" });
   });
-  if (failed.length > 0) {
-    parts.push({ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" });
-  }
+  parts.push(...failures);
   const span = receiptSpan(moment);
   if (span) parts.push({ text: ` · ${span}` });
   return parts;
