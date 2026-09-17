@@ -14,6 +14,7 @@ import {
 } from "../../shared/src/delivery-ledger";
 import {
   adapterInboundResultDisposition,
+  adapterInboundRequiresPairing,
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
@@ -530,7 +531,10 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       transfer.body,
     );
     if (this.retirement.retired(route)) return { terminal: true };
-    if (result.challenge) return await this.pairingResponse(inbound);
+    if (adapterInboundRequiresPairing(result)) {
+      if ((await this.requireState()).activeRoute?.generation !== route.generation) return { terminal: true };
+      return await this.pairingResponse(inbound);
+    }
     const disposition = adapterInboundResultDisposition(result, {
       surface: { kind: "dm", id: inbound.surfaceId },
       providerMessageId: inbound.messageId,
