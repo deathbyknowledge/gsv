@@ -34,5 +34,6 @@
   --ascii-star-glow: none;
 }
 @media (max-width: 900px) {
-  .gsv-auth-illustration { aspect-ratio: 2.8; }
+  /* The 80 glyph rows at 1cqi need 80% of the width in height, plus breathing room. */
+  .gsv-auth-illustration { aspect-ratio: 1.2; }
 }

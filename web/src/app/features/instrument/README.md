@@ -14,6 +14,8 @@ The session layout also owns one ASCII Open Country ship: a broad habitat hull,
 landscape, observation deck and three recessed stern drives. Setup forms it from
 particles; sign-in and recovery show the same ship already formed with gentle
 motion. It sits beside the form on wide screens and above it on narrow screens.
+The narrow layout reserves the full glyph frame's height so the moving hull fits
+above the form without clipping; short screens scroll through the composition.
 The illustration never delays form interaction or sign-in. The completed ship
 continues its slow 3D rotation and bobbing at up to 18 rendered frames per second.
 Formation samples are allocated only when needed and released after the
