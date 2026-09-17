@@ -19,6 +19,7 @@ import {
 } from "../../shared/src/delivery-ledger";
 import {
   adapterInboundResultDisposition,
+  adapterInboundRequiresPairing,
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
@@ -840,7 +841,9 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
       actorId: inbound.actorId,
     });
     if (this.retirement.retired(route)) return { terminal: true };
-    if (result.challenge) {
+    if (adapterInboundRequiresPairing(result)) {
+      const latest = await this.requireState();
+      if (latest.activeRoute?.generation !== route.generation || latest.workspaceGeneration !== payload.workspaceGeneration) return { terminal: true };
       return await this.pairingResponse(inbound);
     }
     return {

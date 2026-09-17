@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   adapterInboundResultDisposition,
+  adapterInboundRequiresPairing,
   InboundDeliveryLedger,
   isTerminalAdapterInboundResult,
 } from "../src/inbound-delivery";
@@ -654,6 +655,20 @@ describe("InboundDeliveryLedger", () => {
     expect(enterKernel).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledTimes(10);
     await expect(restarted.pendingIds()).resolves.toEqual([]);
+  });
+});
+
+describe("adapterInboundRequiresPairing", () => {
+  it("requests fresh pairing only for a terminal revoked identity or link challenge", () => {
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "revoked_identity" })).toBe(true);
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "revoked_identity", replayed: "completed" })).toBe(true);
+    expect(adapterInboundRequiresPairing({ ok: true, challenge: {
+      deliveryId: "challenge", code: "CODE", prompt: "Connect", expiresAt: 123,
+    } })).toBe(true);
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "stale_route_generation" })).toBe(false);
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "unlinked_actor" })).toBe(false);
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "revoked_identity", replayed: "in_progress" })).toBe(false);
+    expect(adapterInboundRequiresPairing({ ok: false, error: "Unavailable" })).toBe(false);
   });
 });
 
