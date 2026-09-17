@@ -54,7 +54,7 @@ export async function evaluateTypeSafe(
     headers: { "Authorization": `Bearer ${request.connection.apiKey}`, "Content-Type": "application/json" },
     body,
     signal,
-    redirect: "error",
+    redirect: "manual",
   });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});

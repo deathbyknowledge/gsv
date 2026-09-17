@@ -33,7 +33,7 @@ describe("TypeSafe decisions", () => {
     const result = await evaluateTypeSafe(request(), signal, provider);
     const [url, init] = provider.mock.calls[0];
     expect(url).toBe("https://api.typesafe.ai/v1/systemone");
-    expect(init).toMatchObject({ signal, redirect: "error", method: "POST" });
+    expect(init).toMatchObject({ signal, redirect: "manual", method: "POST" });
     expect(JSON.parse(String(init?.body)).questions.keep.type).toBe("noul");
     expect(result.answers.keep).toEqual({ type: "boolean", probability: 0.9 });
     expect(result.answers.importance).toMatchObject({ type: "score", score: 1.6 });
@@ -51,11 +51,15 @@ describe("TypeSafe decisions", () => {
     await expect(evaluateTypeSafe(request(), new AbortController().signal, provider)).rejects.toThrow("TypeSafe");
   });
 
-  it("cancels a provider error body and omits its private contents", async () => {
+  it.each([301, 302, 303, 307, 308, 429])("cancels HTTP %s without following redirects or exposing its contents", async (status) => {
     const cancel = vi.fn();
     const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("private evidence")); }, cancel });
-    const provider = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 429 }));
-    await expect(evaluateTypeSafe(request(), new AbortController().signal, provider)).rejects.toThrow("TypeSafe decision request failed (HTTP 429)");
+    const provider = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, {
+      status, headers: { Location: "https://other-provider.test/" },
+    }));
+    await expect(evaluateTypeSafe(request(), new AbortController().signal, provider)).rejects.toThrow(`TypeSafe decision request failed (HTTP ${status})`);
+    expect(provider).toHaveBeenCalledOnce();
+    expect(provider.mock.calls[0][1]?.redirect).toBe("manual");
     expect(cancel).toHaveBeenCalledOnce();
   });
 
