@@ -81,13 +81,24 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
           const cell = row * COLS + column;
           const light = cells.light[cell];
           const coverage = cells.coverage[cell];
-          // Paper needs ink for shadows, with a sparse mark for fully lit surfaces.
-          // Uncovered cells stay blank; exhaust outside the hull keeps only a faint tint.
-          const value = ink ? (coverage > 0 ? Math.max(coverage * 0.09, coverage - light) : light * 0.18) : light;
-          const glyph = ramp[Math.min(ramp.length - 1, Math.floor(value * ramp.length))];
-          nebula += value > 0.06 && value < 0.35 ? glyph : " ";
-          foreground += value >= 0.35 && value < 0.8 ? glyph : " ";
-          stars += value >= 0.8 ? glyph : " ";
+          let tone = light;
+          let density = light;
+          if (ink) {
+            if (coverage > 0) {
+              const shade = Math.max(0, Math.min(1, 1 - light / coverage));
+              // Pale faces keep substantial strokes; geometry coverage softens their edges.
+              tone = Math.max(0.09, shade);
+              density = coverage * mix(0.55, 1, shade);
+            } else {
+              // Empty space stays blank and exhaust retains its soft falloff.
+              tone = light * 0.18;
+              density = tone;
+            }
+          }
+          const glyph = ramp[Math.min(ramp.length - 1, Math.floor(density * ramp.length))];
+          nebula += tone > 0.06 && tone < 0.35 ? glyph : " ";
+          foreground += tone >= 0.35 && tone < 0.8 ? glyph : " ";
+          stars += tone >= 0.8 ? glyph : " ";
         }
         material.push(foreground);
         dust.push(nebula);
