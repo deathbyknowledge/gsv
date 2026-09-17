@@ -89,8 +89,10 @@ They have not been executed by the implementation agent.
 
 The isolated preview runner is `workers/gateway/scripts/workspace-preview.mts`.
 It runs a development-only localhost directory with real Kernel, Process,
-inference executor and ripgit storage. All space data is disposable and separate
-from production. The only simulated service is the installation directory and
+inference executor and ripgit storage. Space data is local and separate from
+production, persisted in `~/.local/state/gsv/workspace-preview` across restarts.
+Set `GSV_WORKSPACE_STATE_DIR` to use a different local state directory.
+The only simulated service is the installation directory and
 unused messaging adapters; model responses and repository operations are real.
 The TypeSafe key is supplied only to the inference Worker as a secret. The Vite
 server can serve only files under this checkout.
@@ -108,7 +110,11 @@ node --import tsx workers/gateway/scripts/workspace-preview.mts
 
 Wrangler uses the operator's existing Cloudflare authentication for the remote
 Workers AI binding. The runner starts the browser UI on localhost:5184 and prints
-the local onboarding link. No model calls are made by the startup script.
+the local onboarding link for fresh state. Existing state uses ordinary sign-in.
+Wrangler watches backend source and reloads it automatically; Vite handles web
+changes. No model calls are made by the startup script. The inference credential
+is copied into a private temporary `.dev.vars` file outside the web root, removed
+on clean shutdown.
 
 Maintainer validation commands (from the checkout root):
 
