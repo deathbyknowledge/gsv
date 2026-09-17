@@ -29,9 +29,6 @@
   font-size: min(9px, 1cqi);
   line-height: 1;
 }
-.gsv-auth-illustration[data-glyph-scale="2"] .gsv-ascii-galaxy-pre {
-  font-size: min(18px, 2cqi);
-}
 .gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {
   --ascii-foreground-glow: none;
   --ascii-star-glow: none;

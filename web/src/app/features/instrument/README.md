@@ -17,9 +17,9 @@ motion. It sits beside the form on wide screens and above it on narrow screens.
 The illustration never delays form interaction or sign-in. Reduced motion shows
 the completed ship, and the glyph host pauses rendering when it is offscreen.
 The fixed geometry raster averages coverage before choosing glyphs, preserving
-the model's empty spaces as its displayed type size changes. The scene supports
-160×80 and 80×40 glyphs from the same 320×160 raster; the local session preview
-can compare both sizes without changing the model or camera.
+the model's empty spaces as its displayed type size changes. The scene uses
+160×80 glyphs from a 320×160 raster, with close framing to give the hull and
+landscape more room within the illustration.
 
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list

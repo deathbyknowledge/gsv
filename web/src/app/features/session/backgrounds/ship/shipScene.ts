@@ -11,9 +11,8 @@ const smooth = (start: number, end: number, time: number) => {
   return amount * amount * (3 - 2 * amount);
 };
 
-export function createShipScene(arrival: boolean, glyphScale: 1 | 2 = 1): AsciiAnimationScene {
-  const cols = COLS / glyphScale, rows = ROWS / glyphScale;
-  const raster = new ShipRaster(COLS, ROWS, glyphScale);
+export function createShipScene(arrival: boolean): AsciiAnimationScene {
+  const raster = new ShipRaster(COLS, ROWS);
   const particles = new ShipRaster(COLS, ROWS);
   let model: ShipModel;
   return {
@@ -28,7 +27,7 @@ export function createShipScene(arrival: boolean, glyphScale: 1 | 2 = 1): AsciiA
       const pitch = mix(-0.23, -0.37, turn);
       const matrix = rotationMatrix(yaw, pitch, -0.035);
       const bob = Math.sin(clock * 0.4) * 0.025 * idle;
-      const unit = raster.width / (7.5 * 1.62);
+      const unit = raster.width / (6.65 * 1.62);
       const ignition = smooth(1.3, 4.1, time);
       const surface = smooth(1.9, 4.5, time);
       raster.clear();
@@ -45,7 +44,7 @@ export function createShipScene(arrival: boolean, glyphScale: 1 | 2 = 1): AsciiA
         const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
         const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
         const perspective = 1 + z * 0.035;
-        const column = raster.width * 0.5 + x * unit * 1.62 * perspective;
+        const column = raster.width * 0.465 + x * unit * 1.62 * perspective;
         const row = raster.height * 0.51 + y * unit * perspective;
         const nx = matrix[0] * point.nx + matrix[1] * point.ny + matrix[2] * point.nz;
         const ny = matrix[3] * point.nx + matrix[4] * point.ny + matrix[5] * point.nz;
@@ -64,10 +63,10 @@ export function createShipScene(arrival: boolean, glyphScale: 1 | 2 = 1): AsciiA
 
       const cells = raster.resolve();
       const material: string[] = [], dust: string[] = [], highlights: string[] = [];
-      for (let row = 0; row < rows; row++) {
+      for (let row = 0; row < ROWS; row++) {
         let foreground = "", nebula = "", stars = "";
-        for (let column = 0; column < cols; column++) {
-          const value = cells[row * cols + column];
+        for (let column = 0; column < COLS; column++) {
+          const value = cells[row * COLS + column];
           const glyph = RAMP[Math.min(RAMP.length - 1, Math.floor(value * RAMP.length))];
           nebula += value > 0.06 && value < 0.35 ? glyph : " ";
           foreground += value >= 0.35 && value < 0.8 ? glyph : " ";

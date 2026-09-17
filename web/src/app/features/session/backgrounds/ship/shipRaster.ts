@@ -14,12 +14,12 @@ export class ShipRaster {
   private readonly cells: Float32Array;
   private projected = new Float32Array(0);
 
-  constructor(private readonly cols: number, private readonly rows: number, private readonly glyphScale: 1 | 2 = 1) {
+  constructor(private readonly cols: number, private readonly rows: number) {
     this.width = cols * 2;
     this.height = rows * 2;
     this.pixels = new Float32Array(this.width * this.height);
     this.depth = new Float32Array(this.pixels.length);
-    this.cells = new Float32Array(cols * rows / (glyphScale * glyphScale));
+    this.cells = new Float32Array(cols * rows);
   }
 
   clear(): void {
@@ -53,7 +53,7 @@ export class ShipRaster {
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
       const perspective = 1 + z * 0.035;
-      projected[index] = this.width * 0.5 + x * unit * 1.62 * perspective;
+      projected[index] = this.width * 0.465 + x * unit * 1.62 * perspective;
       projected[index + 1] = this.height * 0.51 + y * unit * perspective;
       projected[index + 2] = z;
       const nx = matrix[0] * vertices[index + 3] + matrix[1] * vertices[index + 4] + matrix[2] * vertices[index + 5];
@@ -102,16 +102,10 @@ export class ShipRaster {
   }
 
   resolve(): Float32Array {
-    const block = 2 * this.glyphScale;
-    const cols = this.cols / this.glyphScale, rows = this.rows / this.glyphScale;
-    for (let row = 0; row < rows; row++) {
-      for (let column = 0; column < cols; column++) {
-        const index = row * block * this.width + column * block;
-        let coverage = 0;
-        for (let y = 0; y < block; y++) {
-          for (let x = 0; x < block; x++) coverage += this.pixels[index + y * this.width + x];
-        }
-        this.cells[row * cols + column] = coverage / (block * block);
+    for (let row = 0; row < this.rows; row++) {
+      for (let column = 0; column < this.cols; column++) {
+        const index = row * 2 * this.width + column * 2;
+        this.cells[row * this.cols + column] = (this.pixels[index] + this.pixels[index + 1] + this.pixels[index + this.width] + this.pixels[index + this.width + 1]) / 4;
       }
     }
     return this.cells;
