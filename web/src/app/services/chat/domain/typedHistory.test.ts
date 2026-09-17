@@ -6,6 +6,17 @@ import { momentsFromConversation, activitiesForRows, receiptTargets, placesUsed 
 
 const identity = { id: 1, messageId: 1, index: 0, runId: "r", generation: 1, createdAt: 1, source: "typed" };
 describe("typed history projection", () => {
+  it("presents a responsibility wake as a review request rather than raw event data", () => {
+    const rows = transcriptRowsFromRecords([procHistoryRecordSchema.parse({
+      ...identity, kind: "event", payload: {
+        kind: "responsibility.ready", severity: "info", audience: "model",
+        payload: { batchId: "batch:review", ledgerRevision: 2, responsibilityIds: ["r12y:question"], receivedAtMs: 3_000 },
+      },
+    })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ text: "Review requested for 1 responsibility.", event: { kind: "responsibility.ready", audience: "model", severity: "info" } });
+  });
+
   it("retains purpose through result deltas, late call records and a history reload", () => {
     const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
       runId: "r", callId: "disk", tool: "Shell", syscall: "shell.exec", target: "studio",

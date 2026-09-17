@@ -34,7 +34,7 @@ import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, formatProcessRuntimeEvent, formatScheduleEventMessage } from "../history/event-renderer";
+import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
@@ -1605,10 +1605,29 @@ export class ProcessController {
       throw new Error("Runtime event id is invalid");
     }
     const runId = eventId;
+    const historyEvent: ProcHistoryEvent = event.type === "r12y.ready"
+      ? {
+          kind: "responsibility.ready",
+          payload: {
+            batchId: event.batchId,
+            ledgerRevision: event.ledgerRevision,
+            responsibilityIds: event.responsibilityIds,
+            receivedAtMs: Date.now(),
+          },
+          severity: "info",
+          audience: "model",
+        }
+      : {
+          kind: "adapter.work.returned",
+          payload: { eventId, workPid: event.workPid },
+          severity: "info",
+          audience: "model",
+        };
     const admission =
       event.type === "r12y.ready"
-        ? await this.handleRuntimeEvent(null, event.type, {
+        ? await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
             runId,
+            event: historyEvent,
             kind: event.type,
             dedupeId: eventId,
             provenance: JSON.stringify({
@@ -1624,15 +1643,10 @@ export class ProcessController {
               responsibilityIds: event.responsibilityIds,
             },
           })
-        : await this.handleRuntimeEvent(formatProcessRuntimeEvent(event), event.type, {
+        : await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
             distinctRun: true,
             runId,
-            event: {
-              kind: "adapter.work.returned",
-              payload: { eventId, workPid: event.workPid },
-              severity: "info",
-              audience: "model",
-            },
+            event: historyEvent,
           });
     if (!admission.ok) {
       throw new Error(admission.error);

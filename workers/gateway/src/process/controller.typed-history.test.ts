@@ -3,7 +3,8 @@ import {
   procHistoryRecordDataSchema, type ProcHistoryRecordData, type ProcIpcDeliverArgs,
 } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
-import type { ProcessScheduleDeliverArgs } from "../protocol/process-frames";
+import type { ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
+import { evictDurableObject } from "cloudflare:test";
 import {
   initProcess, ROOT_IDENTITY, runInProcess,
 } from "./do-test-harness";
@@ -24,6 +25,52 @@ function isolateAdmission(process: Process): void {
 }
 
 describe("typed controller history producers", () => {
+  it.each([false, true])("persists each responsibility wake once across reload with active run=%s", async (busy) => {
+    const stub = await initProcess(`typed-responsibility-ready-${busy}`, ROOT_IDENTITY);
+    const input = {
+      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000081",
+      event: {
+        type: "r12y.ready", batchId: "batch:00000000-0000-4000-8000-000000000081",
+        ledgerRevision: 2, responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000082"],
+      },
+    } satisfies ProcessRuntimeEventDeliverArgs;
+    const retained = await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      if (busy) process.runs.active = { runId: "existing-run" };
+      const first = await process.controller.handleProcessRuntimeEventDeliver(input);
+      const duplicate = await process.controller.handleProcessRuntimeEventDeliver(input);
+      expect(duplicate).toEqual(first);
+      expect(first.runId).toBe(busy ? "existing-run" : input.eventId);
+      const records = storedRecords(process);
+      expect(records).toEqual([{
+        kind: "event",
+        payload: {
+          kind: "responsibility.ready", severity: "info", audience: "model",
+          payload: {
+            batchId: input.event.batchId, ledgerRevision: 2,
+            responsibilityIds: input.event.responsibilityIds, receivedAtMs: expect.any(Number),
+          },
+        },
+      }]);
+      expect(await process.history.buildContextMessages()).toEqual([
+        expect.objectContaining({ role: "user", content: expect.stringContaining("Responsibility review requested at") }),
+      ]);
+      return records;
+    });
+    await evictDurableObject(stub);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      await process.controller.handleProcessRuntimeEventDeliver(input);
+      expect(storedRecords(process)).toEqual(retained);
+      await process.controller.handleProcessRuntimeEventDeliver({
+        eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000083",
+        event: { ...input.event, batchId: "batch:00000000-0000-4000-8000-000000000083" },
+      });
+      expect(storedRecords(process)).toHaveLength(2);
+      expect(await process.history.buildContextMessages()).toHaveLength(2);
+    });
+  });
+
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
