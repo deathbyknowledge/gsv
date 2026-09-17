@@ -32,6 +32,8 @@ come on during assembly. Sign-in and recovery show the ship underway, with lit
 drive cores and three steady, softly fading exhaust tails. The glows use the same
 projection and respect the hull's depth. Reduced motion preserves the appropriate
 engine state in each still view.
+Light theme reverses the illustration's shadow/highlight colors: shaded glyphs
+use deep violet and illuminated glyphs use pale lavender.
 
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list
