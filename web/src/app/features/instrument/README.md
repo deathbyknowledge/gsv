@@ -32,8 +32,11 @@ come on during assembly. Sign-in and recovery show the ship underway, with lit
 drive cores and three steady, softly fading exhaust tails. The glows use the same
 projection and respect the hull's depth. Reduced motion preserves the appropriate
 engine state in each still view.
-Light theme reverses the illustration's shadow/highlight colors: shaded glyphs
-use deep violet and illuminated glyphs use pale lavender.
+Light theme maps the lighting to ink density with its own glyph ramp: shaded
+surfaces use dense marks, lit faces use sparse marks, and exhaust keeps a faint
+tint. The raster retains surface coverage separately from brightness so empty
+space stays blank and ink thins at partial edges. Theme changes
+redraw the current pose, including reduced-motion stills, without restarting assembly.
 
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list

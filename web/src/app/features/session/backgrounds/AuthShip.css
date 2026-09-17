@@ -30,8 +30,6 @@
   line-height: 1;
 }
 .gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {
-  --ascii-nebula: var(--accent-bright);
-  --ascii-stars: color-mix(in srgb, var(--glyph) 64%, transparent);
   --ascii-foreground-glow: none;
   --ascii-star-glow: none;
 }

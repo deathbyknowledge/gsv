@@ -16,7 +16,7 @@ export type AsciiAnimationFrame = {
 export type AsciiAnimationScene = {
   prepare?: () => void | Promise<void>;
   stillAt: number;
-  frame: (seconds: number, motion: boolean) => AsciiAnimationFrame;
+  frame: (seconds: number, motion: boolean, palette?: ColorTheme) => AsciiAnimationFrame;
 };
 
 export type AsciiAnimationProps = {
@@ -42,6 +42,9 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
   const stars = useRef<HTMLElement>(null);
   const foreground = useRef<HTMLElement>(null);
   const replay = useRef<HTMLButtonElement>(null);
+  const paletteRef = useRef(palette);
+  const redraw = useRef<(() => void) | null>(null);
+  paletteRef.current = palette;
   const style: JSX.CSSProperties & { "--gsv-ascii-galaxy-font-size": string } = { "--gsv-ascii-galaxy-font-size": `${fontSize}px` };
 
   useEffect(() => {
@@ -55,18 +58,25 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
     let raf = 0;
     let start = 0;
     let last = 0;
+    let frameSeconds = scene.stillAt;
+    let frameMotion = false;
     let hiddenAt: number | null = null;
     const frameMs = 1000 / Math.max(1, frameRate);
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const moving = () => animate && !(respectReducedMotion && motion?.matches);
     const draw = (seconds: number, allowMotion: boolean) => {
-      const frame = scene.frame(seconds, allowMotion);
+      const frame = scene.frame(seconds, allowMotion, paletteRef.current);
+      frameSeconds = seconds;
+      frameMotion = allowMotion;
       if (element.textContent !== frame.foreground) element.textContent = frame.foreground;
       element.classList.toggle("is-glitch", frame.glitch === true);
       element.style.transform = frame.transform ?? "none";
       element.style.opacity = frame.opacity ?? "1";
       if (stars.current && stars.current.textContent !== (frame.stars ?? "")) stars.current.textContent = frame.stars ?? "";
       if (nebula.current && nebula.current.textContent !== (frame.nebula ?? "")) nebula.current.textContent = frame.nebula ?? "";
+    };
+    redraw.current = () => {
+      if (ready && visible && !cancelled) draw(frameSeconds, frameMotion);
     };
     const revealReplay = (visible: boolean) => {
       if (replay.current) {
@@ -140,6 +150,7 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
     });
     return () => {
       cancelled = true;
+      redraw.current = null;
       window.cancelAnimationFrame(raf);
       observer?.disconnect();
       document.removeEventListener("visibilitychange", updateVisibility);
@@ -147,6 +158,8 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
       motion?.removeEventListener("change", restart);
     };
   }, [animate, frameRate, inline, label, pauseWhenOffscreen, respectReducedMotion, scene, showReplay]);
+
+  useEffect(() => { redraw.current?.(); }, [palette]);
 
   const Root = inline ? "span" : "div";
   const Layer = inline ? "span" : "pre";

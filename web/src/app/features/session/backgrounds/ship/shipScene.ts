@@ -1,10 +1,12 @@
 import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../components/ui/AsciiAnimation";
+import type { ColorTheme } from "../../../../components/ui/useColorTheme";
 import { buildOpenCountry, sampleShipSurface, type ShipModel, type ShipPoint } from "./openCountry";
 import { rotationMatrix, ShipRaster } from "./shipRaster";
 
 const COLS = 160;
 const ROWS = 80;
 const RAMP = " .,:;irsXA253hMHGS#9B&@";
+const INK_RAMP = " .,:;-=+xX%#@";
 const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 const smooth = (start: number, end: number, time: number) => {
   const amount = Math.max(0, Math.min(1, (time - start) / (end - start)));
@@ -19,7 +21,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
   return {
     prepare() { model = buildOpenCountry(!arrival); },
     stillAt: 7,
-    frame(seconds: number, motion: boolean): AsciiAnimationFrame {
+    frame(seconds: number, motion: boolean, palette: ColorTheme = "dark"): AsciiAnimationFrame {
       const time = arrival ? seconds : 7;
       const idle = smooth(4.5, 7, time);
       const clock = motion ? seconds : 0;
@@ -70,12 +72,19 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
       raster.glow(model.driveGlow, matrix, unit, bob, ignition);
 
       const cells = raster.resolve();
+      const ink = palette === "light";
+      const ramp = ink ? INK_RAMP : RAMP;
       const material: string[] = [], dust: string[] = [], highlights: string[] = [];
       for (let row = 0; row < ROWS; row++) {
         let foreground = "", nebula = "", stars = "";
         for (let column = 0; column < COLS; column++) {
-          const value = cells[row * COLS + column];
-          const glyph = RAMP[Math.min(RAMP.length - 1, Math.floor(value * RAMP.length))];
+          const cell = row * COLS + column;
+          const light = cells.light[cell];
+          const coverage = cells.coverage[cell];
+          // Paper needs ink for shadows, with a sparse mark for fully lit surfaces.
+          // Uncovered cells stay blank; exhaust outside the hull keeps only a faint tint.
+          const value = ink ? (coverage > 0 ? Math.max(coverage * 0.09, coverage - light) : light * 0.18) : light;
+          const glyph = ramp[Math.min(ramp.length - 1, Math.floor(value * ramp.length))];
           nebula += value > 0.06 && value < 0.35 ? glyph : " ";
           foreground += value >= 0.35 && value < 0.8 ? glyph : " ";
           stars += value >= 0.8 ? glyph : " ";

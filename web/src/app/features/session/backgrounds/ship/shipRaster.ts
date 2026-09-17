@@ -1,5 +1,7 @@
 import type { ShipGlowPoint, ShipMesh } from "./openCountry";
 
+type ShipCells = { light: Float32Array; coverage: Float32Array };
+
 export function rotationMatrix(yaw: number, pitch: number, roll: number): number[] {
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
   return [cr * cy - sr * sp * sy, -sr * cp, cr * sy + sr * sp * cy, sr * cy + cr * sp * sy, cr * cp, sr * sy - cr * sp * cy, -cp * sy, sp, cp * cy];
@@ -10,20 +12,23 @@ export class ShipRaster {
   readonly width: number;
   readonly height: number;
   private readonly pixels: Float32Array;
+  private readonly coverage: Float32Array;
   private readonly depth: Float32Array;
-  private readonly cells: Float32Array;
+  private readonly cells: ShipCells;
   private projected = new Float32Array(0);
 
   constructor(private readonly cols: number, private readonly rows: number) {
     this.width = cols * 2;
     this.height = rows * 2;
     this.pixels = new Float32Array(this.width * this.height);
+    this.coverage = new Float32Array(this.pixels.length);
     this.depth = new Float32Array(this.pixels.length);
-    this.cells = new Float32Array(cols * rows);
+    this.cells = { light: new Float32Array(cols * rows), coverage: new Float32Array(cols * rows) };
   }
 
   clear(): void {
     this.pixels.fill(0);
+    this.coverage.fill(0);
     this.depth.fill(-Infinity);
   }
 
@@ -39,6 +44,7 @@ export class ShipRaster {
         if (!coverage || z < this.depth[index]) continue;
         this.depth[index] = z;
         this.pixels[index] = brightness * coverage;
+        this.coverage[index] = coverage;
       }
     }
   }
@@ -119,6 +125,7 @@ export class ShipRaster {
         const brightness = Math.min(1, Math.max((vertices[a + 3] * wa + vertices[b + 3] * wb + vertices[c + 3] * wc) * albedo, emission));
         this.depth[index] = z;
         this.pixels[index] = brightness;
+        this.coverage[index] = 1;
       }
     }
   }
@@ -127,15 +134,18 @@ export class ShipRaster {
   crossfadeFrom(source: ShipRaster, amount: number): void {
     for (let index = 0; index < this.pixels.length; index++) {
       this.pixels[index] = source.pixels[index] * (1 - amount) + this.pixels[index] * amount;
+      this.coverage[index] = source.coverage[index] * (1 - amount) + this.coverage[index] * amount;
       this.depth[index] = Math.max(source.depth[index], this.depth[index]);
     }
   }
 
-  resolve(): Float32Array {
+  resolve(): ShipCells {
     for (let row = 0; row < this.rows; row++) {
       for (let column = 0; column < this.cols; column++) {
         const index = row * 2 * this.width + column * 2;
-        this.cells[row * this.cols + column] = (this.pixels[index] + this.pixels[index + 1] + this.pixels[index + this.width] + this.pixels[index + this.width + 1]) / 4;
+        const cell = row * this.cols + column;
+        this.cells.light[cell] = (this.pixels[index] + this.pixels[index + 1] + this.pixels[index + this.width] + this.pixels[index + this.width + 1]) / 4;
+        this.cells.coverage[cell] = (this.coverage[index] + this.coverage[index + 1] + this.coverage[index + this.width] + this.coverage[index + this.width + 1]) / 4;
       }
     }
     return this.cells;
