@@ -401,14 +401,12 @@ function TooltipBubble({
 }) {
   if (!open) return null;
   const sideClass = placement ? SIDE_CLASS[placement.side] : "";
-  const style: JSX.CSSProperties = {
-    ...theme,
-    ...(placement ? {
-        left: `${placement.left}px`,
-        top: `${placement.top}px`,
-        "--gsv-tt-arrow-offset": `${placement.arrowOffset}px`,
-      } : {}),
-  };
+  const style: JSX.CSSProperties = { ...theme };
+  if (placement) {
+    style.left = `${placement.left}px`;
+    style.top = `${placement.top}px`;
+    style["--gsv-tt-arrow-offset"] = `${placement.arrowOffset}px`;
+  }
   return createPortal(
     <span
       ref={bubbleRef}
