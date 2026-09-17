@@ -30,10 +30,8 @@ import {
   resolvePlace,
   resolveTail,
   receiptSummary,
-  offsetLabel,
   startsWriting,
   type KeyPress,
-  trimOutput,
   noteSummary,
   type AnswerHistoryEntry,
   type Moment,
@@ -329,7 +327,7 @@ describe("filesystem operation presentation", () => {
       toolArgs: { query: "needle", path: "/tmp", include: "*.txt" },
     });
     expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "1 result" });
-    expect(search.output).toBe("");
+    expect(search.output).toBe("/tmp/hit.txt:2\nneedle");
     const noScope = present("fs.search", { ok: true, matches: [], count: 0 }, { toolArgs: { query: "needle" } });
     expect(noScope.operation).toEqual({ label: "searched", subject: "needle", detail: "0 results" });
     expect(noScope.output).toBe("");
@@ -440,8 +438,10 @@ describe("formatting", () => {
     expect(formatSeconds(3800)).toBe("3.8s");
     expect(formatSeconds(72_000)).toBe("1m 12s");
   });
-  it("trims long output", () => {
-    expect(trimOutput("x".repeat(700))).toMatch(/… 100 more characters$/);
+  it("keeps the full command output available inside an expanded action", () => {
+    const output = "x".repeat(700);
+    const activity = activitiesForRows([row({ id: "full-output", role: "toolResult", toolSyscall: "shell.exec", toolOutput: { stdout: output, exitCode: 0 } })], "r", false)[0];
+    expect(activity.calls[0].output).toBe(output);
   });
   it("links known place mentions", () => {
     expect(linkPlaceReferences("on @laptop and @nowhere", places)).toBe("on [@laptop](#place:laptop) and @nowhere");
@@ -862,13 +862,6 @@ describe("momentsFromConversation", () => {
     expect(summaryText(failedOnly)).toBe("1 action on MacBook 16 · 1 failed");
   });
 
-  it("labels row offsets from the run's first event", () => {
-    expect(offsetLabel(2_300, 0)).toBe("+2.3s");
-    expect(offsetLabel(65_000, 0)).toBe("+1m 05s");
-    expect(offsetLabel(10, 40)).toBe("+0.0s");
-    expect(offsetLabel(null, 0)).toBe("");
-  });
-
   it("uses the purpose in the live receipt and preserves it when a separate result lands", () => {
     const running = shell("disk", "df -h", 10, 10, {
       role: "tool", status: "running", toolPurpose: "  check\n free disk space  ", toolOutput: undefined, toolOutcome: undefined,
@@ -878,12 +871,12 @@ describe("momentsFromConversation", () => {
     const result = { ...running, role: "toolResult" as const, status: "done" as const, timestamp: 100,
       toolPurpose: undefined, toolArgs: undefined, toolOutcome: "completed" as const, toolOutput: "96 GB free" };
     const [done] = momentsFromConversation([sent("reply", 110)], [running, result], null);
-    expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", request: "df -h", finished: true } });
+    expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", summary: "df -h", finished: true } });
   });
 
   it.each([undefined, " \n "])("describes a legacy call with purpose %j without using the raw command as prose", (toolPurpose) => {
     const [moment] = momentsFromConversation([], [shell("disk", "df -h", 10, 20, { toolPurpose })], null);
-    expect(moment.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "run a command", request: "df -h" } });
+    expect(moment.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "run a command", summary: "df -h" } });
   });
 });
 

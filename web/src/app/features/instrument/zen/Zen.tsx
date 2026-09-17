@@ -114,12 +114,14 @@ function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: 
 
 function ActivityLine({
   activity,
+  who,
   places,
   open,
   onToggle,
   onFleet,
 }: {
   activity: Activity;
+  who: string;
   places: readonly Place[];
   open: boolean;
   onToggle: () => void;
@@ -175,7 +177,7 @@ function ActivityLine({
       {open ? (
         <div class="detail">
           {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
-          <ActivityWorking activity={activity} />
+          <ActivityWorking activity={activity} who={who} />
           {activity.terminal && <TerminalControls session={activity.terminal} />}
         </div>
       ) : null}
@@ -184,8 +186,9 @@ function ActivityLine({
 }
 
 /** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
-function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
+function Receipt({ receipt, who, places, collections, open, onToggle, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
   receipt: RunReceipt;
+  who: string;
   places: readonly Place[];
   collections: readonly LibraryCollection[];
   open: boolean;
@@ -217,7 +220,7 @@ function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFle
       {open ? (
         <div class="detail">
           {RECEIPT_LAYOUT === "timeline" ? (
-            <ReceiptTimeline moment={moment} places={places} relatedCalls={receipt.relatedCalls} onFleet={onFleet}
+            <ReceiptTimeline moment={moment} who={who} places={places} relatedCalls={receipt.relatedCalls} onFleet={onFleet}
               scope={receipt.key} expanded={expanded} onToggle={onToggleDetail} waitingCallId={waitingCallId} />
           ) : (
             <>
@@ -226,7 +229,7 @@ function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFle
                   <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
                     <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
                   )}</>}</div>
-                  <ActivityWorking activity={activity} />
+                  <ActivityWorking activity={activity} who={who} />
                 </div>
               ))}
               {moment.narration ? (
@@ -472,7 +475,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               callId: run.id,
               syscall: "shell.exec",
               description: "run a command",
-              request: run.command,
               summary: run.command,
               output: run.output,
               finished: terminalFinished(run),
@@ -914,6 +916,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                         <ActivityLine
                           key={activity.key}
                           activity={activity}
+                          who={who}
                           places={places}
                           open={openActivities.has(activity.key)}
                           onToggle={() => toggleActivity(activity.key)}
@@ -923,6 +926,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                     {receipt?.anchorId === moment.id ? (
                       <Receipt
                         receipt={receipt}
+                        who={who}
                         places={places}
                         collections={memoryCollections.data ?? []}
                         onMemory={onMemory}

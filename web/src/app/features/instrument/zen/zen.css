@@ -245,7 +245,7 @@
 .receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
 .receipt .place-rail:first-child .ph { margin-top: 0; }
 
-/* the open receipt as the run happened: a row per note or call, each timed from the first, places named inline */
+/* the open receipt as the run happened: purposes open readable requests and results, places named inline */
 .receipt-timeline { list-style: none; margin: 4px 0 12px; padding: 0; display: grid; gap: 2px; }
 .tl-row { min-width: 0; }
 .tl-toggle { display: grid; grid-template-columns: 12px 6px minmax(0, 1fr) auto; gap: 8px; align-items: start; width: 100%; padding: 5px 0; border: 0; background: none; color: var(--text); text-align: left; font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; }
@@ -259,7 +259,6 @@
 .tl-row .dot.is-running { background: var(--live); box-shadow: 0 0 8px var(--live); }
 .tl-row .dot.is-waiting { background: var(--warn); }
 .tl-thought { margin: 6px 0; font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.5; color: var(--text-dim); text-wrap: pretty; white-space: pre-wrap; overflow-wrap: anywhere; }
-.tl-note-time { margin-right: 8px; color: var(--faint); font-family: var(--gsv-font-mono); font-size: 11px; white-space: nowrap; }
 .tl-body { min-width: 0; margin: 2px 0 10px 34px; padding: 4px 0 6px 12px; border-left: 1px solid var(--border); }
 .receipt .tl-place { color: var(--target); }
 .tl-purpose { color: var(--text); font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; letter-spacing: 0; }
@@ -269,11 +268,11 @@
 .tl-row.is-failed .tl-state, .tl-row.is-failed .work-output { color: var(--error); }
 .tl-meta { color: var(--text-dim); }
 .tl-label { margin: 10px 0 4px; color: var(--faint); font-size: 11px; }
-.tl-evidence { max-height: min(24rem, 50vh); overflow: auto; }
-.tl-confirmation { color: var(--text-dim); overflow-wrap: anywhere; }
+.tl-body .work-call { margin: 6px 0; padding: 0; border: 0; }
 .tl-run-notes { margin: 8px 0 12px 20px; }
 
 .work-calls { margin: 8px 0; display: grid; gap: 14px; }
+.work-calls .machine-rail { margin: 0; }
 .work-call { min-width: 0; }
 .work-heading {
   color: var(--text);
@@ -297,8 +296,8 @@
 }
 .work-command, .work-source { color: var(--text-hi); }
 .work-source code { font: inherit; }
+.work-source, .work-output { max-height: min(24rem, 50vh); overflow: auto; }
 .work-shell { border-left: 2px solid var(--border); padding-left: 12px; }
-.shell-prompt { color: var(--accent); }
 .work-operation .work-output { margin-top: 4px; }
 .work-code .work-source { margin-top: 6px; border-left: 2px solid var(--border); padding-left: 12px; }
 .work-code .work-output { padding-left: 12px; }

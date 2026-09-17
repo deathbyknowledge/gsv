@@ -68,7 +68,7 @@ export type ActivityCall = {
   syscall: string;
   purpose?: string;
   description: string;
-  request: string;
+  details?: Array<{ label: string; text: string }>;
   summary: string;
   output: string;
   finished: boolean;
@@ -174,8 +174,6 @@ export function answerAttribution(
   return { model, provider, fallbacks: [...fallbacks.values()].slice(-3), omittedFallbacks: Math.max(0, fallbacks.size - 3) };
 }
 
-const OUTPUT_LIMIT = 600;
-
 function isRecord(value: ChatTranscriptValue | undefined): value is { [key: string]: ChatTranscriptValue } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -203,12 +201,6 @@ export function argumentThatMatters(syscall: string, args: ChatTranscriptValue |
   return input ?? path ?? url ?? "";
 }
 
-export function trimOutput(text: string): string {
-  const clean = text.replace(/\s+$/, "");
-  if (clean.length <= OUTPUT_LIMIT) return clean;
-  return `${clean.slice(0, OUTPUT_LIMIT)}\n… ${clean.length - OUTPUT_LIMIT} more characters`;
-}
-
 const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() })
   .refine((value) => value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
 const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
@@ -223,6 +215,7 @@ const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() 
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
 const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative(), truncated: z.boolean().optional() });
+const mailResultSchema = z.object({ ok: z.literal(true), messageId: z.string() });
 const filesystemOperationVerbs = new Map([
   ["fs.read", ["read", "reading", "read"]],
   ["fs.write", ["write", "writing", "wrote"]],
@@ -301,6 +294,10 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
     const hits = search.success ? (search.data.results ?? search.data.matches ?? []) : [];
     if (hits.length > 0) return hits.map((hit) => hit.path).join("\n");
   }
+  if (syscall === "mail.send") {
+    const mail = mailResultSchema.safeParse(output);
+    if (mail.success) return `message ${mail.data.messageId}`;
+  }
   if (isStringValue(output)) return output;
   return fallback;
 }
@@ -317,13 +314,23 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     syscall,
     purpose,
     description: purpose ?? describeCall({ toolName: row.toolName ?? syscall, syscall, args: row.toolArgs }),
-    request: syscall === "shell.exec" || syscall.startsWith("codemode.") ? summary : JSON.stringify(row.toolArgs ?? {}, null, 2),
     summary,
     filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
-    output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
+    output: finished ? outputText(syscall, row.toolOutput, row.text) : "",
     finished,
     failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
   };
+  const fields: Array<[key: string, label: string]> = syscall === "fs.write" ? [["content", "content"]]
+    : syscall === "fs.edit" ? [["oldString", "before"], ["newString", "after"]]
+    : syscall === "mail.send" ? [["to", "to"], ["subject", "subject"], ["text", "message"]]
+    : [];
+  if (fields.length > 0 && isRecord(row.toolArgs)) {
+    const args = row.toolArgs;
+    call.details = fields.flatMap(([key, label]) => {
+      const text = args[key];
+      return typeof text === "string" ? [{ label, text }] : [];
+    });
+  }
   const verb = filesystemOperationVerbs.get(syscall);
   if (!verb) return call;
   const completed = finished && !call.failed && row.toolOutcome === "completed";
@@ -336,9 +343,9 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     if (completed && result.success) {
       call.operation.label = verb[2];
       call.operation.detail = result.data.truncated ? `${result.data.count}+ results` : countLabel(result.data.count, "result");
-      call.output = "";
+      call.output = result.data.matches.map((match) => `${match.path}:${match.line}\n${match.content}`).join("\n\n");
     } else if (finished && result.success) {
-      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+      call.output = row.text || JSON.stringify(row.toolOutput, null, 2);
     }
   } else if (syscall !== "fs.read") {
     const result = mutationConfirmation(syscall, row.toolOutput);
@@ -348,7 +355,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
       if (result.detail) call.operation.detail = result.detail;
       call.output = "";
     } else if (finished && result) {
-      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+      call.output = row.text || JSON.stringify(row.toolOutput, null, 2);
     }
   }
   return call;
@@ -389,7 +396,10 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
           call.purpose = existing.calls[index].purpose;
           call.description = existing.calls[index].description;
         }
-        if (row.toolArgs === undefined) call.request = existing.calls[index].request;
+        if (row.toolArgs === undefined) {
+          call.summary = existing.calls[index].summary;
+          call.details = existing.calls[index].details;
+        }
         existing.calls[index] = call;
       }
       else existing.calls.push(call);
@@ -891,22 +901,6 @@ export function linkReceiptRetries(source: readonly MomentEvent[]): MomentEvent[
 
 export function timelineCalls(moment: Moment): CallEvent[] {
   return (moment.timeline ?? []).filter((event): event is CallEvent => event.kind === "call");
-}
-
-/** When the run's first note or call happened; offsets in the receipt count from here. */
-export function receiptFirstAt(moment: Moment): number | null {
-  return (moment.timeline ?? []).reduce<number | null>((first, event) => {
-    const at = event.kind === "thought" ? event.at : event.startedAt;
-    return at === null ? first : first === null ? at : Math.min(first, at);
-  }, null);
-}
-
-/** A row's time in the receipt, counted from the run's first event: "+0.0s", "+2.3s", "+1m 05s". */
-export function offsetLabel(at: number | null, base: number | null): string {
-  if (at === null || base === null) return "";
-  const ms = Math.max(0, at - base);
-  if (ms < 60_000) return `+${(ms / 1000).toFixed(1)}s`;
-  return `+${Math.floor(ms / 60_000)}m ${String(Math.round((ms % 60_000) / 1000)).padStart(2, "0")}s`;
 }
 
 export type SummaryPart = { text: string; tone?: "place" | "failed" };

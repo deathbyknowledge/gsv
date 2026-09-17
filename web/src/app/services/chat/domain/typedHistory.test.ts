@@ -23,7 +23,7 @@ describe("typed history projection", () => {
     ]) {
       expect(rows[0]).toMatchObject({ toolPurpose: "check free disk space", toolArgs: { input: "df -h" } });
       expect(momentsFromConversation([], rows, "r")[0].timeline?.[0]).toMatchObject({
-        kind: "call", call: { description: "check free disk space", request: "df -h" },
+        kind: "call", call: { description: "check free disk space", summary: "df -h" },
       });
     }
   });
