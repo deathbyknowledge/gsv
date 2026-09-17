@@ -16,7 +16,7 @@ export type AsciiAnimationFrame = {
 export type AsciiAnimationScene = {
   prepare?: () => void | Promise<void>;
   stillAt: number;
-  frame: (seconds: number, motion: boolean) => AsciiAnimationFrame;
+  frame: (seconds: number, motion: boolean, palette?: ColorTheme) => AsciiAnimationFrame;
 };
 
 export type AsciiAnimationProps = {
@@ -42,29 +42,41 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
   const stars = useRef<HTMLElement>(null);
   const foreground = useRef<HTMLElement>(null);
   const replay = useRef<HTMLButtonElement>(null);
+  const paletteRef = useRef(palette);
+  const redraw = useRef<(() => void) | null>(null);
+  paletteRef.current = palette;
   const style: JSX.CSSProperties & { "--gsv-ascii-galaxy-font-size": string } = { "--gsv-ascii-galaxy-font-size": `${fontSize}px` };
 
   useEffect(() => {
     const element = foreground.current;
-    if (!element) return;
+    const container = root.current;
+    if (!element || !container) return;
     let cancelled = false;
     let ready = false;
-    let visible = true;
+    let inViewport = !pauseWhenOffscreen || !("IntersectionObserver" in window);
+    let visible = inViewport && !document.hidden;
     let raf = 0;
     let start = 0;
     let last = 0;
+    let frameSeconds = scene.stillAt;
+    let frameMotion = false;
     let hiddenAt: number | null = null;
     const frameMs = 1000 / Math.max(1, frameRate);
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const moving = () => animate && !(respectReducedMotion && motion?.matches);
     const draw = (seconds: number, allowMotion: boolean) => {
-      const frame = scene.frame(seconds, allowMotion);
-      element.textContent = frame.foreground;
+      const frame = scene.frame(seconds, allowMotion, paletteRef.current);
+      frameSeconds = seconds;
+      frameMotion = allowMotion;
+      if (element.textContent !== frame.foreground) element.textContent = frame.foreground;
       element.classList.toggle("is-glitch", frame.glitch === true);
       element.style.transform = frame.transform ?? "none";
       element.style.opacity = frame.opacity ?? "1";
-      if (stars.current) stars.current.textContent = frame.stars ?? "";
+      if (stars.current && stars.current.textContent !== (frame.stars ?? "")) stars.current.textContent = frame.stars ?? "";
       if (nebula.current && nebula.current.textContent !== (frame.nebula ?? "")) nebula.current.textContent = frame.nebula ?? "";
+    };
+    redraw.current = () => {
+      if (ready && visible && !cancelled) draw(frameSeconds, frameMotion);
     };
     const revealReplay = (visible: boolean) => {
       if (replay.current) {
@@ -73,48 +85,60 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
       }
     };
     const loop = (now: number) => {
-      if (cancelled) return;
-      if (visible && now - last >= frameMs) {
+      raf = 0;
+      if (cancelled || !visible || !moving()) return;
+      const seconds = (now - start) / 1000;
+      if (now - last >= frameMs) {
         last = now;
-        const seconds = (now - start) / 1000;
         draw(seconds, true);
         if (seconds > scene.stillAt + 1.5) revealReplay(true);
       }
-      if (visible) raf = window.requestAnimationFrame(loop);
+      raf = window.requestAnimationFrame(loop);
     };
     const restart = () => {
       if (!ready || cancelled) return;
       window.cancelAnimationFrame(raf);
-      if (!moving()) {
-        draw(scene.stillAt, false);
-        revealReplay(false);
-        return;
-      }
+      raf = 0;
       start = performance.now();
       hiddenAt = visible ? null : start;
       last = 0;
       revealReplay(false);
+      if (!visible) return;
+      if (!moving()) {
+        draw(scene.stillAt, false);
+        return;
+      }
       draw(0, false);
-      if (visible) raf = window.requestAnimationFrame(loop);
+      raf = window.requestAnimationFrame(loop);
     };
-    const observer = pauseWhenOffscreen && "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
-      const next = entries.some((entry) => entry.isIntersecting);
+    const updateVisibility = () => {
+      if (cancelled) return;
+      const next = inViewport && !document.hidden;
       if (next === visible) return;
       visible = next;
       if (!visible) {
         hiddenAt = performance.now();
         window.cancelAnimationFrame(raf);
+        raf = 0;
       } else {
         if (hiddenAt !== null) start += performance.now() - hiddenAt;
         hiddenAt = null;
-        if (ready && moving()) raf = window.requestAnimationFrame(loop);
+        if (!ready) return;
+        if (!moving()) draw(scene.stillAt, false);
+        else raf = window.requestAnimationFrame(loop);
       }
+    };
+    const observer = pauseWhenOffscreen && "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+      inViewport = entries.some((entry) => entry.isIntersecting);
+      updateVisibility();
     }) : null;
-    if (root.current) observer?.observe(root.current);
+    observer?.observe(container);
+    document.addEventListener("visibilitychange", updateVisibility);
     const button = replay.current;
     button?.addEventListener("click", restart);
     if (respectReducedMotion) motion?.addEventListener("change", restart);
-    void Promise.resolve().then(() => scene.prepare?.()).then(() => {
+    void Promise.resolve().then(() => { if (!cancelled) return scene.prepare?.(); }).then(() => {
+      if (cancelled) return;
       ready = true;
       restart();
     }).catch(() => {
@@ -126,12 +150,16 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
     });
     return () => {
       cancelled = true;
+      redraw.current = null;
       window.cancelAnimationFrame(raf);
       observer?.disconnect();
+      document.removeEventListener("visibilitychange", updateVisibility);
       button?.removeEventListener("click", restart);
       motion?.removeEventListener("change", restart);
     };
   }, [animate, frameRate, inline, label, pauseWhenOffscreen, respectReducedMotion, scene, showReplay]);
+
+  useEffect(() => { redraw.current?.(); }, [palette]);
 
   const Root = inline ? "span" : "div";
   const Layer = inline ? "span" : "pre";

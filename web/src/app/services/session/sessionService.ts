@@ -48,7 +48,7 @@ const sessionWireSchema = z.unknown();
 type SessionWireValue = z.input<typeof sessionWireSchema>;
 const sessionMessageSchema = z.union([z.instanceof(Error), z.string()]);
 
-export type SessionPhase = "booting" | "setup" | "setup-complete" | "locked" | "authenticating" | "ready";
+export type SessionPhase = "booting" | "setup" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -57,7 +57,6 @@ export type SessionSnapshot = {
   connectionId: string | null;
   server: ServerBuild | null;
   message: string | null;
-  setupResult: SysSetupResult | null;
 };
 
 export type SessionLoginInput = {
@@ -83,7 +82,6 @@ export type SessionService = {
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
-  continueFromSetup: () => Promise<ConnectResult>;
   lock: (reason?: string) => void;
   start: () => Promise<void>;
 };
@@ -245,7 +243,6 @@ export function createSessionService(client: SessionClient): SessionService {
     connectionId: null,
     server: null,
     message: "Booting up...",
-    setupResult: null,
   };
 
   let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
@@ -255,7 +252,6 @@ export function createSessionService(client: SessionClient): SessionService {
   let reconnectAttempts = 0;
   let reconnectInFlight = false;
   let reconnectGeneration = 0;
-  let pendingSetupLogin: SessionLoginInput | null = null;
 
   const emit = (): void => {
     for (const listener of listeners) {
@@ -412,7 +408,6 @@ export function createSessionService(client: SessionClient): SessionService {
       username: snapshot.username,
       connectionId: null,
       message,
-      setupResult: null,
     });
   };
 
@@ -458,7 +453,6 @@ export function createSessionService(client: SessionClient): SessionService {
       username: token.username,
       connectionId: null,
       message: "Reconnecting...",
-      setupResult: null,
     });
 
     try {
@@ -474,7 +468,6 @@ export function createSessionService(client: SessionClient): SessionService {
       }
 
       storeValue(STORAGE_USERNAME, token.username);
-      pendingSetupLogin = null;
       setSnapshot({ ...snapshot, server: result.server });
       scheduleRefresh(token);
       await drainPendingRevokes("ui session cleanup");
@@ -493,7 +486,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: token.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
         return;
       }
@@ -568,7 +560,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: status.username ?? snapshot.username,
           connectionId: status.connectionId,
           message: null,
-          setupResult: null,
         });
       }
       markConnectionStableSoon();
@@ -603,7 +594,6 @@ export function createSessionService(client: SessionClient): SessionService {
       username: username || snapshot.username,
       connectionId: null,
       message: "Connecting...",
-      setupResult: null,
     });
 
     const options: GsvConnectOptions = {
@@ -615,7 +605,6 @@ export function createSessionService(client: SessionClient): SessionService {
     try {
       const result = await client.connect(options);
       storeValue(STORAGE_USERNAME, username);
-      pendingSetupLogin = null;
 
       setSnapshot({
         phase: "ready",
@@ -624,7 +613,6 @@ export function createSessionService(client: SessionClient): SessionService {
         connectionId: result.server.connectionId,
         server: result.server,
         message: null,
-        setupResult: null,
       });
 
       await drainPendingRevokes("ui session cleanup");
@@ -639,7 +627,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: username || snapshot.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
         throw error;
       }
@@ -650,7 +637,6 @@ export function createSessionService(client: SessionClient): SessionService {
         username: username || snapshot.username,
         connectionId: null,
         message: normalizeMessage(error),
-        setupResult: null,
       });
       throw error;
     }
@@ -658,6 +644,7 @@ export function createSessionService(client: SessionClient): SessionService {
 
   const setup = async (input: SessionSetupInput): Promise<SysSetupResult> => {
     cancelSilentReconnect();
+    const setupGeneration = reconnectGeneration;
     const url = deriveGatewayUrlFromOrigin();
     const username = input.username.trim();
     const password = input.password.trim();
@@ -667,54 +654,39 @@ export function createSessionService(client: SessionClient): SessionService {
       url,
       username: username || snapshot.username,
       connectionId: null,
-      message: "Configuring gateway...",
-      setupResult: null,
+      message: "Creating your account...",
     });
 
+    let result: SysSetupResult;
     try {
-      const result = await client.requestOnce(url, "sys.setup", {
+      result = await client.requestOnce(url, "sys.setup", {
         ...input,
         ...(installationOnboardingToken
           ? { onboardingToken: installationOnboardingToken }
           : undefined),
       });
-      if (installationOnboardingToken) {
-        clearInstallationOnboardingToken();
-        installationOnboardingToken = null;
-      }
-      pendingSetupLogin = { username, password };
-      storeValue(STORAGE_USERNAME, username);
-
-      setSnapshot({
-        phase: "setup-complete",
-        url,
-        username,
-        connectionId: null,
-        server: result.server,
-        message: null,
-        setupResult: result,
-      });
-
-      return result;
     } catch (error) {
-      setSnapshot({
-        phase: "setup",
-        url,
-        username: username || snapshot.username,
-        connectionId: null,
-        message: normalizeMessage(error),
-        setupResult: null,
-      });
+      if (setupGeneration === reconnectGeneration) {
+        setSnapshot({
+          phase: "setup",
+          url,
+          username: username || snapshot.username,
+          connectionId: null,
+          message: normalizeMessage(error),
+        });
+      }
       throw error;
     }
-  };
 
-  const continueFromSetup = async (): Promise<ConnectResult> => {
-    if (!pendingSetupLogin) {
-      throw new Error("Setup credentials are no longer available. Sign in manually.");
+    if (installationOnboardingToken) {
+      clearInstallationOnboardingToken();
+      installationOnboardingToken = null;
     }
+    if (setupGeneration !== reconnectGeneration) return result;
 
-    return await login(pendingSetupLogin);
+    storeValue(STORAGE_USERNAME, username);
+    await login({ username, password });
+    return result;
   };
 
   const lock = (reason = "Session locked"): void => {
@@ -722,7 +694,6 @@ export function createSessionService(client: SessionClient): SessionService {
     const lockGeneration = reconnectGeneration;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
-    pendingSetupLogin = null;
 
     if (previousTokenId) {
       queueRevoke(previousTokenId);
@@ -734,7 +705,6 @@ export function createSessionService(client: SessionClient): SessionService {
       username: snapshot.username,
       connectionId: null,
       message: reason,
-      setupResult: null,
     });
 
     void (async () => {
@@ -761,7 +731,6 @@ export function createSessionService(client: SessionClient): SessionService {
         username: snapshot.username,
         connectionId: null,
         message: null,
-        setupResult: null,
       });
       return;
     }
@@ -775,7 +744,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: snapshot.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
       } else {
         setSnapshot({
@@ -784,7 +752,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: snapshot.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
       }
       return;
@@ -800,7 +767,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: snapshot.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
       } else {
         setSnapshot({
@@ -809,7 +775,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: persisted.username,
           connectionId: null,
           message: "Session expired. Sign in again.",
-          setupResult: null,
         });
       }
       return;
@@ -821,7 +786,6 @@ export function createSessionService(client: SessionClient): SessionService {
       username: persisted.username,
       connectionId: null,
       message: "Booting up...",
-      setupResult: null,
     });
 
     try {
@@ -838,7 +802,6 @@ export function createSessionService(client: SessionClient): SessionService {
         connectionId: result.server.connectionId,
         server: result.server,
         message: null,
-        setupResult: null,
       });
 
       await drainPendingRevokes("ui session cleanup");
@@ -852,7 +815,6 @@ export function createSessionService(client: SessionClient): SessionService {
           username: persisted.username,
           connectionId: null,
           message: null,
-          setupResult: null,
         });
         return;
       }
@@ -863,7 +825,6 @@ export function createSessionService(client: SessionClient): SessionService {
         username: persisted.username,
         connectionId: null,
         message: "Session expired. Sign in again.",
-        setupResult: null,
       });
     }
   };
@@ -880,7 +841,6 @@ export function createSessionService(client: SessionClient): SessionService {
     },
     login,
     setup,
-    continueFromSetup,
     lock,
     start,
   };

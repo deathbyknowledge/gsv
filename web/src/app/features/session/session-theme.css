@@ -96,7 +96,7 @@
   --danger-hi: #c0364f;
   --warn: #a46b00;
 }
-.gsv-auth-theme.is-light :is(.gsv-login-panel, .gsv-setup-panel, .gsv-provisioning-panel, .gsv-setup-complete-panel) {
+.gsv-auth-theme.is-light :is(.gsv-login-panel, .gsv-setup-panel) {
   box-shadow: 0 12px 40px rgba(37, 29, 84, 0.08);
 }
 .gsv-auth-theme.is-light .gsv-ti-wrap {
@@ -122,3 +122,33 @@
 .gsv-auth-theme.is-light .gsv-btn-link:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); border-color: var(--accent-bright); }
 .gsv-auth-theme.is-light .gsv-btn-secondary { color: var(--accent); border-color: var(--border-raised); }
 .gsv-auth-theme.is-light .gsv-btn-secondary:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); border-color: var(--accent); background: var(--hover); }
+
+/* Session forms inherit Instrument's type and theme. Retained field components
+   keep their interaction behavior while reading the same tokens as Settings. */
+.gsv-auth-scene .gsv-ti-wrap { background: var(--void); border-color: var(--border); }
+.gsv-auth-scene .gsv-ti-wrap:hover { border-color: var(--border-raised); }
+.gsv-auth-scene .gsv-ti-wrap:focus-within { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+.gsv-auth-scene .gsv-ti-input { color: var(--text); font-size: 14px; letter-spacing: 0; }
+.gsv-auth-scene .gsv-ti-wrap:focus-within .gsv-ti-input { text-shadow: none; }
+.gsv-auth-scene .gsv-ti-input::placeholder { color: var(--text-dim); letter-spacing: 0; }
+.gsv-auth-scene :is(.gsv-ti-affix, .gsv-ti-btn, .gsv-ti-x, .gsv-ti-counter, .gsv-fld-desc, .gsv-fld-req) { color: var(--text-dim); }
+.gsv-auth-scene .gsv-fld-lab-t { color: var(--text-dim); text-transform: none; letter-spacing: 0; }
+.gsv-auth-scene .gsv-fld-req { font-size: 10px; letter-spacing: 0; }
+.gsv-auth-scene .gsv-fld.is-error .gsv-fld-msg { color: var(--error); letter-spacing: 0; }
+.gsv-auth-scene .gsv-fld.is-error .gsv-fld-dot { background: var(--error); box-shadow: none; }
+.gsv-auth-scene :is(.gsv-ti-btn, .gsv-ti-x):hover { color: var(--accent); }
+.gsv-auth-scene .gsv-ti-btn { min-height: 24px; }
+.gsv-auth-scene .gsv-btn-primary { background: var(--primary-hi); border-color: var(--primary-hi); color: #fff; box-shadow: none; }
+.gsv-auth-scene .gsv-btn-primary:not(.is-disabled):is(:hover, :focus-visible) { background: var(--primary-hi); box-shadow: var(--glow-soft); }
+.gsv-auth-scene .gsv-btn-secondary { border-color: transparent; color: var(--accent); padding-inline: 0; }
+.gsv-auth-scene .gsv-btn-secondary:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); border-color: transparent; background: transparent; text-decoration: underline; }
+.gsv-auth-scene .gsv-btn.is-disabled { opacity: .45; cursor: not-allowed; }
+.gsv-auth-scene .gsv-alert { background: transparent; border: 0; border-left: 2px solid var(--border-raised); padding: 4px 0 4px 14px; box-shadow: none; }
+.gsv-auth-scene .gsv-alert-title { color: var(--text); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.gsv-auth-scene .gsv-alert-text { color: var(--text-dim); font-size: 15px; line-height: 1.7; }
+.gsv-auth-scene .gsv-alert-error { border-color: var(--error); }
+.gsv-auth-scene .gsv-alert-error :is(.gsv-alert-title, .gsv-alert-text) { color: var(--error); }
+.gsv-auth-scene .gsv-alert-icon { display: none; }
+@media (max-width: 600px) {
+  .gsv-auth-scene .gsv-ti-input { font-size: 16px; }
+}
