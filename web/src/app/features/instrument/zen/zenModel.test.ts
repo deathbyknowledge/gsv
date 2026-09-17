@@ -4,7 +4,7 @@ import { conversationMessageRow } from "../../../services/chat/domain/conversati
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
 import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
-import { groupRunReceipts, receiptActions } from "./runReceipts";
+import { receiptsForMoments, receiptActions } from "./runReceipts";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import {
   activitiesForRows,
@@ -639,38 +639,43 @@ describe("momentsFromConversation", () => {
       ["one", "ship", ["a"]], ["other-process", "worker", ["b"]], ["other-run", "ship", ["c"]],
       ["", "worker", ["e"]], ["two", "ship", ["d"]],
     ]);
-    const grouped = groupRunReceipts(moments, "run", "ship");
-    const ship = grouped.receipts.get("conversation:one")!;
-    const worker = grouped.receipts.get("conversation:other-process")!;
-    const other = grouped.receipts.get("conversation:other-run")!;
+    const receipts = receiptsForMoments(moments, "run", "ship");
+    const ship = receipts.get("conversation:one")!;
+    const worker = receipts.get("conversation:other-process")!;
+    const other = receipts.get("conversation:other-run")!;
     expect(new Set([ship.key, worker.key, other.key]).size).toBe(3);
-    expect(callsOf(ship.work)).toEqual(["a", "d"]);
-    expect(callsOf(worker.work)).toEqual(["b", "e"]);
-    expect(ship.work.thinking).toBe(true);
+    expect(callsOf(ship.work)).toEqual(["a"]);
+    expect(callsOf(worker.work)).toEqual(["b"]);
+    expect(callsOf(receipts.get("conversation:two")!.work)).toEqual(["d"]);
+    expect(ship.work.thinking).toBe(false);
     expect(worker.work.thinking).toBe(false);
   });
 
-  it("keeps one receipt through streamed and committed replies without merging the messages or their model attribution", () => {
+  it("starts a new receipt after each message and keeps each disclosure stable as replies arrive", () => {
     const transcript = [call("first", 10), call("second", 30), call("tail", 50)];
-    const before = groupRunReceipts(momentsFromConversation([], transcript.slice(0, 1), "run"), "run", "ship");
-    const beforeReceipt = before.receipts.get(before.moments[0].id)!;
-    const streaming = groupRunReceipts(momentsFromConversation([sent("draft", 20, { streaming: true })], transcript.slice(0, 1), "run"), "run", "ship");
+    const before = momentsFromConversation([], transcript.slice(0, 1), "run");
+    const beforeReceipt = receiptsForMoments(before, "run", "ship").get(before[0].id)!;
+    const streaming = receiptsForMoments(momentsFromConversation([sent("draft", 20, { streaming: true })], transcript.slice(0, 1), "run"), "run", "ship");
     const moments = momentsFromConversation([sent("first-reply", 20), sent("second-reply", 40)], transcript, "run");
     const attributed = moments.map((moment, index) => ({ ...moment, attribution: moment.text ? {
       model: index === 0 ? "model-one" : "model-two", provider: "test", fallbacks: [], omittedFallbacks: 0,
     } : null }));
-    const projected = groupRunReceipts(attributed, "run", "ship");
-    const receipt = projected.receipts.get("conversation:first-reply")!;
-    expect(streaming.receipts.get("conversation:draft")?.key).toBe(beforeReceipt.key);
+    const receipts = receiptsForMoments(attributed, "run", "ship");
+    const receipt = receipts.get("conversation:first-reply")!;
+    const second = receipts.get("conversation:second-reply")!;
+    const tail = receipts.get(moments[2].id)!;
+    expect(streaming.get("conversation:draft")?.key).toBe(beforeReceipt.key);
     expect(receipt.key).toBe(beforeReceipt.key);
-    expect(projected.receipts.get("conversation:second-reply")).toBe(receipt);
-    expect(projected.moments).toEqual(attributed.slice(0, 2));
-    expect(receipt.replies.map((reply) => [reply.text, reply.attribution?.model])).toEqual([
+    expect(new Set([receipt.key, second.key, tail.key]).size).toBe(3);
+    expect([receipt, second].flatMap((entry) => entry.replies.map((reply) => [reply.text, reply.attribution?.model]))).toEqual([
       ["first-reply", "model-one"], ["second-reply", "model-two"],
     ]);
-    expect(callsOf(receipt.work)).toEqual(["first", "second", "tail"]);
+    expect([receipt, second, tail].map((entry) => callsOf(entry.work))).toEqual([["first"], ["second"], ["tail"]]);
+    expect([receipt, second, tail].map((entry) => entry.work.thinking)).toEqual([false, false, true]);
     expect(moments.map(callsOf)).toEqual([["first"], ["second"], ["tail"]]);
-    const completed = groupRunReceipts(attributed, null, "ship").receipts.get("conversation:first-reply")!;
+    const finalMoments = momentsFromConversation([sent("first-reply", 20), sent("second-reply", 40), sent("final", 60)], transcript, null);
+    expect(receiptsForMoments(finalMoments, null, "ship").get("conversation:final")?.key).toBe(tail.key);
+    const completed = receiptsForMoments(attributed, null, "ship").get("conversation:first-reply")!;
     expect(completed.key).toBe(receipt.key);
     expect(completed.work.thinking).toBe(false);
   });
@@ -678,10 +683,9 @@ describe("momentsFromConversation", () => {
   it("keeps calls without a run separate and leaves direct commands in their own controls", () => {
     const moments = momentsFromConversation([], [call("one", 10, { runId: undefined }), call("two", 20, { runId: undefined })], null);
     const direct = { ...moments[0], id: "terminal", activities: moments[0].activities.map((activity) => ({ ...activity, you: true })) };
-    const projected = groupRunReceipts([...moments, direct], null, "ship");
-    expect(new Set([...projected.receipts.values()].map((receipt) => receipt.key)).size).toBe(2);
-    expect(projected.receipts.has("terminal")).toBe(false);
-    expect(projected.moments).toEqual([...moments, direct]);
+    const receipts = receiptsForMoments([...moments, direct], null, "ship");
+    expect(new Set([...receipts.values()].map((receipt) => receipt.key)).size).toBe(2);
+    expect(receipts.has("terminal")).toBe(false);
   });
 
   it("uses durable call and outgoing coordinates when multiple Sends share one millisecond", () => {
@@ -794,7 +798,7 @@ describe("momentsFromConversation", () => {
     toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { command }, toolOutput: { status: "completed", output: `${id} output`, exitCode: 0 }, toolStartedAt: startedAt, ...overrides,
   });
   const note = (id: string, text: string, timestamp: number) => message({ id, runId: "run", processId: "ship", text, timestamp });
-  const summaryText = (moment: Moment, now = 0) => receiptSummary(moment, places, now).map((part) => part.text).join("");
+  const summaryText = (moment: Moment) => receiptSummary(moment, places).map((part) => part.text).join("");
 
   it("links retries across reply boundaries and keeps each note inside its following action", () => {
     const transcript = [
@@ -805,14 +809,17 @@ describe("momentsFromConversation", () => {
       note("tail", "Everything is recorded.", 45),
     ];
     const source = momentsFromConversation([sent("update", 20), sent("done", 40)], transcript, "run");
-    const receipt = groupRunReceipts(source, "run", "ship").receipts.get("conversation:update")!;
-    const { actions, trailingNotes } = receiptActions(receipt.work.timeline ?? []);
+    const receipts = [...receiptsForMoments(source, "run", "ship").values()];
+    const receipt = receipts[0];
+    const actions = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).actions);
+    const trailingNotes = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).trailingNotes);
+    expect(receipts.map((entry) => callsOf(entry.work))).toEqual([["failed"], ["retry"], []]);
     expect(actions.map(({ event, notes }) => [event.call.callId, event.retryOf, notes.map((note) => note.text)])).toEqual([
       ["failed", null, ["Try the backup."]], ["retry", "failed", ["Use the current path."]],
     ]);
     expect(trailingNotes.map((note) => note.text)).toEqual(["Everything is recorded."]);
     expect(source.flatMap((moment) => moment.timeline ?? []).filter((event) => event.kind === "call").map((event) => event.retryOf)).toEqual([null, null]);
-    expect(receiptSummary(receipt.work, places, 100).filter((part) => part.tone === "failed")).toEqual([
+    expect(receiptSummary(receipt.work, places, receipt.relatedCalls).filter((part) => part.tone === "failed")).toEqual([
       { text: " · 1 failed and retried", tone: "failed" },
     ]);
   });
@@ -840,19 +847,19 @@ describe("momentsFromConversation", () => {
       ["call", "du", "laptop", null],
     ]);
     expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
-    expect(summaryText(moment)).toBe(`5 actions on MacBook 16 and your cloud home · 1 failed and retried · ${formatSeconds(45)}`);
-    expect(receiptSummary(moment, places, 0).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud home"]);
+    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and your cloud home · 1 failed and retried");
+    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud home"]);
   });
 
-  it("summarises a live run by its running step, or by thinking between steps", () => {
+  it("shows the current purpose or action count without thinking text or a timer", () => {
     const done = shell("df", "df -h", 8, 10);
     const running = shell("ls", "ls -lt", 20, 20, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, isError: undefined });
     const [busy] = momentsFromConversation([], [note("n1", "Look.", 5), done, running], "run");
-    expect(summaryText(busy, 30_005)).toBe(`run a command · ${formatSeconds(30_000)}`);
+    expect(summaryText(busy)).toBe("run a command");
     const [between] = momentsFromConversation([], [note("n1", "Look.", 5), done], "run");
-    expect(summaryText(between, 1_005)).toBe(`1 action · thinking · ${formatSeconds(1_000)}`);
+    expect(summaryText(between)).toBe("1 action on MacBook 16");
     const [failedOnly] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, { toolOutcome: "failed", isError: true, status: "error" })], null);
-    expect(summaryText(failedOnly)).toBe(`1 action on MacBook 16 · 1 failed · ${formatSeconds(5)}`);
+    expect(summaryText(failedOnly)).toBe("1 action on MacBook 16 · 1 failed");
   });
 
   it("labels row offsets from the run's first event", () => {
@@ -867,7 +874,7 @@ describe("momentsFromConversation", () => {
       role: "tool", status: "running", toolPurpose: "  check\n free disk space  ", toolOutput: undefined, toolOutcome: undefined,
     });
     const [busy] = momentsFromConversation([], [running], "run");
-    expect(summaryText(busy, 2_010)).toBe(`check free disk space · ${formatSeconds(2_000)}`);
+    expect(summaryText(busy)).toBe("check free disk space");
     const result = { ...running, role: "toolResult" as const, status: "done" as const, timestamp: 100,
       toolPurpose: undefined, toolArgs: undefined, toolOutcome: "completed" as const, toolOutput: "96 GB free" };
     const [done] = momentsFromConversation([sent("reply", 110)], [running, result], null);

@@ -5,15 +5,11 @@ export type RunReceipt = {
   anchorId: string;
   work: Moment;
   replies: Moment[];
+  relatedCalls: CallEvent[];
 };
 
-type ReceiptProjection = {
-  moments: Moment[];
-  receipts: ReadonlyMap<string, RunReceipt>;
-};
-
-/** Conversation messages keep their identity and attribution; only their work shares one disclosure per run. */
-export function groupRunReceipts(moments: readonly Moment[], activeRunId: string | null, processId: string | null): ReceiptProjection {
+/** Messages separate receipts; the run connects retry evidence without combining their work. */
+export function receiptsForMoments(moments: readonly Moment[], activeRunId: string | null, processId: string | null): ReadonlyMap<string, RunReceipt> {
   const groups = new Map<string, Moment[]>();
   for (const moment of moments) {
     if (moment.role !== "ship" || moment.activities.some((activity) => activity.you)) continue;
@@ -23,28 +19,27 @@ export function groupRunReceipts(moments: readonly Moment[], activeRunId: string
     groups.set(key, group);
   }
   const receipts = new Map<string, RunReceipt>();
-  const hidden = new Set<string>();
-  for (const [key, group] of groups) {
-    if (!group.some((moment) => moment.activities.length || moment.narration || moment.attribution)) continue;
-    const replies = group.filter((moment) => moment.text.trim() || moment.media?.length || moment.streaming);
-    const anchor = replies[0] ?? group[0];
-    const receipt: RunReceipt = {
-      key, anchorId: anchor.id, replies,
-      work: {
-        ...anchor, id: key, text: "", media: undefined, streaming: false, attribution: undefined,
-        processId: anchor.processId ?? processId ?? undefined,
-        thinking: anchor.runId !== null && anchor.runId === activeRunId && (anchor.processId ?? processId) === processId,
-        activities: group.flatMap((moment) => moment.activities),
-        narration: group.map((moment) => moment.narration).filter(Boolean).join("\n\n"),
-        timeline: linkReceiptRetries(group.flatMap((moment) => moment.timeline ?? [])),
-      },
-    };
+  for (const group of groups.values()) {
+    const relatedCalls = linkReceiptRetries(group.flatMap((moment) => moment.timeline ?? []))
+      .filter((event): event is CallEvent => event.kind === "call");
+    const calls = new Map(relatedCalls.map((event) => [event.call.callId, event]));
     for (const moment of group) {
-      receipts.set(moment.id, receipt);
-      if (moment !== anchor && !replies.includes(moment)) hidden.add(moment.id);
+      if (!moment.activities.length && !moment.narration && !moment.attribution) continue;
+      const key = moment.receiptId ?? `receipt:${JSON.stringify([moment.processId ?? processId, moment.runId, moment.id])}`;
+      receipts.set(moment.id, {
+        key, anchorId: moment.id, relatedCalls,
+        replies: moment.text.trim() || moment.media?.length || moment.streaming ? [moment] : [],
+        work: {
+          ...moment, id: key, text: "", media: undefined, streaming: false, attribution: undefined,
+          processId: moment.processId ?? processId ?? undefined,
+          thinking: moment.runId !== null && moment.runId === activeRunId && (moment.processId ?? processId) === processId
+            && (moment.thinking || moment.activities.some((activity) => activity.live)),
+          timeline: (moment.timeline ?? []).map((event) => event.kind === "call" ? calls.get(event.call.callId)! : event),
+        },
+      });
     }
   }
-  return { moments: moments.filter((moment) => !hidden.has(moment.id)), receipts };
+  return receipts;
 }
 
 export type ReceiptNote = Extract<MomentEvent, { kind: "thought" }>;

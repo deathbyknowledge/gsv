@@ -107,6 +107,8 @@ export type Moment = {
   /** The run in the order it happened, notes and calls interleaved; absent for moments that did no work. */
   timeline?: MomentEvent[];
   attribution?: AnswerAttribution | null;
+  /** The work interval after the previous sent message, stable when its next reply arrives. */
+  receiptId?: string;
 };
 
 /** One thing that happened during a ship moment's run: a note the model wrote, or a call it made. */
@@ -813,7 +815,7 @@ export function momentsFromConversation(
         // a run that has not sent anything yet, or never did: it still shows what it did
         moment = {
           id: `work:${JSON.stringify([run.key, boundary ? ["before", boundary.id] : ["after", previous?.id ?? null]])}`,
-          role: "ship", text: "", streaming: false, thinking: active, runId: run.runId, processId: run.processId,
+          role: "ship", text: "", streaming: false, thinking: active && !boundary, runId: run.runId, processId: run.processId,
           timestamp: work[0].position.timestamp, activities: [], narration: "",
         };
         if (previous?.moment?.timestamp !== undefined && previous.moment.timestamp !== null) {
@@ -821,6 +823,7 @@ export function momentsFromConversation(
         }
         moments.push(moment);
       }
+      moment.receiptId = `receipt:${JSON.stringify([run.key, previous?.id ?? null])}`;
       const entries: WorkEntry[] = work.map((entry) => ({ at: entry.position.timestamp, rows: entry.rows }));
       const tools = entries.filter((entry) => isToolRow(entry.rows[0])).map(toolRowOf);
       moment.activities = activitiesForRows(tools, moment.id, active);
@@ -898,18 +901,6 @@ export function receiptFirstAt(moment: Moment): number | null {
   }, null);
 }
 
-/** From the first note or call to the end of the last, as the receipt's total; calls alone when there is no timeline. */
-export function receiptSpan(moment: Moment): string {
-  const timeline = moment.timeline;
-  if (!timeline?.length) return receiptDuration(moment);
-  const start = receiptFirstAt(moment);
-  const end = timeline.reduce<number | null>((last, event) => {
-    const at = event.kind === "thought" ? event.at : event.endedAt ?? event.startedAt;
-    return at === null ? last : last === null ? at : Math.max(last, at);
-  }, null);
-  return start !== null && end !== null && end > start ? formatSeconds(end - start) : "";
-}
-
 /** A row's time in the receipt, counted from the run's first event: "+0.0s", "+2.3s", "+1m 05s". */
 export function offsetLabel(at: number | null, base: number | null): string {
   if (at === null || base === null) return "";
@@ -921,27 +912,25 @@ export function offsetLabel(at: number | null, base: number | null): string {
 export type SummaryPart = { text: string; tone?: "place" | "failed" };
 
 /**
- * The receipt's one line while folded. Live: which step is running where, or that Ship is thinking, and for how
- * long. Done: how many steps, on which places, how many failed and whether they were retried, and the total time.
+ * The receipt's one line while folded: the current purpose, or the actions and places in this message interval.
+ * Related calls retain retry relationships across messages without adding their work to this receipt.
  */
-export function receiptSummary(moment: Moment, places: readonly Place[], now: number): SummaryPart[] {
+export function receiptSummary(moment: Moment, places: readonly Place[], relatedCalls?: readonly CallEvent[]): SummaryPart[] {
   const calls = timelineCalls(moment);
   if (calls.length === 0) {
     const processWork = moment.activities.filter((activity) => !activity.you && activity.target === null);
     if (processWork.length > 0) return [{ text: processWork.some((activity) => activity.live) ? "working" : "worked" }];
-    return [{ text: moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details" }];
+    return [{ text: moment.narration ? "working notes" : "response details" }];
   }
   const label = (target: string | null) => target === null ? "the process" : placeLabel(target, places);
   const failed = calls.filter((event) => event.call.failed);
-  const retried = failed.filter((event) => calls.some((later) => later.retryOf === event.call.callId)).length;
+  const retried = failed.filter((event) => (relatedCalls ?? calls).some((later) => later.retryOf === event.call.callId)).length;
   const failures: SummaryPart[] = failed.length > 0
     ? [{ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" }]
     : [];
   if (moment.thinking) {
-    const elapsed = formatSeconds(now - (receiptFirstAt(moment) ?? now));
     const running = calls.find((event) => !event.call.finished);
-    if (running) return [{ text: `${running.call.description} · ${elapsed}` }, ...failures];
-    return [{ text: `${countLabel(calls.length, "action")} · thinking · ${elapsed}` }, ...failures];
+    if (running) return [{ text: running.call.description }, ...failures];
   }
   const named = [...new Set(calls.map((event) => event.target))].map(label);
   const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "action")} on ` }];
@@ -950,8 +939,6 @@ export function receiptSummary(moment: Moment, places: readonly Place[], now: nu
     parts.push({ text: name, tone: "place" });
   });
   parts.push(...failures);
-  const span = receiptSpan(moment);
-  if (span) parts.push({ text: ` · ${span}` });
   return parts;
 }
 

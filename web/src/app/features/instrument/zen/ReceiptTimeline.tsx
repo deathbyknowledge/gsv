@@ -11,10 +11,10 @@ export type ReceiptLayout = "timeline" | "grouped";
 export const RECEIPT_LAYOUT: ReceiptLayout = "timeline";
 
 /** The run as it happened: one row per note or call, timed from the first of them. */
-export function ReceiptTimeline({ moment, places, now, onFleet, scope, expanded, onToggle, waitingCallId }: {
+export function ReceiptTimeline({ moment, places, relatedCalls, onFleet, scope, expanded, onToggle, waitingCallId }: {
   moment: Moment;
   places: readonly Place[];
-  now: number;
+  relatedCalls: readonly CallEvent[];
   onFleet: (reference: FleetReference) => void;
   scope: string;
   expanded: ReadonlySet<string>;
@@ -29,13 +29,15 @@ export function ReceiptTimeline({ moment, places, now, onFleet, scope, expanded,
   return (
     <>
       <ol class="receipt-timeline">
-        {actions.map(({ event, notes }) => (
-          <CallRow key={event.call.callId} event={event} notes={notes} base={base} places={places} live={moment.thinking} now={now} onFleet={onFleet}
-            open={expanded.has(`${scope}:call:${event.call.callId}`)} onToggle={() => onToggle(`${scope}:call:${event.call.callId}`)}
-            waiting={waitingCallId === event.call.callId}
-            retryOf={event.retryOf ? startOf(event.retryOf) : null}
-            retriedAt={calls.find((later) => later.retryOf === event.call.callId)?.startedAt ?? null} />
-        ))}
+        {actions.map(({ event, notes }) => {
+          const retryOffset = event.retryOf ? startOf(event.retryOf) : "";
+          return <CallRow key={event.call.callId} event={event} notes={notes} base={base} places={places} live={moment.thinking} onFleet={onFleet}
+              open={expanded.has(`${scope}:call:${event.call.callId}`)} onToggle={() => onToggle(`${scope}:call:${event.call.callId}`)}
+              waiting={waitingCallId === event.call.callId}
+              retryOf={event.retryOf ? retryOffset ? `again, after the failure at ${retryOffset}` : "retry of an earlier action" : null}
+              retried={relatedCalls.some((later) => later.retryOf === event.call.callId)}
+              retriedAt={calls.find((later) => later.retryOf === event.call.callId)?.startedAt ?? null} />;
+        })}
       </ol>
       {trailingNotes.length > 0 ? (
         <div class="tl-run-notes">
@@ -47,16 +49,16 @@ export function ReceiptTimeline({ moment, places, now, onFleet, scope, expanded,
   );
 }
 
-function CallRow({ event, notes, base, places, live, now, onFleet, retryOf, retriedAt, open, onToggle, waiting }: {
+function CallRow({ event, notes, base, places, live, onFleet, retryOf, retried, retriedAt, open, onToggle, waiting }: {
   event: CallEvent;
   notes: ReceiptNote[];
   base: number | null;
   places: readonly Place[];
   live: boolean;
-  now: number;
   onFleet: (reference: FleetReference) => void;
-  /** The offset of the failed attempt this call repeats, when it is a retry. */
+  /** The failed attempt this call repeats, including one in an earlier receipt. */
   retryOf: string | null;
+  retried: boolean;
   /** When a later call repeated this failed one. */
   retriedAt: number | null;
   open: boolean;
@@ -68,17 +70,17 @@ function CallRow({ event, notes, base, places, live, now, onFleet, retryOf, retr
   const shell = call.syscall === "shell.exec";
   const duration = call.finished && event.startedAt !== null && event.endedAt !== null && event.endedAt > event.startedAt
     ? formatSeconds(event.endedAt - event.startedAt)
-    : state === "running" && event.startedAt !== null ? formatSeconds(now - event.startedAt) : null;
+    : null;
   const meta = [
     offsetLabel(event.startedAt, base),
     duration,
     call.operation?.detail ?? null,
-    retryOf ? `again, after the failure at ${retryOf}` : null,
-    retriedAt !== null ? `retried at ${offsetLabel(retriedAt, base)}` : null,
+    retryOf,
+    retriedAt !== null ? `retried at ${offsetLabel(retriedAt, base)}` : retried ? "retried in a later receipt" : null,
   ].filter(Boolean);
   const stateLabel = state === "done" ? (retryOf ? "retried" : null)
     : state === "waiting" ? "needs approval"
-    : state === "failed" && retriedAt !== null ? "failed · retried" : state;
+    : state === "failed" && retried ? "failed · retried" : state;
   return (
     <li class={`tl-row is-call is-${state}${open ? " is-open" : ""}${event.retryOf ? " is-retry" : ""}`}>
       <button type="button" class="tl-toggle" aria-expanded={open} onClick={onToggle}>

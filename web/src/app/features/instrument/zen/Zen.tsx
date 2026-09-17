@@ -37,7 +37,7 @@ import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
-import { groupRunReceipts, type RunReceipt } from "./runReceipts";
+import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
@@ -197,16 +197,8 @@ function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFle
   waitingCallId?: string;
 }) {
   const moment = receipt.work;
-  /* while the run is live the line counts time; a second is enough for a summary */
   const live = moment.thinking;
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!live) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [live]);
-  let summary = receiptSummary(moment, places, now);
+  let summary = receiptSummary(moment, places, receipt.relatedCalls);
   if (waitingCallId) summary = [{ text: "waiting for your approval" }, ...summary.filter((part) => part.tone === "failed")];
   const running = live && !waitingCallId && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const worked = moment.activities.filter((activity) => !activity.you);
@@ -225,7 +217,7 @@ function Receipt({ receipt, places, collections, open, onToggle, onMemory, onFle
       {open ? (
         <div class="detail">
           {RECEIPT_LAYOUT === "timeline" ? (
-            <ReceiptTimeline moment={moment} places={places} now={now} onFleet={onFleet}
+            <ReceiptTimeline moment={moment} places={places} relatedCalls={receipt.relatedCalls} onFleet={onFleet}
               scope={receipt.key} expanded={expanded} onToggle={onToggleDetail} waitingCallId={waitingCallId} />
           ) : (
             <>
@@ -495,7 +487,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         },
       ],
     }));
-    return groupRunReceipts([...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)), runtime.activeRunId, pid);
+    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
@@ -834,9 +827,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const activeRun = connected ? runtime.activeRunId : null;
-  const runStartedAt = useMemo(() => runtime.rows.reduce<number | null>((first, row) =>
-    row.runId === activeRun && row.timestamp !== null ? Math.min(first ?? row.timestamp, row.timestamp) : first,
-  null), [activeRun, runtime.rows]);
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
@@ -941,7 +931,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                         onToggle={() => toggleActivity(receipt.key)}
                         expanded={openActivities}
                         onToggleDetail={toggleActivity}
-                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId ? pendingHil.callId : undefined}
+                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
+                          && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
                       />
                     ) : null}
                     {moment.role === "human" ? (
@@ -975,7 +966,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <div class="zen-bottom">
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
         {showFeedback && <div class="zen-feedback">
-          {activeRun && <RunFeedback key={activeRun} startedAt={runStartedAt} model={attemptedModel}
+          {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
             place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
           {!connected && <span role="status">Not connected</span>}
           {connected && !currentPlace.online ? (
