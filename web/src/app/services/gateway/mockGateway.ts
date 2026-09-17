@@ -189,13 +189,14 @@ const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript 
 
 function approvalFor(trigger: string): ApprovalScenario | null {
   if (trigger === "/approve" || trigger === "/approve-old") {
+    const step: Step = {
+      think: "", thought: "Ask before inspecting the windows on your Mac.", place: "studio", tool: "Shell", syscall: "shell.exec",
+      args: { input: GRANOLA_COMMAND, target: "studio" },
+      ms: 900, output: shell(GRANOLA_COMMAND, '48213 Granola\n---\nWeekly sync, Untitled note'),
+    };
+    if (trigger === "/approve") step.purpose = "check whether Granola is running and list its windows";
     return {
-      step: {
-        think: "", thought: "Ask before inspecting the windows on your Mac.", place: "studio", tool: "Shell", syscall: "shell.exec",
-        args: { input: GRANOLA_COMMAND, target: "studio" },
-        ...(trigger === "/approve" ? { purpose: "check whether Granola is running and list its windows" } : {}),
-        ms: 900, output: shell(GRANOLA_COMMAND, '48213 Granola\n---\nWeekly sync, Untitled note'),
-      },
+      step,
       approved: 'Granola is running (pid 48213) with two windows open: "Weekly sync" and "Untitled note".',
       denied: "Okay, I left Granola alone.",
     };
@@ -379,7 +380,10 @@ const textBlock = z.object({ text: z.string() });
 
 /** One generation tick that ends in a tool call: the model streams, its output is announced, the note and call are recorded. */
 async function think(run: OpenRun, step: Step, callId: string): Promise<void> {
-  const call: AiToolCall = { type: "toolCall", id: callId, name: step.tool, arguments: { ...(step.purpose ? { purpose: step.purpose } : {}), ...step.args } };
+  const args: JsonObject = {};
+  if (step.purpose) args.purpose = step.purpose;
+  Object.assign(args, step.args);
+  const call: AiToolCall = { type: "toolCall", id: callId, name: step.tool, arguments: args };
   const content: AssistantContent[] = [{ type: "thinking", thinking: "" }];
   stream(run, { type: "thinking_start", contentIndex: 0, partial: partial(content) });
   for (const piece of step.thought.split(/(?<=[,.;] )/)) {
@@ -410,9 +414,13 @@ async function think(run: OpenRun, step: Step, callId: string): Promise<void> {
   stream(run, { type: "toolcall_end", contentIndex: index, toolCall: call, partial: partial(content) });
   stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
   if (step.think) broadcast("proc.run.output", { text: step.think, thinking: [step.thought], pid: SHIP.pid, runId: run.runId });
+  const callRecord: Extract<ProcHistoryRecordData, { kind: "call" }> = {
+    kind: "call", payload: { callId, tool: step.tool, syscall: step.syscall, args: step.args, target: step.place, runId: run.runId },
+  };
+  if (step.purpose) callRecord.payload.purpose = step.purpose;
   appendGroup(run.runId, [
     { kind: "note", payload: { text: step.think, thinking: [{ type: "thinking", thinking: step.thought }] } },
-    { kind: "call", payload: { callId, tool: step.tool, syscall: step.syscall, args: step.args, target: step.place, runId: run.runId, ...(step.purpose ? { purpose: step.purpose } : {}) } },
+    callRecord,
   ], { provider: MODEL });
   changed(["context"], { context: contextState(run) });
 }
@@ -475,8 +483,8 @@ async function askApproval(run: OpenRun, scenario: ApprovalScenario): Promise<vo
   const request: ProcHilRequest = {
     pid: SHIP.pid, requestId: `hil-${callId}`, runId: run.runId, conversationId: SHIP_CONVERSATION,
     callId, toolName: step.tool, syscall: step.syscall, target: step.place, args: step.args, createdAt: Date.now(),
-    ...(step.purpose ? { purpose: step.purpose } : {}),
   };
+  if (step.purpose) request.purpose = step.purpose;
   run.approval = { ...scenario, request };
   announce("waiting_hil", run.runId);
   changed(["hil"], { runId: run.runId, pendingHil: request });
@@ -694,7 +702,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       if (pid !== SHIP.pid) return respond(id, { ok: false, error: "Only Ship runs are scripted in this mock." });
       const run = world.run;
       if (run) interrupt(run);
-      return respond(id, { ok: true, pid, aborted: run !== null, ...(run ? { runId: run.runId } : {}) });
+      const result: JsonObject = { ok: true, pid, aborted: run !== null };
+      if (run) result.runId = run.runId;
+      return respond(id, result);
     }
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {

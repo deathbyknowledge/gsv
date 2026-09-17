@@ -1,4 +1,5 @@
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 type DescribedCall = {
   toolName: string;
@@ -12,9 +13,10 @@ export function normalizeCallPurpose(purpose: string | null | undefined): string
 }
 
 export function callArgumentText(request: Pick<DescribedCall, "args">, key: string): string | null {
-  const args = request.args;
-  const value = args && typeof args === "object" && !Array.isArray(args) ? args[key] : undefined;
-  return typeof value === "string" && value.trim() ? value : null;
+  const argument = z.object({ [key]: z.string() }).safeParse(request.args);
+  if (!argument.success) return null;
+  const value = argument.data[key];
+  return value.trim() ? value : null;
 }
 
 /** A bare verb phrase for a request the model did not explain, in the shape the purpose would take. */

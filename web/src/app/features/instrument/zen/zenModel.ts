@@ -327,8 +327,8 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   if (fields.length > 0 && isRecord(row.toolArgs)) {
     const args = row.toolArgs;
     call.details = fields.flatMap(([key, label]) => {
-      const text = args[key];
-      return typeof text === "string" ? [{ label, text }] : [];
+      const text = z.string().safeParse(args[key]);
+      return text.success ? [{ label, text: text.data }] : [];
     });
   }
   const verb = filesystemOperationVerbs.get(syscall);
