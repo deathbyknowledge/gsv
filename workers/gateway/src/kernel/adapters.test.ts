@@ -46,6 +46,8 @@ import type {
 } from "../adapter-interface";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import type { IdentityLinkRecord } from "./identity-links";
+import { AuthStore } from "./auth-store";
+import { makeShadowEntry } from "../auth/shadow";
 import { IdentityLinkStore } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
 
@@ -3476,6 +3478,39 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { name: "retained private route", generation: "generation-current", surface: { kind: "dm", id: "12345" }, expected: "revoked_identity" },
+    { name: "obsolete generation", generation: "generation-stale", surface: { kind: "dm", id: "12345" }, expected: "stale_route_generation" },
+    { name: "another private surface", generation: "generation-current", surface: { kind: "dm", id: "other-dm" }, expected: "stale_route_generation" },
+    { name: "shared surface", generation: "generation-current", surface: { kind: "group", id: "12345" }, expected: "stale_route_generation" },
+  ] as const)("classifies $name after password recovery without admitting work", async ({ generation, surface, expected }) => {
+    const ctx = makeContext({}, { upsert: vi.fn() });
+    await runWithRealKernelSql(async (sql) => {
+      ctx.auth = new AuthStore(sql);
+      ctx.auth.addUser({ username: "member", uid: 1000, gid: 1000, gecos: "", home: "/home/member", shell: "/bin/gsv" });
+      ctx.auth.setShadow(makeShadowEntry("member", "old-password-hash"));
+      ctx.adapters.identityLinks = new IdentityLinkStore(sql);
+      ctx.adapters.identityLinks.link("telegram", "managed", "12345", 1000, 1000, {
+        managed: true, surfaceKind: "dm", surfaceId: "12345", routeGeneration: "generation-current",
+      });
+      ctx.auth.replaceHumanPassword(1000, "new-password-hash", "messenger recovery");
+
+      const request = {
+        adapter: "telegram", accountId: "managed", routeGeneration: generation, deliveryId: "after-recovery",
+        message: { messageId: "after-recovery", surface, actor: { id: "12345" }, text: "Hello again" },
+      };
+      await expect(handleAdapterInbound(request, ctx)).resolves.toEqual({ ok: true, droppedReason: expected });
+      await expect(handleAdapterInbound(request, ctx)).resolves.toMatchObject({
+        ok: true, droppedReason: expected, replayed: "completed",
+      });
+      expect(ctx.adapters.identityLinks.list(1000)).toEqual([]);
+      expect(ctx.adapters.identityLinks.listForCleanup(1000)).toHaveLength(1);
+    });
+    expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("drops ingress for a removed member while its managed link awaits disconnect", async () => {
     const link: IdentityLinkRecord = {
       adapter: "telegram", accountId: "managed", actorId: "12345", uid: 1000, createdAt: 1, linkedByUid: 1000,
@@ -3486,6 +3521,7 @@ describe("adapter lifecycle handlers", () => {
       ctx.adapters.identityLinks = new IdentityLinkStore(sql);
       ctx.adapters.identityLinks.link(link.adapter, link.accountId, link.actorId, link.uid, link.linkedByUid, link.metadata ?? undefined);
       sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", link.uid, Date.now());
+      ctx.auth = new AuthStore(sql);
       await expect(handleAdapterInbound({
         adapter: "telegram", accountId: "managed", routeGeneration: "generation-current",
         message: { messageId: "removed-member", surface: { kind: "dm", id: "12345" }, actor: { id: "12345" }, text: "Late delivery" },

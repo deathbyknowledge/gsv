@@ -479,6 +479,12 @@ export function adapterInboundResultDisposition(
   return disposition;
 }
 
+/** Managed adapters own fresh pairing codes after the Kernel revokes their saved identity. */
+export function adapterInboundRequiresPairing(result: AdapterInboundResult): boolean {
+  return result.ok && isTerminalAdapterInboundResult(result)
+    && (Boolean(result.challenge) || result.droppedReason === "revoked_identity");
+}
+
 function requireDeliveryId(value: string): string {
   const normalized = value.trim();
   if (!normalized) {

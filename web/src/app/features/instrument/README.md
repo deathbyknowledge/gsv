@@ -2,6 +2,43 @@
 
 Instrument is the default web UI at `/`. Its views use `/zen`, `/fleet`, `/memory` and `/zen/settings`. The former desktop shell, console and standalone workspaces are retired; old deep links have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
+Login, recovery and installation setup share Instrument's star field, wordmark,
+typefaces and light/dark preference. Setup identifies the current space and asks
+for one local username and password. The browser supplies its timezone; optional
+configuration stays in Settings and Fleet. The session service owns the
+installation capability and signs in immediately after creating the account.
+Failed account creation keeps the form available for retry. If only sign-in
+fails, the ordinary login form shows the error with the created username filled.
+
+The session layout also owns one ASCII Open Country ship: a broad habitat hull,
+landscape, observation deck and three recessed stern drives. Setup forms it from
+particles; sign-in and recovery show the same ship already formed with gentle
+motion. It sits beside the form on wide screens and above it on narrow screens.
+The narrow layout reserves the full glyph frame's height so the moving hull fits
+above the form without clipping; short screens scroll through the composition.
+The illustration never delays form interaction or sign-in. The completed ship
+continues its slow 3D rotation and bobbing at up to 18 rendered frames per second.
+Formation samples are allocated only when needed and released after the
+particle/surface blend; login, recovery and reduced-motion still views skip them.
+Reduced motion shows a still, completed ship. The glyph host pauses rendering
+when offscreen or when the tab is hidden, and resumes without advancing through
+the hidden time.
+The fixed geometry raster averages coverage before choosing glyphs, preserving
+the model's empty spaces as its displayed type size changes. The scene uses
+160×80 glyphs from a 320×160 raster, with close framing to give the hull and
+landscape more room within the illustration.
+Setup keeps the drive cores dark and has no exhaust while the habitat lights
+come on during assembly. Sign-in and recovery show the ship underway, with lit
+drive cores and three steady, softly fading exhaust tails. The glows use the same
+projection and respect the hull's depth. Reduced motion preserves the appropriate
+engine state in each still view.
+Light theme separates purple tone from glyph density. Lit faces use pale lavender
+with substantial glyph strokes so the surface stays legible on white; shaded
+faces use deeper violet and denser marks. The raster retains surface coverage
+separately from brightness, allowing partial edges to use thinner glyphs while
+empty space stays blank. Exhaust keeps its faint tint and soft falloff. Theme changes
+redraw the current pose, including reduced-motion stills, without restarting assembly.
+
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list
 supplies owner and run identity; each control reads the original child request
@@ -12,19 +49,19 @@ request's `purpose` when the model wrote one, otherwise a sentence built from th
 request shape. The raw command or path stays under a closed fold; Fleet's
 inspector shows the sentence above the syscall, target and arguments.
 
-Zen owns the conversation. A fresh conversation shows the first-day introduction inline, with its original four connection rows and inline panels. Background replies and machine events keep that setup experience open. Meet your Ship sends a visible introduction request through ordinary chat; an accepted message, a direct command or opening the conversation leaves setup. A quiet setup action returns to it. The choice follows the owner and canonical conversation through reload and Process replacement; older paginated conversations default to chat. Helpers have a simple empty conversation state. There is no first-day navigation destination. A reply that has no words yet shows a thinking mark where its text will be; the mark is never a caret, so nothing there invites typing.
+Zen owns the conversation. A fresh conversation shows a brief welcome and the ordinary composer. The person's first question or task goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns any guidance after that first message. Helpers have a simple empty conversation state.
 
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
 
-The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and places. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, place, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by place, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
+The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and places. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, place, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by place, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
 Fleet owns places, contacts, processes, activity, and their inspectors. Places always offers Connect, and Contacts always offers Add contact, subject to the signed-in account's permissions. A new place can be a computer or browser. A contact is another Ship and has its own list and inspector, separate from execution targets. Opening a connection form never creates a credential or invitation.
 
 The place flow creates a ten-minute invitation and provides install/connection instructions for the active gateway. The name derives the target ID until it is customized. The invitation survives panel closure, navigation, reload and changes to the installation platform. Explicit cancellation invalidates an unused invitation without revoking a paired device. The CLI and extension persist their receiving credential before redemption, so a lost reply can be recovered without issuing another key. Connected places remain visible while adding another; existing device IDs require the explicit pair-again action.
 
-Contacts supports creating and accepting invitations, pending invitation cancellation, aliases, and revocation. The gateway sends owner-scoped `contact.changed` and `contact.invite.changed` notifications after saved changes, including remote acceptance and revocation. WireSync rereads only the affected list; closed lists are marked stale until opened. Fleet and the first-day introduction share the contact cache. Neither polls, and reconnect reloads missed changes. Invitation expiry uses a local deadline. External alias updates preserve an unsaved local draft.
+Contacts supports creating and accepting invitations, pending invitation cancellation, aliases, and revocation. The gateway sends owner-scoped `contact.changed` and `contact.invite.changed` notifications after saved changes, including remote acceptance and revocation. WireSync rereads only the affected list; closed lists are marked stale until opened. Fleet uses the shared contact cache without polling, and reconnect reloads missed changes. Invitation expiry uses a local deadline. External alias updates preserve an unsaved local draft.
 
-Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). The first-day panels preserve the existing introduction. Fleet keeps connection actions available after those rows become connected.
+Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Fleet keeps connection actions available for adding computers, browsers and contacts whenever the person needs them.
 
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.
 
@@ -68,7 +105,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | Prompt | Scenario |
 | --- | --- |
 | `/run` | Three steps with purposes, notes, outputs and a reply. |
-| `/run-long` | Nine steps across two places, including a failure and retry. |
+| `/run-long` | Nine steps across two places, including a failure and a corrected command. |
 | `/run-updates` | The long run with two progress messages separating three receipts, followed by a final reply. |
 | `/run-old` | The short run without purposes, using generated descriptions. |
 | `/think`, then `/reply` or `/stream` | Hold a tool open, then finish with a plain or streamed reply. |

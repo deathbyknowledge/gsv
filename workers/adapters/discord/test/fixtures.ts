@@ -58,6 +58,7 @@ export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
   async serviceFrame(installation, frame) {
     const bytes = frame.body ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer())) : undefined;
     calls.push({ installation, call: frame.call, args: frame.args, bytes });
+    if (frame.args.message?.text === "__identity_revoked__") return { type: "res", id: frame.id, ok: true, data: { ok: true, droppedReason: "revoked_identity" } };
     return { type: "res", id: frame.id, ok: true, data: { ok: true, reply: { deliveryId: "reply:" + frame.args.deliveryId, text: "Fixture reply", replyToId: frame.args.message?.messageId } } };
   }
   async unlinkAdapterIdentity(installation, input) { calls.push({ installation, call: "unlink", input }); return { removed: true }; }

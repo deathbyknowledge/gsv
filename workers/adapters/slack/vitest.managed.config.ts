@@ -24,6 +24,9 @@ export default defineConfig({
                   if (frame.call === "adapter.state.update") {
                     return { type: "res", id: frame.id, ok: true, data: { ok: true } };
                   }
+                  if (frame.args.message?.text === "__identity_revoked__") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true, droppedReason: "revoked_identity" } };
+                  }
                   return {
                     type: "res",
                     id: frame.id,
@@ -74,6 +77,6 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts","test/managed-flow.test.ts"],
+    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts", "test/managed-flow.test.ts", "test/recovery.test.ts"],
   },
 });

@@ -384,6 +384,8 @@
   text-wrap: pretty;
 }
 .zen-empty .place { color: var(--target); }
+.zen-empty h1 { margin: 0 0 16px; font-size: inherit; font-weight: 500; }
+.zen-empty .zen-welcome-copy { max-width: 460px; margin: 0; color: var(--text-dim); font-size: 17px; line-height: 1.7; }
 
 /* materialising: a moment before its turn holds its room unseen; at its turn the labels and receipt flicker in and the text settles over a ghost of itself */
 /* The ghost is now the final rendered text: a paint-only mask preserves its exact layout. */

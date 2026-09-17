@@ -257,9 +257,9 @@ function ManagedMessengerOnboardingFlow({
           <>
             <Alert
               variant={candidate?.linked ? "warning" : "attention"}
-              title={candidate?.linked ? `MOVE THIS ${platform.toUpperCase()} IDENTITY?` : "IS THIS YOU?"}
+              title={candidate?.linked ? "REPLACE THE EXISTING CONNECTION?" : "IS THIS YOU?"}
               text={candidate?.linked
-                ? `${displayIdentity} is linked to another GSV. Confirming moves future messages here; the old link stays active until this confirmation succeeds.`
+                ? `${displayIdentity} has an existing GSV link, which may be an old link to this space. Confirming replaces it and sends future messages to your account here.`
                 : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted GSV.`}
             />
             <div class="gsv-cf-framed">

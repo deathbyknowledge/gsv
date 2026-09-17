@@ -1,167 +1,49 @@
-import type { RefObject } from "preact";
-import { useEffect, useRef } from "preact/hooks";
-import type {
-  OnboardingDraft,
-  OnboardingLane,
-} from "@humansandmachines/gsv/protocol";
-import type { OnboardingSnapshot } from "../../services/session/onboardingService";
-import type { SessionSnapshot } from "../../services/session/sessionService";
-import { Button } from "../../components/ui/Button";
-import { Stepper } from "../../components/ui/Stepper";
+import { TextInput } from "../../components/ui/TextInput";
 import { AuthLayout } from "./AuthLayout";
 import { SessionError } from "./SessionChrome";
-import { currentDetailStep } from "./sessionDomain";
-import { DetailsStage } from "./setup/DetailsStage";
-import { GuidePanel } from "./setup/GuidePanel";
-import { ReviewStage } from "./setup/ReviewStage";
-import { WelcomeStage } from "./setup/WelcomeStage";
+import { USERNAME_FORMAT_DESCRIPTION } from "./sessionDomain";
 import "./SetupScreen.css";
 
 type SetupScreenProps = {
-  snapshot: SessionSnapshot;
-  onboardingSnapshot: OnboardingSnapshot;
-  setupError: string | null;
-  guideMessage: string;
-  guideInputRef: RefObject<HTMLTextAreaElement>;
-  guideLogRef: RefObject<HTMLDivElement>;
-  timezoneOptions: string[];
-  onLane: (lane: OnboardingLane) => void;
-  onBack: () => void;
-  onNext: () => void;
-  onStep: (index: number) => void;
+  visible: boolean;
+  busy: boolean;
+  space: string;
+  username: string;
+  password: string;
+  passwordConfirm: string;
+  error: string | null;
+  onUsername: (value: string) => void;
+  onPassword: (value: string) => void;
+  onPasswordConfirm: (value: string) => void;
   onSubmit: (event: Event) => void;
-  onGuideToggle: () => void;
-  onGuideMessage: (message: string) => void;
-  onGuideSend: () => void;
-  onGuideKeyDown: (event: KeyboardEvent) => void;
-  updateDraft: (updater: (draft: OnboardingDraft) => OnboardingDraft) => void;
 };
 
-export function SetupScreen({
-  snapshot,
-  onboardingSnapshot,
-  setupError,
-  guideMessage,
-  guideInputRef,
-  guideLogRef,
-  timezoneOptions,
-  onLane,
-  onBack,
-  onNext,
-  onStep,
-  onSubmit,
-  onGuideToggle,
-  onGuideMessage,
-  onGuideSend,
-  onGuideKeyDown,
-  updateDraft,
-}: SetupScreenProps) {
-  const { draft } = onboardingSnapshot;
-  const busy = snapshot.phase === "authenticating";
-  const showNext = draft.stage === "details";
-  const showSubmit = draft.stage === "review";
-  const showBack = draft.stage !== "welcome";
-  // The guide opens as a floating corner window; its launcher sits at that same
-  // corner and only shows while the guide is available but not already open.
-  const showGuideLaunch = draft.stage !== "welcome" && draft.mode !== "guided";
-  const formRef = useRef<HTMLFormElement>(null);
-
-  // Three stepper steps: Login credentials (account) · Preferences (system) ·
-  // Review and deploy. Welcome is the path chooser — before step 1 — so it has
-  // no stepper and no step count.
-  const detailStep = currentDetailStep(draft);
-  const onWelcome = draft.stage === "welcome";
-  const current =
-    draft.stage === "review" ? 2 : detailStep !== "account" ? 1 : 0;
-
-  // Each step is a fresh page: when the step changes, scroll the panel back to
-  // the top so a step doesn't open mid-scroll from the previous one.
-  const panelRef = useRef<HTMLDivElement>(null);
-  const stepKey = `${draft.stage}:${detailStep}`;
-  useEffect(() => {
-    panelRef.current?.scrollTo({ top: 0 });
-  }, [stepKey]);
-
-  return (
-    <AuthLayout background="galaxy" visible={snapshot.phase === "setup"} surfaceClass="gsv-auth-surface-setup">
-      <div class="gsv-setup-panel" data-session-setup-view ref={panelRef}>
-        <form
-          ref={formRef}
-          class="gsv-setup-form"
-          data-session-setup-form
-          data-setup-stage={draft.stage}
-          onSubmit={onSubmit}
-        >
-          {!onWelcome ? (
-            <div class="gsv-setup-stepper">
-              <Stepper
-                current={current}
-                l0="Login credentials"
-                l1="Preferences"
-                l2="Review and deploy"
-                size="small"
-                width={460}
-                onChange={onStep}
-              />
-            </div>
-          ) : null}
-
-          <div class="gsv-setup-body">
-            <WelcomeStage draft={draft} onLane={onLane} />
-            <DetailsStage draft={draft} timezoneOptions={timezoneOptions} updateDraft={updateDraft} />
-            <ReviewStage draft={draft} />
-            <SessionError className="gsv-setup-alert" message={setupError} />
-          </div>
-
-          {!onWelcome ? (
-            <div class="gsv-setup-nav">
-              {showBack ? (
-                <Button variant="secondary" label="Back" disabled={busy} onClick={onBack} />
-              ) : null}
-              <span class="gsv-setup-nav-spacer">
-                <span class="gsv-setup-stepcount gsv-sublabel">
-                  {current + 1} / 3
-                </span>
-              </span>
-              <div class="gsv-setup-nav-primary">
-                {showNext ? (
-                  <Button variant="primary" label="Next" disabled={busy} onClick={onNext} />
-                ) : null}
-                {showSubmit ? (
-                  <Button
-                    variant="primary"
-                    label="Deploy"
-                    disabled={busy}
-                    dataAttrs={{ "data-setup-submit": true }}
-                    onClick={() => formRef.current?.requestSubmit()}
-                  />
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </form>
+export function SetupScreen({ visible, busy, space, username, password, passwordConfirm, error, onUsername, onPassword, onPasswordConfirm, onSubmit }: SetupScreenProps) {
+  return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
+    <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
+      <div class="gsv-setup-head">
+        <p class="gsv-setup-space">{space}</p>
+        <h1 id="setup-heading">Welcome to your space</h1>
+        <p>Create your sign-in, then start talking with your Ship.</p>
       </div>
-
-      <GuidePanel
-        snapshot={onboardingSnapshot}
-        sessionSnapshot={snapshot}
-        guideMessage={guideMessage}
-        guideInputRef={guideInputRef}
-        guideLogRef={guideLogRef}
-        onGuideMessage={onGuideMessage}
-        onGuideSend={onGuideSend}
-        onGuideKeyDown={onGuideKeyDown}
-        onClose={onGuideToggle}
-      />
-
-      {showGuideLaunch ? (
-        <button type="button" class="gsv-guide-launch" onClick={onGuideToggle}>
-          <svg class="gsv-guide-launch-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
-            <path d="M2 3.5 H14 V11 H6.5 L3.5 13.5 V11 H2 Z" />
-          </svg>
-          Ask the guide
-        </button>
-      ) : null}
-    </AuthLayout>
-  );
+      <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} onSubmit={onSubmit}>
+        <TextInput label="Username" value={username} disabled={busy} info={USERNAME_FORMAT_DESCRIPTION}
+          placeholder="Choose a username" onChange={onUsername}
+          inputProps={{ autoComplete: "username", maxLength: 32, "data-setup-username": true }} />
+        <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
+          placeholder="At least 8 characters" onChange={onPassword}
+          inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password": true }} />
+        <TextInput label="Confirm password" type="password" value={passwordConfirm} disabled={busy} clearable={false}
+          placeholder="Enter your password again" onChange={onPasswordConfirm}
+          inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true }} />
+        <p class="gsv-setup-note">This sign-in is for this space.</p>
+        <SessionError message={error} />
+        <div class="gsv-setup-actions">
+          <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}>
+            {busy ? "Opening your space…" : "Create account"}
+          </button>
+        </div>
+      </form>
+    </section>
+  </AuthLayout>;
 }
