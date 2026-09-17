@@ -17,6 +17,7 @@ import {
 } from "../../../kernel/repo";
 import { handleSysBootstrap } from "../../../kernel/sys/bootstrap";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { buildWikiContext } from "./wiki-context";
 
 const WIKI_MANIFEST_PATH = "wiki.json";
 const WIKI_MANIFEST_KIND = "gsv.wiki";
@@ -76,6 +77,11 @@ async function runWikiCommand(args: string[], ctx: KernelContext): Promise<ExecR
   const [subcommand = "help", ...rest] = args;
 
   switch (subcommand) {
+    case "context":
+    case "enrich": {
+      const context = await buildWikiContext(rest, ctx, subcommand === "enrich");
+      return { stdout: `${JSON.stringify(context)}\n`, stderr: "", exitCode: 0 };
+    }
     case "help":
     case "--help":
     case "-h":
@@ -804,6 +810,8 @@ function wikiUsage(): string {
     "Pages:",
     "  wiki read <wiki-id/path.md>",
     "  wiki search <query> [--prefix WIKI_OR_PATH] [--limit N]",
+    "  wiki context <conversation-id> <message-sequence>",
+    "  wiki enrich <conversation-id> <message-sequence>",
     "  wiki brief <query> [--prefix WIKI_OR_PATH]",
     "",
     "Sources:",

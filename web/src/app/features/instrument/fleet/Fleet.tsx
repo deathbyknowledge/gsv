@@ -823,7 +823,7 @@ type ProcessInspectorProps = {
   requestedApprovalId?: string;
   model: string | null;
   cost: number | null;
-  responsibilities: number;
+  responsibilities: number | null;
   canEditAi: boolean;
   now: number;
   onZen: (prefill?: string, pid?: string) => void;
@@ -859,7 +859,7 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
         <dt>Last model request</dt>
         <dd>{model ?? "—"}</dd>
         <dt>Responsibilities</dt>
-        <dd>{responsibilities === 0 ? "none open" : `${responsibilities} open`}</dd>
+        <dd>{responsibilities === null ? "—" : responsibilities === 0 ? "none open" : `${responsibilities} open`}</dd>
         <dt>Last active</dt>
         <dd>{relativeTime(process.lastActiveAt, now)}</dd>
         <dt>Today</dt>

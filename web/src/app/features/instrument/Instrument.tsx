@@ -16,6 +16,8 @@ import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
+import { Workspace } from "./workspace/Workspace";
+import type { WorkspaceObservation } from "../../services/workspace/workspaceService";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -65,6 +67,8 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
+  const [workspaceEnabled, setWorkspaceEnabled] = useState(false);
+  const [workspaceObservation, setWorkspaceObservation] = useState<WorkspaceObservation | null>(null);
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
@@ -113,6 +117,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       setZenDirty(false);
       setFleetDirty(false);
       setMemoryDirty(false);
+      setWorkspaceEnabled(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
@@ -198,7 +203,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef}
+        workspace={workspaceEnabled} onWorkspace={() => setWorkspaceEnabled((current) => !current)} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
           <h4>Views & appearance</h4>
@@ -271,10 +277,16 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       ) : null}
       <div class={`distance${phaseClass}`}>
         {distance === "zen" ? (
-          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+          <Workspace enabled={workspaceEnabled} observation={workspaceObservation} draftActive={zenDirty}
+            onMemory={(page) => { if (move("memory")) setSelectedMemoryPage(page); }}
+            onFleet={(reference) => move("fleet", reference)}
+            onShip={() => { setWorkspaceEnabled(false); if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null); }}
+            onProcess={(pid) => { if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) { setWorkspaceEnabled(false); setZenPid(pid); } }}>
+          {(conversationVisible) => <Zen key={zenPid ?? "ship"} keyboardEnabled={conversationVisible} onWorkspaceObservation={setWorkspaceObservation} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage(page);
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />}
+          </Workspace>
         ) : distance === "memory" ? (
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
             if (!move("zen")) return;

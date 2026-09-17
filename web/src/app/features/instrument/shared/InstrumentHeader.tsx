@@ -12,9 +12,11 @@ type InstrumentHeaderProps = {
   onHelp: () => void;
   /** The keys button, so the panel it opens can tell a press on it from one outside. */
   helpButtonRef: RefObject<HTMLButtonElement>;
+  workspace?: boolean;
+  onWorkspace?: () => void;
 };
 
-export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, onHelp, helpButtonRef }: InstrumentHeaderProps) {
+export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, onHelp, helpButtonRef, workspace, onWorkspace }: InstrumentHeaderProps) {
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
@@ -22,6 +24,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">
+        {distance === "zen" && onWorkspace && <button type="button" aria-pressed={workspace} onClick={onWorkspace}>workspace</button>}
         <button type="button" onClick={() => onNavigate(distance === "fleet" ? "zen" : "fleet")}>
           <kbd>z</kbd>{distance === "fleet" ? "zen" : "fleet"}
         </button>

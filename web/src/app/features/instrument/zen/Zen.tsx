@@ -32,6 +32,7 @@ import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
+import type { WorkspaceObservation } from "../../../services/workspace/workspaceService";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
@@ -75,6 +76,8 @@ export type ZenProps = {
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
+  keyboardEnabled?: boolean;
+  onWorkspaceObservation?: (observation: WorkspaceObservation | null) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -301,7 +304,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, keyboardEnabled = true, onWorkspaceObservation }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -490,6 +493,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows, pid]);
+
+  useEffect(() => {
+    if (!onWorkspaceObservation) return;
+    const message = [...conversation.rows].reverse().find((row) => row.conversationSequence !== undefined && !row.streaming);
+    if (!pid || !conversation.conversation || !message?.conversationSequence) { onWorkspaceObservation(null); return; }
+    const files = moments.flatMap((moment) => moment.activities.flatMap((activity) => activity.calls.flatMap((call) =>
+      call.filePath && activity.target && activity.target !== "unknown target" ? [{ target: activity.target, path: call.filePath }] : [])));
+    onWorkspaceObservation({ pid, conversationId: conversation.conversation.id, sequence: message.conversationSequence, message,
+      files: [...new Map(files.map((file) => [`${file.target}:${file.path}`, file])).values()].slice(-4) });
+  }, [conversation.conversation, conversation.rows, moments, onWorkspaceObservation, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -716,6 +729,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (!keyboardEnabled) return;
+      if (event.target instanceof Element && event.target.closest(".workspace.is-enabled") && !event.target.closest(".workspace-conversation")) return;
       if (event.defaultPrevented || event.isComposing) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
@@ -782,11 +797,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity, keyboardEnabled]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
+      if (!keyboardEnabled) return;
+      if (event.target instanceof Element && event.target.closest(".workspace.is-enabled") && !event.target.closest(".workspace-conversation")) return;
       if (event.defaultPrevented || editableElement(event.target) || pendingHil) return;
       const input = promptRef.current;
       if (!input || input.disabled) return;
@@ -799,7 +816,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addFiles, pendingHil]);
+  }, [addFiles, pendingHil, keyboardEnabled]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(

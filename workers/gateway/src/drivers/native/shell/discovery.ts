@@ -145,7 +145,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "skills create <name> --description <text> [--from <body-file>] [--replace]",
     "skills validate <skill-or-path>",
   ]),
-  wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, organize, or refresh durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference", "manual", "refresh"], [], ["wiki refresh gsv-manual"]),
+  wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, organize, or refresh durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference", "manual", "refresh"], [], ["wiki refresh gsv-manual", "wiki context <conversation-id> <message-sequence>", "wiki enrich <conversation-id> <message-sequence>"]),
   flynn: command("Print the GSV version banner.", "Inspect the GSV release banner or project easter egg.", ["version", "banner", "gsv"]),
 });
 
