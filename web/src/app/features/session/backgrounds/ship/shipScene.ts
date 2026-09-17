@@ -2,9 +2,8 @@ import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../compo
 import { buildOpenCountry, type ShipModel, type ShipPoint } from "./openCountry";
 import { rotationMatrix, ShipRaster } from "./shipRaster";
 
-export const SHIP_GLYPH_SCALE = 0.75;
-const COLS = Math.round(160 / SHIP_GLYPH_SCALE);
-const ROWS = Math.round(80 / SHIP_GLYPH_SCALE);
+const COLS = 160;
+const ROWS = 80;
 const RAMP = " .,:;irsXA253hMHGS#9B&@";
 const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 const smooth = (start: number, end: number, time: number) => {

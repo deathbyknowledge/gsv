@@ -23,7 +23,6 @@ const MATERIALS = {
   water: { albedo: 0.38, emission: 0 },
   light: { albedo: 0.9, emission: 0.88 },
   drive: { albedo: 0.8, emission: 1 },
-  field: { albedo: 0.42, emission: 0.18 },
 };
 const subtract = (a: Vector, b: Vector): Vector => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a: Vector, b: Vector): Vector => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -183,13 +182,6 @@ export function buildOpenCountry(drivesOn: boolean): ShipModel {
 
   // Wider, shallower apertures keep the three separate drives legible in the compact glyph view.
   for (const side of [-1, 0, 1]) drive([3.16, 0.23, side * 0.92], side === 0 ? 0.37 : 0.34);
-  let previous: Vector | undefined;
-  for (let i = 0; i <= 48; i++) {
-    const angle = Math.PI + Math.PI * i / 48;
-    const point: Vector = [Math.cos(angle) * 2.45, Math.sin(angle) * 0.68 - 0.08, Math.sin(angle) * 1.25];
-    if (previous) beam(previous, point, 0.014, "field");
-    previous = point;
-  }
 
   const mesh: ShipMesh = { vertices: new Float32Array(vertices), indices: new Uint32Array(indices), materials };
   let area = 0;
