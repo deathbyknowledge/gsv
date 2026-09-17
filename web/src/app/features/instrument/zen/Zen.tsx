@@ -24,6 +24,7 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
+import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "./ApprovalCard";
@@ -32,6 +33,9 @@ import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
+import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
+import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
+import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
 import {
@@ -51,9 +55,8 @@ import {
   placeLabel,
   resolvePlace,
   noteSummary,
-  receiptDuration,
-  receiptTargets,
-  receiptSteps,
+  receiptSummary,
+  startsWriting,
   CLOUD_PLACE_ID,
   type Activity,
   type Moment,
@@ -83,6 +86,15 @@ function settleDuration(length: number): number {
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
+/** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
+const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
+const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
+
+/** The element a key or paste would already edit, or null when it would reach nothing. */
+function editableElement(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof HTMLElement)) return null;
+  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable ? target : null;
+}
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -100,12 +112,14 @@ function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: 
 
 function ActivityLine({
   activity,
+  who,
   places,
   open,
   onToggle,
   onFleet,
 }: {
   activity: Activity;
+  who: string;
   places: readonly Place[];
   open: boolean;
   onToggle: () => void;
@@ -161,7 +175,7 @@ function ActivityLine({
       {open ? (
         <div class="detail">
           {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
-          <ActivityWorking activity={activity} />
+          <ActivityWorking activity={activity} who={who} />
           {activity.terminal && <TerminalControls session={activity.terminal} />}
         </div>
       ) : null}
@@ -169,80 +183,85 @@ function ActivityLine({
   );
 }
 
-/** One line under a ship's message: what it did, generated from its calls; the working opens beneath. */
-function Receipt({ moment, places, collections, open, onToggle, onMemory, onFleet }: {
-  moment: Moment;
+/** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
+function Receipt({ receipt, who, places, collections, open, onToggle, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
+  receipt: RunReceipt;
+  who: string;
   places: readonly Place[];
   collections: readonly LibraryCollection[];
   open: boolean;
   onToggle: () => void;
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
+  expanded: ReadonlySet<string>;
+  onToggleDetail: (key: string) => void;
+  waitingCallId?: string;
 }) {
-  const targets = receiptTargets(moment);
-  const steps = receiptSteps(moment);
-  const duration = receiptDuration(moment);
-  const notes = moment.narration ? moment.narration.split(/\n\n+/).length : 0;
+  const moment = receipt.work;
+  const live = moment.thinking;
+  let summary = receiptSummary(moment, places, receipt.relatedCalls);
+  if (waitingCallId) summary = [{ text: "waiting for your approval" }, ...summary.filter((part) => part.tone === "failed")];
+  const running = live && !waitingCallId && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const worked = moment.activities.filter((activity) => !activity.you);
-  const processWork = worked.filter((activity) => activity.target === null);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
+  const replies = receipt.replies.filter((reply) => reply.attribution);
   return (
-    <div class={`receipt${open ? " is-open" : ""}`}>
+    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
-          {targets.map((target, index) => (
-            <span key={target.target} class={target.live ? "now" : target.failed ? "is-failed" : ""}>
-              {index > 0 ? " · " : ""}
-              {target.live ? <span class="pulse blink" /> : null}
-              {target.live ? "using" : "used"} <span class="place">{placeLabel(target.target, places)}</span>
-              {target.failed ? " · failed" : ""}
-            </span>
-          ))}
-          {targets.length === 0 ? (processWork.length > 0 ? (processWork.some((activity) => activity.live) ? "working" : "worked") : moment.narration ? (moment.thinking ? "thinking" : "thought it through") : "response details") : null}
-          {processWork.some((activity) => activity.calls.some((call) => call.failed)) ? <span class="is-failed"> · work failed</span> : null}
-          {moment.attribution?.fallbacks.length ? <span class="is-failed"> · fallback used</span> : null}
-          <span class="n"> · {open ? "close" : "open"}</span>
+          <span class="receipt-chevron" aria-hidden="true">›</span>
+          {running ? <span class="pulse blink" /> : null}
+          {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
+          {replies.some((reply) => reply.attribution?.fallbacks.length) ? <span class="is-failed"> · fallback used</span> : null}
         </button>
-        {pages.length > 0 ? (
-          <span class="memory-references"> · from your memory: {pages.map((page, index) => (
-            <span key={`${page.db}:${page.path}`}>
-              {index > 0 ? ", " : ""}
-              <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
-            </span>
-          ))}</span>
-        ) : null}
       </div>
       {open ? (
         <div class="detail">
-          <div class="receipt-meta">
-            {moment.attribution?.model ? <span class="answer-model" title={moment.attribution.provider ?? undefined}>answered by {moment.attribution.model}</span> : null}
-            {steps > 0 ? <span>{countLabel(steps, "step")}{duration ? ` · ${duration}` : ""}</span> : null}
-            {notes > 0 ? <span>{countLabel(notes, "note")}</span> : null}
-          </div>
-          {moment.attribution?.fallbacks.length ? (
-            <div class="zen-model-fallback">
-              {moment.attribution.fallbacks.map((fallback, index) => (
-                <span key={`${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
-                  {index ? " · " : "fallback: "}{fallback.from} → {fallback.to}
-                </span>
+          {RECEIPT_LAYOUT === "timeline" ? (
+            <ReceiptTimeline moment={moment} who={who} places={places} relatedCalls={receipt.relatedCalls} onFleet={onFleet}
+              scope={receipt.key} expanded={expanded} onToggle={onToggleDetail} waitingCallId={waitingCallId} />
+          ) : (
+            <>
+              {worked.map((activity) => (
+                <div key={activity.key} class="place-rail">
+                  <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
+                    <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
+                  )}</>}</div>
+                  <ActivityWorking activity={activity} who={who} />
+                </div>
               ))}
-              {moment.attribution.omittedFallbacks ? ` · ${moment.attribution.omittedFallbacks} earlier` : ""}
-            </div>
+              {moment.narration ? (
+                <div class="place-rail">
+                  <div class="ph">thought it through</div>
+                  <div class="machine-rail narration">{moment.narration}</div>
+                </div>
+              ) : null}
+            </>
+          )}
+          {pages.length > 0 ? (
+            <div class="memory-references">from your memory: {pages.map((page, index) => (
+              <span key={`${page.db}:${page.path}`}>
+                {index > 0 ? ", " : ""}
+                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
+              </span>
+            ))}</div>
           ) : null}
-          {worked.map((activity) => (
-            <div key={activity.key} class="place-rail">
-              <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
-                <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
-              )}</>}</div>
-              <ActivityWorking activity={activity} />
+          {replies.map((reply, index) => (
+            <div key={reply.id} class="receipt-reply">
+              {reply.attribution?.model ? <div class="receipt-meta" title={reply.text}>
+                {receipt.replies.length > 1 ? <span>reply {receipt.replies.indexOf(reply) + 1}</span> : null}
+                <span class="answer-model" title={reply.attribution.provider ?? undefined}>answered by {reply.attribution.model}</span>
+              </div> : null}
+              {reply.attribution?.fallbacks.length ? <div class="zen-model-fallback">
+                {reply.attribution.fallbacks.map((fallback, fallbackIndex) => (
+                  <span key={`${index}:${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
+                    {fallbackIndex ? " · " : "fallback: "}{fallback.from} → {fallback.to}
+                  </span>
+                ))}
+                {reply.attribution.omittedFallbacks ? ` · ${reply.attribution.omittedFallbacks} earlier` : ""}
+              </div> : null}
             </div>
           ))}
-          {moment.narration ? (
-            <div class="place-rail">
-              <div class="ph">thought it through</div>
-              <div class="machine-rail narration">{moment.narration}</div>
-            </div>
-          ) : null}
           {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>view process</button> : null}
         </div>
       ) : null}
@@ -431,15 +450,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const streaming = runtime.rows.some((row) => row.streaming);
   /* a message that arrives whole settles out of noise on arrival; a streamed one already did, character by character */
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const animating = streaming || settling.size > 0;
-  useEffect(() => {
-    if (!animating || reducedMotion()) return undefined;
-    const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
-    return () => window.clearInterval(interval);
-  }, [animating]);
 
   /* moments: the runtime's, plus the commands run by hand */
-  const moments = useMemo(() => {
+  const { moments, receipts } = useMemo(() => {
     const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     const fromLocal: Moment[] = localRuns.map((run) => ({
@@ -459,6 +472,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {
               callId: run.id,
               syscall: "shell.exec",
+              description: "run a command",
               summary: run.command,
               output: run.output,
               finished: terminalFinished(run),
@@ -473,8 +487,18 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         },
       ],
     }));
-    return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows]);
+    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
+  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows, pid]);
+
+  /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
+  const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
+  const animating = streaming || settling.size > 0 || marking;
+  useEffect(() => {
+    if (!animating || reducedMotion()) return undefined;
+    const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
+    return () => window.clearInterval(interval);
+  }, [animating]);
 
   const loadOlder = useCallback(async () => {
     await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
@@ -483,7 +507,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
   const { browse, viewport: momentsRef, content: contentRef } = scrolling;
-  const hasMemoryRead = moments.some((moment) => moment.activities.some((activity) =>
+  const hasMemoryRead = [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
     ),
@@ -683,9 +707,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     onPrefillUsed?.();
   }, [prefill, onPrefillUsed, connected, pid]);
 
-  const focusPrompt = useCallback(() => {
-    promptRef.current?.focus();
-  }, []);
   const onPromptFocus = useCallback(
     (focused: boolean) => {
       setPromptFocused(focused);
@@ -696,12 +717,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      const target = event.target;
-      const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (typing && event.key === "Escape") {
+      const editing = editableElement(event.target);
+      const typing = editing !== null;
+      if (editing && event.key === "Escape") {
         // Escape leaves the prompt even if the input's own handler did not run.
         event.preventDefault();
-        target.blur();
+        editing.blur();
         return;
       }
       if (event.metaKey || event.altKey) return;
@@ -734,12 +755,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         return;
       }
       const focused = browse !== null ? moments[browse] : latest;
-      if (event.key === "o" && focused && (focused.activities.length > 0 || focused.narration || focused.attribution)) {
+      const focusedReceipt = focused ? receipts.get(focused.id) : undefined;
+      if (event.key === "o" && focused && (focusedReceipt || focused.activities.some((activity) => activity.you))) {
         event.preventDefault();
         scrolling.stopFollowing();
         const yours = focused.activities.filter((activity) => activity.you);
-        const worked = focused.role === "ship" && (focused.activities.some((activity) => !activity.you) || focused.narration || focused.attribution);
-        toggleActivity(worked ? `receipt:${focused.id}` : yours[yours.length - 1].key);
+        toggleActivity(focusedReceipt ? focusedReceipt.key : yours[yours.length - 1].key);
+        if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
       if (browse !== null && event.key === "j") {
@@ -752,14 +774,32 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         scrolling.select(Math.max(0, browse - 1));
         return;
       }
-      if (event.key === "i") {
-        event.preventDefault();
-        focusPrompt();
-      }
+      // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
+      // A pending approval keeps the keys, and shortcut letters keep their meaning.
+      if (pendingHil || !startsWriting(event, CLAIMED_KEYS)) return;
+      const input = promptRef.current;
+      if (input && !input.disabled) input.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, focusPrompt, latest, moments, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+
+  /* a paste outside the prompt lands in it too: files attach, text joins the draft */
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || editableElement(event.target) || pendingHil) return;
+      const input = promptRef.current;
+      if (!input || input.disabled) return;
+      const files = Array.from(event.clipboardData?.files ?? []);
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (files.length === 0 && !text) return;
+      event.preventDefault();
+      if (files.length > 0) addFiles(files);
+      else input.append(text);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFiles, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -776,9 +816,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const activeRun = connected ? runtime.activeRunId : null;
-  const runStartedAt = useMemo(() => runtime.rows.reduce<number | null>((first, row) =>
-    row.runId === activeRun && row.timestamp !== null ? Math.min(first ?? row.timestamp, row.timestamp) : first,
-  null), [activeRun, runtime.rows]);
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
@@ -832,6 +869,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               </div>}
               {moments.map((moment, index) => {
                 const isLatest = index === moments.length - 1;
+                const receipt = receipts.get(moment.id);
                 const settleStart = settling.get(moment.id);
                 const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
                 const materialising = !cascadeUnset && settleStart !== undefined && !pending;
@@ -867,31 +905,35 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                         <ActivityLine
                           key={activity.key}
                           activity={activity}
+                          who={who}
                           places={places}
                           open={openActivities.has(activity.key)}
                           onToggle={() => toggleActivity(activity.key)}
                           onFleet={onFleet}
                         />
                       ))}
-                    {moment.role === "ship" && (moment.activities.some((activity) => !activity.you) || moment.narration || moment.attribution) ? (
+                    {receipt?.anchorId === moment.id ? (
                       <Receipt
-                        moment={moment}
+                        receipt={receipt}
+                        who={who}
                         places={places}
                         collections={memoryCollections.data ?? []}
                         onMemory={onMemory}
                         onFleet={onFleet}
-                        open={openActivities.has(`receipt:${moment.id}`)}
-                        onToggle={() => toggleActivity(`receipt:${moment.id}`)}
+                        open={openActivities.has(receipt.key)}
+                        onToggle={() => toggleActivity(receipt.key)}
+                        expanded={openActivities}
+                        onToggleDetail={toggleActivity}
+                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
+                          && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
                       />
                     ) : null}
                     {moment.role === "human" ? (
                       <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
                     ) : moment.text ? (
                       <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
-                    ) : moment.thinking ? (
-                      <div class="text">
-                        <span class="zen-caret blink" />
-                      </div>
+                    ) : moment.thinking || moment.streaming ? (
+                      <div class="text"><ThinkingMark tick={tick} /></div>
                     ) : null}
                     {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
                     {isLatest && pendingHil ? (
@@ -917,7 +959,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <div class="zen-bottom">
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
         {showFeedback && <div class="zen-feedback">
-          {activeRun && <RunFeedback key={activeRun} startedAt={runStartedAt} model={attemptedModel}
+          {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
             place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
           {!connected && <span role="status">Not connected</span>}
           {connected && !currentPlace.online ? (
@@ -968,7 +1010,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               pendingHil
                 ? "answer the approval first"
                 : !promptFocused
-                  ? "Press i or click here to write"
+                  ? "Start typing, or click here to write"
                   : currentPlace.online
                     ? "Ask in plain words, or start with $ to run a command yourself"
                     : `Ask in plain words; ${currentPlace.label} will run it when it's back`
@@ -994,4 +1036,3 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     </main>
   );
 }
-

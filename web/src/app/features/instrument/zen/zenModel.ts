@@ -2,6 +2,7 @@ import type { TerminalSession } from "../../../services/terminal/terminalSession
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import { describeCall, normalizeCallPurpose } from "../../../services/chat/domain/callDescription";
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import type { MemoryPageRef } from "../shared/navigation";
@@ -65,7 +66,11 @@ export function defaultPlace(places: readonly Place[]): string {
 export type ActivityCall = {
   callId: string;
   syscall: string;
+  purpose?: string;
+  description: string;
+  details?: Array<{ label: string; text: string }>;
   summary: string;
+  retryKey?: string;
   output: string;
   finished: boolean;
   failed: boolean;
@@ -100,8 +105,18 @@ export type Moment = {
   activities: Activity[];
   /** The ship's working narration for this run: what it told itself, not what it sent. Folded by default. */
   narration: string;
+  /** The run in the order it happened, notes and calls interleaved; absent for moments that did no work. */
+  timeline?: MomentEvent[];
   attribution?: AnswerAttribution | null;
+  /** The work interval after the previous sent message, stable when its next reply arrives. */
+  receiptId?: string;
 };
+
+/** One thing that happened during a ship moment's run: a note the model wrote, or a call it made. */
+export type MomentEvent =
+  | { kind: "thought"; text: string; at: number | null }
+  | { kind: "call"; call: ActivityCall; target: string | null; startedAt: number | null; endedAt: number | null; retryOf: string | null };
+export type CallEvent = Extract<MomentEvent, { kind: "call" }>;
 
 export type AnswerHistoryEntry = {
   runId: string | null;
@@ -160,8 +175,6 @@ export function answerAttribution(
   return { model, provider, fallbacks: [...fallbacks.values()].slice(-3), omittedFallbacks: Math.max(0, fallbacks.size - 3) };
 }
 
-const OUTPUT_LIMIT = 600;
-
 function isRecord(value: ChatTranscriptValue | undefined): value is { [key: string]: ChatTranscriptValue } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -189,12 +202,6 @@ export function argumentThatMatters(syscall: string, args: ChatTranscriptValue |
   return input ?? path ?? url ?? "";
 }
 
-export function trimOutput(text: string): string {
-  const clean = text.replace(/\s+$/, "");
-  if (clean.length <= OUTPUT_LIMIT) return clean;
-  return `${clean.slice(0, OUTPUT_LIMIT)}\n… ${clean.length - OUTPUT_LIMIT} more characters`;
-}
-
 const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() })
   .refine((value) => value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
 const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
@@ -209,6 +216,7 @@ const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() 
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
 const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative(), truncated: z.boolean().optional() });
+const mailResultSchema = z.object({ ok: z.literal(true), messageId: z.string() });
 const filesystemOperationVerbs = new Map([
   ["fs.read", ["read", "reading", "read"]],
   ["fs.write", ["write", "writing", "wrote"]],
@@ -287,6 +295,10 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
     const hits = search.success ? (search.data.results ?? search.data.matches ?? []) : [];
     if (hits.length > 0) return hits.map((hit) => hit.path).join("\n");
   }
+  if (syscall === "mail.send") {
+    const mail = mailResultSchema.safeParse(output);
+    if (mail.success) return `message ${mail.data.messageId}`;
+  }
   if (isStringValue(output)) return output;
   return fallback;
 }
@@ -297,15 +309,38 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? (row.toolName === "CodeMode" ? "codemode.exec" : row.toolName ?? "call");
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
   const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
+  const purpose = normalizeCallPurpose(row.toolPurpose);
+  let retryKey: string | undefined = summary;
+  if (syscall.startsWith("shell.")) {
+    const input = stringField(row.toolArgs, "input") ?? stringField(row.toolArgs, "command");
+    retryKey = input === null ? undefined : JSON.stringify([
+      input, stringField(row.toolArgs, "cwd"), stringField(row.toolArgs, "sessionId"),
+      isRecord(row.toolArgs) && row.toolArgs.start === true,
+    ]);
+  }
   const call: ActivityCall = {
     callId: row.toolCallId ?? row.id,
     syscall,
+    purpose,
+    description: purpose ?? describeCall({ toolName: row.toolName ?? syscall, syscall, args: row.toolArgs }),
     summary,
+    retryKey,
     filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
-    output: finished ? trimOutput(outputText(syscall, row.toolOutput, row.text)) : "",
+    output: finished ? outputText(syscall, row.toolOutput, row.text) : "",
     finished,
     failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
   };
+  const fields: Array<[key: string, label: string]> = syscall === "fs.write" ? [["content", "content"]]
+    : syscall === "fs.edit" ? [["oldString", "before"], ["newString", "after"]]
+    : syscall === "mail.send" ? [["to", "to"], ["subject", "subject"], ["text", "message"]]
+    : [];
+  if (fields.length > 0 && isRecord(row.toolArgs)) {
+    const args = row.toolArgs;
+    call.details = fields.flatMap(([key, label]) => {
+      const text = z.string().safeParse(args[key]);
+      return text.success ? [{ label, text: text.data }] : [];
+    });
+  }
   const verb = filesystemOperationVerbs.get(syscall);
   if (!verb) return call;
   const completed = finished && !call.failed && row.toolOutcome === "completed";
@@ -318,9 +353,9 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     if (completed && result.success) {
       call.operation.label = verb[2];
       call.operation.detail = result.data.truncated ? `${result.data.count}+ results` : countLabel(result.data.count, "result");
-      call.output = "";
+      call.output = result.data.matches.map((match) => `${match.path}:${match.line}\n${match.content}`).join("\n\n");
     } else if (finished && result.success) {
-      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+      call.output = row.text || JSON.stringify(row.toolOutput, null, 2);
     }
   } else if (syscall !== "fs.read") {
     const result = mutationConfirmation(syscall, row.toolOutput);
@@ -330,7 +365,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
       if (result.detail) call.operation.detail = result.detail;
       call.output = "";
     } else if (finished && result) {
-      call.output = trimOutput(row.text || JSON.stringify(row.toolOutput, null, 2));
+      call.output = row.text || JSON.stringify(row.toolOutput, null, 2);
     }
   }
   return call;
@@ -366,6 +401,14 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
         if (call.syscall === "fs.read" && row.toolArgs === undefined) call.filePath ??= existing.calls[index].filePath;
         if (call.operation && !call.operation.subject && row.toolArgs === undefined) {
           call.operation.subject = existing.calls[index].operation?.subject ?? "";
+        }
+        if (row.toolPurpose === undefined && existing.calls[index].purpose) {
+          call.purpose = existing.calls[index].purpose;
+          call.description = existing.calls[index].description;
+        }
+        if (row.toolArgs === undefined) {
+          call.summary = existing.calls[index].summary;
+          call.details = existing.calls[index].details;
         }
         existing.calls[index] = call;
       }
@@ -627,6 +670,20 @@ export function resolveTail(text: string, random: () => number, tail = RESOLVE_T
   return { head: glyphs.slice(0, cut).join(""), tail: chars };
 }
 
+/* ---------- typing anywhere ---------- */
+
+export type KeyPress = { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean };
+
+/**
+ * Whether a key pressed outside any text field is the start of writing: one printable character with
+ * no command modifier (Shift is how capitals are typed) that no shortcut has claimed. Whitespace never starts it.
+ */
+export function startsWriting(press: KeyPress, claimed: ReadonlySet<string>): boolean {
+  if (press.ctrlKey || press.metaKey || press.altKey) return false;
+  if (claimed.has(press.key)) return false;
+  return Array.from(press.key).length === 1 && !/\s/u.test(press.key);
+}
+
 /* ---------- references to places inside ship text ---------- */
 
 /** Replace `@name` mentions of known places with markdown links the renderer turns into fleet references. */
@@ -778,7 +835,7 @@ export function momentsFromConversation(
         // a run that has not sent anything yet, or never did: it still shows what it did
         moment = {
           id: `work:${JSON.stringify([run.key, boundary ? ["before", boundary.id] : ["after", previous?.id ?? null]])}`,
-          role: "ship", text: "", streaming: false, thinking: active, runId: run.runId, processId: run.processId,
+          role: "ship", text: "", streaming: false, thinking: active && !boundary, runId: run.runId, processId: run.processId,
           timestamp: work[0].position.timestamp, activities: [], narration: "",
         };
         if (previous?.moment?.timestamp !== undefined && previous.moment.timestamp !== null) {
@@ -786,23 +843,103 @@ export function momentsFromConversation(
         }
         moments.push(moment);
       }
-      const tools = work.filter((entry) => isToolRow(entry.rows[0])).map((entry) => {
-        const terminal = entry.rows.filter((row) => row.role === "toolResult" || row.status === "done" || row.status === "error");
-        const result = terminal.at(-1) ?? entry.rows.at(-1)!;
-        const call = entry.rows.find((row) => row.role === "tool") ?? entry.rows[0];
-        return {
-          ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
-          toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.position.timestamp,
-        };
-      });
+      moment.receiptId = `receipt:${JSON.stringify([run.key, previous?.id ?? null])}`;
+      const entries: WorkEntry[] = work.map((entry) => ({ at: entry.position.timestamp, rows: entry.rows }));
+      const tools = entries.filter((entry) => isToolRow(entry.rows[0])).map(toolRowOf);
       moment.activities = activitiesForRows(tools, moment.id, active);
       moment.narration = work.filter((entry) => entry.rows[0].role === "assistant").map((entry) => entry.rows[0].text.trim()).join("\n\n");
+      moment.timeline = timelineForWork(entries, moment.id, active);
     }
   }
   return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }
 
+/** A run's work in position order: the rows of one call, or one note. */
+type WorkEntry = { at: number | null; rows: ChatTranscriptRow[] };
+
+/** One row for a call: its result over its request, started when the work began. */
+function toolRowOf(entry: WorkEntry): ChatTranscriptRow {
+  const terminal = entry.rows.filter((row) => row.role === "toolResult" || row.status === "done" || row.status === "error");
+  const result = terminal.at(-1) ?? entry.rows.at(-1)!;
+  const call = entry.rows.find((row) => row.role === "tool") ?? entry.rows[0];
+  return {
+    ...result, toolArgs: result.toolArgs ?? call.toolArgs, toolTarget: result.toolTarget ?? call.toolTarget,
+    toolSyscall: result.toolSyscall ?? call.toolSyscall, toolStartedAt: entry.at,
+    toolPurpose: result.toolPurpose ?? call.toolPurpose,
+  };
+}
+
+/**
+ * The run in order: each note as its paragraphs, each call with its place and timing. A call that repeats
+ * a failed one (same kind, same place, same command or path) is marked as its retry. Sends are the reply, not work.
+ */
+function timelineForWork(work: readonly WorkEntry[], runKey: string, active: boolean): MomentEvent[] {
+  const events: MomentEvent[] = [];
+  for (const entry of work) {
+    const first = entry.rows[0];
+    if (isToolRow(first)) {
+      if (isMessageSend(first)) continue;
+      const [activity] = activitiesForRows([toolRowOf(entry)], runKey, active);
+      if (!activity) continue;
+      events.push({ kind: "call", call: activity.calls[0], target: activity.target, startedAt: activity.startedAt, endedAt: activity.endedAt, retryOf: null });
+    } else if (first.role === "assistant" && first.text.trim()) {
+      for (const paragraph of first.text.trim().split(/\n\s*\n+/)) events.push({ kind: "thought", text: paragraph.trim(), at: entry.at });
+    }
+  }
+  return linkReceiptRetries(events);
+}
+
+/** Retry links span the whole run, including calls separated by a committed reply. */
+export function linkReceiptRetries(source: readonly MomentEvent[]): MomentEvent[] {
+  const events: MomentEvent[] = source.map((event) => event.kind === "call" ? { ...event, retryOf: null } : event);
+  const calls = events.filter((event): event is CallEvent => event.kind === "call");
+  calls.forEach((failed, index) => {
+    if (!failed.call.failed || failed.call.retryKey === undefined) return;
+    const retry = calls.slice(index + 1).find((later) => later.retryOf === null && later.call.syscall === failed.call.syscall
+      && later.target === failed.target && later.call.retryKey === failed.call.retryKey);
+    if (retry) retry.retryOf = failed.call.callId;
+  });
+  return events;
+}
+
 /* the receipt: what a ship moment did, in plain words, generated from its calls */
+
+export function timelineCalls(moment: Moment): CallEvent[] {
+  return (moment.timeline ?? []).filter((event): event is CallEvent => event.kind === "call");
+}
+
+export type SummaryPart = { text: string; tone?: "place" | "failed" };
+
+/**
+ * The receipt's one line while folded: the current purpose, or the actions and places in this message interval.
+ * Related calls retain retry relationships across messages without adding their work to this receipt.
+ */
+export function receiptSummary(moment: Moment, places: readonly Place[], relatedCalls?: readonly CallEvent[]): SummaryPart[] {
+  const calls = timelineCalls(moment);
+  if (calls.length === 0) {
+    const processWork = moment.activities.filter((activity) => !activity.you && activity.target === null);
+    if (processWork.length > 0) return [{ text: processWork.some((activity) => activity.live) ? "working" : "worked" }];
+    return [{ text: moment.narration ? "working notes" : "response details" }];
+  }
+  const label = (target: string | null) => target === null ? "the process" : placeLabel(target, places);
+  const failed = calls.filter((event) => event.call.failed);
+  const retried = failed.filter((event) => (relatedCalls ?? calls).some((later) => later.retryOf === event.call.callId)).length;
+  const failures: SummaryPart[] = failed.length > 0
+    ? [{ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" }]
+    : [];
+  if (moment.thinking) {
+    const running = calls.find((event) => !event.call.finished);
+    if (running) return [{ text: running.call.description }, ...failures];
+  }
+  const named = [...new Set(calls.map((event) => event.target))].map(label);
+  const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "action")} on ` }];
+  named.forEach((name, index) => {
+    if (index > 0) parts.push({ text: index === named.length - 1 ? " and " : ", " });
+    parts.push({ text: name, tone: "place" });
+  });
+  parts.push(...failures);
+  return parts;
+}
 
 export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {
   return moment.activities.filter((activity): activity is Activity & { target: string } => !activity.you && activity.target !== null).map((activity) => ({

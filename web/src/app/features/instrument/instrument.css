@@ -378,6 +378,8 @@
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .zen-caret,
+.instrument.is-light .zen-thinking .dot,
+.instrument.is-light .receipt-timeline .dot,
 .instrument.is-light .prompt-line .block-caret,
 .instrument.is-light .zen-timeline i.is-here,
 .instrument.is-light .zen-timeline i.is-focus,

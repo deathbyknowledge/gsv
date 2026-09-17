@@ -37,6 +37,8 @@ export type PromptLineHandle = {
   /** The place chip, so the picker it opens can tell a press on it from one outside. */
   chip: HTMLButtonElement | null;
   setValue(value: string): void;
+  /** Add text after what is already there and start editing; how a paste from outside the prompt lands. */
+  append(text: string): void;
   focus(): void;
   blur(): void;
   submit(): void;
@@ -137,6 +139,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     setValue(value) {
       if (!inputRef.current) return;
       inputRef.current.value = value;
+      changed();
+    },
+    append(text) {
+      const input = inputRef.current;
+      if (!input || disabled) return;
+      input.focus();
+      input.setRangeText(text, input.value.length, input.value.length, "end");
       changed();
     },
     focus: () => inputRef.current?.focus(),

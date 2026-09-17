@@ -4,6 +4,7 @@ import { conversationMessageRow } from "../../../services/chat/domain/conversati
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
 import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
+import { receiptsForMoments, receiptActions } from "./runReceipts";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import {
   activitiesForRows,
@@ -28,7 +29,9 @@ import {
   receiptSteps,
   resolvePlace,
   resolveTail,
-  trimOutput,
+  receiptSummary,
+  startsWriting,
+  type KeyPress,
   noteSummary,
   type AnswerHistoryEntry,
   type Moment,
@@ -324,7 +327,7 @@ describe("filesystem operation presentation", () => {
       toolArgs: { query: "needle", path: "/tmp", include: "*.txt" },
     });
     expect(search.operation).toEqual({ label: "searched", subject: "needle in /tmp", detail: "1 result" });
-    expect(search.output).toBe("");
+    expect(search.output).toBe("/tmp/hit.txt:2\nneedle");
     const noScope = present("fs.search", { ok: true, matches: [], count: 0 }, { toolArgs: { query: "needle" } });
     expect(noScope.operation).toEqual({ label: "searched", subject: "needle", detail: "0 results" });
     expect(noScope.output).toBe("");
@@ -435,8 +438,10 @@ describe("formatting", () => {
     expect(formatSeconds(3800)).toBe("3.8s");
     expect(formatSeconds(72_000)).toBe("1m 12s");
   });
-  it("trims long output", () => {
-    expect(trimOutput("x".repeat(700))).toMatch(/… 100 more characters$/);
+  it("keeps the full command output available inside an expanded action", () => {
+    const output = "x".repeat(700);
+    const activity = activitiesForRows([row({ id: "full-output", role: "toolResult", toolSyscall: "shell.exec", toolOutput: { stdout: output, exitCode: 0 } })], "r", false)[0];
+    expect(activity.calls[0].output).toBe(output);
   });
   it("links known place mentions", () => {
     expect(linkPlaceReferences("on @laptop and @nowhere", places)).toBe("on [@laptop](#place:laptop) and @nowhere");
@@ -634,6 +639,53 @@ describe("momentsFromConversation", () => {
       ["one", "ship", ["a"]], ["other-process", "worker", ["b"]], ["other-run", "ship", ["c"]],
       ["", "worker", ["e"]], ["two", "ship", ["d"]],
     ]);
+    const receipts = receiptsForMoments(moments, "run", "ship");
+    const ship = receipts.get("conversation:one")!;
+    const worker = receipts.get("conversation:other-process")!;
+    const other = receipts.get("conversation:other-run")!;
+    expect(new Set([ship.key, worker.key, other.key]).size).toBe(3);
+    expect(callsOf(ship.work)).toEqual(["a"]);
+    expect(callsOf(worker.work)).toEqual(["b"]);
+    expect(callsOf(receipts.get("conversation:two")!.work)).toEqual(["d"]);
+    expect(ship.work.thinking).toBe(false);
+    expect(worker.work.thinking).toBe(false);
+  });
+
+  it("starts a new receipt after each message and keeps each disclosure stable as replies arrive", () => {
+    const transcript = [call("first", 10), call("second", 30), call("tail", 50)];
+    const before = momentsFromConversation([], transcript.slice(0, 1), "run");
+    const beforeReceipt = receiptsForMoments(before, "run", "ship").get(before[0].id)!;
+    const streaming = receiptsForMoments(momentsFromConversation([sent("draft", 20, { streaming: true })], transcript.slice(0, 1), "run"), "run", "ship");
+    const moments = momentsFromConversation([sent("first-reply", 20), sent("second-reply", 40)], transcript, "run");
+    const attributed = moments.map((moment, index) => ({ ...moment, attribution: moment.text ? {
+      model: index === 0 ? "model-one" : "model-two", provider: "test", fallbacks: [], omittedFallbacks: 0,
+    } : null }));
+    const receipts = receiptsForMoments(attributed, "run", "ship");
+    const receipt = receipts.get("conversation:first-reply")!;
+    const second = receipts.get("conversation:second-reply")!;
+    const tail = receipts.get(moments[2].id)!;
+    expect(streaming.get("conversation:draft")?.key).toBe(beforeReceipt.key);
+    expect(receipt.key).toBe(beforeReceipt.key);
+    expect(new Set([receipt.key, second.key, tail.key]).size).toBe(3);
+    expect([receipt, second].flatMap((entry) => entry.replies.map((reply) => [reply.text, reply.attribution?.model]))).toEqual([
+      ["first-reply", "model-one"], ["second-reply", "model-two"],
+    ]);
+    expect([receipt, second, tail].map((entry) => callsOf(entry.work))).toEqual([["first"], ["second"], ["tail"]]);
+    expect([receipt, second, tail].map((entry) => entry.work.thinking)).toEqual([false, false, true]);
+    expect(moments.map(callsOf)).toEqual([["first"], ["second"], ["tail"]]);
+    const finalMoments = momentsFromConversation([sent("first-reply", 20), sent("second-reply", 40), sent("final", 60)], transcript, null);
+    expect(receiptsForMoments(finalMoments, null, "ship").get("conversation:final")?.key).toBe(tail.key);
+    const completed = receiptsForMoments(attributed, null, "ship").get("conversation:first-reply")!;
+    expect(completed.key).toBe(receipt.key);
+    expect(completed.work.thinking).toBe(false);
+  });
+
+  it("keeps calls without a run separate and leaves direct commands in their own controls", () => {
+    const moments = momentsFromConversation([], [call("one", 10, { runId: undefined }), call("two", 20, { runId: undefined })], null);
+    const direct = { ...moments[0], id: "terminal", activities: moments[0].activities.map((activity) => ({ ...activity, you: true })) };
+    const receipts = receiptsForMoments([...moments, direct], null, "ship");
+    expect(new Set([...receipts.values()].map((receipt) => receipt.key)).size).toBe(2);
+    expect(receipts.has("terminal")).toBe(false);
   });
 
   it("uses durable call and outgoing coordinates when multiple Sends share one millisecond", () => {
@@ -740,6 +792,125 @@ describe("momentsFromConversation", () => {
     expect(callsOf(moments[0])).toEqual(["slow", "fast"]);
     expect(moments[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60 });
     expect(receiptDuration(moments[0])).toBe(formatSeconds(50));
+  });
+
+  const shell = (id: string, command: string, startedAt: number, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => call(id, timestamp, {
+    toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { command }, toolOutput: { status: "completed", output: `${id} output`, exitCode: 0 }, toolStartedAt: startedAt, ...overrides,
+  });
+  const note = (id: string, text: string, timestamp: number) => message({ id, runId: "run", processId: "ship", text, timestamp });
+  const summaryText = (moment: Moment) => receiptSummary(moment, places).map((part) => part.text).join("");
+
+  it("links retries across reply boundaries and keeps each note inside its following action", () => {
+    const transcript = [
+      note("note-a", "Try the backup.", 5),
+      shell("failed", "rsync /a /b", 10, 15, { toolOutcome: "failed", status: "error", isError: true }),
+      note("note-b", "Try the same sync again.", 25),
+      shell("retry", "rsync /a /b", 30, 35, { toolArgs: { input: "rsync /a /b", timeout: 60_000 } }),
+      note("tail", "Everything is recorded.", 45),
+    ];
+    const source = momentsFromConversation([sent("update", 20), sent("done", 40)], transcript, "run");
+    const receipts = [...receiptsForMoments(source, "run", "ship").values()];
+    const receipt = receipts[0];
+    const actions = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).actions);
+    const trailingNotes = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).trailingNotes);
+    expect(receipts.map((entry) => callsOf(entry.work))).toEqual([["failed"], ["retry"], []]);
+    expect(actions.map(({ event, notes }) => [event.call.callId, event.retryOf, notes.map((note) => note.text)])).toEqual([
+      ["failed", null, ["Try the backup."]], ["retry", "failed", ["Try the same sync again."]],
+    ]);
+    expect(trailingNotes.map((note) => note.text)).toEqual(["Everything is recorded."]);
+    expect(source.flatMap((moment) => moment.timeline ?? []).filter((event) => event.kind === "call").map((event) => event.retryOf)).toEqual([null, null]);
+    expect(receiptSummary(receipt.work, places, receipt.relatedCalls).filter((part) => part.tone === "failed")).toEqual([
+      { text: " · 1 failed and retried", tone: "failed" },
+    ]);
+  });
+
+  type ShellRetryCase = { name: string; failedArgs: ChatTranscriptValue | undefined; laterArgs: ChatTranscriptValue | undefined };
+  it.each<ShellRetryCase>([
+    { name: "different command arguments", failedArgs: { input: "cat /missing-a" }, laterArgs: { input: "cat /other-file" } },
+    { name: "different working directories", failedArgs: { input: "cat config.json", cwd: "/first" }, laterArgs: { input: "cat config.json", cwd: "/second" } },
+    { name: "different shell sessions", failedArgs: { input: "status", sessionId: "first" }, laterArgs: { input: "status", sessionId: "second" } },
+    { name: "starting versus continuing a session", failedArgs: { input: "status", sessionId: "first", start: true }, laterArgs: { input: "status", sessionId: "first" } },
+    { name: "missing command evidence", failedArgs: undefined, laterArgs: undefined },
+  ])("does not mark work with $name as a retry across replies", ({ failedArgs, laterArgs }) => {
+    const source = momentsFromConversation([sent("update", 20), sent("done", 40)], [
+      shell("failed", "", 10, 15, { toolArgs: failedArgs, toolOutcome: "failed", status: "error", isError: true }),
+      shell("unrelated", "", 30, 35, { toolArgs: laterArgs }),
+    ], null);
+    const receipts = [...receiptsForMoments(source, null, "ship").values()];
+    const actions = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).actions);
+    expect(actions.map(({ event }) => [event.call.callId, event.retryOf])).toEqual([
+      ["failed", null], ["unrelated", null],
+    ]);
+    expect(receiptSummary(receipts[0].work, places, receipts[0].relatedCalls).filter((part) => part.tone === "failed")).toEqual([
+      { text: " · 1 failed", tone: "failed" },
+    ]);
+  });
+
+  it("finds the matching shell retry after unrelated work using the same executable", () => {
+    const [moment] = momentsFromConversation([sent("reply", 60)], [
+      shell("failed", "cat /missing-a", 10, 15, { toolOutcome: "failed", status: "error", isError: true }),
+      shell("unrelated", "cat /other-file", 30, 35),
+      shell("retry", "cat /missing-a", 40, 45),
+    ], null);
+    expect(moment.timeline?.filter((event) => event.kind === "call").map((event) => [event.call.callId, event.retryOf])).toEqual([
+      ["failed", null], ["unrelated", null], ["retry", "failed"],
+    ]);
+    expect(summaryText(moment)).toBe("3 actions on MacBook 16 · 1 failed and retried");
+  });
+
+  it("lays the run out in order, notes between calls, and links a retry to the failure it repeats", () => {
+    const transcript = [
+      note("n1", "Check the disk first.", 5),
+      shell("df", "df -h /Volumes/Studio", 8, 10),
+      note("n2", "Now the notes.\n\nThen size the sync.", 12),
+      call("read", 20, { toolStartedAt: 18 }),
+      shell("sync-a", "rsync -a /Projects/ /B/", 25, 30, { toolOutcome: "failed", isError: true, status: "error", toolOutput: { status: "completed", output: "rsync: link_stat failed", exitCode: 23 } }),
+      shell("sync-b", "rsync -a /Projects/ /B/", 35, 45),
+      shell("du", "du -sh /x", 48, 50),
+      call("send", 55, { toolName: "Send", toolSyscall: null }),
+    ];
+    const [moment] = momentsFromConversation([sent("reply", 60)], transcript, null);
+    expect(moment.timeline?.map((event) => event.kind === "thought" ? ["thought", event.text] : ["call", event.call.callId, event.target, event.retryOf])).toEqual([
+      ["thought", "Check the disk first."],
+      ["call", "df", "laptop", null],
+      ["thought", "Now the notes."],
+      ["thought", "Then size the sync."],
+      ["call", "read", "gsv", null],
+      ["call", "sync-a", "laptop", null],
+      ["call", "sync-b", "laptop", "sync-a"],
+      ["call", "du", "laptop", null],
+    ]);
+    expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
+    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and your cloud home · 1 failed and retried");
+    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud home"]);
+  });
+
+  it("shows the current purpose or action count without thinking text or a timer", () => {
+    const done = shell("df", "df -h", 8, 10);
+    const running = shell("ls", "ls -lt", 20, 20, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, isError: undefined });
+    const [busy] = momentsFromConversation([], [note("n1", "Look.", 5), done, running], "run");
+    expect(summaryText(busy)).toBe("run a command");
+    const [between] = momentsFromConversation([], [note("n1", "Look.", 5), done], "run");
+    expect(summaryText(between)).toBe("1 action on MacBook 16");
+    const [failedOnly] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, { toolOutcome: "failed", isError: true, status: "error" })], null);
+    expect(summaryText(failedOnly)).toBe("1 action on MacBook 16 · 1 failed");
+  });
+
+  it("uses the purpose in the live receipt and preserves it when a separate result lands", () => {
+    const running = shell("disk", "df -h", 10, 10, {
+      role: "tool", status: "running", toolPurpose: "  check\n free disk space  ", toolOutput: undefined, toolOutcome: undefined,
+    });
+    const [busy] = momentsFromConversation([], [running], "run");
+    expect(summaryText(busy)).toBe("check free disk space");
+    const result = { ...running, role: "toolResult" as const, status: "done" as const, timestamp: 100,
+      toolPurpose: undefined, toolArgs: undefined, toolOutcome: "completed" as const, toolOutput: "96 GB free" };
+    const [done] = momentsFromConversation([sent("reply", 110)], [running, result], null);
+    expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", summary: "df -h", finished: true } });
+  });
+
+  it.each([undefined, " \n "])("describes a legacy call with purpose %j without using the raw command as prose", (toolPurpose) => {
+    const [moment] = momentsFromConversation([], [shell("disk", "df -h", 10, 20, { toolPurpose })], null);
+    expect(moment.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "run a command", summary: "df -h" } });
   });
 });
 
@@ -974,5 +1145,25 @@ describe("conversation attachments", () => {
     expect(moments).toHaveLength(2);
     expect(moments.map((moment) => moment.media)).toEqual([media, media]);
     expect(answerAttribution(moments[1], [{ runId: "r1", timestamp: 150, metadata: { provider: { provider: "test", model: "image-model" } } }], 200)?.model).toBe("image-model");
+  });
+});
+
+describe("startsWriting", () => {
+  const claimed = new Set(["j", "k", "g", "G", "o", "z", "m", ",", "l", "x", "?"]);
+  const press = (key: string, held: Partial<Omit<KeyPress, "key">> = {}): KeyPress => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...held });
+
+  it("starts on a plain printable character, capitals and symbols included", () => {
+    for (const key of ["a", "A", "1", "@", "$", "/", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
+  });
+
+  it("leaves claimed shortcut keys to their owners", () => {
+    for (const key of ["j", "G", "?", "z", ","]) expect(startsWriting(press(key), claimed)).toBe(false);
+  });
+
+  it("ignores command modifiers, whitespace and named keys", () => {
+    expect(startsWriting(press("a", { ctrlKey: true }), claimed)).toBe(false);
+    expect(startsWriting(press("k", { metaKey: true }), claimed)).toBe(false);
+    expect(startsWriting(press("e", { altKey: true }), claimed)).toBe(false);
+    for (const key of [" ", "Enter", "Tab", "Escape", "ArrowDown", "Dead", "Shift", "Backspace"]) expect(startsWriting(press(key), claimed)).toBe(false);
   });
 });

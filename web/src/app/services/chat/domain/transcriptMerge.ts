@@ -207,6 +207,7 @@ export function mergeTranscriptRows(
       merged.set(key, { ...current, toolArgs: row.toolArgs ?? current.toolArgs, toolSyscall: row.toolSyscall ?? current.toolSyscall, toolTarget: row.toolTarget ?? current.toolTarget, toolRunControl: row.toolRunControl ?? current.toolRunControl,
         toolStartedAt: row.toolStartedAt ?? current.toolStartedAt,
         toolCallRecordKey: row.toolCallRecordKey ?? current.toolCallRecordKey,
+        toolPurpose: row.toolPurpose ?? current.toolPurpose,
       });
       continue;
     }
@@ -214,6 +215,7 @@ export function mergeTranscriptRows(
       merged.set(key, { ...row,
         processId: row.processId ?? current.processId,
         toolArgs: row.toolArgs ?? current.toolArgs,
+        toolPurpose: row.toolPurpose ?? current.toolPurpose,
         toolSyscall: row.toolSyscall ?? current.toolSyscall,
         toolTarget: row.toolTarget ?? current.toolTarget,
         toolRunControl: row.toolRunControl || current.toolRunControl,
