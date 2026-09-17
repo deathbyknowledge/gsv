@@ -1,8 +1,7 @@
 import * as deployedAdapter from "../src/managed";
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
-import type { ManagedTelegramPeer } from "../src/managed-peer";
 
 type TelegramApiMessage = {
   method: string;
@@ -196,58 +195,6 @@ function typedStub<T, V>(value: V): T {
 }
 
 describe("managed Telegram clean-instance flow", () => {
-  it("offers fresh pairing after password revocation and waits for confirmation before replacing the route", async () => {
-    // SAFETY: the test configuration binds this concrete Durable Object class.
-    const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace<ManagedTelegramPeer>;
-    const peer = peers.getByName("managed:12345");
-    const previousRoute = {
-      installationId: "installation_recovery", localUid: 1000, generation: "revoked-generation",
-      canonicalOrigin: "https://recovery.gsv.test", linkedAt: Date.now(),
-    };
-    await runInDurableObject(peer, async (_instance, state) => {
-      await state.storage.put("managed_telegram_peer:v1:state", {
-        version: 1, actorId: "12345", surfaceId: "12345", activeRoute: previousRoute,
-      });
-    });
-    const before = (await telegramMessages()).length;
-    expect((await SELF.fetch(update(501, 501, "__identity_revoked__"))).status).toBe(200);
-    let code = "";
-    await vi.waitFor(async () => {
-      const text = (await telegramMessages()).slice(before).find((message) => message.body.text?.includes("Pairing code:"))?.body.text ?? "";
-      code = text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0]?.replaceAll("-", "") ?? "";
-      expect(code).toHaveLength(12);
-    });
-    await runInDurableObject(peer, async (_instance, state) => {
-      expect(await state.storage.get("managed_telegram_peer:v1:state")).toMatchObject({ activeRoute: previousRoute });
-    });
-    // SAFETY: the test configuration binds the managed pairing namespace.
-    const pairings = env.MANAGED_TELEGRAM_PAIRING as DurableObjectNamespace;
-    const pairing = typedStub<ManagedPairingStub>(pairings.getByName(`pair:${code}`));
-    await expect(pairing.inspect()).resolves.toMatchObject({ actorId: "12345", linked: true });
-    const operation = {
-      code, installationId: previousRoute.installationId, localUid: 1000,
-      operationId: "confirm-after-recovery", canonicalOrigin: previousRoute.canonicalOrigin,
-    };
-    const prepared = await pairing.prepare(operation);
-    expect(prepared.route.generation).not.toBe(previousRoute.generation);
-    const activation = { code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin };
-    await pairing.activate(activation);
-    await pairing.finalize(activation);
-
-    expect((await SELF.fetch(update(502, 502, "hello after reconnecting"))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect(await telegramMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ text: "Personal received hello after reconnecting" }),
-      }));
-    });
-    const calls = (await gatewayCalls()).filter((call) => call.call === "adapter.inbound");
-    expect(calls.filter((call) => call.args?.message?.text === "__identity_revoked__")).toHaveLength(1);
-    expect(calls).toContainEqual(expect.objectContaining({
-      installation: { installationId: previousRoute.installationId },
-      args: expect.objectContaining({ routeGeneration: prepared.route.generation, message: expect.objectContaining({ text: "hello after reconnecting" }) }),
-    }));
-  });
-
   it("pairs a bot-first identity and routes later messages to the selected installation", async () => {
     expect((await SELF.fetch(update(1, 1, "hello"))).status).toBe(200);
     await vi.waitFor(async () => {

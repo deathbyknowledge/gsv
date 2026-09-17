@@ -529,32 +529,6 @@ async function sendApproval(
 }
 
 describe("managed Slack clean-instance flow", () => {
-  it("offers fresh private pairing when the Gateway reports a password-revoked identity", async () => {
-    await installWorkspace();
-    const initial = await pairActor({
-      actorId: "UALICE01", eventId: "EvRECOVER1", ts: "1700000501.000001",
-      installationId: "installation-recovery", operationId: "before-recovery",
-    });
-    expect((await SELF.fetch(await signedEvent({
-      actorId: "UALICE01", channelId: "DALICE01", type: "message", channelType: "im",
-      eventId: "EvRECOVER2", ts: "1700000502.000001", text: "__identity_revoked__",
-    }))).status).toBe(200);
-    const code = await pairingCodeFor("UALICE01", initial.code);
-    await expect(pairingStub(code).inspect()).resolves.toMatchObject({ actorId: "UALICE01", linked: true });
-    const replacement = await pair("UALICE01", code, "installation-recovery", "after-recovery");
-    expect(replacement.generation).not.toBe(initial.generation);
-    expect((await SELF.fetch(await signedEvent({
-      actorId: "UALICE01", channelId: "DALICE01", type: "message", channelType: "im",
-      eventId: "EvRECOVER3", ts: "1700000503.000001", text: "hello after reconnecting",
-    }))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
-        installation: { installationId: "installation-recovery" }, call: "adapter.inbound",
-        args: expect.objectContaining({ routeGeneration: replacement.generation, message: expect.objectContaining({ text: "hello after reconnecting" }) }),
-      }));
-    });
-  });
-
   it.each([
     { call: "shell.exec", stage: "admission" },
     { call: "fs.read", stage: "admission" },

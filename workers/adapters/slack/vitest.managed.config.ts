@@ -77,6 +77,6 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts","test/managed-flow.test.ts"],
+    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts", "test/managed-flow.test.ts", "test/recovery.test.ts"],
   },
 });
