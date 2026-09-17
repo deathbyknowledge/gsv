@@ -64,6 +64,117 @@ describe("account setup", () => {
     } satisfies SessionClient;
   }
 
+  it("opens sign-in and clears a stale setup capability after the space is initialized", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    window.localStorage.setItem("gsv.ui.gateway.username", "alice");
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code: 401 });
+    const service = createSessionService(client);
+
+    await service.start();
+
+    expect(service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: null });
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+    expect(client.requestOnce).toHaveBeenCalledOnce();
+    expect(client.requestOnce).toHaveBeenCalledWith(
+      "wss://example.test/ws", "sys.connect", expect.objectContaining({ protocol: 4 }),
+    );
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["setup is still required", { code: 425, details: { setupMode: true } }],
+    ["the server cannot be reached", new Error("Connection interrupted")],
+  ])("retains setup authorization on startup when %s", async (_label, error) => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce(error);
+    const service = createSessionService(client);
+
+    await service.start();
+
+    expect(service.snapshot().phase).toBe("setup");
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe(onboardingToken);
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("restores an existing session after discarding stale setup authorization", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    window.localStorage.setItem("gsv.ui.session.token.v1", JSON.stringify({
+      username: "alice", tokenId: "session:alice", token: "saved-session", expiresAt: null,
+    }));
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code: 401 });
+    const service = createSessionService(client);
+
+    await service.start();
+
+    expect(service.snapshot()).toMatchObject({ phase: "ready", username: "alice" });
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+    expect(client.connect).toHaveBeenCalledWith({
+      url: "wss://example.test/ws", username: "alice", token: "saved-session",
+    });
+  });
+
+  it("does not reopen setup after the user locks a pending startup probe", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    let rejectProbe!: (reason: unknown) => void;
+    client.requestOnce.mockReturnValueOnce(new Promise<never>((_resolve, reject) => {
+      rejectProbe = reject;
+    }));
+    const service = createSessionService(client);
+
+    const pending = service.start();
+    service.lock();
+    rejectProbe({ code: 425, details: { setupMode: true } });
+    await pending;
+
+    expect(service.snapshot().phase).toBe("locked");
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe(onboardingToken);
+  });
+
+  it("offers sign-in when rejected setup is followed by confirmation that the space is initialized", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    const setupError = Object.assign(new Error("Installation setup link is invalid or expired"), { code: 401 });
+    client.requestOnce.mockRejectedValueOnce(setupError).mockRejectedValueOnce({ code: 401 });
+    const service = createSessionService(client);
+
+    await expect(service.setup({ username: "alice", password: "setup password" })).rejects.toBe(setupError);
+
+    expect(service.snapshot()).toMatchObject({
+      phase: "locked", username: "alice", message: "This space is already set up. Sign in to continue.",
+    });
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+    expect(client.requestOnce).toHaveBeenNthCalledWith(
+      2, "wss://example.test/ws", "sys.connect", expect.objectContaining({ protocol: 4 }),
+    );
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["setup is still required", { code: 425, details: { setupMode: true } }],
+    ["the server cannot be reached", new Error("Connection interrupted")],
+  ])("keeps rejected setup retryable when %s", async (_label, error) => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    const setupError = Object.assign(new Error("Installation setup link is invalid or expired"), { code: 401 });
+    client.requestOnce.mockRejectedValueOnce(setupError).mockRejectedValueOnce(error);
+    const service = createSessionService(client);
+
+    await expect(service.setup({ username: "alice", password: "setup password" })).rejects.toBe(setupError);
+
+    expect(service.snapshot()).toMatchObject({ phase: "setup", message: setupError.message });
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe(onboardingToken);
+  });
+
   it("signs in immediately with the credentials created by setup", async () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);

@@ -83,7 +83,7 @@ describe("installation onboarding capability", () => {
         cwd: "/home/alice",
       },
       rootLocked: false,
-    }));
+    })).mockRejectedValueOnce({ code: 425, details: { setupMode: true } });
     const client = {
       connect: vi.fn<SessionClient["connect"]>().mockResolvedValue({
         protocol: 4,

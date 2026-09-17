@@ -211,7 +211,7 @@ async function revokeSessionToken(client: SessionClient, tokenId: string, reason
   return result.revoked === true;
 }
 
-async function probeSetupMode(client: SessionClient, url: string): Promise<boolean> {
+async function probeSetupMode(client: SessionClient, url: string): Promise<boolean | null> {
   try {
     await client.requestOnce(url, "sys.connect", {
       protocol: 4,
@@ -226,7 +226,7 @@ async function probeSetupMode(client: SessionClient, url: string): Promise<boole
     if (isSetupRequiredError(error)) {
       return true;
     }
-    return false;
+    return isAuthenticationRejectedError(error) ? false : null;
   }
 }
 
@@ -666,13 +666,22 @@ export function createSessionService(client: SessionClient): SessionService {
           : undefined),
       });
     } catch (error) {
+      if (setupGeneration !== reconnectGeneration) throw error;
+      const alreadyInitialized = isAuthenticationRejectedError(error)
+        && await probeSetupMode(client, url) === false;
       if (setupGeneration === reconnectGeneration) {
+        if (alreadyInitialized) {
+          clearInstallationOnboardingToken();
+          installationOnboardingToken = null;
+        }
         setSnapshot({
-          phase: "setup",
+          phase: alreadyInitialized ? "locked" : "setup",
           url,
           username: username || snapshot.username,
           connectionId: null,
-          message: normalizeMessage(error),
+          message: alreadyInitialized
+            ? "This space is already set up. Sign in to continue."
+            : normalizeMessage(error),
         });
       }
       throw error;
@@ -721,46 +730,24 @@ export function createSessionService(client: SessionClient): SessionService {
 
   const start = async (): Promise<void> => {
     cancelSilentReconnect();
+    const startGeneration = reconnectGeneration;
     const url = deriveGatewayUrlFromOrigin();
     const persisted = currentSessionToken;
+    const expired = persisted !== null && isTokenExpired(persisted);
 
-    if (installationOnboardingToken) {
-      setSnapshot({
-        phase: "setup",
-        url,
-        username: snapshot.username,
-        connectionId: null,
-        message: null,
-      });
-      return;
-    }
-
-    if (!persisted) {
-      const setupRequired = await probeSetupMode(client, url);
-      if (setupRequired) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      } else {
-        setSnapshot({
-          phase: "locked",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      }
-      return;
-    }
-
-    if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
+    if (expired) {
       clearStoredSessionToken();
+    }
+
+    if (installationOnboardingToken || !persisted || expired) {
       const setupRequired = await probeSetupMode(client, url);
-      if (setupRequired) {
+      if (startGeneration !== reconnectGeneration) return;
+
+      if (setupRequired === false && installationOnboardingToken) {
+        clearInstallationOnboardingToken();
+        installationOnboardingToken = null;
+      }
+      if (setupRequired || installationOnboardingToken) {
         setSnapshot({
           phase: "setup",
           url,
@@ -768,16 +755,18 @@ export function createSessionService(client: SessionClient): SessionService {
           connectionId: null,
           message: null,
         });
-      } else {
+        return;
+      }
+      if (!persisted || expired) {
         setSnapshot({
           phase: "locked",
           url,
-          username: persisted.username,
+          username: persisted?.username ?? snapshot.username,
           connectionId: null,
-          message: "Session expired. Sign in again.",
+          message: expired ? "Session expired. Sign in again." : null,
         });
+        return;
       }
-      return;
     }
 
     setSnapshot({
