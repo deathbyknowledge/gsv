@@ -4,6 +4,7 @@ import { useColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
 import { InstrumentBackdrop } from "../instrument/shared/InstrumentBackdrop";
 import { Wordmark } from "../instrument/shared/Wordmark";
+import { AuthShip } from "./backgrounds/AuthShip";
 import "../../../styles/gsv-fonts.css";
 import "../instrument/instrument.css";
 import "./session-theme.css";
@@ -23,7 +24,12 @@ export function AuthScene({ children, setup = false }: { children: ComponentChil
           {theme === "light" ? "Dark" : "Light"}
         </button>
       </header>
-      <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
+      <div class="gsv-auth-composition">
+        <AuthShip arrival={setup} theme={theme} />
+        <div class="gsv-auth-panels">
+          <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
+        </div>
+      </div>
     </div>
   );
 }

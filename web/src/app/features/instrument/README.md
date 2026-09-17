@@ -10,6 +10,14 @@ installation capability and signs in immediately after creating the account.
 Failed account creation keeps the form available for retry. If only sign-in
 fails, the ordinary login form shows the error with the created username filled.
 
+The session layout also owns one ASCII Wayfarer ship. Setup forms it from
+particles; sign-in and recovery show the same ship already formed with gentle
+motion. It sits beside the form on wide screens and above it on narrow screens.
+The illustration never delays form interaction or sign-in. Reduced motion shows
+the completed ship, and the glyph host pauses rendering when it is offscreen.
+The fixed geometry raster averages coverage before choosing glyphs, preserving
+the model's empty spaces as its displayed type size changes.
+
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list
 supplies owner and run identity; each control reads the original child request

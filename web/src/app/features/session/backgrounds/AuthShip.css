@@ -1,0 +1,38 @@
+.gsv-auth-illustration {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1.45;
+  container-type: inline-size;
+  pointer-events: none;
+  user-select: none;
+}
+.gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette] {
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 64%, transparent);
+  --ascii-foreground: var(--glyph);
+  --ascii-stars: var(--accent-bright);
+  --ascii-foreground-glow: 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
+  --ascii-star-glow: 0 0 6px color-mix(in srgb, var(--accent) 28%, transparent);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.gsv-auth-ship .gsv-ascii-galaxy-pre {
+  font-family: "Departure Mono", monospace;
+  font-size: min(9px, 1cqi);
+  line-height: 1;
+}
+.gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {
+  --ascii-foreground-glow: none;
+  --ascii-star-glow: none;
+}
+@media (max-width: 900px) {
+  .gsv-auth-illustration { aspect-ratio: 2.8; }
+}
