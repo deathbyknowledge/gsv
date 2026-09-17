@@ -26,7 +26,7 @@
 }
 .gsv-auth-ship .gsv-ascii-galaxy-pre {
   font-family: "Departure Mono", monospace;
-  font-size: min(9px, 1cqi);
+  font-size: min(calc(9px * var(--ship-glyph-scale)), calc(1cqi * var(--ship-glyph-scale)));
   line-height: 1;
 }
 .gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {

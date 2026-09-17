@@ -2,8 +2,9 @@ import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../compo
 import { buildOpenCountry, type ShipModel, type ShipPoint } from "./openCountry";
 import { rotationMatrix, ShipRaster } from "./shipRaster";
 
-const COLS = 160;
-const ROWS = 80;
+export const SHIP_GLYPH_SCALE = 0.75;
+const COLS = Math.round(160 / SHIP_GLYPH_SCALE);
+const ROWS = Math.round(80 / SHIP_GLYPH_SCALE);
 const RAMP = " .,:;irsXA253hMHGS#9B&@";
 const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 const smooth = (start: number, end: number, time: number) => {
@@ -44,7 +45,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
         const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
         const perspective = 1 + z * 0.035;
-        const column = raster.width * 0.41 + x * unit * 1.62 * perspective;
+        const column = raster.width * 0.43 + x * unit * 1.62 * perspective;
         const row = raster.height * 0.51 + y * unit * perspective;
         const nx = matrix[0] * point.nx + matrix[1] * point.ny + matrix[2] * point.nz;
         const ny = matrix[3] * point.nx + matrix[4] * point.ny + matrix[5] * point.nz;

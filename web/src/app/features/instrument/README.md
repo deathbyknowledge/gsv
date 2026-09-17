@@ -18,8 +18,9 @@ The illustration never delays form interaction or sign-in. Reduced motion shows
 the completed ship, and the glyph host pauses rendering when it is offscreen.
 The fixed geometry raster averages coverage before choosing glyphs, preserving
 the model's empty spaces as its displayed type size changes. The scene uses
-160×80 glyphs from a 320×160 raster, with close framing to give the hull and
-landscape more room within the illustration.
+213×107 glyphs at 0.75× text size from a fixed 320×160 raster. The font and grid
+share one scale so smaller characters retain the enlarged ship's physical size;
+fractional area averaging preserves the same projected geometry and coverage.
 Setup keeps the drive cores dark and has no exhaust while the habitat lights
 come on during assembly. Sign-in and recovery show the ship underway, with lit
 drive cores and three steady, softly fading exhaust tails. The glows use the same

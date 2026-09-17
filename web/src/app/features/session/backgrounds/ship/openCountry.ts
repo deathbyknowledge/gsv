@@ -130,7 +130,7 @@ export function buildOpenCountry(drivesOn: boolean): ShipModel {
       for (let i = 0; i < 24; i++) {
         const distance = i / 23;
         driveGlow.push({
-          x: x + 0.015 + distance * 0.75, y, z,
+          x: x + 0.015 + distance * 0.56, y, z,
           radius: radius * (0.52 - distance * 0.32),
           brightness: 0.98 * Math.pow(1 - distance, 0.7),
         });

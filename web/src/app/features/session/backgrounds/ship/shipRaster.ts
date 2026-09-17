@@ -12,14 +12,16 @@ export class ShipRaster {
   private readonly pixels: Float32Array;
   private readonly depth: Float32Array;
   private readonly cells: Float32Array;
+  private readonly integral: Float64Array;
   private projected = new Float32Array(0);
 
   constructor(private readonly cols: number, private readonly rows: number) {
-    this.width = cols * 2;
-    this.height = rows * 2;
+    this.width = 320;
+    this.height = 160;
     this.pixels = new Float32Array(this.width * this.height);
     this.depth = new Float32Array(this.pixels.length);
     this.cells = new Float32Array(cols * rows);
+    this.integral = new Float64Array((this.width + 1) * (this.height + 1));
   }
 
   clear(): void {
@@ -53,7 +55,7 @@ export class ShipRaster {
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
       const perspective = 1 + z * 0.035;
-      projected[index] = this.width * 0.41 + x * unit * 1.62 * perspective;
+      projected[index] = this.width * 0.43 + x * unit * 1.62 * perspective;
       projected[index + 1] = this.height * 0.51 + y * unit * perspective;
       projected[index + 2] = z;
       const nx = matrix[0] * vertices[index + 3] + matrix[1] * vertices[index + 4] + matrix[2] * vertices[index + 5];
@@ -76,7 +78,7 @@ export class ShipRaster {
       const y = matrix[3] * point.x + matrix[4] * py + matrix[5] * point.z;
       const z = matrix[6] * point.x + matrix[7] * py + matrix[8] * point.z;
       const perspective = 1 + z * 0.035;
-      const cx = this.width * 0.41 + x * unit * 1.62 * perspective;
+      const cx = this.width * 0.43 + x * unit * 1.62 * perspective;
       const cy = this.height * 0.51 + y * unit * perspective;
       const radius = point.radius * unit * perspective;
       const left = Math.max(0, Math.ceil(cx - radius * 1.62 - 0.5));
@@ -132,10 +134,30 @@ export class ShipRaster {
   }
 
   resolve(): Float32Array {
-    for (let row = 0; row < this.rows; row++) {
-      for (let column = 0; column < this.cols; column++) {
-        const index = row * 2 * this.width + column * 2;
-        this.cells[row * this.cols + column] = (this.pixels[index] + this.pixels[index + 1] + this.pixels[index + this.width] + this.pixels[index + this.width + 1]) / 4;
+    const { width, height, cols, rows, pixels, integral } = this;
+    const stride = width + 1;
+    for (let y = 0; y < height; y++) {
+      let sum = 0;
+      for (let x = 0; x < width; x++) {
+        sum += pixels[y * width + x];
+        integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + sum;
+      }
+    }
+    const areaTo = (x: number, y: number): number => {
+      const ix = Math.min(width - 1, Math.floor(x)), iy = Math.min(height - 1, Math.floor(y));
+      const fx = x - ix, fy = y - iy;
+      const index = iy * stride + ix;
+      const base = integral[index];
+      return base + fx * (integral[index + 1] - base) + fy * (integral[index + stride] - base) + fx * fy * pixels[iy * width + ix];
+    };
+    // Fractional glyph cells include empty pixels, retaining gaps at any text size.
+    const area = width / cols * height / rows;
+    for (let row = 0; row < rows; row++) {
+      const top = row / rows * height, bottom = (row + 1) / rows * height;
+      for (let column = 0; column < cols; column++) {
+        const left = column / cols * width, right = (column + 1) / cols * width;
+        const sum = areaTo(right, bottom) - areaTo(left, bottom) - areaTo(right, top) + areaTo(left, top);
+        this.cells[row * cols + column] = Math.max(0, Math.min(1, sum / area));
       }
     }
     return this.cells;
