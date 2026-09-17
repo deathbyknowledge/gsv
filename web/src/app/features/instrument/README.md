@@ -14,14 +14,13 @@ The session layout also owns one ASCII Open Country ship: a broad habitat hull,
 landscape, observation deck and three recessed stern drives. Setup forms it from
 particles; sign-in and recovery show the same ship already formed with gentle
 motion. It sits beside the form on wide screens and above it on narrow screens.
-The illustration never delays form interaction or sign-in. After setup's 5.8-second
-formation, the glyph host stops rendering and retains the completed frame. Login
-and recovery render that frame once. Gentle settled motion uses a CSS transform;
-the model and glyph text are not recalculated during the drift. Formation samples
-are allocated only when needed and released after the particle/surface blend.
-Reduced motion shows the completed ship without drift. The glyph host pauses
-both frame rendering and CSS drift when offscreen or when the tab is hidden,
-and resumes without advancing through the hidden time.
+The illustration never delays form interaction or sign-in. The completed ship
+continues its slow 3D rotation and bobbing at up to 18 rendered frames per second.
+Formation samples are allocated only when needed and released after the
+particle/surface blend; login, recovery and reduced-motion still views skip them.
+Reduced motion shows a still, completed ship. The glyph host pauses rendering
+when offscreen or when the tab is hidden, and resumes without advancing through
+the hidden time.
 The fixed geometry raster averages coverage before choosing glyphs, preserving
 the model's empty spaces as its displayed type size changes. The scene uses
 160×80 glyphs from a 320×160 raster, with close framing to give the hull and

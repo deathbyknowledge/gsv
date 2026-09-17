@@ -33,17 +33,6 @@
   --ascii-foreground-glow: none;
   --ascii-star-glow: none;
 }
-.gsv-auth-ship.is-settled {
-  animation: gsv-auth-ship-drift 18s ease-in-out infinite;
-  animation-play-state: var(--gsv-ascii-play-state, paused);
-}
-@keyframes gsv-auth-ship-drift {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(-0.35%, -0.65%, 0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .gsv-auth-ship.is-settled { animation: none; }
-}
 @media (max-width: 900px) {
   .gsv-auth-illustration { aspect-ratio: 2.8; }
 }
