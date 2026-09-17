@@ -16,6 +16,8 @@ export type AsciiAnimationFrame = {
 export type AsciiAnimationScene = {
   prepare?: () => void | Promise<void>;
   stillAt: number;
+  /** Stop rendering at this time. Omit for continuously changing scenes such as loaders. */
+  duration?: number;
   frame: (seconds: number, motion: boolean) => AsciiAnimationFrame;
 };
 
@@ -46,25 +48,31 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
 
   useEffect(() => {
     const element = foreground.current;
-    if (!element) return;
+    const container = root.current;
+    if (!element || !container) return;
     let cancelled = false;
     let ready = false;
-    let visible = true;
+    let inViewport = !pauseWhenOffscreen || !("IntersectionObserver" in window);
+    let visible = inViewport && !document.hidden;
+    let finished = false;
     let raf = 0;
     let start = 0;
     let last = 0;
     let hiddenAt: number | null = null;
     const frameMs = 1000 / Math.max(1, frameRate);
+    const duration = scene.duration ?? Infinity;
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const moving = () => animate && !(respectReducedMotion && motion?.matches);
     const draw = (seconds: number, allowMotion: boolean) => {
-      const frame = scene.frame(seconds, allowMotion);
-      element.textContent = frame.foreground;
+      finished = seconds >= duration;
+      const frame = scene.frame(Math.min(seconds, duration), allowMotion);
+      if (element.textContent !== frame.foreground) element.textContent = frame.foreground;
       element.classList.toggle("is-glitch", frame.glitch === true);
       element.style.transform = frame.transform ?? "none";
       element.style.opacity = frame.opacity ?? "1";
-      if (stars.current) stars.current.textContent = frame.stars ?? "";
+      if (stars.current && stars.current.textContent !== (frame.stars ?? "")) stars.current.textContent = frame.stars ?? "";
       if (nebula.current && nebula.current.textContent !== (frame.nebula ?? "")) nebula.current.textContent = frame.nebula ?? "";
+      container.classList.toggle("is-settled", finished);
     };
     const revealReplay = (visible: boolean) => {
       if (replay.current) {
@@ -73,54 +81,74 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
       }
     };
     const loop = (now: number) => {
-      if (cancelled) return;
-      if (visible && now - last >= frameMs) {
+      raf = 0;
+      if (cancelled || !visible || !moving() || finished) return;
+      const seconds = (now - start) / 1000;
+      if (now - last >= frameMs || seconds >= duration) {
         last = now;
-        const seconds = (now - start) / 1000;
         draw(seconds, true);
-        if (seconds > scene.stillAt + 1.5) revealReplay(true);
+        if (finished || seconds > scene.stillAt + 1.5) revealReplay(true);
       }
-      if (visible) raf = window.requestAnimationFrame(loop);
+      if (!finished) raf = window.requestAnimationFrame(loop);
+    };
+    const updateMotion = () => {
+      container.style.setProperty("--gsv-ascii-play-state", ready && visible && moving() ? "running" : "paused");
     };
     const restart = () => {
       if (!ready || cancelled) return;
       window.cancelAnimationFrame(raf);
-      if (!moving()) {
-        draw(scene.stillAt, false);
-        revealReplay(false);
-        return;
-      }
+      raf = 0;
+      finished = false;
       start = performance.now();
       hiddenAt = visible ? null : start;
       last = 0;
+      container.classList.remove("is-settled");
       revealReplay(false);
+      updateMotion();
+      if (!visible) return;
+      if (!moving()) {
+        draw(scene.stillAt, false);
+        return;
+      }
       draw(0, false);
-      if (visible) raf = window.requestAnimationFrame(loop);
+      if (!finished) raf = window.requestAnimationFrame(loop);
     };
-    const observer = pauseWhenOffscreen && "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
-      const next = entries.some((entry) => entry.isIntersecting);
+    const updateVisibility = () => {
+      if (cancelled) return;
+      const next = inViewport && !document.hidden;
       if (next === visible) return;
       visible = next;
+      updateMotion();
       if (!visible) {
         hiddenAt = performance.now();
         window.cancelAnimationFrame(raf);
+        raf = 0;
       } else {
         if (hiddenAt !== null) start += performance.now() - hiddenAt;
         hiddenAt = null;
-        if (ready && moving()) raf = window.requestAnimationFrame(loop);
+        if (!ready) return;
+        if (!moving()) draw(scene.stillAt, false);
+        else if (!finished) raf = window.requestAnimationFrame(loop);
       }
+    };
+    const observer = pauseWhenOffscreen && "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+      inViewport = entries.some((entry) => entry.isIntersecting);
+      updateVisibility();
     }) : null;
-    if (root.current) observer?.observe(root.current);
+    observer?.observe(container);
+    document.addEventListener("visibilitychange", updateVisibility);
     const button = replay.current;
     button?.addEventListener("click", restart);
     if (respectReducedMotion) motion?.addEventListener("change", restart);
-    void Promise.resolve().then(() => scene.prepare?.()).then(() => {
+    void Promise.resolve().then(() => { if (!cancelled) return scene.prepare?.(); }).then(() => {
+      if (cancelled) return;
       ready = true;
       restart();
     }).catch(() => {
       if (cancelled) return;
       ready = false;
       window.cancelAnimationFrame(raf);
+      updateMotion();
       element.textContent = label;
       revealReplay(false);
     });
@@ -128,6 +156,9 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
       cancelled = true;
       window.cancelAnimationFrame(raf);
       observer?.disconnect();
+      document.removeEventListener("visibilitychange", updateVisibility);
+      container.classList.remove("is-settled");
+      container.style.removeProperty("--gsv-ascii-play-state");
       button?.removeEventListener("click", restart);
       motion?.removeEventListener("change", restart);
     };

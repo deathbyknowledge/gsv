@@ -43,12 +43,12 @@ export class ShipRaster {
     }
   }
 
-  mesh(mesh: ShipMesh, matrix: number[], unit: number, bob: number, ignition: number): void {
+  mesh(mesh: ShipMesh, matrix: number[], unit: number, ignition: number): void {
     const vertices = mesh.vertices;
     if (this.projected.length !== vertices.length) this.projected = new Float32Array(vertices.length);
     const projected = this.projected;
     for (let index = 0; index < vertices.length; index += 6) {
-      const px = vertices[index], py = vertices[index + 1] + bob, pz = vertices[index + 2];
+      const px = vertices[index], py = vertices[index + 1], pz = vertices[index + 2];
       const x = matrix[0] * px + matrix[1] * py + matrix[2] * pz;
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
@@ -67,14 +67,13 @@ export class ShipRaster {
     }
   }
 
-  glow(points: ShipGlowPoint[], matrix: number[], unit: number, bob: number, ignition: number): void {
+  glow(points: ShipGlowPoint[], matrix: number[], unit: number, ignition: number): void {
     for (const point of points) {
       const brightness = point.brightness * ignition;
       if (brightness < 0.01) continue;
-      const py = point.y + bob;
-      const x = matrix[0] * point.x + matrix[1] * py + matrix[2] * point.z;
-      const y = matrix[3] * point.x + matrix[4] * py + matrix[5] * point.z;
-      const z = matrix[6] * point.x + matrix[7] * py + matrix[8] * point.z;
+      const x = matrix[0] * point.x + matrix[1] * point.y + matrix[2] * point.z;
+      const y = matrix[3] * point.x + matrix[4] * point.y + matrix[5] * point.z;
+      const z = matrix[6] * point.x + matrix[7] * point.y + matrix[8] * point.z;
       const perspective = 1 + z * 0.035;
       const cx = this.width * 0.43 + x * unit * 1.62 * perspective;
       const cy = this.height * 0.51 + y * unit * perspective;

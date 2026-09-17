@@ -11,7 +11,7 @@ export type ShipPoint = Material & {
   delay: number; noise: number;
 };
 export type ShipGlowPoint = { x: number; y: number; z: number; radius: number; brightness: number };
-export type ShipModel = { mesh: ShipMesh; points: ShipPoint[]; driveGlow: ShipGlowPoint[] };
+export type ShipModel = { mesh: ShipMesh; driveGlow: ShipGlowPoint[] };
 
 const TAU = Math.PI * 2;
 const MATERIALS = {
@@ -184,9 +184,18 @@ export function buildOpenCountry(drivesOn: boolean): ShipModel {
   for (const side of [-1, 0, 1]) drive([3.16, 0.23, side * 0.92], side === 0 ? 0.37 : 0.34);
 
   const mesh: ShipMesh = { vertices: new Float32Array(vertices), indices: new Uint32Array(indices), materials };
+  return { mesh, driveGlow };
+}
+
+/** Formation samples are only needed while the hull is assembling. */
+export function sampleShipSurface(mesh: ShipMesh): ShipPoint[] {
+  const { vertices, indices, materials } = mesh;
   let area = 0;
   const distribution = materials.map((material, faceIndex) => {
-    const corners = indices.slice(faceIndex * 3, faceIndex * 3 + 3).map((index): Vector => [vertices[index * 6], vertices[index * 6 + 1], vertices[index * 6 + 2]]);
+    const corners = Array.from({ length: 3 }, (_, corner): Vector => {
+      const index = indices[faceIndex * 3 + corner] * 6;
+      return [vertices[index], vertices[index + 1], vertices[index + 2]];
+    });
     area += Math.hypot(...cross(subtract(corners[1], corners[0]), subtract(corners[2], corners[0]))) / 2 * (material.emission ? 4 : 1);
     return area;
   });
@@ -201,5 +210,5 @@ export function buildOpenCountry(drivesOn: boolean): ShipModel {
     const angle = rand() * TAU, distance = 2.8 + rand() * 3.2;
     points.push({ x: p[0], y: p[1], z: p[2], nx: p[3], ny: p[4], nz: p[5], ...materials[low], sx: Math.cos(angle) * distance, sy: Math.sin(angle) * distance * 0.5, sz: (rand() - 0.5) * 4, delay: rand() * 0.8, noise: rand() });
   }
-  return { mesh, points, driveGlow };
+  return points;
 }
