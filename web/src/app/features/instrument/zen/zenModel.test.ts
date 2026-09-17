@@ -804,8 +804,8 @@ describe("momentsFromConversation", () => {
     const transcript = [
       note("note-a", "Try the backup.", 5),
       shell("failed", "rsync /a /b", 10, 15, { toolOutcome: "failed", status: "error", isError: true }),
-      note("note-b", "Use the current path.", 25),
-      shell("retry", "rsync /c /b", 30, 35),
+      note("note-b", "Try the same sync again.", 25),
+      shell("retry", "rsync /a /b", 30, 35, { toolArgs: { input: "rsync /a /b", timeout: 60_000 } }),
       note("tail", "Everything is recorded.", 45),
     ];
     const source = momentsFromConversation([sent("update", 20), sent("done", 40)], transcript, "run");
@@ -815,13 +815,47 @@ describe("momentsFromConversation", () => {
     const trailingNotes = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).trailingNotes);
     expect(receipts.map((entry) => callsOf(entry.work))).toEqual([["failed"], ["retry"], []]);
     expect(actions.map(({ event, notes }) => [event.call.callId, event.retryOf, notes.map((note) => note.text)])).toEqual([
-      ["failed", null, ["Try the backup."]], ["retry", "failed", ["Use the current path."]],
+      ["failed", null, ["Try the backup."]], ["retry", "failed", ["Try the same sync again."]],
     ]);
     expect(trailingNotes.map((note) => note.text)).toEqual(["Everything is recorded."]);
     expect(source.flatMap((moment) => moment.timeline ?? []).filter((event) => event.kind === "call").map((event) => event.retryOf)).toEqual([null, null]);
     expect(receiptSummary(receipt.work, places, receipt.relatedCalls).filter((part) => part.tone === "failed")).toEqual([
       { text: " · 1 failed and retried", tone: "failed" },
     ]);
+  });
+
+  type ShellRetryCase = { name: string; failedArgs: ChatTranscriptValue | undefined; laterArgs: ChatTranscriptValue | undefined };
+  it.each<ShellRetryCase>([
+    { name: "different command arguments", failedArgs: { input: "cat /missing-a" }, laterArgs: { input: "cat /other-file" } },
+    { name: "different working directories", failedArgs: { input: "cat config.json", cwd: "/first" }, laterArgs: { input: "cat config.json", cwd: "/second" } },
+    { name: "different shell sessions", failedArgs: { input: "status", sessionId: "first" }, laterArgs: { input: "status", sessionId: "second" } },
+    { name: "starting versus continuing a session", failedArgs: { input: "status", sessionId: "first", start: true }, laterArgs: { input: "status", sessionId: "first" } },
+    { name: "missing command evidence", failedArgs: undefined, laterArgs: undefined },
+  ])("does not mark work with $name as a retry across replies", ({ failedArgs, laterArgs }) => {
+    const source = momentsFromConversation([sent("update", 20), sent("done", 40)], [
+      shell("failed", "", 10, 15, { toolArgs: failedArgs, toolOutcome: "failed", status: "error", isError: true }),
+      shell("unrelated", "", 30, 35, { toolArgs: laterArgs }),
+    ], null);
+    const receipts = [...receiptsForMoments(source, null, "ship").values()];
+    const actions = receipts.flatMap((entry) => receiptActions(entry.work.timeline ?? []).actions);
+    expect(actions.map(({ event }) => [event.call.callId, event.retryOf])).toEqual([
+      ["failed", null], ["unrelated", null],
+    ]);
+    expect(receiptSummary(receipts[0].work, places, receipts[0].relatedCalls).filter((part) => part.tone === "failed")).toEqual([
+      { text: " · 1 failed", tone: "failed" },
+    ]);
+  });
+
+  it("finds the matching shell retry after unrelated work using the same executable", () => {
+    const [moment] = momentsFromConversation([sent("reply", 60)], [
+      shell("failed", "cat /missing-a", 10, 15, { toolOutcome: "failed", status: "error", isError: true }),
+      shell("unrelated", "cat /other-file", 30, 35),
+      shell("retry", "cat /missing-a", 40, 45),
+    ], null);
+    expect(moment.timeline?.filter((event) => event.kind === "call").map((event) => [event.call.callId, event.retryOf])).toEqual([
+      ["failed", null], ["unrelated", null], ["retry", "failed"],
+    ]);
+    expect(summaryText(moment)).toBe("3 actions on MacBook 16 · 1 failed and retried");
   });
 
   it("lays the run out in order, notes between calls, and links a retry to the failure it repeats", () => {
@@ -831,7 +865,7 @@ describe("momentsFromConversation", () => {
       note("n2", "Now the notes.\n\nThen size the sync.", 12),
       call("read", 20, { toolStartedAt: 18 }),
       shell("sync-a", "rsync -a /Projects/ /B/", 25, 30, { toolOutcome: "failed", isError: true, status: "error", toolOutput: { status: "completed", output: "rsync: link_stat failed", exitCode: 23 } }),
-      shell("sync-b", "rsync -a /Work/ /B/", 35, 45),
+      shell("sync-b", "rsync -a /Projects/ /B/", 35, 45),
       shell("du", "du -sh /x", 48, 50),
       call("send", 55, { toolName: "Send", toolSyscall: null }),
     ];

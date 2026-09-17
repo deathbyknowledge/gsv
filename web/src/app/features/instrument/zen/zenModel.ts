@@ -70,6 +70,7 @@ export type ActivityCall = {
   description: string;
   details?: Array<{ label: string; text: string }>;
   summary: string;
+  retryKey?: string;
   output: string;
   finished: boolean;
   failed: boolean;
@@ -309,12 +310,21 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
   const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
   const purpose = normalizeCallPurpose(row.toolPurpose);
+  let retryKey: string | undefined = summary;
+  if (syscall.startsWith("shell.")) {
+    const input = stringField(row.toolArgs, "input") ?? stringField(row.toolArgs, "command");
+    retryKey = input === null ? undefined : JSON.stringify([
+      input, stringField(row.toolArgs, "cwd"), stringField(row.toolArgs, "sessionId"),
+      isRecord(row.toolArgs) && row.toolArgs.start === true,
+    ]);
+  }
   const call: ActivityCall = {
     callId: row.toolCallId ?? row.id,
     syscall,
     purpose,
     description: purpose ?? describeCall({ toolName: row.toolName ?? syscall, syscall, args: row.toolArgs }),
     summary,
+    retryKey,
     filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
     output: finished ? outputText(syscall, row.toolOutput, row.text) : "",
     finished,
@@ -859,11 +869,6 @@ function toolRowOf(entry: WorkEntry): ChatTranscriptRow {
   };
 }
 
-/** What a call is about, for telling a retry from unrelated work: the command name, or the path. */
-function callHead(event: CallEvent): string {
-  return event.call.syscall.startsWith("shell.") ? event.call.summary.trim().split(/\s+/)[0] ?? "" : event.call.summary;
-}
-
 /**
  * The run in order: each note as its paragraphs, each call with its place and timing. A call that repeats
  * a failed one (same kind, same place, same command or path) is marked as its retry. Sends are the reply, not work.
@@ -889,9 +894,9 @@ export function linkReceiptRetries(source: readonly MomentEvent[]): MomentEvent[
   const events: MomentEvent[] = source.map((event) => event.kind === "call" ? { ...event, retryOf: null } : event);
   const calls = events.filter((event): event is CallEvent => event.kind === "call");
   calls.forEach((failed, index) => {
-    if (!failed.call.failed) return;
+    if (!failed.call.failed || failed.call.retryKey === undefined) return;
     const retry = calls.slice(index + 1).find((later) => later.retryOf === null && later.call.syscall === failed.call.syscall
-      && later.target === failed.target && callHead(later) === callHead(failed));
+      && later.target === failed.target && later.call.retryKey === failed.call.retryKey);
     if (retry) retry.retryOf = failed.call.callId;
   });
   return events;
