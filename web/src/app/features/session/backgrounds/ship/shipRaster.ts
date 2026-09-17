@@ -53,7 +53,7 @@ export class ShipRaster {
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
       const perspective = 1 + z * 0.035;
-      projected[index] = this.width * 0.43 + x * unit * 1.62 * perspective;
+      projected[index] = this.width * 0.41 + x * unit * 1.62 * perspective;
       projected[index + 1] = this.height * 0.51 + y * unit * perspective;
       projected[index + 2] = z;
       const nx = matrix[0] * vertices[index + 3] + matrix[1] * vertices[index + 4] + matrix[2] * vertices[index + 5];
@@ -76,7 +76,7 @@ export class ShipRaster {
       const y = matrix[3] * point.x + matrix[4] * py + matrix[5] * point.z;
       const z = matrix[6] * point.x + matrix[7] * py + matrix[8] * point.z;
       const perspective = 1 + z * 0.035;
-      const cx = this.width * 0.43 + x * unit * 1.62 * perspective;
+      const cx = this.width * 0.41 + x * unit * 1.62 * perspective;
       const cy = this.height * 0.51 + y * unit * perspective;
       const radius = point.radius * unit * perspective;
       const left = Math.max(0, Math.ceil(cx - radius * 1.62 - 0.5));
