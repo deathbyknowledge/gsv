@@ -13,7 +13,7 @@ import "./AuthLayout.css";
 const SharedAuthScene = createContext(false);
 
 /** Keep one animation alive while local sign-in, recovery, and setup panels change. */
-export function AuthScene({ children, setup = false }: { children: ComponentChildren; setup?: boolean }) {
+export function AuthScene({ children, setup = false, shipGlyphScale = 1 }: { children: ComponentChildren; setup?: boolean; shipGlyphScale?: 1 | 2 }) {
   const { theme, toggleTheme } = useColorTheme();
   return (
     <div class={`instrument gsv-auth-surface gsv-auth-scene${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
@@ -25,7 +25,7 @@ export function AuthScene({ children, setup = false }: { children: ComponentChil
         </button>
       </header>
       <div class="gsv-auth-composition">
-        <AuthShip arrival={setup} theme={theme} />
+        <AuthShip arrival={setup} theme={theme} glyphScale={shipGlyphScale} />
         <div class="gsv-auth-panels">
           <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
         </div>

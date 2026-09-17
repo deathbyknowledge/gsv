@@ -1,4 +1,4 @@
-import type { ShipMesh } from "./wayfarer";
+import type { ShipMesh } from "./openCountry";
 
 export function rotationMatrix(yaw: number, pitch: number, roll: number): number[] {
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
@@ -14,12 +14,12 @@ export class ShipRaster {
   private readonly cells: Float32Array;
   private projected = new Float32Array(0);
 
-  constructor(private readonly cols: number, private readonly rows: number) {
+  constructor(private readonly cols: number, private readonly rows: number, private readonly glyphScale: 1 | 2 = 1) {
     this.width = cols * 2;
     this.height = rows * 2;
     this.pixels = new Float32Array(this.width * this.height);
     this.depth = new Float32Array(this.pixels.length);
-    this.cells = new Float32Array(cols * rows);
+    this.cells = new Float32Array(cols * rows / (glyphScale * glyphScale));
   }
 
   clear(): void {
@@ -52,14 +52,14 @@ export class ShipRaster {
       const x = matrix[0] * px + matrix[1] * py + matrix[2] * pz;
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
-      const perspective = 1 + z * 0.045;
-      projected[index] = this.width * 0.47 + x * unit * 1.62 * perspective;
-      projected[index + 1] = this.height * 0.49 + y * unit * perspective;
+      const perspective = 1 + z * 0.035;
+      projected[index] = this.width * 0.5 + x * unit * 1.62 * perspective;
+      projected[index + 1] = this.height * 0.51 + y * unit * perspective;
       projected[index + 2] = z;
       const nx = matrix[0] * vertices[index + 3] + matrix[1] * vertices[index + 4] + matrix[2] * vertices[index + 5];
       const ny = matrix[3] * vertices[index + 3] + matrix[4] * vertices[index + 4] + matrix[5] * vertices[index + 5];
       const nz = matrix[6] * vertices[index + 3] + matrix[7] * vertices[index + 4] + matrix[8] * vertices[index + 5];
-      projected[index + 3] = 0.23 + Math.max(0, -0.37 * nx - 0.66 * ny + 0.66 * nz) * 0.63 + Math.pow(1 - Math.min(1, Math.abs(nz)), 3) * 0.14;
+      projected[index + 3] = 0.25 + Math.max(0, -0.42 * nx - 0.69 * ny + 0.58 * nz) * 0.65 + Math.pow(1 - Math.min(1, Math.abs(nz)), 3) * 0.1;
     }
     for (let index = 0; index < mesh.indices.length; index += 3) {
       const material = mesh.materials[index / 3];
@@ -102,10 +102,16 @@ export class ShipRaster {
   }
 
   resolve(): Float32Array {
-    for (let row = 0; row < this.rows; row++) {
-      for (let column = 0; column < this.cols; column++) {
-        const index = row * 2 * this.width + column * 2;
-        this.cells[row * this.cols + column] = (this.pixels[index] + this.pixels[index + 1] + this.pixels[index + this.width] + this.pixels[index + this.width + 1]) / 4;
+    const block = 2 * this.glyphScale;
+    const cols = this.cols / this.glyphScale, rows = this.rows / this.glyphScale;
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < cols; column++) {
+        const index = row * block * this.width + column * block;
+        let coverage = 0;
+        for (let y = 0; y < block; y++) {
+          for (let x = 0; x < block; x++) coverage += this.pixels[index + y * this.width + x];
+        }
+        this.cells[row * cols + column] = coverage / (block * block);
       }
     }
     return this.cells;
