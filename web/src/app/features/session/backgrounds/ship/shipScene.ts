@@ -16,7 +16,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
   const particles = new ShipRaster(COLS, ROWS);
   let model: ShipModel;
   return {
-    prepare() { model = buildOpenCountry(); },
+    prepare() { model = buildOpenCountry(!arrival); },
     stillAt: 7,
     frame(seconds: number, motion: boolean): AsciiAnimationFrame {
       const time = arrival ? seconds : 7;
@@ -44,7 +44,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
         const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
         const perspective = 1 + z * 0.035;
-        const column = raster.width * 0.465 + x * unit * 1.62 * perspective;
+        const column = raster.width * 0.43 + x * unit * 1.62 * perspective;
         const row = raster.height * 0.51 + y * unit * perspective;
         const nx = matrix[0] * point.nx + matrix[1] * point.ny + matrix[2] * point.nz;
         const ny = matrix[3] * point.nx + matrix[4] * point.ny + matrix[5] * point.nz;
@@ -60,7 +60,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         for (const point of model.points) drawParticle(point, particles);
         raster.crossfadeFrom(particles, surface);
       }
-      raster.glow(model.driveGlow, matrix, unit, bob, ignition * smooth(2.3, 4.4, time));
+      raster.glow(model.driveGlow, matrix, unit, bob, ignition);
 
       const cells = raster.resolve();
       const material: string[] = [], dust: string[] = [], highlights: string[] = [];

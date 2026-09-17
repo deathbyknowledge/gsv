@@ -53,7 +53,7 @@ export class ShipRaster {
       const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
       const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
       const perspective = 1 + z * 0.035;
-      projected[index] = this.width * 0.465 + x * unit * 1.62 * perspective;
+      projected[index] = this.width * 0.43 + x * unit * 1.62 * perspective;
       projected[index + 1] = this.height * 0.51 + y * unit * perspective;
       projected[index + 2] = z;
       const nx = matrix[0] * vertices[index + 3] + matrix[1] * vertices[index + 4] + matrix[2] * vertices[index + 5];
@@ -76,7 +76,7 @@ export class ShipRaster {
       const y = matrix[3] * point.x + matrix[4] * py + matrix[5] * point.z;
       const z = matrix[6] * point.x + matrix[7] * py + matrix[8] * point.z;
       const perspective = 1 + z * 0.035;
-      const cx = this.width * 0.465 + x * unit * 1.62 * perspective;
+      const cx = this.width * 0.43 + x * unit * 1.62 * perspective;
       const cy = this.height * 0.51 + y * unit * perspective;
       const radius = point.radius * unit * perspective;
       const left = Math.max(0, Math.ceil(cx - radius * 1.62 - 0.5));
@@ -89,7 +89,7 @@ export class ShipRaster {
           if (z < this.depth[index]) continue;
           const distance = Math.hypot((column + 0.5 - cx) / 1.62, row + 0.5 - cy) / radius;
           if (distance >= 1) continue;
-          const light = brightness * Math.pow(1 - distance * distance, 2);
+          const light = brightness * (1 - distance * distance);
           // Light respects the hull's depth without obscuring it or building an opaque exhaust surface.
           this.pixels[index] = Math.max(this.pixels[index], light);
         }

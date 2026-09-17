@@ -37,7 +37,7 @@ function random(seed: number): () => number {
   return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; };
 }
 
-export function buildOpenCountry(): ShipModel {
+export function buildOpenCountry(drivesOn: boolean): ShipModel {
   const vertices: number[] = [], indices: number[] = [], materials: Material[] = [];
   const driveGlow: ShipGlowPoint[] = [];
   function face(corners: Vector[], material: MaterialName): void {
@@ -46,7 +46,7 @@ export function buildOpenCountry(): ShipModel {
     for (const corner of corners) vertices.push(...corner, ...normal);
     for (let index = 1; index < corners.length - 1; index++) {
       indices.push(base, base + index, base + index + 1);
-      materials.push(MATERIALS[material]);
+      materials.push(material === "drive" && !drivesOn ? MATERIALS.recess : MATERIALS[material]);
     }
   }
   function solid(points: Vector[], polygons: number[][], material: MaterialName): void {
@@ -126,13 +126,15 @@ export function buildOpenCountry(): ShipModel {
     }
     face(throat, "drive");
     for (const side of [-1, 1]) beam([x - length * 0.65, y - radius * 0.28, z + side * radius * 0.9], [x - radius * 0.75, y - radius * 0.28, z + side * radius * 0.9], 0.025, "light");
-    for (let i = 0; i < 24; i++) {
-      const distance = i / 23;
-      driveGlow.push({
-        x: x + 0.015 + distance * 0.3, y, z,
-        radius: radius * (0.34 - distance * 0.22),
-        brightness: 0.9 * Math.pow(1 - distance, 1.4),
-      });
+    if (drivesOn) {
+      for (let i = 0; i < 24; i++) {
+        const distance = i / 23;
+        driveGlow.push({
+          x: x + 0.015 + distance * 0.56, y, z,
+          radius: radius * (0.52 - distance * 0.32),
+          brightness: 0.98 * Math.pow(1 - distance, 0.7),
+        });
+      }
     }
   }
   function landscape(): void {
