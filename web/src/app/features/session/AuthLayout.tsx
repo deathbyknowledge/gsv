@@ -1,6 +1,6 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext } from "preact/hooks";
-import { useColorTheme } from "../../components/ui/useColorTheme";
+import { useColorTheme, type ColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
 import { InstrumentBackdrop } from "../instrument/shared/InstrumentBackdrop";
 import { Wordmark } from "../instrument/shared/Wordmark";
@@ -13,7 +13,11 @@ import "./AuthLayout.css";
 const SharedAuthScene = createContext(false);
 
 /** Keep one animation alive while local sign-in, recovery, and setup panels change. */
-export function AuthScene({ children, setup = false }: { children: ComponentChildren; setup?: boolean }) {
+export function AuthScene({ children, setup = false, illustration }: {
+  children: ComponentChildren;
+  setup?: boolean;
+  illustration?: (theme: ColorTheme) => ComponentChildren;
+}) {
   const { theme, toggleTheme } = useColorTheme();
   return (
     <div class={`instrument gsv-auth-surface gsv-auth-scene${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
@@ -25,7 +29,7 @@ export function AuthScene({ children, setup = false }: { children: ComponentChil
         </button>
       </header>
       <div class="gsv-auth-composition">
-        <AuthShip arrival={setup} theme={theme} />
+        {illustration ? illustration(theme) : <AuthShip arrival={setup} theme={theme} />}
         <div class="gsv-auth-panels">
           <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
         </div>
