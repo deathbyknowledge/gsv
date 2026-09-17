@@ -20,6 +20,9 @@ The fixed geometry raster averages coverage before choosing glyphs, preserving
 the model's empty spaces as its displayed type size changes. The scene uses
 160×80 glyphs from a 320×160 raster, with close framing to give the hull and
 landscape more room within the illustration.
+The three drives have short, softly fading exhaust glows that light gradually
+during assembly and stay steady once formed. They use the same projection and
+respect the hull's depth, including in the reduced-motion still view.
 
 Ship keeps approvals for its owner's pending work above the prompt even while
 Ship is idle. Helper conversations show descendant approvals. The process list

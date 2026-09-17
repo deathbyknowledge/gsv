@@ -1,4 +1,4 @@
-import type { ShipMesh } from "./openCountry";
+import type { ShipGlowPoint, ShipMesh } from "./openCountry";
 
 export function rotationMatrix(yaw: number, pitch: number, roll: number): number[] {
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
@@ -64,6 +64,36 @@ export class ShipRaster {
     for (let index = 0; index < mesh.indices.length; index += 3) {
       const material = mesh.materials[index / 3];
       this.triangle(mesh.indices[index] * 6, mesh.indices[index + 1] * 6, mesh.indices[index + 2] * 6, material.albedo, material.emission * ignition);
+    }
+  }
+
+  glow(points: ShipGlowPoint[], matrix: number[], unit: number, bob: number, ignition: number): void {
+    for (const point of points) {
+      const brightness = point.brightness * ignition;
+      if (brightness < 0.01) continue;
+      const py = point.y + bob;
+      const x = matrix[0] * point.x + matrix[1] * py + matrix[2] * point.z;
+      const y = matrix[3] * point.x + matrix[4] * py + matrix[5] * point.z;
+      const z = matrix[6] * point.x + matrix[7] * py + matrix[8] * point.z;
+      const perspective = 1 + z * 0.035;
+      const cx = this.width * 0.465 + x * unit * 1.62 * perspective;
+      const cy = this.height * 0.51 + y * unit * perspective;
+      const radius = point.radius * unit * perspective;
+      const left = Math.max(0, Math.ceil(cx - radius * 1.62 - 0.5));
+      const right = Math.min(this.width - 1, Math.floor(cx + radius * 1.62 - 0.5));
+      const top = Math.max(0, Math.ceil(cy - radius - 0.5));
+      const bottom = Math.min(this.height - 1, Math.floor(cy + radius - 0.5));
+      for (let row = top; row <= bottom; row++) {
+        for (let column = left; column <= right; column++) {
+          const index = row * this.width + column;
+          if (z < this.depth[index]) continue;
+          const distance = Math.hypot((column + 0.5 - cx) / 1.62, row + 0.5 - cy) / radius;
+          if (distance >= 1) continue;
+          const light = brightness * Math.pow(1 - distance * distance, 2);
+          // Light respects the hull's depth without obscuring it or building an opaque exhaust surface.
+          this.pixels[index] = Math.max(this.pixels[index], light);
+        }
+      }
     }
   }
 

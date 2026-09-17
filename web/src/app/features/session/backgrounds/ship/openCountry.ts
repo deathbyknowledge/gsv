@@ -10,7 +10,8 @@ export type ShipPoint = Material & {
   sx: number; sy: number; sz: number;
   delay: number; noise: number;
 };
-export type ShipModel = { mesh: ShipMesh; points: ShipPoint[] };
+export type ShipGlowPoint = { x: number; y: number; z: number; radius: number; brightness: number };
+export type ShipModel = { mesh: ShipMesh; points: ShipPoint[]; driveGlow: ShipGlowPoint[] };
 
 const TAU = Math.PI * 2;
 const MATERIALS = {
@@ -38,6 +39,7 @@ function random(seed: number): () => number {
 
 export function buildOpenCountry(): ShipModel {
   const vertices: number[] = [], indices: number[] = [], materials: Material[] = [];
+  const driveGlow: ShipGlowPoint[] = [];
   function face(corners: Vector[], material: MaterialName): void {
     const normal = unit(cross(subtract(corners[1], corners[0]), subtract(corners[2], corners[0])));
     const base = vertices.length / 6;
@@ -124,6 +126,14 @@ export function buildOpenCountry(): ShipModel {
     }
     face(throat, "drive");
     for (const side of [-1, 1]) beam([x - length * 0.65, y - radius * 0.28, z + side * radius * 0.9], [x - radius * 0.75, y - radius * 0.28, z + side * radius * 0.9], 0.025, "light");
+    for (let i = 0; i < 24; i++) {
+      const distance = i / 23;
+      driveGlow.push({
+        x: x + 0.015 + distance * 0.3, y, z,
+        radius: radius * (0.34 - distance * 0.22),
+        brightness: 0.9 * Math.pow(1 - distance, 1.4),
+      });
+    }
   }
   function landscape(): void {
     const cols = 22, rows = 12;
@@ -197,5 +207,5 @@ export function buildOpenCountry(): ShipModel {
     const angle = rand() * TAU, distance = 2.8 + rand() * 3.2;
     points.push({ x: p[0], y: p[1], z: p[2], nx: p[3], ny: p[4], nz: p[5], ...materials[low], sx: Math.cos(angle) * distance, sy: Math.sin(angle) * distance * 0.5, sz: (rand() - 0.5) * 4, delay: rand() * 0.8, noise: rand() });
   }
-  return { mesh, points };
+  return { mesh, points, driveGlow };
 }

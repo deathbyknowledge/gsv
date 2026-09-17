@@ -60,6 +60,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         for (const point of model.points) drawParticle(point, particles);
         raster.crossfadeFrom(particles, surface);
       }
+      raster.glow(model.driveGlow, matrix, unit, bob, ignition * smooth(2.3, 4.4, time));
 
       const cells = raster.resolve();
       const material: string[] = [], dust: string[] = [], highlights: string[] = [];
