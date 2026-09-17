@@ -6,7 +6,7 @@ import { rotationMatrix, ShipRaster } from "./shipRaster";
 const COLS = 160;
 const ROWS = 80;
 const RAMP = " .,:;irsXA253hMHGS#9B&@";
-const INK_RAMP = " .,:;-=+xX%#@";
+const INK_RAMP = " .,:-=+*#%@";
 const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 const smooth = (start: number, end: number, time: number) => {
   const amount = Math.max(0, Math.min(1, (time - start) / (end - start)));
@@ -81,9 +81,9 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
           const cell = row * COLS + column;
           const light = cells.light[cell];
           const coverage = cells.coverage[cell];
-          // Paper needs ink for shadows, with a sparse mark for fully lit surfaces.
+          // Paper leaves lit faces clear and concentrates ink in shaded surfaces.
           // Uncovered cells stay blank; exhaust outside the hull keeps only a faint tint.
-          const value = ink ? (coverage > 0 ? Math.max(coverage * 0.09, coverage - light) : light * 0.18) : light;
+          const value = ink ? (coverage > 0 ? coverage * smooth(0.14, 0.84, 1 - light / coverage) : light * 0.18) : light;
           const glyph = ramp[Math.min(ramp.length - 1, Math.floor(value * ramp.length))];
           nebula += value > 0.06 && value < 0.35 ? glyph : " ";
           foreground += value >= 0.35 && value < 0.8 ? glyph : " ";
