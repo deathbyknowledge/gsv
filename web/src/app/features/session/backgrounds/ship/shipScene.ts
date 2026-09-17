@@ -1,5 +1,5 @@
 import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../components/ui/AsciiAnimation";
-import { buildWayfarer, type ShipModel } from "./wayfarer";
+import { buildWayfarer, type ShipModel, type ShipPoint } from "./wayfarer";
 import { rotationMatrix, ShipRaster } from "./shipRaster";
 
 const COLS = 160;
@@ -13,6 +13,7 @@ const smooth = (start: number, end: number, time: number) => {
 
 export function createShipScene(arrival: boolean): AsciiAnimationScene {
   const raster = new ShipRaster(COLS, ROWS);
+  const particles = new ShipRaster(COLS, ROWS);
   let model: ShipModel;
   return {
     prepare() { model = buildWayfarer(); },
@@ -27,13 +28,13 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
       const matrix = rotationMatrix(yaw, pitch, -0.085);
       const bob = Math.sin(clock * 0.4) * 0.025 * idle;
       const unit = raster.width / (6.4 * 1.62);
-      const ignition = smooth(2, 4.4, time);
-      const opacity = smooth(3.1, 4.5, time);
+      const ignition = smooth(1.3, 4.1, time);
+      const surface = smooth(1.9, 4.5, time);
       raster.clear();
-      if (opacity > 0) raster.mesh(model.mesh, matrix, unit, bob, ignition, opacity);
-      for (const point of opacity === 1 ? model.exhaust : model.points) {
+      if (surface > 0) raster.mesh(model.mesh, matrix, unit, bob, ignition);
+      const drawParticle = (point: ShipPoint, target: ShipRaster) => {
         const formed = smooth(0.3 + point.delay, 3.2 + point.delay, time);
-        if (point.noise > 0.07 + formed * 0.93) continue;
+        if (point.noise > 0.07 + formed * 0.93) return;
         const swirl = (1 - formed) * 0.9;
         const cosine = Math.cos(swirl), sine = Math.sin(swirl);
         const px = mix(point.sx * cosine - point.sy * sine, point.x, formed);
@@ -53,9 +54,17 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         let light = Math.max((0.23 + diffuse * 0.63 + rim * 0.14) * point.albedo, point.emission * ignition);
         if (point.exhaust) light = point.emission * ignition * (0.9 + Math.sin(clock * 3 + point.phase) * 0.08);
         light = mix(0.1 + point.noise * 0.1, light, formed);
-        if (point.exhaust && light < 0.08) continue;
-        raster.splat(column, row, z, Math.min(1, light), point.exhaust ? 1.3 : 1.15);
+        if (point.exhaust && light < 0.08) return;
+        target.splat(column, row, z, Math.min(1, light), point.exhaust ? 1.3 : 1.15);
+      };
+      if (surface < 1) {
+        particles.clear();
+        for (const point of model.points) {
+          if (!point.exhaust) drawParticle(point, particles);
+        }
+        raster.crossfadeFrom(particles, surface);
       }
+      for (const point of model.exhaust) drawParticle(point, raster);
 
       const cells = raster.resolve();
       const material: string[] = [], dust: string[] = [], highlights: string[] = [];

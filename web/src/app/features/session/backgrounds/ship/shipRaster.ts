@@ -43,7 +43,7 @@ export class ShipRaster {
     }
   }
 
-  mesh(mesh: ShipMesh, matrix: number[], unit: number, bob: number, ignition: number, opacity: number): void {
+  mesh(mesh: ShipMesh, matrix: number[], unit: number, bob: number, ignition: number): void {
     const vertices = mesh.vertices;
     if (this.projected.length !== vertices.length) this.projected = new Float32Array(vertices.length);
     const projected = this.projected;
@@ -63,11 +63,11 @@ export class ShipRaster {
     }
     for (let index = 0; index < mesh.indices.length; index += 3) {
       const material = mesh.materials[index / 3];
-      this.triangle(mesh.indices[index] * 6, mesh.indices[index + 1] * 6, mesh.indices[index + 2] * 6, material.albedo, material.emission * ignition, opacity);
+      this.triangle(mesh.indices[index] * 6, mesh.indices[index + 1] * 6, mesh.indices[index + 2] * 6, material.albedo, material.emission * ignition);
     }
   }
 
-  private triangle(a: number, b: number, c: number, albedo: number, emission: number, opacity: number): void {
+  private triangle(a: number, b: number, c: number, albedo: number, emission: number): void {
     const vertices = this.projected;
     const ax = vertices[a], ay = vertices[a + 1], bx = vertices[b], by = vertices[b + 1], cx = vertices[c], cy = vertices[c + 1];
     const area = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
@@ -88,8 +88,16 @@ export class ShipRaster {
         if (z < this.depth[index]) continue;
         const brightness = Math.min(1, Math.max((vertices[a + 3] * wa + vertices[b + 3] * wb + vertices[c + 3] * wc) * albedo, emission));
         this.depth[index] = z;
-        this.pixels[index] = brightness * opacity;
+        this.pixels[index] = brightness;
       }
+    }
+  }
+
+  /** At zero retain the particles; at one retain this complete surface render. */
+  crossfadeFrom(source: ShipRaster, amount: number): void {
+    for (let index = 0; index < this.pixels.length; index++) {
+      this.pixels[index] = source.pixels[index] * (1 - amount) + this.pixels[index] * amount;
+      this.depth[index] = Math.max(source.depth[index], this.depth[index]);
     }
   }
 
