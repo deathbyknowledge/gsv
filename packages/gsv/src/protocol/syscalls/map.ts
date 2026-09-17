@@ -20,6 +20,7 @@ import type {
 } from "./fs";
 import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
+import type { AiDecideArgs, AiDecideResult } from "./decisions";
 import type {
   CodeModeExecArgs,
   CodeModeExecResult,
@@ -447,6 +448,7 @@ export type SyscallDomains = {
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.models": { args: AiModelsArgs; result: AiModelsResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
+  "ai.decide": { args: AiDecideArgs; result: AiDecideResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
   "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };
   "ai.image.generate": { args: AiImageGenerateArgs; result: AiImageGenerateResult };

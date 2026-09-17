@@ -8,6 +8,7 @@ import type {
   AiTranscriptionCreateResult,
 } from "../protocol/syscalls/ai";
 import type { JsonObject } from "../protocol/json";
+import type { AiDecideArgs, AiDecideResult } from "../protocol/syscalls/decisions";
 import type {
   ManagedInferenceAbortReason,
   ManagedInferenceActor,
@@ -72,7 +73,16 @@ export interface InferenceExecutor {
     body?: ReadableStream<Uint8Array>,
     transport?: InferenceTransport,
   ): Promise<InferenceMediaResult>;
+  decide(request: InferenceDecisionRequest): Promise<AiDecideResult>;
 }
+
+/** Decisions share the executor's admission, identity, deadline and cancellation. */
+export type InferenceDecisionRequest = Pick<InferenceExecutionRequest,
+  "version" | "installationId" | "logicalRequestId" | "actor" | "workload" | "timeoutMs" | "deadlineAt"
+> & {
+  connection: { provider: "typesafe"; model: string; apiKey: string; useOperatorKey?: boolean };
+  input: Pick<AiDecideArgs, "state" | "questions">;
+};
 
 type InferenceMediaIdentity = Pick<InferenceExecutionRequest,
   "version" | "installationId" | "logicalRequestId" | "actor" | "workload" | "timeoutMs" | "deadlineAt"

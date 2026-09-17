@@ -43,6 +43,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "r12y.*",
     "ai.models",
     "ai.text.generate",
+    "ai.decide",
     "ai.image.generate",
     "ai.image.read",
     "ai.transcription.create",

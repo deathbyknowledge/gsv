@@ -1715,6 +1715,11 @@ type AiSyscalls = {
     args: { target?: string; systemPrompt?: string; messages: AiTextMessage[]; tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>; config?: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string }; options?: { maxTokens?: number; reasoning?: AiTextGenerationReasoning; timeoutMs?: number }; sessionAffinityKey?: string };
     result: { message: AiAssistantMessage; provider: string; model: string; text?: string };
   };
+
+  "ai.decide": {
+    args: { state: AiDecisionState; questions: Record<string, AiDecisionQuestion>; model?: string; timeoutMs?: number };
+    result: AiDecideResult;
+  };
 };
 ```
 
@@ -1726,6 +1731,21 @@ array is an authoritative catalog with no entries. `ai.text.generate` runs one m
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
 `AiTextGenerationReasoning` are the message and reasoning records in
 `packages/gsv/src/protocol/syscalls/ai.ts`.
+
+`ai.decide` evaluates independent typed boolean, choice and score questions over
+one shared state. Its types live in `packages/gsv/src/protocol/syscalls/decisions.ts`.
+The first provider is TypeSafe Jev. Configure `ai/decision/api_key`, optionally
+`ai/decision/provider` and `ai/decision/model`, under the owner's
+`users/<uid>/` config or the installation's `config/` prefix. A personal decision
+configuration is a complete credential scope; it never borrows a system key.
+Without a personal override or installation key, the executor may use its
+server-side `TYPESAFE_API_KEY` secret. Gateway and browser environment variables
+do not provide this credential.
+The default model is `jev-latest`. A boolean answer carries a probability;
+choice and score answers carry their full distribution and confidence. These
+values describe model judgments, not authorization. Requests allow up to 64
+questions and 128 KiB of combined state and questions. Decisions run in the
+inference executor and share its installation admission and cancellation.
 
 ## Adapters: `adapter.*`
 

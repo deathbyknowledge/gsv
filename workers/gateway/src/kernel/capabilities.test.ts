@@ -108,6 +108,7 @@ describe("CapabilityStore", () => {
         "adapter.route",
         "adapter.send",
         "adapter.status",
+        "ai.decide",
         "ai.image.generate",
         "ai.image.read",
         "ai.models",

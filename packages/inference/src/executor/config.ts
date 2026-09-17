@@ -17,6 +17,7 @@ export type ExecutorEnvironment = {
   INFERENCE_DEFAULT_MODEL?: string;
   INFERENCE_API_KEY?: string;
   INFERENCE_BASE_URL?: string;
+  TYPESAFE_API_KEY?: string;
 };
 
 export function executorLimits(env: ExecutorEnvironment): ExecutorLimits {

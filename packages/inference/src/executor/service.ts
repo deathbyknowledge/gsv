@@ -36,5 +36,6 @@ class ExecutorTarget extends RpcTarget implements ExecutorContract {
   generate(...args: Parameters<ExecutorContract["generate"]>) { return this.#owner.generate(...args); }
   generateStream(...args: Parameters<ExecutorContract["generateStream"]>) { return this.#owner.generateStream(...args); }
   media(...args: Parameters<ExecutorContract["media"]>) { return this.#owner.media(...args); }
+  decide(...args: Parameters<ExecutorContract["decide"]>) { return this.#owner.decide(...args); }
   abort(...args: Parameters<ExecutorContract["abort"]>) { return this.#owner.abort(...args); }
 }

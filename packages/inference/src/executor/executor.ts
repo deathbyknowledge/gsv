@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Context } from "@earendil-works/pi-ai";
-import { encodeInferenceExecutionStreamEvent as encodeManagedInferenceStreamEvent } from "@humansandmachines/gsv/protocol";
-import type { InferenceExecutionRequest, InferenceExecutor as ExecutorContract, InferenceTransport, InferenceMediaRequest, InferenceMediaResult } from "@humansandmachines/gsv/services/inference-execution";
+import { encodeInferenceExecutionStreamEvent as encodeManagedInferenceStreamEvent, type AiDecideResult } from "@humansandmachines/gsv/protocol";
+import type { InferenceExecutionRequest, InferenceDecisionRequest, InferenceExecutor as ExecutorContract, InferenceTransport, InferenceMediaRequest, InferenceMediaResult } from "@humansandmachines/gsv/services/inference-execution";
 import type { ManagedInferenceAbortReason, ManagedInferenceResult, ManagedInferenceStreamEvent } from "@humansandmachines/gsv/services/inference";
 import { createGenerationService } from "../text/service";
 import type { InferenceProviderFactory } from "../text/provider";
@@ -12,6 +12,7 @@ import { executorConnection, executorLimits, opaqueId, requireActiveInstallation
 import { ExecutorStore, type TerminalState } from "./store";
 import { executionEvent, executionResult } from "./projection";
 import { executeMedia } from "./media";
+import { evaluateTypeSafe } from "../decisions/typesafe";
 import { requestBinding } from "./bodies";
 import * as z from "zod/mini";
 import { errorMessageFromUnknown, formatProviderErrorMessage } from "../text/errors";
@@ -146,6 +147,26 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
     } else {
       this.store.finish(id, reason);
       this.scheduleExpiry();
+    }
+  }
+
+  async decide(input: InferenceDecisionRequest): Promise<AiDecideResult> {
+    const request = this.open(input);
+    try {
+      // Typed decisions count as requests, independently of generative token limits.
+      await this.admit(input, request, 0);
+      request.controller.signal.throwIfAborted();
+      const connection = input.connection.useOperatorKey
+        ? { ...input.connection, apiKey: input.connection.apiKey || this.env.TYPESAFE_API_KEY || "" }
+        : input.connection;
+      const result = await raceWithAbort(evaluateTypeSafe({ ...input, connection }, request.controller.signal), request.controller.signal);
+      this.checkDeadline(request);
+      request.controller.signal.throwIfAborted();
+      this.finish(request, "completed", 0);
+      return result;
+    } catch (error) {
+      this.finish(request, "error");
+      throw error;
     }
   }
 

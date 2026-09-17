@@ -22,7 +22,7 @@ function fixture() {
   const target = {
     generate: vi.fn(async () => message),
     generateStream: vi.fn(async () => new Response(encodeInferenceExecutionStreamEvent({ type: "done", reason: "stop", message })).body!),
-    abort: vi.fn(async () => {}), media: vi.fn(), [Symbol.dispose]: vi.fn(),
+    abort: vi.fn(async () => {}), media: vi.fn(), decide: vi.fn(), [Symbol.dispose]: vi.fn(),
   };
   const getExecutor = vi.fn(async (_space: string): Promise<InferenceExecutor> => target);
   // SAFETY: These tests exercise only the required inference binding.

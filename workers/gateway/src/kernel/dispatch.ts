@@ -24,6 +24,7 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import { handleAiDecide } from "./decisions";
 import {
   handleAiContext,
   handleAiConfig,
@@ -487,6 +488,9 @@ async function dispatchKernel(
         break;
       case "ai.text.generate":
         data = await handleAiTextGenerate(frame.args, ctx, deps);
+        break;
+      case "ai.decide":
+        data = await handleAiDecide(frame.args, ctx);
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx, frame.body);

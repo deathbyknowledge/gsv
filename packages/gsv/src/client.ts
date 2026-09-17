@@ -390,6 +390,7 @@ const SYSCALL_NAMES = [
   "ai.config",
   "ai.models",
   "ai.text.generate",
+  "ai.decide",
   "adapter.connect",
   "adapter.disconnect",
   "adapter.state.update",
