@@ -33,10 +33,10 @@ drive cores and three steady, softly fading exhaust tails. The glows use the sam
 projection and respect the hull's depth. Reduced motion preserves the appropriate
 engine state in each still view.
 Light theme maps the lighting to ink density with its own glyph ramp: shaded
-surfaces use dense violet-black marks, lit faces fade to paper, and exhaust keeps
-a faint tint. A smooth contrast curve concentrates ink in the shadows and clears
-the brightest faces. The raster retains surface coverage separately from brightness
-so empty space stays blank and ink thins at partial edges. Theme changes
+surfaces use dense violet marks, lit faces use sparse lavender marks, and exhaust
+keeps a faint tint. The gradual density ramp retains intermediate glyph detail
+and the Instrument purple palette. The raster retains surface coverage separately
+from brightness so empty space stays blank and ink thins at partial edges. Theme changes
 redraw the current pose, including reduced-motion stills, without restarting assembly.
 
 Ship keeps approvals for its owner's pending work above the prompt even while
