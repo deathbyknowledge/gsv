@@ -95,7 +95,7 @@ word by word. Escape sequences and surrogate pairs are released only once whole,
 precede `text` are skipped. When the call completes, the committed text is reconciled against what
 was streamed: a match sends the remainder as one last delta, a difference aborts the projection so
 the client drops the preview and shows the committed message. A Send that fails validation, a
-generation that fails or retries, and a run that is interrupted, superseded or reset also abort
+generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
 
 The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its

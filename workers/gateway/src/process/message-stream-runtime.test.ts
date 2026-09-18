@@ -40,6 +40,7 @@ function recordStreamedPhases(process: Process): StreamedPhase[] {
   const streamed: StreamedPhase[] = [];
   vi.spyOn(process.streams, "emitProjection").mockImplementation(
     async (_runId, projection, phase, delta, reason) => {
+      if (phase === "aborted") expect(process.killed).toBe(false);
       const entry: StreamedPhase = { phase, id: projection.id };
       if (delta !== undefined) entry.delta = delta;
       if (reason !== undefined) entry.reason = reason;
@@ -132,7 +133,7 @@ describe("Send text streaming", () => {
     expect(JSON.parse(toolResult.toolCalls)).toMatchObject({ isError: true });
   });
 
-  it.each(["abort", "reset", "supersede"])("withdraws the live preview on %s", async (operation) => {
+  it.each(["abort", "reset", "supersede", "kill", "kill-archive"])("withdraws the live preview on %s", async (operation) => {
     const pid = `mech-send-stream-${operation}`;
     const runId = `${pid}-run`;
     const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -146,10 +147,12 @@ describe("Send text streaming", () => {
       await process.streams.append(runId, "send", "Partial");
       if (operation === "abort") await process.controller.handleProcAbort({ runId });
       else if (operation === "reset") await process.controller.resetExecutionState("test reset");
+      else if (operation.startsWith("kill")) await process.controller.handleProcKill({ archive: operation === "kill-archive" });
       else await process.controller.handleProcSend({ message: "New input" });
-      return { streamed, activeRunId: process.runs.active?.runId };
+      return { streamed, activeRunId: process.runs.active?.runId, killed: process.killed };
     });
     expect(result.streamed.map((entry) => entry.phase)).toEqual(["started", "delta", "aborted"]);
     expect(result.activeRunId).not.toBe(runId);
+    expect(result.killed).toBe(operation.startsWith("kill"));
   });
 });

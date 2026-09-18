@@ -661,6 +661,7 @@ async function killProcess(
       pendingCleanup,
     } satisfies ProcessKilledTombstone;
     const bestEffort = postKillTasks(host, pid, activeRun, finishPayload);
+    const streamAbort = activeRun ? host.streams.abortRun(activeRun.runId, "The process was killed") : undefined;
 
     tombstoneKilledProcessStorage(host.ctx.storage, killedTombstone);
     host.killedTombstone = killedTombstone;
@@ -674,6 +675,8 @@ async function killProcess(
     }
 
     return await host.controller.completeKilledProcessCleanup(async () => {
+      await streamAbort;
+      if (activeRun) host.streams.deleteRun(activeRun.runId);
       for (const task of await failedCleanupTasks(bestEffort)) {
         console.warn(`[Process] Post-kill ${task.label} failed for ${pid}`);
       }
