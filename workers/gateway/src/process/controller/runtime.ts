@@ -253,7 +253,11 @@ async function admitInterruptingSend(
       if (existing) return existing;
     }
 
+    // a reply the person watched being typed is withdrawn while its run can still reach them
     const activeRun = host.runs.active;
+    const streamAbort = activeRun
+      ? host.streams.abortRun(activeRun.runId, "A newer message superseded the run")
+      : undefined;
     if (activeRun) {
       host.tools.cancelPendingRequests(activeRun.runId, USER_SUPERSEDED_TOOL_MESSAGE);
     }
@@ -297,6 +301,7 @@ async function admitInterruptingSend(
       return { effects, messageId };
     });
 
+    await streamAbort;
     if (!admission) {
       const existing = admittedRunId ? host.controller.existingRunAdmission(runId) : null;
       return existing ?? { ok: false, error: "Process no longer exists" };
@@ -656,6 +661,7 @@ async function killProcess(
       pendingCleanup,
     } satisfies ProcessKilledTombstone;
     const bestEffort = postKillTasks(host, pid, activeRun, finishPayload);
+    const streamAbort = activeRun ? host.streams.abortRun(activeRun.runId, "The process was killed") : undefined;
 
     tombstoneKilledProcessStorage(host.ctx.storage, killedTombstone);
     host.killedTombstone = killedTombstone;
@@ -669,6 +675,8 @@ async function killProcess(
     }
 
     return await host.controller.completeKilledProcessCleanup(async () => {
+      await streamAbort;
+      if (activeRun) host.streams.deleteRun(activeRun.runId);
       for (const task of await failedCleanupTasks(bestEffort)) {
         console.warn(`[Process] Post-kill ${task.label} failed for ${pid}`);
       }
@@ -1053,6 +1061,7 @@ export class ProcessController {
     }
 
     const runId = run.runId;
+    const streamAbort = this.host.streams.abortRun(runId, "The run was interrupted");
     this.host.tools.cancelPendingRequests(runId, USER_INTERRUPTED_TOOL_MESSAGE);
     const effects = this.host.ctx.storage.transactionSync((): AbortEffects | null => {
       const active = this.host.runs.active;
@@ -1071,6 +1080,7 @@ export class ProcessController {
       });
       return { approval, interrupted, transition };
     });
+    await streamAbort;
     if (!effects) return { ok: true, pid, aborted: false };
     const { approval, interrupted: recordedTools, transition: completed } = effects;
     if (!completed || !recordedTools) {
@@ -1324,6 +1334,7 @@ export class ProcessController {
     this.host.settings.abortTitleGeneration(resetError);
     this.host.resources.abortMediaUploads(resetError);
     const activeRun = this.host.runs.active;
+    const streamAbort = activeRun ? this.host.streams.abortRun(activeRun.runId, resetError.message) : undefined;
     this.host.tools.cancelPendingRequests(null, resetError.message);
     this.host.tools.rejectCodeModeWaiters(null, "Process execution state was reset");
     const effects = this.host.ctx.storage.transactionSync(() => {
@@ -1348,6 +1359,7 @@ export class ProcessController {
       this.host.store.queue.clearQueue();
       return result;
     });
+    await streamAbort;
     if (activeRun) this.host.streams.deleteRun(activeRun.runId);
     if (activeRun && effects.interrupted) {
       this.host.startBackground(

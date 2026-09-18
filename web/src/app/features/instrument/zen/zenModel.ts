@@ -2,6 +2,7 @@ import type { TerminalSession } from "../../../services/terminal/terminalSession
 import { z } from "zod";
 import type { ProcHistoryRecordsResult, ProcMessageMetadata } from "@humansandmachines/gsv/protocol";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
+import type { OutgoingChatMessage } from "../../../services/chat/hooks/useChatOutbox";
 import { describeCall, normalizeCallPurpose } from "../../../services/chat/domain/callDescription";
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -91,6 +92,7 @@ export type Activity = {
 };
 
 export type Moment = {
+  outgoing?: OutgoingChatMessage;
   id: string;
   /** `note` is the ship's own memory: a compaction summary the gateway wrote when it folded older history. */
   role: "human" | "ship" | "note";

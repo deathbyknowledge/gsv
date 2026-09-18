@@ -1,15 +1,15 @@
 import { LoadingState } from "../../../components/ui/Spinner";
 import { chatMediaKind, formatChatMediaSize, parseChatMedia } from "../../../services/chat/domain/media";
 import { useChatMediaSource, useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
-import type { ZenAttachment } from "./zenAttachments";
+import type { ChatMediaUpload } from "../../../services/chat/domain/processes";
 
-export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachment: ZenAttachment; onRemove: () => void; disabled?: boolean }) {
+export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachment: ChatMediaUpload; onRemove?: () => void; disabled?: boolean }) {
   const image = attachment.type === "image";
   const source = useMediaObjectUrl(image ? attachment.body : undefined);
   return <li class="zen-draft-attachment">
     {source && <img src={source} alt="" />}
     <span class="file-name">{attachment.filename}<small>{formatChatMediaSize(attachment.body.size)}</small></span>
-    <button type="button" onClick={onRemove} disabled={disabled} aria-label={`Remove ${attachment.filename}`}>×</button>
+    {onRemove && <button type="button" onClick={onRemove} disabled={disabled} aria-label={`Remove ${attachment.filename}`}>×</button>}
   </li>;
 }
 

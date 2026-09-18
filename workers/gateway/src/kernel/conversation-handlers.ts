@@ -21,7 +21,7 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
-import { stableOpaqueId } from "../shared/stable-id";
+import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
@@ -110,7 +110,7 @@ export async function handleConversationSend(
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
-  const messageId = await stableOpaqueId("msg", [conversation.id, idempotencyKey]);
+  const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
   const origin = conversationOrigin(ctx);
   const interactionOrigin = processInteractionOrigin(ctx);
