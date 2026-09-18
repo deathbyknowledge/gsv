@@ -149,8 +149,11 @@ Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
-deny, or ask for matching syscalls. The default policy asks for `shell.exec`,
-`fs.delete`, `sys.mcp.call`, and `mail.send`. A background process can pause
+deny, or ask for matching syscalls. The default policy automatically permits
+native `gsv` work and reading/searching connected targets. It asks before file
+changes, shell commands, or network requests on connected targets, and before
+`sys.mcp.call` or `mail.send`. Explicit account and process policies remain
+authoritative; capability and resource checks always apply. A background process can pause
 durably for the owner's decision without gaining a direct human conversation.
 
 ## Targets and Devices
