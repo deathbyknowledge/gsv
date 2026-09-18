@@ -182,7 +182,7 @@ describe("Zen conversation entry", () => {
       send.mockResolvedValueOnce({ message: message("user", "My first question"), handlerPid: shipPid, runId: "retry" });
       const retry = zen.nodes().find((node) => node.type === "button" && collectText(node) === "retry");
       expect(retry).toBeDefined();
-      await act(() => { retry!.props.onClick(); });
+      await act(() => { retry!.props.onClick?.(); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       expect(send.mock.calls[1]?.[0].idempotencyKey).toBe(send.mock.calls[0]?.[0].idempotencyKey);
       expect(zen.props(ZenText).text).toBe("My first question");

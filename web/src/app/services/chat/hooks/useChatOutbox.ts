@@ -17,6 +17,13 @@ export type OutgoingChatMessage = {
 /** Own pending sends until acknowledgement; retries retain the original recipient, files and send identity. */
 export function useChatOutbox(acceptMessage: (message: ConversationMessage) => void) {
   const { client } = useGateway();
+  return useChatOutboxRuntime(acceptMessage, client);
+}
+
+export function useChatOutboxRuntime(
+  acceptMessage: (message: ConversationMessage) => void,
+  client: Parameters<typeof sendChatMessage>[0],
+) {
   const [messages, setMessages] = useState<OutgoingChatMessage[]>([]);
   const active = useRef<{ id: string; controller: AbortController } | null>(null);
   const mounted = useRef(true);
