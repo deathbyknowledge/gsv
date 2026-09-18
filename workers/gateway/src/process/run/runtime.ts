@@ -1,6 +1,8 @@
 /** Owns the Process run state machine from admission through terminal delivery. */
 
-import type { AssistantMessage, Context, ToolCall, Tool } from "@humansandmachines/gsv/services/inference-context";
+import type {
+  AssistantMessage, AssistantMessageEvent, Context, ToolCall, Tool,
+} from "@humansandmachines/gsv/services/inference-context";
 import { z } from "zod";
 import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
@@ -63,6 +65,10 @@ import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
 import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
+import { SendTextReader } from "../send-text-reader";
+
+/** Why a Send shown as typed is withdrawn when its generation does not complete. */
+const GENERATION_FAILED_STREAM_REASON = "Generation ended before the message was sent";
 
 /** The name a run-control result is recorded under: the Send tool's own, or the Shell's syscall. */
 function runControlRegistration(
@@ -815,6 +821,9 @@ export class ProcessRun {
     // TODO: add ai.text.stream
     const stream = this.host.generation.stream(request);
     const eventSink = await this.host.streams.openRunEventSink(options.runId);
+    const sendReaders = this.host.settings.interactive && options.context.tools?.some((tool) => tool.name === SEND_TOOL_NAME)
+      ? new Map<number, SendTextReader>()
+      : null;
     try {
       let seq = options.streamSeq?.value ?? 0;
       let response: AssistantMessage | null = null;
@@ -825,6 +834,8 @@ export class ProcessRun {
         }
         this.host.trace.recordGenerationEvent(options.runId, options.traceSpanId, event);
         await eventSink?.emit(seq, event);
+        if (this.host.handleRunStopped(options.runId)) return null;
+        if (sendReaders) await this.streamSendText(options.runId, sendReaders, event);
         if (event.type === "done") {
           response = event.message;
         } else if (event.type === "error") {
@@ -839,6 +850,29 @@ export class ProcessRun {
     } finally {
       await eventSink?.close();
     }
+  }
+
+  /**
+   * Shows the person a Send's `text` while the model is still writing the call.
+   * The projection is keyed by the tool call id, the same action id the completed
+   * call commits under, so `complete` reconciles the committed text against it.
+   */
+  async streamSendText(
+    runId: string,
+    readers: Map<number, SendTextReader>,
+    event: AssistantMessageEvent,
+  ): Promise<void> {
+    if (event.type !== "toolcall_delta") return;
+    const call = event.partial.content[event.contentIndex];
+    if (call?.type !== "toolCall" || call.name !== SEND_TOOL_NAME) return;
+    let reader = readers.get(event.contentIndex);
+    if (!reader) {
+      reader = new SendTextReader();
+      readers.set(event.contentIndex, reader);
+    }
+    const completed = reader.push(event.delta);
+    if (!completed || !call.id) return;
+    await this.host.streams.append(runId, call.id, reader.text);
   }
 
   async generateCompactionText(options: {
@@ -1142,6 +1176,8 @@ export class ProcessRun {
     if (this.host.handleRunStopped(runId)) {
       return { kind: "complete", result: null };
     }
+    await this.host.streams.abortRun(runId, GENERATION_FAILED_STREAM_REASON);
+    this.host.streams.deleteRun(runId);
     const config = control.prepared.activeConfig;
     if (isProviderContextOverflowErrorMessage(message, {
       provider: config.provider,
@@ -1200,6 +1236,8 @@ export class ProcessRun {
         },
       };
     }
+    await this.host.streams.abortRun(runId, GENERATION_FAILED_STREAM_REASON);
+    this.host.streams.deleteRun(runId);
     const message = response.errorMessage ?? failure ?? "Provider context overflow";
     if (isProviderContextOverflow(response, config.contextWindowTokens)) {
       const recovered = await this.recoverRunTickProviderOverflow(
@@ -1368,6 +1406,12 @@ export class ProcessRun {
   } | null> {
     if (turn.kind !== "run-control") {
       if (dispatchId) throw new Error("Non-run-control turn registered a run-control action");
+      // a Send mixed with other actions never commits, so whatever of it was shown as typed is withdrawn
+      if (turn.kind === "invalid-run-control") {
+        for (const { toolCall } of turn.runControlCalls) {
+          await this.host.streams.abortAction(runId, toolCall.id, "The message was combined with other tool actions");
+        }
+      }
       return { result: null };
     }
     const call = turn.runControlCalls[0];
@@ -1382,14 +1426,12 @@ export class ProcessRun {
         outputMedia,
       );
     } catch (error) {
-      this.persistRunControlExecutionError(
-        runId,
-        dispatchId,
-        call.toolCall.id,
-        errorMessageFromUnknown(error),
-      );
+      const message = errorMessageFromUnknown(error);
+      this.persistRunControlExecutionError(runId, dispatchId, call.toolCall.id, message);
+      await this.host.streams.abortAction(runId, call.toolCall.id, message);
       throw error;
     }
+    if (!result.ok) await this.host.streams.abortAction(runId, call.toolCall.id, result.error);
     const persisted = this.persistRunControlToolResult(runId, dispatchId, call.toolCall.id, result);
     if (!persisted) return null;
     await this.host.signals.changed(["messages"], { runId });

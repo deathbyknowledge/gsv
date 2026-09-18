@@ -520,9 +520,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
+  /* the committed message lands under a new id, so a reply that streamed is also known by its run */
+  const streamedRunsRef = useRef<Set<string>>(new Set());
   useLayoutEffect(() => {
     if (!ready) return;
-    for (const moment of moments) if (moment.streaming) streamedMomentsRef.current.add(moment.id);
+    for (const moment of moments) {
+      if (!moment.streaming) continue;
+      streamedMomentsRef.current.add(moment.id);
+      if (moment.runId) streamedRunsRef.current.add(moment.runId);
+    }
     const whole = moments.filter((moment) => moment.role === "ship" && moment.text && !moment.streaming).map((moment) => moment.id);
     if (seenMomentsRef.current === null) {
       // the history as first loaded is not news, but it does materialise: the recent messages settle one after another
@@ -541,7 +547,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     const fresh = whole.filter((id) => !seen.has(id));
     if (fresh.length === 0) return;
     for (const id of fresh) seen.add(id);
-    const arrived = fresh.filter((id) => !streamedMomentsRef.current.has(id));
+    const streamed = (id: string): boolean => {
+      if (streamedMomentsRef.current.has(id)) return true;
+      const runId = moments.find((moment) => moment.id === id)?.runId ?? null;
+      return runId !== null && streamedRunsRef.current.has(runId);
+    };
+    const arrived = fresh.filter((id) => !streamed(id));
     if (arrived.length === 0 || reducedMotion()) return;
     const startedAt = Date.now();
     setSettling((current) => {

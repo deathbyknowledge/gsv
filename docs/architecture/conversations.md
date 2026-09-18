@@ -79,14 +79,24 @@ human delivery cannot erase a caller result.
 The run route identifies the endpoint that caused the interaction. It controls immediate delivery,
 not conversation ownership:
 
-- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` once
-  each message command has been validated, then `message.committed`.
+- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` while
+  the model is still writing the message, then `message.committed`.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
 - A background Personal run without a conversation-origin route may use the last authorized private
   adapter destination. A disconnected client-origin conversation never falls back to an adapter.
+
+Streaming begins before the Send call is complete. As the model writes the call's arguments, the
+Process reads the `text` string out of the partial JSON and appends each newly completed run of
+characters to a message projection keyed by the tool call id, so the person watches the reply grow
+word by word. Escape sequences and surrogate pairs are released only once whole, and members that
+precede `text` are skipped. When the call completes, the committed text is reconciled against what
+was streamed: a match sends the remainder as one last delta, a difference aborts the projection so
+the client drops the preview and shows the committed message. A Send that fails validation, a
+generation that fails or retries, and a run that is interrupted, superseded or reset also abort
+their projections, so no partial text outlives its message. Adapters never see the projection.
 
 The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its
 connection disappears, while a background Personal event may use the authorized private fallback.
