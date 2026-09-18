@@ -164,6 +164,7 @@ export type CompletedRunTransition = {
 
 export type CodeModeResponseWaiter = {
   runId: string | null;
+  ownerDispatchId?: string;
   call: SyscallName;
   args: JsonObject;
   resolve: (frame: ResponseFrame) => void;

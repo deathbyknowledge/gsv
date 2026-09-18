@@ -22,7 +22,8 @@ import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
-import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import {
   handleAiContext,
@@ -303,8 +304,23 @@ async function dispatchLocal(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
+  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const requestTarget: DispatchDeps["requestTarget"] = async (targetId, call, args, options) => {
+    const signal = options?.signal ?? nativeContext.requestSignal;
+    try {
+      await authorizeNestedOperation({ ...nativeContext, requestSignal: signal }, call, { ...args, target: targetId });
+      signal?.throwIfAborted();
+      return await deps.requestTarget(targetId, call, args, options);
+    } catch (error) {
+      if (options?.body && !options.body.stream.locked) {
+        await options.body.stream.cancel(error).catch(() => {});
+      }
+      throw error;
+    }
+  };
   const fsTransport = {
     ...deps,
+    requestTarget,
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0]) => (
       await openContactResourceSource(source, ctx)
     ),
@@ -323,10 +339,11 @@ async function dispatchLocal(
       return await handleContactResourceSend(frame.args, ctx, frame.id);
     }
     if (isRoutableSyscall(frame.call)) {
-      return await dispatchGsvTarget(frame, ctx, {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: "gsv" }));
+      return await dispatchGsvTarget(frame, nativeContext, {
         fsTransport,
-        netFetchTransport: deps,
-        request: (request, signal) => deps.request(request, ctx, signal),
+        netFetchTransport: { requestTarget },
+        request: (request, signal) => deps.request(request, nativeContext, signal),
       });
     }
 
@@ -805,6 +822,17 @@ async function routeToTarget(
     return {
       handled: true,
       response: rejectBeforeDispatch(frame, 400, `Target ${target.targetId} does not implement ${frame.call}`),
+    };
+  }
+
+  try {
+    await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }));
+    ctx.requestSignal?.throwIfAborted();
+  } catch (error) {
+    return {
+      handled: true,
+      response: rejectBeforeDispatch(frame, ctx.requestSignal?.aborted ? 499 : 403,
+        error instanceof Error ? error.message : String(error)),
     };
   }
 

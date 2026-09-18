@@ -13,6 +13,7 @@ import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import { managedMailAddressForOwner } from "./mailbox";
+import { authorizeNestedOperation } from "./tool-approval";
 import type {
   MailMessageRecord,
   MailOutboundRecord,
@@ -59,6 +60,7 @@ export async function handleMailSend(
       throw new MailSendError("Managed mail is not available for this account", false);
     }
     const normalized = normalizeMailSend(value, ownerUid, ctx);
+    await authorizeNestedOperation(ctx, "mail.send", value);
     ctx.requestSignal?.throwIfAborted();
     deliveryId = normalized.deliveryId;
     outboundId = await stableOpaqueId("mail-outbound", [

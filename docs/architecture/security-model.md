@@ -218,10 +218,17 @@ mail domain before using the provider binding.
 
 CodeMode exposes `mail.send` as a nested syscall, not as a fixed direct tool, and
 the default interactive policy asks for approval on each call. The native
-`mail send` and `mail reply` commands execute beneath `shell.exec`; the outer
-shell approval is their authority and they do not generate a second nested
-approval. Policies that auto-approve `shell.exec` therefore also authorize
-those shell forms, just as they authorize other shell side effects.
+`mail send` and `mail reply` commands execute beneath `shell.exec` and retain
+the owning Process run's mail approval policy. The same ownership follows MCP
+calls, CodeMode, and file/network operations sent to another target. Approval
+is requested before dispatch; cancellation or a stale run prevents dispatch.
+Nested approvals expire with the enclosing execution or after 55 seconds.
+An interrupted command is never replayed when its approval is restored.
+
+Agent-created scheduled shell commands require approval by default when added
+or enabled, because their future execution has no active run in which to ask.
+An explicit scheduling policy can override this default. Ordinary reminder and
+Process schedules are unaffected.
 
 Outbound replay protection spans both trust boundaries. Kernel SQLite binds a
 human owner's required, caller-retained `deliveryId` to the exact draft while R2 holds the canonical body.
