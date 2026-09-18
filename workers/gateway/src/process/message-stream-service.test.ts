@@ -116,10 +116,14 @@ describe("ProcessMessageStreamService", () => {
     let release!: () => void;
     const delivery = new Promise<void>((resolve) => { release = resolve; });
     const notify = vi.spyOn(streams, "emitProjection").mockImplementation(async () => delivery);
+    notify.mockClear();
     const aborted = streams.abortRun("run", "interrupted");
-    await streams.append("run", "b", "two late");
-    expect(notify.mock.calls.map((call) => call[2])).toEqual(["aborted", "aborted"]);
-    release();
+    try {
+      await streams.append("run", "b", "two late");
+      expect(notify.mock.calls.map((call) => call[2])).toEqual(["aborted", "aborted"]);
+    } finally {
+      release();
+    }
     await aborted;
     expect(emitted.map((entry) => entry.delta ?? "").join("")).toBe("onetwo");
   });
