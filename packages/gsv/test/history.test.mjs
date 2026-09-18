@@ -236,6 +236,7 @@ const eventFixtures = {
   "context.runway": { epochId: "epoch:1", remainingInputTokens: 100, runwayBeforeBoundaryTokens: 50, policy },
   "context.failed": { reason: "context.policy.fail", policy, pressure: 0.9 },
   "responsibility.revision": { epochId: "epoch:1", transition },
+  "responsibility.ready": { batchId: "batch:1", ledgerRevision: 2, responsibilityIds: ["r12y:1"], receivedAtMs: 300 },
   "correction.text-only": { attempt: 1, limit: 3 },
   "correction.exhausted": { attempts: 3, limit: 3, conversationId: "conversation:1", messageId: "message:1" },
   "generation.failed": { reason: "generation.error", error: "Provider unavailable", provider: "provider", model: "model" },

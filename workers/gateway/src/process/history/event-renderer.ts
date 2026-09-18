@@ -21,7 +21,7 @@ import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import { formatTargetConnectionEvent } from "../../prompts/target-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
-import { formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
+import { formatResponsibilityReadyEvent, formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
 export { formatResponsibilityTransitionEvent, formatResponsibilityLine } from "../../prompts/responsibility-events";
 
 export function renderHistoryEvent(event: ProcHistoryEvent): string {
@@ -31,6 +31,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "context.runway": return formatContextRunwayAlertMessage(event.payload);
     case "context.failed": return renderContextFailure(event.payload);
     case "responsibility.revision": return formatResponsibilityTransitionEvent(event.payload.transition, event.payload.contextFields);
+    case "responsibility.ready": return formatResponsibilityReadyEvent(event.payload);
     case "correction.text-only": return YIELD_CORRECTION_MESSAGE;
     case "correction.exhausted": return CORRECTION_FAILURE_NOTICE;
     case "generation.failed": return formatGenerationFailure(event.payload.error, event.payload);
