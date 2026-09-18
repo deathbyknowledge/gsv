@@ -1,5 +1,6 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary } from "@humansandmachines/gsv/protocol";
+import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
 import { act } from "preact/test-utils";
@@ -101,6 +102,7 @@ async function mountedZen(pid?: string) {
     return node.props as P;
   };
   return { render, props, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+    nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
   };
@@ -139,20 +141,30 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
-  it("sends the person's first question through ordinary conversation.send", async () => {
+  it("shows the first question before acknowledgement and reconciles an early commit exactly once", async () => {
     const accepted = deferred<ConversationSendResult>();
     send.mockReturnValue(accepted.promise);
     const zen = await mountedZen();
     try {
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
-      await act(() => { void prompt().onSubmit("Help me plan my week"); });
+      await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
+      expect(zen.props(ZenText).text).toBe("Help me plan my week");
+      expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "canonical-ship",
         text: "Help me plan my week", idempotencyKey: expect.any(String) }));
       await act(() => { prompt().onInput?.("My next question"); });
-      await act(async () => { accepted.resolve({ message: message("user", "Help me plan my week"), handlerPid: shipPid, runId: "first-question" }); await accepted.promise; });
+      const committed = { ...message("user", "Help me plan my week"),
+        id: await conversationSendMessageId("canonical-ship", send.mock.calls[0]![0].idempotencyKey!) };
+      await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: false }); });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+      expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
+      await act(async () => { accepted.resolve({ message: committed, handlerPid: shipPid, runId: "first-question" }); await accepted.promise; });
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Help me plan my week"));
       expect(zen.dirty()).toBe(true);
       expect(send).toHaveBeenCalledTimes(1);
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+      expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false);
     } finally { await zen.unmount(); }
   });
 
@@ -162,13 +174,37 @@ describe("Zen conversation entry", () => {
     try {
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { prompt().onInput?.("My first question"); });
-      await act(async () => { expect(await prompt().onSubmit("My first question")).toBe(false); });
-      expect(zen.text()).toContain("The message did not go through.");
+      await act(() => { expect(prompt().onSubmit("My first question")).toBe(true); prompt().onInput?.(""); });
+      await vi.waitFor(() => expect(zen.text()).toContain("The message did not go through."));
+      expect(zen.props(ZenText).text).toBe("My first question");
       expect(zen.dirty()).toBe(true);
+      await act(() => { prompt().onInput?.("A different draft"); });
       send.mockResolvedValueOnce({ message: message("user", "My first question"), handlerPid: shipPid, runId: "retry" });
-      await act(async () => { expect(await prompt().onSubmit("My first question")).toBe(true); });
+      const retry = zen.nodes().find((node) => node.type === "button" && collectText(node) === "retry");
+      expect(retry).toBeDefined();
+      await act(() => { retry!.props.onClick(); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       expect(send.mock.calls[1]?.[0].idempotencyKey).toBe(send.mock.calls[0]?.[0].idempotencyKey);
       expect(zen.props(ZenText).text).toBe("My first question");
+      expect(zen.dirty()).toBe(true);
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps an identical message from another client separate from a pending send", async () => {
+    const accepted = deferred<ConversationSendResult>();
+    send.mockReturnValue(accepted.promise);
+    const zen = await mountedZen();
+    try {
+      await act(() => { zen.props(PromptLine).onSubmit("Continue"); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const remote = { ...message("user", "Continue"), createdAt: Date.now(), origin: { kind: "client" as const, clientId: "phone" } };
+      await act(() => { for (const listener of signals) listener("message.committed", { message: remote, directed: false }); });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
+      const local = { ...message("user", "Continue", 2),
+        id: await conversationSendMessageId("canonical-ship", send.mock.calls[0]![0].idempotencyKey!) };
+      await act(async () => { accepted.resolve({ message: local, handlerPid: shipPid, runId: "local" }); await accepted.promise; });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
     } finally { await zen.unmount(); }
   });
 

@@ -4,13 +4,13 @@ import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { LoadingState } from "../../../components/ui/Spinner";
+import { LoadingState, Spinner } from "../../../components/ui/Spinner";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
   decideChatHil,
-  sendChatMessage,
 } from "../../../services/chat/backend/chatService";
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
+import { useChatOutbox } from "../../../services/chat/hooks/useChatOutbox";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
 import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
@@ -37,7 +37,7 @@ import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
-import { zenAttachment, zenSendIntent, type ZenAttachment, type ZenSendIntent } from "./zenAttachments";
+import { zenAttachment, type ZenAttachment } from "./zenAttachments";
 import {
   activityDuration,
   answerAttribution,
@@ -320,26 +320,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
+  const outbox = useChatOutbox(conversation.acceptMessage);
   const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
   const runtime = processRuntime.runtime;
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
   const [draftText, setDraftText] = useState("");
-  const [sending, setSending] = useState<"uploading" | "sending" | null>(null);
-  const pendingSend = useRef<{ intent: ZenSendIntent; controller: AbortController } | null>(null);
-  const retryIntent = useRef<ZenSendIntent | null>(null);
-  const mounted = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = draftText !== "" || attachments.length > 0 || sending !== null;
+  const dirty = draftText !== "" || attachments.length > 0 || outbox.messages.length > 0;
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; pendingSend.current?.controller.abort(new Error("Upload cancelled")); };
-  }, []);
   useEffect(() => {
     if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -453,8 +446,23 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* moments: the runtime's, plus the commands run by hand */
   const { moments, receipts } = useMemo(() => {
-    const fromRuntime = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
+    const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
+    for (const outgoing of outbox.messages) {
+      if (outgoing.draft.conversationId
+        ? outgoing.draft.conversationId !== conversation.conversation?.id
+        : outgoing.draft.pid !== pid) continue;
+      const committed = fromRuntime.find((moment) => moment.id === `conversation:${outgoing.messageId}`);
+      if (committed) {
+        committed.outgoing = outgoing;
+      } else {
+        fromRuntime.push({
+          id: `outgoing:${outgoing.id}`, role: "human", text: outgoing.draft.message,
+          timestamp: outgoing.createdAt, processId: outgoing.draft.pid,
+          runId: null, streaming: false, thinking: false, activities: [], narration: "", outgoing,
+        });
+      }
+    }
     const fromLocal: Moment[] = localRuns.map((run) => ({
       id: run.id,
       role: "ship",
@@ -489,7 +497,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     }));
     const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
-  }, [answerHistory, conversation.rows, localRuns, runtime.activeRunId, runtime.rows, pid]);
+  }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -605,43 +613,21 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     promptRef.current?.focus();
   }, []);
   const say = useCallback(
-    async (text: string) => {
-      if (pendingSend.current) return false;
+    (text: string) => {
       if (!pid) {
         setNote("Your ship is still starting.");
         return false;
       }
-      const intent = zenSendIntent(retryIntent.current, pid, text, attachments, where ?? defaultPlace(places));
+      const accepted = outbox.send({
+        pid, conversationId: conversation.conversation?.id, message: text,
+        media: [...attachments], selectedTarget: where ?? defaultPlace(places),
+      });
+      if (!accepted) return false;
       scrolling.follow();
-      retryIntent.current = intent;
-      const pending = { intent, controller: new AbortController() };
-      pendingSend.current = pending;
-      setSending(attachments.length > 0 ? "uploading" : "sending");
-      try {
-        const result = await sendChatMessage(client, {
-          pid, conversationId: conversation.conversation?.id, message: text,
-          media: [...intent.media], idempotencyKey: intent.idempotencyKey,
-          selectedTarget: intent.selectedTarget,
-        }, {
-          signal: pending.controller.signal,
-          onUploaded: () => { if (mounted.current) setSending("sending"); },
-        });
-        if (mounted.current) {
-          conversation.acceptMessage(result.message);
-          setAttachments((current) => current.filter((file) => !intent.media.some((sent) => sent.id === file.id)));
-          retryIntent.current = null;
-          setNote(null);
-        }
-        return true;
-      } catch (error) {
-        if (mounted.current) setNote(error instanceof Error ? error.message : "The message did not go through.");
-        return false;
-      } finally {
-        if (pendingSend.current === pending) pendingSend.current = null;
-        if (mounted.current) setSending(null);
-      }
+      setAttachments([]);
+      return true;
     },
-    [attachments, client, conversation, pid, places, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where],
   );
 
   const runDirectly = useCallback(
@@ -659,7 +645,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const onSubmit = useCallback(
     (raw: string) => {
-      if (pendingSend.current) return false;
+      if (outbox.sending) return false;
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
@@ -678,7 +664,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       return say(intent.text);
     },
-    [attachments.length, places, runDirectly, say],
+    [attachments.length, outbox.sending, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -908,6 +894,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
                       {moment.role === "human" ? who : "ship"}
+                      {moment.outgoing && moment.outgoing.status !== "failed" ? (
+                        <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
+                          <Spinner size={14} />
+                        </span>
+                      ) : null}
                       {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
                     </div> : null}
                     {moment.activities
@@ -947,6 +938,20 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       <div class="text"><ThinkingMark tick={tick} /></div>
                     ) : null}
                     {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+                    {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
+                      <ul class="zen-draft-attachments" aria-label="Message attachments">
+                        {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
+                      </ul>
+                    ) : null}
+                    {moment.outgoing?.status === "uploading" ? (
+                      <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
+                    ) : moment.outgoing?.status === "failed" ? (
+                      <div class="zen-send-actions">
+                        <span class="is-err" role="alert">{moment.outgoing.error}</span>
+                        <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
+                        <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
+                      </div>
+                    ) : null}
                     {isLatest && pendingHil ? (
                       <ApprovalCard
                         request={pendingHil}
@@ -1006,7 +1011,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
           {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
-              disabled={pendingSend.current?.intent.media.some((file) => file.id === attachment.id)}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           <PromptLine
@@ -1037,10 +1041,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
-            {sending ? <>
-              <LoadingState>{sending === "uploading" ? "uploading…" : "sending…"}</LoadingState>
-              {sending === "uploading" && <button type="button" onClick={() => pendingSend.current?.controller.abort(new Error("Upload cancelled. Your draft is still here."))}>cancel upload</button>}
-            </> : attachments.length > 0 && <button type="button" disabled={!connected || !pid} onClick={() => promptRef.current?.submit()}>send</button>}
+            {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
           </div>
         </div>
       </div>
