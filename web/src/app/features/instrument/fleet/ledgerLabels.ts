@@ -7,6 +7,7 @@ const labels = {
   "fs.edit": "edited a file",
   "fs.delete": "removed a file",
   "fs.search": "searched files",
+  "web.search": "searched the web",
   "fs.copy": "copied a file",
   "fs.transfer.stat": "checked a file transfer",
   "fs.transfer.send": "sent a file to another place",
