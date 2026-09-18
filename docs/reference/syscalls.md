@@ -426,6 +426,24 @@ and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
 
+## Web search: `web.search`
+
+Indexed web search is the separate, non-target-routed `web.search` syscall,
+exposed as the model's `Search` tool, native `web search` command, and CodeMode
+`web.search(args)`. It requires a configured `WEB_SEARCH` service and the
+`web.search` capability. See [Web search](web-search.md) for arguments and the
+operator contract. Filesystem `fs.search` remains target-routed and is available
+through CodeMode.
+
+```ts
+interface WebSearchSyscalls {
+  "web.search": {
+    args: { query: string; limit?: number; includeDomains?: string[]; excludeDomains?: string[] };
+    result: { provider: string; results: { title: string; url: string; snippet: string; publishedAt?: string }[] };
+  };
+}
+```
+
 ## CodeMode: `codemode.exec`, `codemode.run`
 
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO

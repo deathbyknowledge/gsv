@@ -9,6 +9,22 @@ import {
 import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
+  it("keeps web search separate from target-routed filesystem search", async () => {
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(env, `
+      await web.search({ query: "current news", limit: 3 });
+      return await fs.search({ query: "needle", path: "/workspace", target: "laptop" });
+    `, async (call, args) => {
+      calls.push({ call, args });
+      return call === "web.search" ? { provider: "fixture", results: [] } : { matches: [] };
+    }, { defaultTarget: "laptop", defaultCwd: "/workspace" });
+    expect(result.status).toBe("completed");
+    expect(calls).toEqual([
+      { call: "web.search", args: { query: "current news", limit: 3 } },
+      { call: "fs.search", args: { query: "needle", path: "/workspace", target: "laptop" } },
+    ]);
+  });
+
   it("returns a clear error when the Worker Loader binding is unavailable", async () => {
     const result = await executeCodeMode({}, "return 1;", async () => null);
 

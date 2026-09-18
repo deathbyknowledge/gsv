@@ -56,7 +56,7 @@ import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
-import { TOOL_TO_SYSCALL } from "../../syscalls/constants";
+import { resolveToolSyscall } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
 import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
@@ -1643,6 +1643,7 @@ export class ProcessRun {
           media: outputMedia,
           runId,
           runControlCallIds: turn.runControlCalls.map(({ toolCall }) => toolCall.id),
+          toolSyscalls: run.toolSyscalls,
           resolveTarget: (syscall, args) => {
             if (!isRoutableSyscall(syscall)) return null;
             const prepared = this.host.tools.prepareToolArgs(syscall, args);
@@ -1687,7 +1688,7 @@ export class ProcessRun {
         this.appendInvalidRunControlToolResult(runId, toolCall);
         continue;
       }
-      const syscall = TOOL_TO_SYSCALL[toolCall.name];
+      const syscall = resolveToolSyscall(toolCall.name, this.host.runs.active?.toolSyscalls);
       const args = jsonObjectSchema.parse(toolCall.arguments);
       const prepared = syscall
         ? this.host.tools.prepareToolArgs(syscall, args)
@@ -1706,7 +1707,7 @@ export class ProcessRun {
       }
     }
     for (const toolCall of turn.unofferedToolCalls) {
-      const syscall = TOOL_TO_SYSCALL[toolCall.name];
+      const syscall = resolveToolSyscall(toolCall.name, this.host.runs.active?.toolSyscalls);
       this.host.store.messages.appendToolResult(
         toolCall.id,
         syscall ?? toolCall.name,
@@ -1735,7 +1736,7 @@ export class ProcessRun {
   appendInvalidRunControlToolResult(runId: string, toolCall: ToolCall): void {
     this.host.store.messages.appendToolResult(
       toolCall.id,
-      TOOL_TO_SYSCALL[toolCall.name] ?? toolCall.name,
+      resolveToolSyscall(toolCall.name, this.host.runs.active?.toolSyscalls) ?? toolCall.name,
       "message send and yield must be issued separately from other tool actions",
       true,
       runId,
@@ -2117,6 +2118,7 @@ export class ProcessRun {
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
+        toolSyscalls: toolsResult.toolSyscalls,
         targets: toolsResult.targets,
         mcpServers: toolsResult.mcpServers,
       }));

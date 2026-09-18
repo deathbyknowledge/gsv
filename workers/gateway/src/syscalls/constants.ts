@@ -4,6 +4,7 @@ export const FS_WRITE = "fs.write";
 export const FS_EDIT = "fs.edit";
 export const FS_DELETE = "fs.delete";
 export const FS_SEARCH = "fs.search";
+export const WEB_SEARCH = "web.search";
 
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";
@@ -34,6 +35,7 @@ export const SYSCALL_TOOL_NAMES = {
   [FS_EDIT]: "Edit",
   [FS_DELETE]: "Delete",
   [FS_SEARCH]: "Search",
+  [WEB_SEARCH]: "Search",
   [SHELL_EXEC]: "Shell",
   [CODEMODE_EXEC]: "CodeMode",
 } satisfies Record<string, string>;
@@ -62,7 +64,18 @@ export const TOOL_TO_SYSCALL = defineToolToSyscallMap({
   [SYSCALL_TOOL_NAMES[FS_WRITE]]: FS_WRITE,
   [SYSCALL_TOOL_NAMES[FS_EDIT]]: FS_EDIT,
   [SYSCALL_TOOL_NAMES[FS_DELETE]]: FS_DELETE,
-  [SYSCALL_TOOL_NAMES[FS_SEARCH]]: FS_SEARCH,
+  [SYSCALL_TOOL_NAMES[WEB_SEARCH]]: WEB_SEARCH,
   [SYSCALL_TOOL_NAMES[SHELL_EXEC]]: SHELL_EXEC,
   [SYSCALL_TOOL_NAMES[CODEMODE_EXEC]]: CODEMODE_EXEC,
 });
+
+// Runs and untyped history written before Search became web search have no captured routing.
+const LEGACY_TOOL_TO_SYSCALL = defineToolToSyscallMap({ ...TOOL_TO_SYSCALL, Search: FS_SEARCH });
+
+export function resolveToolSyscall(
+  name: string,
+  captured?: Readonly<Record<string, string>>,
+): ToolSyscallName | undefined {
+  const call = (captured ?? LEGACY_TOOL_TO_SYSCALL)[name];
+  return call && isToolSyscallName(call) ? call : undefined;
+}

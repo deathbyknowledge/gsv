@@ -62,7 +62,7 @@ import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
 import { FS_EDIT_DEFINITION } from "../syscalls/edit";
 import { FS_DELETE_DEFINITION } from "../syscalls/delete";
-import { FS_SEARCH_DEFINITION } from "../syscalls/search";
+import { WEB_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import { isCodeModeAvailable } from "../codemode/availability";
@@ -113,7 +113,7 @@ const SYSCALL_TOOLS: Array<{ syscall: SyscallName; definition: ToolDefinition }>
   { syscall: "fs.write", definition: FS_WRITE_DEFINITION },
   { syscall: "fs.edit", definition: FS_EDIT_DEFINITION },
   { syscall: "fs.delete", definition: FS_DELETE_DEFINITION },
-  { syscall: "fs.search", definition: FS_SEARCH_DEFINITION },
+  { syscall: "web.search", definition: WEB_SEARCH_DEFINITION },
   { syscall: "shell.exec", definition: SHELL_EXEC_DEFINITION },
   { syscall: "codemode.exec", definition: CODEMODE_EXEC_DEFINITION },
 ];
@@ -164,18 +164,22 @@ export async function handleAiTools(
   const onlineDevices: AiToolsTarget[] = visibleTargets.map(targetToAiTarget);
 
   const tools: ToolDefinition[] = [];
+  const toolSyscalls: Record<string, string> = {};
 
   for (const { syscall, definition } of SYSCALL_TOOLS) {
     if (!hasCapability(capabilities, syscall)) continue;
     if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
+    if (syscall === "web.search" && !ctx.env.WEB_SEARCH) continue;
 
     tools.push(withPurpose(
       isRoutableSyscall(syscall) ? intoSyscallTool(definition) : definition,
     ));
+    toolSyscalls[definition.name] = syscall;
   }
 
   return {
     tools,
+    toolSyscalls,
     targets: onlineDevices,
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
   };

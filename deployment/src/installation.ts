@@ -51,7 +51,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
 export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRuntimeDependencies) => {
   const { Cloudflare, Effect, retain } = dependencies;
   return Effect.gen(function* () {
-  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound)) {
+  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch)) {
     throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
   }
   if (Boolean(props.services?.inferenceExecution) !== Boolean(props.services?.inferenceLifecycle)) {

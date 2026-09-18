@@ -4,6 +4,7 @@ import type { InferenceExecutionService } from "@humansandmachines/gsv/services/
 import type { InstallationOwnershipService } from "@humansandmachines/gsv/services/ownership";
 import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import type { WebSearchService } from "@humansandmachines/gsv/services/web-search";
 
 /**
  * Deployment service contracts augment the generated platform bindings.
@@ -14,6 +15,7 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   INFERENCE_EXECUTION: InferenceExecutionService;
   MANAGED_INFERENCE_INSTALLATIONS?: DurableObjectNamespace;
   MANAGED_MAIL_OUTBOUND?: Queue<ManagedOutboundMailCommand>;
+  WEB_SEARCH?: WebSearchService;
 };
 
 export type GatewayEnv = Omit<Env, "INFERENCE_EXECUTION"> & GatewayDeploymentBindings;

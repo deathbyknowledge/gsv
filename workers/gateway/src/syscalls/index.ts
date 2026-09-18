@@ -13,6 +13,7 @@ type SyscallDomain =
   | "fs"
   | "shell"
   | "net"
+  | "web"
   | "codemode"
   | "mail"
   | "proc"

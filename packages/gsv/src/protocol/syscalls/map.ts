@@ -20,6 +20,7 @@ import type {
 } from "./fs";
 import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
+import type { WebSearchArgs, WebSearchResult } from "./web";
 import type {
   CodeModeExecArgs,
   CodeModeExecResult,
@@ -314,6 +315,7 @@ export type SyscallDomains = {
   "shell.cancel": { args: ShellCancelArgs; result: ShellCancelResult };
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
+  "web.search": { args: WebSearchArgs; result: WebSearchResult };
 
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
