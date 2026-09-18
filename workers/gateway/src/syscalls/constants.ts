@@ -70,7 +70,7 @@ export const TOOL_TO_SYSCALL = defineToolToSyscallMap({
 });
 
 // Runs and untyped history written before Search became web search have no captured routing.
-const LEGACY_TOOL_TO_SYSCALL: ToolToSyscallMap = { ...TOOL_TO_SYSCALL, Search: FS_SEARCH };
+const LEGACY_TOOL_TO_SYSCALL = defineToolToSyscallMap({ ...TOOL_TO_SYSCALL, Search: FS_SEARCH });
 
 export function resolveToolSyscall(
   name: string,
