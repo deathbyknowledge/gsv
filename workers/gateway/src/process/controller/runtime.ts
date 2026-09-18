@@ -41,7 +41,7 @@ import {
   isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome, normalizeOptionalString,
   parseStoredStringArray, cancelResponseBody,
 } from "../internal/messages";
-import { CODEMODE_EXEC, SYSCALL_TOOL_NAMES } from "../../syscalls/constants";
+import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
   InternalResponseFrame,
@@ -1178,14 +1178,13 @@ export class ProcessController {
       ? toolCalls.find(
           (result) =>
             result.dispatchId === pending.ownerDispatchId &&
-            result.call === CODEMODE_EXEC &&
             result.status === "pending",
         )
       : undefined;
     const error = outerCodeMode
       ? args.decision === "deny"
         ? TOOL_EXECUTION_DENIED_BY_USER_MESSAGE
-        : "CodeMode execution was interrupted while waiting for tool approval"
+        : "Tool execution was interrupted while waiting for approval"
       : `Registered tool call not found: ${pending.runId}/${pending.toolCallId}`;
     if (outerCodeMode) {
       await this.host.tools.failStartedTool(
@@ -1291,7 +1290,7 @@ export class ProcessController {
     );
     const codeModeOwnerDispatchId = pendingHil.ownerDispatchId ?? codeModeApproval?.dispatchId;
     const offeredToolName = codeModeOwnerDispatchId
-      ? SYSCALL_TOOL_NAMES[CODEMODE_EXEC]!
+      ? syscallToolName(this.host.store.tools.getPending(codeModeOwnerDispatchId)?.call ?? "") ?? pendingHil.toolName
       : pendingHil.toolName;
     if (args.decision === "approve" && !this.host.tools.wasToolOffered(run, offeredToolName)) {
       return await this.rejectUnofferedHil(
@@ -2030,6 +2029,12 @@ export class ProcessController {
     frame: ProcessRequestFrame,
   ): Promise<ResponseFrame | InternalResponseFrame<ProcessInternalCall> | null> {
     try {
+      if (frame.call === "proc.tool.authorize") {
+        const approved = await this.handleCancellableRequest(frame.id, (signal) =>
+          this.host.tools.authorizeNestedTool(frame.args, signal),
+        );
+        return { type: "res", id: frame.id, ok: true, data: { approved } };
+      }
       if (frame.call === "proc.event.deliver") {
         const result = await deliverProcessEvent(this.host, frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
@@ -2081,7 +2086,7 @@ export class ProcessController {
           break;
         case "codemode.run":
           data = await this.handleCancellableRequest(frame.id, (signal) =>
-            this.host.tools.handleCodeModeRun(frame.args, signal, frame.id),
+            this.host.tools.handleCodeModeRun(frame.args, signal, frame.id, frame.toolOwner),
           );
           break;
         case "proc.history":
