@@ -194,6 +194,7 @@ function stringField(value: ChatTranscriptValue | undefined, key: string): strin
 /** The target a tool call touched: an explicit `target` argument, else the cloud home. */
 /** The one argument a person wants to see: the command, the path, the URL, or the tool's name. */
 export function argumentThatMatters(syscall: string, args: ChatTranscriptValue | undefined): string {
+  if (syscall === "web.search") return stringField(args, "query") ?? "";
   if (syscall === "codemode.exec" || syscall === "codemode.run" || syscall === "CodeMode") return stringField(args, "code") ?? "";
   const input = stringField(args, "input") ?? stringField(args, "command");
   if (input && syscall.startsWith("shell.")) return input;
@@ -217,6 +218,7 @@ const fileEditResultSchema = z.object({ ok: z.literal(true), path: z.string(), r
 const fileDeleteResultSchema = z.object({ ok: z.literal(true), path: z.string() });
 const fileResultSchema = z.object({ content: z.string().optional(), entries: z.array(z.object({ name: z.string(), kind: z.string().optional() })).optional() });
 const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string() })).optional(), matches: z.array(z.object({ path: z.string() })).optional() });
+const webSearchResultSchema = z.object({ results: z.array(z.object({ title: z.string(), url: z.string(), snippet: z.string(), publishedAt: z.string().optional() })) });
 const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative(), truncated: z.boolean().optional() });
 const mailResultSchema = z.object({ ok: z.literal(true), messageId: z.string() });
 const filesystemOperationVerbs = new Map([
@@ -246,6 +248,10 @@ function mutationConfirmation(syscall: string, output: ChatTranscriptValue | und
 /** The tool result as a person would read it: stdout and stderr for a command, content or names for files, never the transport JSON. */
 export function outputText(syscall: string, output: ChatTranscriptValue | undefined, fallback: string): string {
   if (output === undefined || output === null) return fallback;
+  if (syscall === "web.search") {
+    const search = webSearchResultSchema.safeParse(output);
+    if (search.success) return search.data.results.map((hit) => [hit.title, hit.url, hit.publishedAt, hit.snippet].filter(Boolean).join("\n")).join("\n\n") || "No results.";
+  }
   if (syscall.startsWith("fs.")) {
     const error = fileOperationErrorSchema.safeParse(output);
     if (error.success) return error.data.error;
