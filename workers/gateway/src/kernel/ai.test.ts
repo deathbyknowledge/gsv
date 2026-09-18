@@ -190,6 +190,7 @@ function makeContext(
     env: {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       LOADER: {} as WorkerLoader,
+      WEB_SEARCH: { getInstallation: async () => ({ search: async () => ({ provider: "fixture", results: [] }), cancel: async () => {} }) },
     },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -224,6 +225,11 @@ describe("handleAiTools", () => {
       "ai.tools should stay a fixed Linux-like surface: filesystem tools, Shell, and CodeMode only. Do not expose OS conveniences such as spawn, sched, MCP, or copy as direct LLM tools.",
     ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
+    expect(result.toolSyscalls?.Search).toBe("web.search");
+    const searchTool = result.tools.find((tool) => tool.name === "Search");
+    expect(searchTool?.inputSchema.properties).toHaveProperty("includeDomains");
+    expect(searchTool?.inputSchema.properties).not.toHaveProperty("target");
+    expect(searchTool?.inputSchema.properties).not.toHaveProperty("path");
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("mail.send");
     expect(codeModeTool?.description).toContain("return mcpTools.map");
@@ -246,6 +252,17 @@ describe("handleAiTools", () => {
       "Search",
       "Shell",
     ]);
+  });
+
+  it("only advertises Search with both a web service and a web.search grant", async () => {
+    const unconfigured = makeContext("ready");
+    delete unconfigured.env.WEB_SEARCH;
+    const filesystemOnly = makeContext("ready", { capabilities: ["fs.*"] });
+    for (const ctx of [unconfigured, filesystemOnly]) {
+      const result = await handleAiTools(ctx);
+      expect(result.tools.some((tool) => tool.name === "Search")).toBe(false);
+      expect(result.toolSyscalls).not.toHaveProperty("Search");
+    }
   });
 
   it("advertises owner-owned MCP tools for service-account agent processes", async () => {

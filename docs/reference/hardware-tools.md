@@ -37,11 +37,14 @@ support background jobs or resumable shell sessions.
 | `Write` | `fs.write` | Write a complete file, creating parents where supported. |
 | `Edit` | `fs.edit` | Replace exact text in a file. |
 | `Delete` | `fs.delete` | Delete a file or directory. |
-| `Search` | `fs.search` | Search file contents. |
+| `Search` | `web.search` | Search indexed web pages through the configured service. No target argument. |
 | `Shell` | `shell.exec` | Execute a shell command. |
 | `CodeMode` | `codemode.exec` | Run a sandboxed JavaScript block that can call filesystem and shell tools programmatically. |
 
 Each tool receives the same public argument shape regardless of target. For example:
+
+`Search` uses the installation's web-search service rather than a target.
+For files, use Shell commands or CodeMode `fs.search({ target, path, query })`.
 
 ```json
 {

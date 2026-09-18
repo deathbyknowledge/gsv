@@ -10,6 +10,26 @@ import {
 import { classifyAssistantTurn } from "./run-tick-policy";
 
 describe("typed history producers", () => {
+  it.each([
+    { toolSyscalls: undefined, syscall: "fs.search", target: "gsv" },
+    { toolSyscalls: { Search: "web.search" }, syscall: "web.search", target: null },
+  ])("keeps captured Search routing across run storage: $syscall", async ({ toolSyscalls, syscall, target }) => {
+    const stub = await initProcess(`typed-search-${syscall}`, ROOT_IDENTITY);
+    await runInProcess(stub, async (process) => {
+      const runId = "search-run";
+      process.runs.active = { runId, toolSyscalls, offeredToolNames: ["Search"] };
+      const turn = classifyAssistantTurn(assistantResponse([
+        { type: "toolCall", id: "search", name: "Search", arguments: { query: "example" } },
+      ]), ["Search"]);
+      process.run.persistRunTickAssistantHistory(runId, turn, [], undefined);
+      expect(process.store.messages.getRecords()).toContainEqual(expect.objectContaining({
+        kind: "call", payload: expect.objectContaining({ syscall, target }),
+      }));
+      expect(process.store.tools.getResults(runId)).toContainEqual(expect.objectContaining({ call: syscall }));
+      process.runs.active = null;
+    });
+  });
+
   it("retains source JSON, resources, and all tool outcomes without parsing display text", async () => {
     const stub = await initProcess("typed-history-tools", ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {

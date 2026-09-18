@@ -25,6 +25,7 @@ import type { ShellSessionStore } from "./shell-sessions";
 import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import { handleWebSearch } from "./web-search";
 import {
   handleAiContext,
   handleAiConfig,
@@ -377,6 +378,9 @@ async function dispatchKernel(
 
       case "mail.send":
         data = await handleMailSend(frame.args, ctx);
+        break;
+      case "web.search":
+        data = await handleWebSearch(frame.args, ctx);
         break;
       case "mail.status":
         data = handleMailStatus(frame.args, ctx);

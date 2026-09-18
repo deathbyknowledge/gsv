@@ -428,6 +428,13 @@ send that returned `queued`.
 
 ## CodeMode: `codemode.exec`, `codemode.run`
 
+Indexed web search is the separate, non-target-routed `web.search` syscall,
+exposed as the model's `Search` tool, native `web search` command, and CodeMode
+`web.search(args)`. It requires a configured `WEB_SEARCH` service and the
+`web.search` capability. See [Web search](web-search.md) for arguments and the
+operator contract. Filesystem `fs.search` remains target-routed and is available
+through CodeMode.
+
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO
 using Cloudflare Worker Loader. It is exposed to models as the `CodeMode` tool
 for multi-step workflows that are easier to express as code than as repeated
