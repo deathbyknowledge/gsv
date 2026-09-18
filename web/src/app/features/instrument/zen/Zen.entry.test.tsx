@@ -164,7 +164,7 @@ describe("Zen conversation entry", () => {
       expect(zen.dirty()).toBe(true);
       expect(send).toHaveBeenCalledTimes(1);
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
-      expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false);
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
     } finally { await zen.unmount(); }
   });
 
@@ -184,6 +184,7 @@ describe("Zen conversation entry", () => {
       expect(retry).toBeDefined();
       await act(() => { retry!.props.onClick?.(); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
       expect(send.mock.calls[1]?.[0].idempotencyKey).toBe(send.mock.calls[0]?.[0].idempotencyKey);
       expect(zen.props(ZenText).text).toBe("My first question");
       expect(zen.dirty()).toBe(true);
@@ -204,6 +205,7 @@ describe("Zen conversation entry", () => {
       const local = { ...message("user", "Continue", 2),
         id: await conversationSendMessageId("canonical-ship", send.mock.calls[0]![0].idempotencyKey!) };
       await act(async () => { accepted.resolve({ message: local, handlerPid: shipPid, runId: "local" }); await accepted.promise; });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
     } finally { await zen.unmount(); }
   });
