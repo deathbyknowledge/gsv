@@ -141,6 +141,9 @@ describe("console agent behavior", () => {
 
     expect(policy.default).toBe("auto");
     expect(policy.rules.map((rule) => rule.match)).toEqual([
+      "fs.*",
+      "shell.exec",
+      "net.fetch",
       "shell.exec",
       "net.fetch",
       "fs.*",

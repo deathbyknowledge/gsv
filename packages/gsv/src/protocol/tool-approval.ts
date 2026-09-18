@@ -15,6 +15,9 @@ export type ToolApprovalPolicy = {
 export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
   default: "auto",
   rules: [
+    { match: "fs.*", target: "gsv", action: "auto" },
+    { match: "shell.exec", target: "gsv", action: "auto" },
+    { match: "net.fetch", target: "gsv", action: "auto" },
     { match: "shell.exec", target: "targets/*", action: "ask" },
     { match: "net.fetch", target: "targets/*", action: "ask" },
     { match: "fs.*", target: "targets/*", action: "ask" },

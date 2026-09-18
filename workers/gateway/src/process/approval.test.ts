@@ -38,6 +38,9 @@ describe("tool approval policy", () => {
   });
 
   it("allows native work and keeps mail and integrations guarded", () => {
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec")).toMatchObject({
+      action: "auto", target: "gsv", matchedRule: "shell.exec",
+    });
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "net.fetch").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("auto");
