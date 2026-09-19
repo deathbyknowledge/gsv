@@ -26,10 +26,12 @@ describe("approval beneath a native command", () => {
     const stub = await initProcess("nested-shell-search", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       prepareShell(process);
-      process.runs.active!.approvalPolicy!.rules.unshift(
+      const run = process.runs.active!;
+      run.approvalPolicy!.rules.unshift(
         { match: "web.search", target: "gsv", action: "auto" },
         { match: "web.search", target: "targets/*", action: "ask" },
       );
+      process.runs.active = run;
       const signal = new AbortController().signal;
       const request: ProcessToolAuthorizeArgs = {
         runId: "run", requestId: "shell", syscall: "web.search", args: { target: "gsv", query: "news" },
