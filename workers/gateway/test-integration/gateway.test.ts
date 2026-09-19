@@ -105,7 +105,7 @@ describe("gateway integration", () => {
         .resolves.toEqual(result);
       expect(requests).toEqual([{ query: "news", limit: 2 }]);
       const shell = await client.shell.exec({ input: "web search --target search-provider --json news" });
-      expect(shell).toMatchObject({ status: "completed", stdout: `${JSON.stringify(result)}\n` });
+      expect(shell).toMatchObject({ status: "completed", output: `${JSON.stringify(result)}\n`, exitCode: 0 });
       await expect(client.web.search({ query: "news" })).rejects.toMatchObject({
         message: "Web search is not configured for this installation",
       });
