@@ -4,6 +4,7 @@ import {
   GSVClient,
   GsvClientError,
 } from "@humansandmachines/gsv";
+import { webSearchQuerySchema } from "@humansandmachines/gsv/services/web-search";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
@@ -86,8 +87,9 @@ describe("gateway integration", () => {
       provider.onRequest(async (frame, _body, signal) => {
         expect(frame.call).toBe("web.search");
         expect(frame.args).not.toHaveProperty("target");
-        requests.push(frame.args);
-        if (frame.args?.query === "cancel") {
+        const args = webSearchQuerySchema.parse(frame.args);
+        requests.push(args);
+        if (args.query === "cancel") {
           waiting = true;
           await new Promise<void>((resolve) => {
             signal?.addEventListener("abort", () => { cancelled = true; resolve(); }, { once: true });
