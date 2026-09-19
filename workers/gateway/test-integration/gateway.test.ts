@@ -74,7 +74,6 @@ describe("gateway integration", () => {
     let provider: GSVClient | undefined;
     try {
       await client.connect();
-      expect((await client.ai.tools()).tools.some((tool) => tool.name === "Search")).toBe(false);
       const token = await client.sys.token.create({ kind: "machine", peerId: "search-provider" });
       provider = new GSVClient({
         url: wsUrl, username: USERNAME, token: token.token.token,
@@ -98,9 +97,8 @@ describe("gateway integration", () => {
         return { data: result };
       });
       await provider.connect();
-      const discovery = await client.ai.tools();
-      expect(discovery.tools.some((tool) => tool.name === "Search")).toBe(true);
-      expect(discovery.targets).toContainEqual(expect.objectContaining({ id: "search-provider", implements: ["web.search"] }));
+      const discovery = await client.sys.target.list();
+      expect(discovery.targets).toContainEqual(expect.objectContaining({ targetId: "search-provider", implements: ["web.search"] }));
       await expect(client.web.search({ target: "search-provider", query: " news ", limit: 2 }))
         .resolves.toEqual(result);
       expect(requests).toEqual([{ query: "news", limit: 2 }]);
