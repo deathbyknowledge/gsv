@@ -61,7 +61,7 @@ export function buildCustomCommands(
   const mcp = buildMcpCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
-  const web = buildWebCommand(ctx);
+  const web = buildWebCommand(ctx, options?.request);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
   const r12y = buildR12yCommand(ctx);
@@ -108,7 +108,7 @@ export function buildCustomCommands(
     yieldRun,
     skills,
     wiki,
-    ...(ctx.env.WEB_SEARCH ? [web] : []),
+    web,
     flynn,
   ];
   discovery.registerCommands(nativeCommands);

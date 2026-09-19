@@ -14,6 +14,7 @@ The current contracts are:
 - `entitlements`: a versioned, cacheable map of deployment policy values
 - `inference`: streamed model inference and cancellation
 - `mail`: Gateway mail transport and operational mail inspection
+- `web-search`: optional provider-neutral search implementation for the `gsv` target
 - `adapters`: external messaging transport discovery and operations
 
 [Installation directory and onboarding](./installation-directory.md)
@@ -85,6 +86,16 @@ Compaction is an awaited invocation with no durable operation to resume: each
 generation admission, retry, fallback or later manual attempt allocates a new
 persisted ordinal before dispatch. Repeating an unchanged compaction input does
 not reopen a completed invocation.
+
+## Web search
+
+An optional `WEB_SEARCH` binding implements the native `gsv` target's
+`web.search` syscall. Gateway acquires an installation-scoped service capability
+and forwards a validated query, request identity, and deadline. The service owns
+provider credentials, quotas, cancellation, and cleanup. The binding is the
+implementation transport; target selection remains ordinary syscall routing.
+Connected providers can advertise `web.search` without this binding or a messaging
+adapter. See [Web search](../reference/web-search.md).
 
 ## Adapters
 

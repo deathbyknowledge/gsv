@@ -9,10 +9,11 @@ import {
 import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
-  it("keeps web search separate from target-routed filesystem search", async () => {
+  it("keeps default web search on gsv and preserves an explicit search target", async () => {
     const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(env, `
       await web.search({ query: "current news", limit: 3 });
+      await web.search({ query: "more sources", target: "personal-search" });
       return await fs.search({ query: "needle", path: "/workspace", target: "laptop" });
     `, async (call, args) => {
       calls.push({ call, args });
@@ -21,6 +22,7 @@ describe.sequential("CodeMode executor", () => {
     expect(result.status).toBe("completed");
     expect(calls).toEqual([
       { call: "web.search", args: { query: "current news", limit: 3 } },
+      { call: "web.search", args: { query: "more sources", target: "personal-search" } },
       { call: "fs.search", args: { query: "needle", path: "/workspace", target: "laptop" } },
     ]);
   });

@@ -15,6 +15,12 @@ import {
 export const GSV_TARGET_ID = "gsv";
 export const GSV_TARGET_IMPLEMENTATIONS = ["fs.*", "shell.exec", "net.fetch"] as const;
 
+export function gsvTargetImplementations(ctx: Pick<KernelContext, "env">): string[] {
+  return ctx.env.WEB_SEARCH
+    ? [...GSV_TARGET_IMPLEMENTATIONS, "web.search"]
+    : [...GSV_TARGET_IMPLEMENTATIONS];
+}
+
 export type TargetDescriptor = {
   targetId: string;
   ownerUid: number;

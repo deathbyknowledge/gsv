@@ -4,7 +4,7 @@ import { WEB_SEARCH, SYSCALL_TOOL_NAMES } from "./constants";
 export const WEB_SEARCH_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[WEB_SEARCH],
   description:
-    "Search the web for current information and sources. Returns titles, URLs, and excerpts, not full pages. Use Shell commands or CodeMode fs.search for file contents.",
+    "Search the web for current information and sources on gsv or an explicit search target. Returns titles, URLs, and excerpts, not full pages. Use Shell commands or CodeMode fs.search for file contents.",
   inputSchema: {
     type: "object",
     properties: {

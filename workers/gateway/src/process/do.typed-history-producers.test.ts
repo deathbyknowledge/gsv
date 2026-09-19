@@ -12,7 +12,7 @@ import { classifyAssistantTurn } from "./run-tick-policy";
 describe("typed history producers", () => {
   it.each([
     { toolSyscalls: undefined, syscall: "fs.search", target: "gsv" },
-    { toolSyscalls: { Search: "web.search" }, syscall: "web.search", target: null },
+    { toolSyscalls: { Search: "web.search" }, syscall: "web.search", target: "gsv" },
   ])("keeps captured Search routing across run storage: $syscall", async ({ toolSyscalls, syscall, target }) => {
     const stub = await initProcess(`typed-search-${syscall}`, ROOT_IDENTITY);
     await runInProcess(stub, async (process) => {

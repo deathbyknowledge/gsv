@@ -228,7 +228,8 @@ describe("handleAiTools", () => {
     expect(result.toolSyscalls?.Search).toBe("web.search");
     const searchTool = result.tools.find((tool) => tool.name === "Search");
     expect(searchTool?.inputSchema.properties).toHaveProperty("includeDomains");
-    expect(searchTool?.inputSchema.properties).not.toHaveProperty("target");
+    expect(searchTool?.inputSchema.properties).toHaveProperty("target");
+    expect(searchTool?.inputSchema.required).not.toContain("target");
     expect(searchTool?.inputSchema.properties).not.toHaveProperty("path");
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("mail.send");
@@ -254,7 +255,7 @@ describe("handleAiTools", () => {
     ]);
   });
 
-  it("only advertises Search with both a web service and a web.search grant", async () => {
+  it("only advertises Search with a search implementation and a web.search grant", async () => {
     const unconfigured = makeContext("ready");
     delete unconfigured.env.WEB_SEARCH;
     const filesystemOnly = makeContext("ready", { capabilities: ["fs.*"] });
@@ -263,6 +264,22 @@ describe("handleAiTools", () => {
       expect(result.tools.some((tool) => tool.name === "Search")).toBe(false);
       expect(result.toolSyscalls).not.toHaveProperty("Search");
     }
+  });
+
+  it("offers Search through an accessible online target without a managed search binding", async () => {
+    const ctx = makeContext("ready", { capabilities: ["web.search"] });
+    delete ctx.env.WEB_SEARCH;
+    vi.mocked(ctx.targets.listForUser).mockReturnValue([
+      makeDevice({ target_id: "personal-search", implements: ["web.search"] }),
+    ]);
+    const result = await handleAiTools(ctx);
+    expect(result.tools.map((tool) => tool.name)).toEqual(["Search"]);
+    expect(result.targets).toContainEqual(expect.objectContaining({ id: "personal-search", implements: ["web.search"] }));
+
+    vi.mocked(ctx.targets.listForUser).mockReturnValue([
+      makeDevice({ target_id: "personal-search", implements: ["web.search"], online: false }),
+    ]);
+    expect((await handleAiTools(ctx)).tools).toEqual([]);
   });
 
   it("advertises owner-owned MCP tools for service-account agent processes", async () => {

@@ -1,17 +1,15 @@
 import type { WebSearchArgs, WebSearchResult } from "@humansandmachines/gsv/protocol";
-import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
-import type { KernelContext } from "./context";
-import { principalOf } from "./context";
-import { hasCapability } from "./capabilities";
-import { raceWithAbort } from "../shared/abort";
-import { authorizeNestedOperation } from "./tool-approval";
+import { WEB_SEARCH_TIMEOUT_MS, webSearchQuerySchema } from "@humansandmachines/gsv/services/web-search";
+import type { KernelContext } from "../../kernel/context";
+import { principalOf } from "../../kernel/context";
+import { hasCapability } from "../../kernel/capabilities";
+import { raceWithAbort } from "../../shared/abort";
 
 export async function handleWebSearch(value: WebSearchArgs, ctx: KernelContext): Promise<WebSearchResult> {
   if (!hasCapability(principalOf(ctx)?.calls ?? [], "web.search")) throw new Error("Permission denied: web.search");
-  const args = webSearchArgsSchema.parse(value);
+  const args = webSearchQuerySchema.parse(value);
   const service = ctx.env.WEB_SEARCH;
   if (!service) throw new Error("Web search is not configured for this installation");
-  await authorizeNestedOperation(ctx, "web.search", args);
   const signal = ctx.requestSignal
     ? AbortSignal.any([ctx.requestSignal, AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS)])
     : AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS);

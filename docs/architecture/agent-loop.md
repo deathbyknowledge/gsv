@@ -206,7 +206,8 @@ instead of silently completing or hanging.
 
 The model sees a fixed surface of eight tools. Seven are syscall-backed: `Read`, `Write`, `Edit`,
 `Delete`, `Search`, `Shell`, and `CodeMode` map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`,
-`web.search`, `shell.exec`, and `codemode.exec`. Search requires a configured web-search service;
+`web.search`, `shell.exec`, and `codemode.exec`. Search is offered when the caller has
+`web.search` and either a native search service or an accessible online search target;
 filesystem search remains available through Shell commands and CodeMode `fs.search`.
 Each run stores its tool-to-syscall routing with the offered schemas; already-active filesystem
 Search calls and legacy history keep their original meaning across an upgrade.

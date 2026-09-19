@@ -96,7 +96,7 @@ import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
-import { discoverVisibleTargets, listAllVisibleTargets, targetToAiTarget } from "./targets";
+import { discoverVisibleTargets, gsvTargetImplementations, listAllVisibleTargets, targetCanHandle, targetToAiTarget } from "./targets";
 import {
   isSameAiModelCredentialScope,
   layerAiModelStacks,
@@ -162,6 +162,8 @@ export async function handleAiTools(
 
   const visibleTargets = await listAllVisibleTargets(ctx);
   const onlineDevices: AiToolsTarget[] = visibleTargets.map(targetToAiTarget);
+  const canSearch = gsvTargetImplementations(ctx).includes("web.search")
+    || visibleTargets.some((target) => targetCanHandle(target, "web.search"));
 
   const tools: ToolDefinition[] = [];
   const toolSyscalls: Record<string, string> = {};
@@ -169,7 +171,7 @@ export async function handleAiTools(
   for (const { syscall, definition } of SYSCALL_TOOLS) {
     if (!hasCapability(capabilities, syscall)) continue;
     if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
-    if (syscall === "web.search" && !ctx.env.WEB_SEARCH) continue;
+    if (syscall === "web.search" && !canSearch) continue;
 
     tools.push(withPurpose(
       isRoutableSyscall(syscall) ? intoSyscallTool(definition) : definition,

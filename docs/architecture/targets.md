@@ -49,6 +49,8 @@ Target routing is useful only while the same primitive keeps the same meaning:
   directory behavior, output, exit status, timeout, and cancellation semantics.
 - `net.fetch` performs the same HTTP operation from the selected environment's
   network position.
+- `web.search` searches an index of web pages and returns titles, URLs, and
+  excerpts using the same bounded query and domain filters on every target.
 
 A target may implement only the primitives it can honor. Provider-specific
 commands can live inside a real target shell, just as the browser target offers
@@ -63,8 +65,9 @@ GSV currently projects these environments:
 
 - `gsv` is the native cloud target. Its provider owns `fs.*`, `shell.exec`, and
   `net.fetch` through `GsvFs`, the just-bash command environment, and the
-  Worker's network position. Kernel control-plane syscalls remain outside that
-  provider.
+  Worker's network position. It also implements `web.search` when the operator
+  supplies a search service binding. Kernel control-plane syscalls remain outside
+  that provider.
 - `gsvd` registers physical computers and implements filesystem, shell, network,
   and host operations using that computer's local environment.
 - The browser extension registers a browser profile as a pseudo-computer. It

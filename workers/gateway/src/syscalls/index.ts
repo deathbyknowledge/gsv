@@ -47,7 +47,7 @@ function domainOf(syscall: SyscallName): SyscallDomain {
  * `net` can exit from the Gateway Worker or another target's network position.
  * `proc` is a Kernel control-plane domain and is not target-routed.
  */
-const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net"];
+const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell", "net", "web"];
 const TARGET_SCHEMA_DESCRIPTION = "Target to execute on. Use \"gsv\" for the native cloud target, or preserve the exact target from an authorized file reference. Run `targets list` in Shell to inspect accessible targets and their current online status.";
 
 /**
@@ -69,7 +69,7 @@ export function intoSyscallTool(
     );
   }
 
-  const targetRequired = tool.name !== "Shell";
+  const targetRequired = tool.name !== "Shell" && tool.name !== "Search";
 
   return {
     name: tool.name,
@@ -80,7 +80,9 @@ export function intoSyscallTool(
         ...properties,
         target: {
           type: "string",
-          description: TARGET_SCHEMA_DESCRIPTION,
+          description: tool.name === "Search"
+            ? "Search target; defaults to gsv, whose search requires an operator-configured service. Other accessible targets must advertise web.search. Run targets list in Shell to inspect implementations and availability."
+            : TARGET_SCHEMA_DESCRIPTION,
         },
       },
       required: targetRequired ? [...required, "target"] : required,

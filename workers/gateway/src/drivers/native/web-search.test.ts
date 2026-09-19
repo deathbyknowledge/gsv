@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleWebSearch } from "./web-search";
-import { testPeer } from "../test-support/peers";
-import type { KernelContext } from "./context";
+import { testPeer } from "../../test-support/peers";
+import type { KernelContext } from "../../kernel/context";
 import type { WebSearchService, WebSearchTarget } from "@humansandmachines/gsv/services/web-search";
 
 function context(service: WebSearchService, calls = ["web.search"], signal?: AbortSignal): KernelContext {
