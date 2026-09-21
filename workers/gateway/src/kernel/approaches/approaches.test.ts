@@ -142,9 +142,14 @@ type TestSpace = { installationId: string; run<T>(work: (ctx: KernelContext) => 
 
 function testSpace(name: string): TestSpace {
   const installationId = `inst_${crypto.randomUUID()}`;
-  const stub = env.KERNEL.getByName(installationId);
-  return { installationId, run: <T>(work: (ctx: KernelContext) => T | Promise<T>) =>
-    runInDurableObject(stub, (_instance: Kernel, state) => work(spaceContext(state.storage, name, installationId))) };
+  return { installationId, run: async <T>(work: (ctx: KernelContext) => T | Promise<T>) => {
+    const outcome = await runInDurableObject(env.KERNEL.getByName(installationId), async (_instance: Kernel, state) => {
+      try { return { ok: true as const, value: await work(spaceContext(state.storage, name, installationId)) }; }
+      catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : String(error) }; }
+    });
+    if (!outcome.ok) throw new Error(outcome.error);
+    return outcome.value;
+  } };
 }
 
 async function withSpaces(work: (sender: TestSpace, recipient: TestSpace, profile: PublicProfile) => Promise<void>): Promise<void> {

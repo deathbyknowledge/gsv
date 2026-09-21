@@ -610,7 +610,10 @@ describe("federation inbound boundary", () => {
     });
 
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
+      console.info("inbound recovery fixture: removing owner");
       await removeOwner(instance);
+      console.info("inbound recovery fixture: owner removed");
+      console.info("inbound recovery fixture: inspecting schedules");
       const recoveryTasks = state.storage.sql.exec<{ callback: string; payload: string }>(
         `SELECT callback, payload FROM cf_agents_schedules
          WHERE callback = 'onFederationInbox'`,
@@ -630,8 +633,11 @@ describe("federation inbound boundary", () => {
       );
     });
 
+    console.info("inbound recovery fixture: evicting Kernel");
     await evictDurableObject(kernel);
+    console.info("inbound recovery fixture: Kernel evicted");
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
+      console.info("inbound recovery fixture: inspecting schedules");
       const recoveryTasks = state.storage.sql.exec<{ callback: string; payload: string }>(
         `SELECT callback, payload FROM cf_agents_schedules
          WHERE callback = 'onFederationInbox'`,
