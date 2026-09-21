@@ -127,16 +127,24 @@ budgets remain distinct.
 
 At the incoming pending installation ceiling, first-message text is at most
 31.25 MiB across 1,000 existing-class Conversation objects. The outgoing ceiling
-adds at most 15.625 MiB. Metadata, replay rows,
-temporary append payloads and each Conversation's own search index have separate
-bounds. This is a source-byte capacity calculation, not a measured physical
-SQLite size or cost estimate. CI must exercise full-capacity admission, expiry,
-replay and interrupted cleanup before the endpoint is enabled.
+adds at most 15.625 MiB. CI at `84e8827b` measured a fresh Conversation at
+126,976 SQLite bytes and one containing a maximum-size first message and its
+search index at 176,128 bytes. At 1,000 such objects that is about 168 MiB,
+before provider accounting and other owned data. A Kernel fixture containing
+1,000 maximum-size incoming append reservations grew from 1,007,616 to
+35,717,120 SQLite bytes. These are fixture measurements, not production costs;
+object/schema overhead is material and source-text size alone understates it.
+The capacity fixtures enforce admission limits without evicting owned records.
+Expiry, replay, interrupted cleanup and the complete two-space flow must also
+pass CI before release.
 
 Terminal unaccepted requests have an explicit retention/cleanup path. Clearing
 their intake rows alone is insufficient: their Conversation, index and temporary
 setup material remain owned resources. Cleanup must fence late appends and
 claim work and must never delete an accepted relationship's Conversation.
-Accepted message history follows normal Conversation retention. Physical-size
-measurement and the final unaccepted-message retention wording remain release
-gates; public admission is not enabled by this design document.
+Accepted message history follows normal Conversation retention. A terminal,
+unaccepted request is retained for eight days for receipt recovery, then its
+unpromoted Conversation content and search index are discarded. A durable
+fence rejects late appends. Deleting rows is not a claim that SQLite pages or
+all object overhead are immediately reclaimed. Cleanup failures retry without
+removing the owning intake record. No cleanup may remove a promoted thread.

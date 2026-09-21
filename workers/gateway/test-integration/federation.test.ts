@@ -448,7 +448,7 @@ describe("cross-GSV federation integration", () => {
     const before = await second.conversation.history({ conversationId: received.conversationId });
     expect(messagesWithText(before, input.text)).toHaveLength(1);
     expect(before.messages.find((message) => message.text === input.text)?.social?.provenance.kind).toBe("human");
-    expect((await second.conversation.get({ conversationId: received.conversationId })).conversation.handlerPid).toBeUndefined();
+    expect(before.conversation.handlerPid).toBeUndefined();
     await second.approach.decide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" });
     await expect.poll(async () => (await first.approach.get({ approachId: sent.id })).approach.connection, { timeout: 20_000 }).toBe("connected");
     const connected = (await second.approach.get({ approachId: received.id })).approach;

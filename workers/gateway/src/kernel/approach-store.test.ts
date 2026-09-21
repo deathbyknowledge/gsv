@@ -14,6 +14,7 @@ describe("durable first-contact records", () => {
         const input = incoming(1000 + Math.floor(index / 250));
         input.content.text = "x".repeat(32_768);
         ids.push(requests.prepare(input, () => {}, now).summary.id);
+        if (index % 50 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
       }
       expect(() => requests.prepare(incoming(1004), () => {}, now)).toThrow("capacity");
       expect(sql.databaseSize - baseline).toBeLessThan(96 * 1024 * 1024);
