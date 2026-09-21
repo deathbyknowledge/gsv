@@ -39,6 +39,8 @@ export type FederationContactRecord = ContactSummary & {
   threadId: string;
 };
 
+type ActorBlockChange = { block: ContactBlock | null; changed: boolean };
+
 export class FederationActorBlockedError extends Error {
   constructor() {
     super("Contact pairing is unavailable");
@@ -997,7 +999,7 @@ export class FederationStore {
     return this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId).toArray().length > 0;
   }
 
-  setActorBlock(ownerUid: number, actor: ActorRef, blocked: boolean, now = Date.now()): { block: ContactBlock | null; changed: boolean } {
+  setActorBlock(ownerUid: number, actor: ActorRef, blocked: boolean, now = Date.now()): ActorBlockChange {
     const existing = this.sql.exec<{ created_at: number }>(
       "SELECT created_at FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId,
     ).toArray()[0];

@@ -3,6 +3,7 @@ import type {
   ContactBlockSetArgs, ContactBlockSetResult, ContactBlockListArgs, ContactBlockListResult,
 } from "@humansandmachines/gsv/protocol";
 import { actorRefSchema, contactPreferencesPatchSchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { contactSummary, requireContactCaller, requireContactHuman } from "./authority";
 import { revokeFederationContact } from "./pairing";
@@ -19,11 +20,11 @@ export function handleContactPreferencesUpdate(args: ContactPreferencesUpdateArg
 export async function handleContactBlockSet(args: ContactBlockSetArgs, ctx: KernelContext): Promise<ContactBlockSetResult> {
   const ownerUid = requireContactHuman(ctx);
   const actor = actorRefSchema.parse(args.actor);
-  if (typeof args.blocked !== "boolean") throw new Error("Blocked state must be a boolean");
+  const blocked = z.boolean().parse(args.blocked);
   const contact = ctx.federation.getByRemote(ownerUid, actor.shipId, actor.subjectId);
   const result = await ctx.coordinateFederationContact(contact?.id ?? `pairing:${ownerUid}:${actor.shipId}:${actor.subjectId}`, () => ctx.federation.transaction(() => {
-    const outcome = ctx.federation.setActorBlock(ownerUid, actor, args.blocked);
-    if (args.blocked) {
+    const outcome = ctx.federation.setActorBlock(ownerUid, actor, blocked);
+    if (blocked) {
       const current = ctx.federation.getByRemote(ownerUid, actor.shipId, actor.subjectId);
       if (current?.state === "active") {
         const now = Date.now();
