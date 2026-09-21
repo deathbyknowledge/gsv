@@ -368,7 +368,7 @@
 }
 .instrument.is-light .instrument-scan,
 .instrument.is-light .instrument-vignette { display: none; }
-.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); text-shadow: none; }
+.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); }
 .instrument.is-light .wordmark.is-glitch { text-shadow: none; }
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }

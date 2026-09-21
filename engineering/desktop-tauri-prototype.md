@@ -499,3 +499,33 @@ The next requested human comparison is **No star glow**, which retains the star
 positions, glyph updates, overlays and UI shadows while removing the star text
 shadow. It runs in the same app session without a rebuild or restart. Further
 individual comparisons remain available if that does not recover responsiveness.
+
+## Star shadow isolated and removed from the default
+
+The next human report used **No star glow**, with the same dark theme, 69 moments,
+2560×1440 viewport and 150% zoom. Only the star field's CSS `text-shadow` was
+disabled; its JavaScript loop, positions and glyphs, the scanlines/vignette, and
+interface shadows remained enabled. Across 116 navigation samples the next-frame
+median was 12 ms, p95 18 ms and maximum 24 ms, compared with 158/315/333 ms for
+normal effects in the prior report. Both taps (35 samples, p95 16 ms) and held
+keys (81 samples, p95 18 ms) recovered. Typing now has 82 samples: next-frame p95
+15 ms and input-to-caret p95 17 ms, with maxima 31 and 33 ms respectively. Cursor
+movement still has no samples in this report.
+
+This isolates the animated star shadow as the trigger for the measured dark-mode
+regression on this WebKitGTK setup. It does not profile the renderer's internal
+blur, paint, or compositing implementation. `GlyphStars` now explicitly uses
+`text-shadow: none` as its shared default. Light-only shadow overrides are removed
+as redundant. Both Instrument and auth backgrounds use that same component in
+web and desktop. Animation cadence, density, colors, fonts, glyph selection and
+the spaceship renderer are unaffected by this change.
+
+The user accepted the unblurred appearance as the final choice. The temporary
+effect-removal controls and CSS are removed; there is no setting needed to get
+the responsive rendering. Timings still reports the theme and now reads the
+star field's computed shadow once when capturing a report, rather than labeling
+a temporary comparison. The user can keep testing the current window with
+**No star glow**; that setting already matches the new shared default.
+The desktop frontend and native executable compile successfully. No local test
+suite or runtime verification was run; the running comparison window was left
+untouched.

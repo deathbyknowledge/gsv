@@ -85,7 +85,8 @@ const STYLE = `
   letter-spacing: 0;
   pointer-events: none;
   text-rendering: geometricPrecision;
-  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+  /* Blurred shadows on the animated glyphs caused persistent input latency in WebKitGTK. */
+  text-shadow: none;
   transform: translate(-50%, -50%);
   white-space: pre;
   -webkit-font-smoothing: none;

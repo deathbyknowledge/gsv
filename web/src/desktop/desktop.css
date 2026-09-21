@@ -20,13 +20,3 @@
 .desktop-timing-actions { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
 .desktop-timings pre { overflow: auto; user-select: text; }
 .desktop-timings summary { cursor: pointer; }
-.desktop-rendering-comparison { margin: 16px 0; }
-.desktop-rendering-comparison label { display: grid; gap: 8px; }
-.desktop-rendering-comparison select { min-width: 0; width: 100%; padding: 6px; color: var(--text); background: var(--panel); border: 1px solid var(--border-raised); font: inherit; }
-/* Prototype-only comparisons isolate drawing effects without changing theme or conversation state. */
-:is(html[data-desktop-rendering="no-stars"], html[data-desktop-rendering="plain"]) .instrument-field { display: none !important; }
-html[data-desktop-rendering="no-star-glow"] .instrument-field .gsv-glyph-stars pre { text-shadow: none !important; }
-:is(html[data-desktop-rendering="no-overlays"], html[data-desktop-rendering="plain"]) :is(.instrument-scan, .instrument-vignette) { display: none !important; }
-:is(html[data-desktop-rendering="no-ui-shadows"], html[data-desktop-rendering="plain"]) :is(.instrument-scaled, .instrument-scaled *),
-:is(html[data-desktop-rendering="no-ui-shadows"], html[data-desktop-rendering="plain"]) .instrument-scaled *::before,
-:is(html[data-desktop-rendering="no-ui-shadows"], html[data-desktop-rendering="plain"]) .instrument-scaled *::after { text-shadow: none !important; box-shadow: none !important; }
