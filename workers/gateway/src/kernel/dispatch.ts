@@ -117,6 +117,7 @@ import {
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
 import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import { handleProfileAvatarUpload, handleProfileAvatarRead } from "./profile-images";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
 import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
@@ -711,6 +712,11 @@ async function dispatchKernel(
       case "profile.get":
         data = handleProfileGet(ctx);
         break;
+      case "profile.avatar.upload":
+        data = await handleProfileAvatarUpload(ctx, frame.body);
+        break;
+      case "profile.avatar.read":
+        return { type: "res", id: frame.id, ok: true, ...await handleProfileAvatarRead(frame.args, ctx) };
       case "approach.create":
         data = await handleApproachCreate(frame.args, ctx);
         break;
@@ -727,7 +733,7 @@ async function dispatchKernel(
         data = await handleApproachRetry(frame.args, ctx);
         break;
       case "profile.update":
-        data = handleProfileUpdate(frame.args, ctx);
+        data = await handleProfileUpdate(frame.args, ctx);
         break;
       case "profile.publish":
         data = await handleProfilePublish(frame.args, ctx);

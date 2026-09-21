@@ -10,6 +10,8 @@ header { padding-bottom: 32px; border-bottom: 1px solid var(--line); }
 .brand { color: var(--text); letter-spacing: .2em; }
 .status { max-width: 32ch; }
 .alias { margin: 40px 0 8px; color: var(--accent); font: 13px/1.8 "Martian Mono", monospace; }
+.avatar { display: block; width: 128px; height: 128px; object-fit: cover; border-radius: 50%; margin-top: 32px; }
+.avatar + .alias { margin-top: 20px; }
 h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; letter-spacing: -.035em; margin: 0 0 24px; }
 .about { white-space: pre-wrap; }
 .representation { margin-top: 32px; font-size: 15px; color: var(--muted); }

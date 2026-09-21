@@ -7,12 +7,14 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
 import { canConfigure } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
+import { ProfileAvatarEditor, ProfileAvatarPreview } from "./ProfileAvatarEditor";
 
 export function Profile({ account, active, onDirty }: SettingsSectionProps) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const key = [...INSTRUMENT_PROFILE_KEY, account.uid];
   const [draft, setDraft] = useState<{ revision: number; fields: ProfileFields } | null>(null);
+  const [editingImage, setEditingImage] = useState(false);
   const canRead = canConfigure(account, "profile.get");
   const profile = useQuery({ queryKey: key, queryFn: () => loadProfile(client), enabled: connected && active && canRead });
   const refresh = async (state: ProfileState) => {
@@ -40,10 +42,10 @@ export function Profile({ account, active, onDirty }: SettingsSectionProps) {
   const valid = !!fields && !!fields.displayName.trim() && profileFieldsSchema.safeParse(fields).success;
   const edit = (patch: Partial<ProfileFields>) => {
     if (!state || !fields) return;
-    setDraft({ revision: draft?.revision ?? state.revision, fields: { ...fields, ...patch } });
+    setDraft((current) => ({ revision: current?.revision ?? state.revision, fields: { ...(current?.fields ?? state.draft), ...patch } }));
   };
   const editable = connected && canConfigure(account, "profile.update") && !pending;
-  useSettingsDirty(dirty || pending, onDirty);
+  useSettingsDirty(dirty || pending || editingImage, onDirty);
 
   return <section aria-labelledby="settings-profile-title">
     <h1 id="settings-profile-title">Public profile</h1>
@@ -54,11 +56,12 @@ export function Profile({ account, active, onDirty }: SettingsSectionProps) {
     {state && fields && <>
       <p role="status" class="settings-muted">{state.publicationFailed ? "Publication failed. Your previous published profile, if any, is still available. You can retry or unpublish."
         : state.publishing ? "Publication pending…" : state.published ? <>Published at <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a></> : "Your profile is private."}</p>
-      <form class="settings-form" onSubmit={(event) => { event.preventDefault(); if (draft && valid && editable && !stale) save.mutate(draft); }}>
+      <form class="settings-form" onSubmit={(event) => { event.preventDefault(); if (draft && valid && editable && !stale && !editingImage) save.mutate(draft); }}>
         <label>Public alias<input value={fields.alias} autoComplete="off" spellcheck={false} maxLength={32} disabled={!editable} onInput={(event) => edit({ alias: event.currentTarget.value })} /></label>
         <p class="settings-muted">2–32 lowercase letters, numbers, underscores or hyphens, starting with a letter. This is separate from your sign-in name. Previous aliases remain reserved to you.</p>
         <label>Display name<input value={fields.displayName} maxLength={80} disabled={!editable} onInput={(event) => edit({ displayName: event.currentTarget.value })} /></label>
         <label>About you<textarea value={fields.about} maxLength={2048} rows={4} disabled={!editable} onInput={(event) => edit({ about: event.currentTarget.value })} /></label>
+        <ProfileAvatarEditor avatar={fields.avatar} disabled={!editable} onChange={(avatar) => edit({ avatar })} onEditing={setEditingImage} />
         <label>New conversations<select value={fields.contactPolicy} disabled={!editable} onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "requests" || value === "invitation" || value === "closed") edit({ contactPolicy: value });
@@ -67,12 +70,13 @@ export function Profile({ account, active, onDirty }: SettingsSectionProps) {
         <p class="settings-muted">This describes your profile. Allowing your Ship to help is a separate choice.</p>
         {stale && <p class="settings-error">Your saved profile changed in another session. Reload the draft before saving.</p>}
         <div class="settings-actions">
-          <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale}>{save.isPending ? "saving…" : "save draft"}</button>
-          {draft && <button class="settings-text-action" type="button" disabled={pending} onClick={() => { setDraft(null); save.reset(); }}>discard edits</button>}
+          <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale || editingImage}>{save.isPending ? "saving…" : "save draft"}</button>
+          {draft && <button class="settings-text-action" type="button" disabled={pending || editingImage} onClick={() => { setDraft(null); save.reset(); }}>discard edits</button>}
         </div>
       </form>
       <div class="settings-profile-preview" aria-label="Public profile preview">
         <p class="settings-muted">Preview · {dirty ? "unsaved edits" : "saved draft"}</p>
+        <ProfileAvatarPreview avatar={fields.avatar} />
         <span class="settings-profile-alias">@{fields.alias || "your-alias"}</span><h2>{fields.displayName}</h2>
         {fields.about && <p class="settings-profile-about">{fields.about}</p>}
         <p>{fields.contactPolicy === "requests" ? "Open to message requests" : fields.contactPolicy === "invitation" ? "Connect by invitation" : "Not receiving new message requests"}</p>
@@ -80,7 +84,7 @@ export function Profile({ account, active, onDirty }: SettingsSectionProps) {
       </div>
       <p class="settings-muted">{dirty ? "Save your edits before publishing." : "Only the saved preview is published. Later draft edits stay private until you publish again."}</p>
       <div class="settings-actions">
-        <button type="button" class="ibtn is-primary" disabled={!connected || pending || dirty || !valid || !state.revision || !canConfigure(account, "profile.publish") || (state.publishing && !state.publicationFailed) || state.published?.revision === state.revision} onClick={() => publish.mutate(state.revision)}>{publish.isPending ? "publishing…" : state.publicationFailed ? "retry publication" : "publish profile"}</button>
+        <button type="button" class="ibtn is-primary" disabled={!connected || pending || dirty || editingImage || !valid || !state.revision || !canConfigure(account, "profile.publish") || (state.publishing && !state.publicationFailed) || state.published?.revision === state.revision} onClick={() => publish.mutate(state.revision)}>{publish.isPending ? "publishing…" : state.publicationFailed ? "retry publication" : "publish profile"}</button>
         {(state.published || state.publishing) && <button type="button" class="settings-text-action is-danger" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} onClick={() => unpublish.mutate(state.revision)}>unpublish</button>}
       </div>
       <p class="settings-muted">Unpublishing removes your public page. People may retain copies they already viewed. Existing conversations continue.</p>

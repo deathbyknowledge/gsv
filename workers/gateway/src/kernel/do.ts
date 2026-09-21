@@ -693,8 +693,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return projection && profileOwnerActive(projection.ownerUid, this.buildKernelContext({})) ? projection : null;
   }
 
-  async scheduleProfilePublication(ownerUid: number): Promise<void> {
-    await this.schedule(new Date(Date.now() + 10), "onProfilePublication", ownerUid, { idempotent: true });
+  async scheduleProfilePublication(ownerUid: number, runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact(`profile-schedule:${ownerUid}`, async () => {
+      const maintenance = this.profiles.nextMaintenance(ownerUid);
+      if (maintenance === null) return;
+      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), maintenance);
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
+    });
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -882,9 +891,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
           return;
         }
         await this.federationRuntime.coordinateFederationContact(`profile:${task.payload}`, () => processProfilePublication(task.payload, this.buildKernelContext({})));
-        if (this.profiles.hasPendingWork(task.payload)) {
-          await this.schedule(new Date(Date.now() + 1000), "onProfilePublication", task.payload, { idempotent: true, excludeTaskId: task.id });
-        }
+        await this.scheduleProfilePublication(task.payload, task.id);
         return;
       }
       case "onProcessDeliveryNotice":

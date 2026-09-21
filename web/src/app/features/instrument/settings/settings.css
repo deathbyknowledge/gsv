@@ -112,3 +112,13 @@
 .settings-account-grants ul { list-style: none; padding: 0; }
 .settings-account-grants li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
 .settings-account-grants code { color: var(--faint); overflow-wrap: anywhere; }
+
+.settings .settings-avatar-editor { margin-block: 1.5rem 2rem; }
+.settings-avatar-editor legend { color: var(--text); font-size: .8rem; }
+.settings-avatar-editor > p { max-width: 56ch; font-size: .8rem; }
+.settings-profile-avatar { display: block; object-fit: cover; border-radius: 50%; margin-block: 1rem; }
+.settings-avatar-crop { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: start; margin-bottom: 1.5rem; }
+.settings-avatar-crop canvas { width: 192px; height: 192px; max-width: 100%; border-radius: 50%; background: var(--wash); }
+.settings-avatar-sliders { flex: 1 1 200px; max-width: 24rem; }
+.settings .settings-avatar-sliders input[type="range"] { padding: .5rem 0; border: 0; accent-color: var(--accent); }
+.settings .settings-avatar-file input { max-width: 32rem; }

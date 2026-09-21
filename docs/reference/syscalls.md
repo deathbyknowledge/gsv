@@ -703,6 +703,8 @@ federated subject. `expectedRevision` prevents stale edits or publication.
 ```ts
 {
   "profile.get": { args: {}; result: { profile: ProfileState } };
+  "profile.avatar.upload": { args: {}; result: { avatar: ProfileAvatar } };
+  "profile.avatar.read": { args: { sha256: string }; result: { avatar: ProfileAvatar } };
   "profile.update": { args: { expectedRevision: number; draft: ProfileFields }; result: { profile: ProfileState } };
   "profile.publish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
   "profile.unpublish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
@@ -722,6 +724,17 @@ signed snapshot before its R2 write; later draft edits do not alter that approva
 The previous publication remains visible until its replacement commits. Retry
 the same revision after failure. Unpublishing immediately fences public serving
 and pending publication, while preserving existing conversations.
+
+An optional `avatar` is an owned image descriptor returned by
+`profile.avatar.upload`. Upload takes a binary body: static RGB/RGBA PNG, at most
+512×512 pixels and 256 KiB, without animation or embedded text metadata. The web
+editor crops and exports a fresh PNG locally. Uploading alone publishes nothing;
+save the descriptor in the draft, then publish that exact revision. The signed-in
+owner can preview it with `profile.avatar.read` (binary response body). Public
+image serving requires a currently published reference and rechecks publication
+after reading storage. Unreferenced uploads expire after 24 hours; each owner may
+retain eight images, with an installation ceiling of 2,048. Neither syscall
+accepts another account or a caller-chosen storage address.
 
 `profile.resolve` fetches one explicitly chosen profile URL through public-only
 federation egress. It verifies the profile domain, address, key-derived actor and

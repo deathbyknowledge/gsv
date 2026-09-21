@@ -30,6 +30,8 @@ const labels = {
   "conversation.media.read": "opened a message attachment",
   "contact.identity": "checked contact identity",
   "profile.get": "opened the profile draft",
+  "profile.avatar.upload": "uploaded a profile image",
+  "profile.avatar.read": "previewed a profile image",
   "approach.create": "sent a message request",
   "approach.get": "opened a message request",
   "approach.list": "opened message requests",

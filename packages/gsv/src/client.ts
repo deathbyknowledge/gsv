@@ -286,6 +286,8 @@ const SYSCALL_NAMES = [
   "conversation.send",
   "contact.identity",
   "profile.get",
+  "profile.avatar.upload",
+  "profile.avatar.read",
   "profile.update",
   "profile.publish",
   "profile.unpublish",

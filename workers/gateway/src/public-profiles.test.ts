@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import type { PublicProfile } from "@humansandmachines/gsv/protocol";
+import type { ProfileAvatar, PublicProfile } from "@humansandmachines/gsv/protocol";
+import { profileImageFixture } from "./test-support/profile-image";
 import { createInstallationStorage } from "./installation/storage";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 
@@ -13,6 +14,30 @@ const PROFILE: PublicProfile = {
 const projection = { ownerUid: 1000, alias: "person", revision: 1, key: "social/profiles/subject/1.json" };
 
 describe("public profile projection serving", () => {
+  it("serves only the currently published image and fences withdrawal after the R2 read", async () => {
+    const bucket = createInstallationStorage(env.STORAGE, `inst_${crypto.randomUUID()}`);
+    const bytes = profileImageFixture();
+    const sha256 = "a".repeat(64);
+    const url = `${PROFILE.origin}/_gsv/federation/v2/avatars/subject%3Aone/${sha256}.png`;
+    const avatar: ProfileAvatar = { url, sha256, width: 2, height: 2, size: bytes.length, contentType: "image/png" };
+    const image = { key: "social/avatars/one.png", avatar };
+    await bucket.put(image.key, bytes);
+    const path = matchPublicProfilePath(new URL(url).pathname)!;
+    expect(path).toEqual({ locator: { subjectId: "subject:one" }, json: false, avatarSha256: sha256 });
+    const read = () => new Request(url);
+    const privateImage = await servePublicProfileRequest(read(), path, bucket, async () => projection);
+    expect(privateImage.status).toBe(404);
+    const published = await servePublicProfileRequest(read(), path, bucket, async () => ({ ...projection, image }));
+    expect(published.headers.get("content-type")).toBe("image/png");
+    expect(published.headers.get("cache-control")).toBe("no-store");
+    expect(new Uint8Array(await published.arrayBuffer())).toEqual(bytes);
+    let calls = 0;
+    const withdrawn = await servePublicProfileRequest(read(), path, bucket, async () => ++calls === 1 ? { ...projection, image } : null);
+    expect(withdrawn.status).toBe(404);
+    for (const invalid of [`${url}/extra`, url.replace("subject%3Aone", "subject%3aone"), url.replace(".png", ".svg")]) {
+      expect(matchPublicProfilePath(new URL(invalid).pathname)).toEqual({ invalid: true });
+    }
+  });
   it("hands off only the reviewed public profile address without creating an approach", async () => {
     const bucket = createInstallationStorage(env.STORAGE, `inst_${crypto.randomUUID()}`);
     await bucket.put(projection.key, JSON.stringify({ ...PROFILE, contactPolicy: "requests" }));

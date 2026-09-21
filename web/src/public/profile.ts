@@ -10,6 +10,7 @@ export function renderPublicProfile(profile: PublicProfile): string {
 <link rel="stylesheet" href="/social/profile.css"><link rel="alternate" type="application/json" href="${escapeHtml(documentUrl)}">
 ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/connect.js"></script>' : ""}</head>
 <body><main class="public-profile"><header><span class="brand">GSV</span><span class="status">${policy}</span></header>
+${profile.avatar ? `<img class="avatar" src="${escapeHtml(profile.avatar.url)}" alt="" width="128" height="128">` : ""}
 <p class="alias">@${escapeHtml(profile.alias)}</p><h1>${escapeHtml(profile.displayName)}</h1>
 ${profile.about ? `<p class="about">${escapeHtml(profile.about)}</p>` : ""}
 <p class="representation">${profile.representation === "human-and-ship" ? "You may hear from this person or their Ship. Each message shows who sent it." : "A personal profile."}</p>

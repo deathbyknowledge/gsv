@@ -322,6 +322,7 @@ import type {
   ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
   ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
   ProfileResolveArgs, ProfileResolveResult,
+  ProfileAvatarUploadArgs, ProfileAvatarUploadResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
 } from "./profile";
 import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
@@ -359,6 +360,8 @@ export type SyscallDomains = {
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
 
   "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
+  "profile.avatar.upload": { args: ProfileAvatarUploadArgs; result: ProfileAvatarUploadResult };
+  "profile.avatar.read": { args: ProfileAvatarReadArgs; result: ProfileAvatarReadResult };
   "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };
   "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
   "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };

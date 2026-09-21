@@ -23,7 +23,7 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   } } };
 }
 
-export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): ProfileGetResult {
+export async function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): Promise<ProfileGetResult> {
   const ownerUid = requireContactHuman(ctx);
   const draft = profileFieldsSchema.parse(args.draft);
   if (!draft.displayName.trim()) throw new Error("A public display name is required");
@@ -32,6 +32,7 @@ export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext)
   const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
   ctx.profiles.update(ownerUid, subject.id, revision, draft);
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  await ctx.scheduleProfilePublication(ownerUid);
   return handleProfileGet(ctx);
 }
 
@@ -83,6 +84,7 @@ export async function handleProfileResolve(args: ProfileResolveArgs, ctx: Kernel
 export async function verifyPublicProfile(profile: PublicProfile, expectedUrl: string): Promise<void> {
   const { signature, ...unsigned } = profile;
   if (profile.url !== expectedUrl || profile.url !== `${profile.origin}/@${profile.alias}` || normalizeFederationOrigin(profile.origin) !== profile.origin) throw new Error("Profile address does not match its signed identity");
+  if (profile.avatar && profile.avatar.url !== `${profile.origin}/_gsv/federation/v2/avatars/${encodeURIComponent(profile.actor.subjectId)}/${profile.avatar.sha256}.png`) throw new Error("Profile image address does not match its signed identity");
   if (profile.actor.shipId !== `ship:${await sha256Base64Url(canonicalJson(jsonValueSchema.parse(profile.publicKey)))}`) throw new Error("Profile identity does not match its public key");
   if (!await verifySignedValue(profile.publicKey, jsonValueSchema.parse(unsigned), signature)) throw new Error("Profile signature is invalid");
 }
@@ -110,6 +112,10 @@ export async function processProfilePublication(ownerUid: number, ctx: KernelCon
   for (const key of ctx.profiles.garbage(ownerUid)) {
     await ctx.env.STORAGE.delete(key);
     ctx.profiles.collected(key);
+  }
+  for (const image of ctx.profiles.claimImageGarbage(ownerUid)) {
+    await ctx.env.STORAGE.delete(image.object_key);
+    ctx.profiles.imageCollected(image);
   }
 }
 
