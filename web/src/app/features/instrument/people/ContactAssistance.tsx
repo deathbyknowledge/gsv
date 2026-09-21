@@ -26,12 +26,7 @@ export function ContactAssistance({ contact, account, initialPid, onDirty, onOpe
   const key = [...INSTRUMENT_PROCESSES_KEY, "social", contact.conversationId];
   const helpers = useQuery({ queryKey: key, enabled: connected && canConfigure(account, "proc.list"),
     queryFn: () => client.proc.list({ conversationId: contact.conversationId }) });
-  const families = new Map<string, ProcListEntry>();
-  for (const process of [...(helpers.data?.processes ?? [])].sort((a, b) => a.createdAt - b.createdAt)) {
-    const family = process.scopeId ?? process.pid;
-    if (!families.has(family)) families.set(family, process);
-  }
-  const processes = [...families.values()].sort((a, b) => b.createdAt - a.createdAt);
+  const processes = [...(helpers.data?.processes ?? [])].sort((a, b) => b.createdAt - a.createdAt);
   useEffect(() => client.onSignal((signal, payload) => {
     if (signal !== "proc.changed" && signal !== "process.exit") return;
     const change = procSignalSchema.safeParse(payload);
@@ -51,15 +46,15 @@ export function ContactAssistance({ contact, account, initialPid, onDirty, onOpe
     {helpers.isPending && connected && <LoadingState>Loading private work…</LoadingState>}
     {helpers.error && <p class="people-error" role="alert">{helpers.error.message}<button class="people-action" disabled={!connected} onClick={() => void helpers.refetch()}>retry</button></p>}
     {helpers.data && !processes.length && <p class="people-note">No helpers for this conversation yet. Incoming messages do not start one.</p>}
-    {processes.length > 0 && <label>Private work<select value={helper?.pid ?? ""} onChange={(event) => setSelected(event.currentTarget.value)}><option value="" disabled>Choose a helper</option>{processes.map((process) => <option value={process.pid} key={process.pid}>{process.label || "Conversation help"} · {new Date(process.createdAt).toLocaleString()}</option>)}</select></label>}
+    {processes.length > 0 && <label>Private work<select value={helper?.pid ?? ""} onChange={(event) => setSelected(event.currentTarget.value)}><option value="" disabled>Choose a helper</option>{processes.map((process) => <option value={process.pid} key={process.pid}>{process.label || "Conversation help"}{process.parentPid ? " · delegated work" : ""} · {new Date(process.createdAt).toLocaleString()}</option>)}</select></label>}
     {selected && !helper && helpers.data && <p class="people-note">This helper is no longer available. Saved draft reviews remain below.</p>}
-    {helper && <PrivateHelper key={helper.pid} helper={helper} contact={contact} account={account} onReply={setReply} onOpenWork={onOpenWork} />}
+    {helper && <PrivateHelper key={helper.pid} helper={helper} processes={processes} contact={contact} account={account} onReply={setReply} onOpenWork={onOpenWork} />}
     {canConfigure(account, "contact.draft.list") && <ContactDrafts contact={contact} account={account} />}
   </section>;
 }
 
-function PrivateHelper({ helper, contact, account, onReply, onOpenWork }: {
-  helper: ProcListEntry; contact: ContactSummary; account: ConsoleAccount;
+function PrivateHelper({ helper, processes, contact, account, onReply, onOpenWork }: {
+  helper: ProcListEntry; processes: ProcListEntry[]; contact: ContactSummary; account: ConsoleAccount;
   onReply: (reply: ReplyForReview) => void; onOpenWork: (pid: string) => void;
 }) {
   const { client, connected } = useGateway();
@@ -79,12 +74,14 @@ function PrivateHelper({ helper, contact, account, onReply, onOpenWork }: {
   const active = !!grant && grant.state === "active" && grant.policy.expiresAtMs > now && contact.state === "active"
     && grant.policy.conversations.every((entry) => entry.contactId !== contact.id || entry.generation === contact.generation);
   const allowance = !!grant && grant.used.generations < grant.policy.budgets.generations;
+  const automaticRootRemoved = !!grant?.policy.automatic && !processes.some((process) => process.pid === grant.rootPid);
   const resources: ResourceBlock[] = grant?.policy.resources.map((ref) => ({ type: "resource", ref, filename: ref.path.split("/").at(-1) })) ?? [];
   return <section class="people-private-helper" aria-label="Private helper replies">
     {scope.isPending && connected && <LoadingState>Loading access…</LoadingState>}
     {grant && <>
-      <div class="people-helper-heading"><span class="people-kicker">{!active ? "Access ended" : grant.automation?.pausedReason ? "Automatic attention paused" : !allowance ? "Allowance used" : helper.state === "idle" ? grant.policy.automatic ? "Waiting for new human messages" : "Private helper" : helper.state === "waiting_hil" ? "Waiting for your decision" : "Working"}</span><button class="people-action" onClick={() => onOpenWork(helper.pid)}>open work and continue →</button></div>
+      <div class="people-helper-heading"><span class="people-kicker">{!active ? "Access ended" : automaticRootRemoved ? "Original helper removed" : grant.automation?.pausedReason ? "Automatic attention paused" : !allowance ? "Allowance used" : helper.state === "idle" ? grant.policy.automatic && helper.pid === grant.rootPid ? "Waiting for new human messages" : "Private helper" : helper.state === "waiting_hil" ? "Waiting for your decision" : "Working"}</span><button class="people-action" onClick={() => onOpenWork(helper.pid)}>open work and continue →</button></div>
       <HelperAccess scope={grant} />
+      {automaticRootRemoved && active && <p class="people-note">The original automatic helper was removed. This delegated work retains the shared access until you stop it or it expires. Stop it before setting up a new automatic helper.</p>}
       {grant.policy.automatic && <p class="people-note">{grant.policy.automatic.mode === "draft" ? "Prepares private replies for your review." : "May reply to this person as your Ship within the reviewed allowance."} {grant.automation?.acceptedMessages ?? 0} of {grant.policy.automatic.maxMessages} incoming messages admitted · {grant.automation?.pendingMessages ?? 0} waiting.</p>}
       {grant.automation?.pausedReason && <p class="people-note">Paused: {grant.automation.pausedReason}. Review this work, then stop it before choosing a new allowance.</p>}
       {active && canConfigure(account, "proc.scope.revoke") && <button class="people-action is-danger" disabled={!connected || revoke.isPending} onClick={() => revoke.mutate()}>{revoke.isPending ? "stopping…" : "stop helper and revoke access"}</button>}
@@ -113,7 +110,7 @@ function HelperAccess({ scope }: { scope: ProcessScope }) {
     <dt>Files</dt><dd>{scope.policy.resources.length} selected attachments</dd>
     <dt>Remote replies</dt><dd>{scope.policy.budgets.messages === 0 ? "Requires your approval for each draft" : `${Math.max(0, scope.policy.budgets.messages - scope.used.messages)} left`}</dd>
     <dt>Model requests</dt><dd>{Math.max(0, scope.policy.budgets.generations - scope.used.generations)} of {scope.policy.budgets.generations} left</dd>
-    <dt>Processes</dt><dd>{scope.used.processes} of {scope.policy.budgets.processes} created</dd>
+    <dt>Processes</dt><dd>{scope.used.processes} of {scope.policy.budgets.processes} created; allowances and stop apply to the whole helper family</dd>
     <dt>Expires</dt><dd>{new Date(scope.policy.expiresAtMs).toLocaleString()}</dd>
   </dl>{scope.policy.automatic && <details><summary>Your instructions for new messages</summary><pre class="people-evidence-preview">{scope.policy.automatic.request}</pre></details>}{scope.policy.materials.map((material) => {
     const messages = material.name === "exchange.json" ? selectedMessageCopies(material.text) : null;

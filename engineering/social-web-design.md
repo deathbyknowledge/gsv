@@ -115,3 +115,9 @@ send review. Attachments require selection again. Saved reviews survive browser
 navigation, show uncertain submission explicitly, and link ordinary delivery
 state. Incoming contact files are supported; files in private native storage
 still require selected text material in this initial grant implementation.
+
+Delegated work stays selectable alongside its original helper. Returning from
+Zen opens that exact process, including a child. Removing the original automatic
+helper stops admission of new messages, while surviving work retains its shared
+grant and remains visible for review or revocation. A replacement becomes
+available after that family is removed or its access ends.

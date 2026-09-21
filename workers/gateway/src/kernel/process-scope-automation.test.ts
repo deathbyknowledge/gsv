@@ -92,7 +92,9 @@ describe("bounded automatic message admission", () => {
       const procs = new ProcessRegistry(sql);
       const scopes = procs.scopes;
       const create = (pid: string) => storage.transactionSync(() => {
-        const scope = scopes.create(owner.uid, pid, policy(now), now);
+        const grant = policy(now);
+        grant.budgets.processes = 2;
+        const scope = scopes.create(owner.uid, pid, grant, now);
         scopes.automation.register(scope, 0, now);
         procs.spawn(pid, owner, { ownerUid: owner.uid, scopeId: scope.id });
         return scope;
