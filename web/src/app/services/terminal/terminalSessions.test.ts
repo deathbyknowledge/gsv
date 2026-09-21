@@ -68,7 +68,7 @@ describe("direct shell session ownership", () => {
     const [input] = execute.mock.calls[0];
     expect(input.start).toBe(true);
     expect(input.background).toBe(true);
-    expect(typeof input.sessionId).toBe("string");
+    expect(input.sessionId).toEqual(expect.any(String));
   });
 
   it("keeps a running session live and appends incremental output until its terminal result", async () => {
