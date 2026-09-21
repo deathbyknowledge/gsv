@@ -662,7 +662,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
-| `contact.request.update` | Applies a valid state transition using an optional expected revision for optimistic concurrency. |
+| `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
 
 `contact.send` reports `queued` when the sender has durably accepted the work
 and `delivered` only after the receiving Kernel has durably committed it. A
@@ -742,6 +742,12 @@ type ContactRequestRecord = {
   details?: JsonObject;
   state: "offered" | "accepted" | "rejected" | "active" | "completed" | "cancelled";
   revision: number;
+  exchange?: {
+    state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+    source?: "local" | "remote";
+    deliveryId?: string;
+    lastError?: string;
+  };
   createdAtMs: number;
   updatedAtMs: number;
 };

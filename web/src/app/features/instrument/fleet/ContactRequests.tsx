@@ -1,4 +1,5 @@
 import type { ContactRequestRecord, ContactRequestState, ContactSummary, JsonValue } from "@humansandmachines/gsv/protocol";
+import { contactRequestTransitions } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -32,12 +33,17 @@ function RequestRow({ request, editable }: { request: ContactRequestRecord; edit
     },
     onError: () => refreshContactQuery(cache, instrumentContactRequestsKey(request.contactId)),
   });
-  const actions: NextState[] = request.state === "offered" ? request.direction === "incoming" ? ["accepted", "rejected"] : ["cancelled"]
-    : request.state === "accepted" ? ["active", "completed", "cancelled"] : request.state === "active" ? ["completed", "cancelled"] : [];
+  const exchange = request.exchange?.state ?? "unconfirmed";
+  const actions = exchange === "pending" || exchange === "failed" ? []
+    : contactRequestTransitions(request.state, request.direction === "incoming" ? "performer" : "requester");
   return <article class="fleet-contact-request">
     <div class="sub">{request.direction === "incoming" ? "from them" : "from you"} · {request.state}</div>
     <h4>{request.title}</h4>
     <p class="note">{request.kind.replaceAll("_", " ")}</p>
+    {exchange === "pending" && <p class="note"><LoadingState>Awaiting delivery confirmation…</LoadingState></p>}
+    {exchange === "failed" && <p class="error">The other GSV has not confirmed this update. This request is unsettled.</p>}
+    {exchange === "unconfirmed" && <p class="note">Confirmation is unavailable for this recorded state.</p>}
+    {request.exchange?.lastError && <p class="note">{request.exchange.lastError}</p>}
     {request.details && <details><summary>details</summary><RequestDetails value={request.details} /></details>}
     {actions.length > 0 && <div class="fleet-actions">{actions.map((state) => <button key={state} class="fleet-text-action" disabled={!editable || mutation.isPending} onClick={() => mutation.mutate(state)}>{mutation.isPending && mutation.variables === state ? <LoadingState>{LABELS[state]}…</LoadingState> : LABELS[state]}</button>)}</div>}
     {mutation.error && <p class="error" role="alert">{mutation.error.message}</p>}
@@ -54,7 +60,8 @@ export function ContactRequests({ contact, account }: { contact: ContactSummary;
     enabled: connected && mayRead,
     queryFn: async () => (await client.contact.request.list({ contactId: contact.id, includeTerminal: true })).requests,
   });
-  const terminal = (request: ContactRequestRecord) => ["completed", "rejected", "cancelled"].includes(request.state);
+  const terminal = (request: ContactRequestRecord) => ["completed", "rejected", "cancelled"].includes(request.state)
+    && request.exchange?.state !== "pending" && request.exchange?.state !== "failed";
   const open = query.data?.filter((request) => !terminal(request)) ?? [];
   const closed = query.data?.filter(terminal) ?? [];
   return <section class="fleet-contact-requests" aria-label="Contact requests">

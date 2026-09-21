@@ -211,9 +211,29 @@ export type ContactRequestRecord = {
   details?: JsonObject;
   state: ContactRequestState;
   revision: number;
+  /** Confirmation of this revision, independent of its locally recorded work state. */
+  exchange?: ContactRequestExchange;
   createdAtMs: number;
   updatedAtMs: number;
 };
+
+export type ContactRequestExchange = {
+  state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+  source?: "local" | "remote";
+  deliveryId?: string;
+  lastError?: string;
+};
+
+export function contactRequestTransitions(
+  state: ContactRequestState,
+  participant: "requester" | "performer",
+): Exclude<ContactRequestState, "offered">[] {
+  if (participant === "requester") return state === "offered" ? ["cancelled"] : [];
+  if (state === "offered") return ["accepted", "rejected"];
+  if (state === "accepted") return ["active", "completed", "cancelled"];
+  if (state === "active") return ["completed", "cancelled"];
+  return [];
+}
 
 export type ContactRequestListArgs = {
   contactId?: string;

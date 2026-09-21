@@ -1,4 +1,5 @@
 import type {
+  ContactRequestRecord,
   FederationDeliveryReceipt,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -27,6 +28,7 @@ import {
   handleContactInviteCancel,
   handleContactInviteAccept,
   handleContactRequestCreate,
+  handleContactRequestUpdate,
   handleContactResourceRead,
   handleContactResourceSend,
   handleContactSend,
@@ -46,6 +48,34 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ["outgoing", "offered", "accepted"],
+    ["outgoing", "offered", "rejected"],
+    ["outgoing", "accepted", "active"],
+    ["outgoing", "active", "completed"],
+    ["outgoing", "accepted", "cancelled"],
+    ["incoming", "offered", "cancelled"],
+  ] as const)("rejects a local %s request action from %s to %s before retaining work", async (direction, state, next) => {
+    const contact = activeContact();
+    const request: ContactRequestRecord = {
+      id: "request:role", remoteId: "request:remote", contactId: contact.id,
+      contactGeneration: contact.generation, direction, kind: "task", title: "Participant-owned work",
+      state, revision: 1, createdAtMs: 1_000, updatedAtMs: 1_000,
+    };
+    const enqueue = vi.fn();
+    const updateRequest = vi.fn();
+    const ctx = focusedContext({
+      federation: focusedFixture({
+        prune: vi.fn(), outboxByIdempotency: () => null, get: () => contact,
+        request: () => request, enqueue, updateRequest,
+      }),
+    });
+    await expect(handleContactRequestUpdate({ requestId: request.id, state: next }, ctx))
+      .rejects.toThrow("This participant cannot change");
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(updateRequest).not.toHaveBeenCalled();
   });
 
   it("notifies the owner after a saved alias change, but not for a no-op or failed write", () => {

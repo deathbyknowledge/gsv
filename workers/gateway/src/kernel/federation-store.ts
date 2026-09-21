@@ -1,4 +1,5 @@
 import type {
+  ContactRequestExchange,
   ContactRequestRecord,
   ContactRequestState,
   ContactState,
@@ -349,6 +350,10 @@ type RequestRow = {
   details_json: string | null;
   state: ContactRequestState;
   revision: number;
+  exchange_state: ContactRequestExchange["state"];
+  exchange_delivery_id: string | null;
+  exchange_error: string | null;
+  exchange_source: "local" | "remote" | null;
   created_at: number;
   updated_at: number;
 };
@@ -754,7 +759,8 @@ export class FederationStore {
       if (existing.generation !== input.generation) {
         this.sql.exec(
           `UPDATE federation_requests SET
-             state = 'cancelled', revision = revision + 1, updated_at = ?
+             state = 'cancelled', revision = revision + 1, updated_at = ?,
+             exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
            WHERE contact_id = ? AND contact_generation <> ?
              AND state NOT IN ('rejected', 'completed', 'cancelled')`,
           now,
@@ -970,7 +976,8 @@ export class FederationStore {
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
-         state = 'cancelled', revision = revision + 1, updated_at = ?
+         state = 'cancelled', revision = revision + 1, updated_at = ?,
+         exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
        WHERE contact_id = ?
          AND contact_generation = ?
          AND state NOT IN ('rejected', 'completed', 'cancelled')`,
@@ -1570,8 +1577,9 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_requests (
          request_id, remote_request_id, contact_id, contact_generation, direction,
-         kind, title, details_json, state, revision, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         kind, title, details_json, state, revision, created_at, updated_at,
+         exchange_state, exchange_delivery_id, exchange_error, exchange_source
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.remoteId ?? null,
       input.contactId,
@@ -1583,6 +1591,10 @@ export class FederationStore {
       input.state,
       input.createdAtMs,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
     );
     return this.request(input.id)!;
   }
@@ -1637,6 +1649,22 @@ export class FederationStore {
     return row ? requestFromRow(row) : null;
   }
 
+  settleRequestDelivery(record: FederationReadyOutboxRecord): ContactRequestRecord | null {
+    const state = record.state === "delivered" ? "acknowledged"
+      : record.state === "terminal" ? "failed" : "pending";
+    const row = this.sql.exec<RequestRow>(
+      `UPDATE federation_requests SET exchange_state = ?, exchange_error = ?
+       WHERE exchange_source = 'local' AND exchange_delivery_id = ? AND contact_id = ? AND contact_generation = ?
+       RETURNING *`,
+      state,
+      record.lastError ?? null,
+      record.deliveryId,
+      record.contactId,
+      record.contactGeneration,
+    ).toArray()[0];
+    return row ? requestFromRow(row) : null;
+  }
+
   listRequests(
     ownerUid: number,
     contactId?: string,
@@ -1649,7 +1677,7 @@ export class FederationStore {
       values.push(contactId);
     }
     if (!includeTerminal) {
-      conditions.push("r.state NOT IN ('rejected', 'completed', 'cancelled')");
+      conditions.push("(r.state NOT IN ('rejected', 'completed', 'cancelled') OR r.exchange_state IN ('pending', 'failed'))");
     }
     return this.sql.exec<RequestRow>(
       `SELECT r.* FROM federation_requests r
@@ -1664,6 +1692,7 @@ export class FederationStore {
     requestId: string;
     expectedRevision: number;
     state: ContactRequestState;
+    exchange?: ContactRequestExchange;
     details?: JsonObject;
     updatedAtMs: number;
   }): ContactRequestRecord {
@@ -1675,11 +1704,16 @@ export class FederationStore {
     this.sql.exec(
       `UPDATE federation_requests SET
          state = ?, details_json = COALESCE(?, details_json),
-         revision = revision + 1, updated_at = ?
+         revision = revision + 1, updated_at = ?,
+         exchange_state = ?, exchange_delivery_id = ?, exchange_error = ?, exchange_source = ?
        WHERE request_id = ? AND revision = ?`,
       input.state,
       input.details ? JSON.stringify(input.details) : null,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
       input.requestId,
       input.expectedRevision,
     );
@@ -1851,6 +1885,12 @@ function requestFromRow(row: RequestRow): ContactRequestRecord {
       : undefined),
     state: row.state,
     revision: row.revision,
+    exchange: {
+      state: row.exchange_state,
+      ...(row.exchange_source ? { source: row.exchange_source } : undefined),
+      ...(row.exchange_delivery_id ? { deliveryId: row.exchange_delivery_id } : undefined),
+      ...(row.exchange_error ? { lastError: row.exchange_error } : undefined),
+    },
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
   };

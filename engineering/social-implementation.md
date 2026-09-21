@@ -26,8 +26,8 @@ or deploy merely because an intermediate batch is ready.
 
 | Batch | Outcome | Primary ownership | Status |
 | --- | --- | --- | --- |
-| 1. Federation correctness | Enforce participant roles on local and inbound work-request actions; expose failed/unsettled exchanges accurately; preserve existing delivery and resource fences. | Kernel federation handlers/store, protocol and affected clients | Pending |
-| 2. Shared contracts and storage | Versioned federation, trusted human/Process provenance, stable message/reply references, relationship policy, numbered migrations, and contact Conversations with no Process handler. | SDK/protocol, Kernel, Conversation storage | Pending |
+| 1. Federation correctness | Enforce participant roles on local and inbound work-request actions; expose failed/unsettled exchanges accurately; preserve existing delivery and resource fences. | Kernel federation handlers/store, protocol and affected clients | Implemented; awaiting CI and human validation |
+| 2. Shared contracts and storage | Versioned federation, trusted human/Process provenance, stable message/reply references, relationship policy, numbered migrations, and contact Conversations with no Process handler. | SDK/protocol, Kernel, Conversation storage | In progress |
 | 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Pending |
 | 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Pending |
 | 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
@@ -82,6 +82,23 @@ checks, a model verdict, or a new bespoke authorization mechanism.
 
 The worktree was created from `origin/main` at
 `e917c3f4d47ee835b45140ea9dc63ff7e3768984`. The existing RFC documentation commit
-was brought onto the branch as `8ea7ade4`. No social runtime changes have been
-made yet; all seven implementation batches remain pending. No PR, merge,
-deployment or local validation was performed during workstream setup.
+was brought onto the branch as `8ea7ade4`.
+
+Batch 1 enforces requester/performer roles on local and signed inbound v1
+updates. The requester can withdraw an unaccepted offer; only the performer
+can accept, reject, start, complete or confirm cancellation. V1 cannot express a
+stop request after acceptance, so it does not offer that action to the requester.
+Pending local changes cannot be extended before their receipt. A crossed remote
+operation may still conflict under v1; its failed exchange remains visible.
+
+Migration v053 preserves delivery confirmation separately from request state,
+including beyond outbox retention. Failed and pending terminal updates remain
+in the open request list and do not resolve their responsibility as settled.
+Old states without proof remain explicitly unconfirmed. Recovery of an already
+applied inbound update binds the exact delivery, not a coincident timestamp.
+Regression cases cover participant authority, receipt fencing, retention and
+upgrades, with the two-space trial updated for confirmation-aware actions.
+
+Source changes and protocol generation are complete for batch 1. No local tests,
+lint, typechecks, builds or browser/live probes were run. CI and user acceptance
+remain outstanding. No merge or deployment has occurred.

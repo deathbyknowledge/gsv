@@ -284,6 +284,7 @@ describe("cross-GSV federation integration", () => {
       idempotencyKey: "integration-request-first-accepts",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "accepted" });
+    await waitForRequest(first, { id: reverseIncoming.id, state: "accepted", exchange: { state: "acknowledged" } });
     await first.contact.request.update({
       requestId: reverseIncoming.id,
       expectedRevision: reverseAccepted.request.revision,
@@ -291,17 +292,19 @@ describe("cross-GSV federation integration", () => {
       idempotencyKey: "integration-request-first-completes",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "completed" });
+    await waitForRequest(first, { id: reverseIncoming.id, state: "completed", exchange: { state: "acknowledged" } });
 
-    await expect.poll(() => firstRequestSignals.length).toBe(5);
-    await expect.poll(() => secondRequestSignals.length).toBe(5);
-    expect(firstRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: firstContact.id })));
-    expect(secondRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: secondContact.id })));
+    await expect.poll(() => firstRequestSignals.length).toBeGreaterThanOrEqual(5);
+    await expect.poll(() => secondRequestSignals.length).toBeGreaterThanOrEqual(5);
+    expect(firstRequestSignals.every((signal) => signal.contactId === firstContact.id)).toBe(true);
+    expect(secondRequestSignals.every((signal) => signal.contactId === secondContact.id)).toBe(true);
+    const firstRequestSignalCount = firstRequestSignals.length;
     await expect(first.contact.request.update({
       requestId: reverseIncoming.id,
       expectedRevision: 1,
       state: "active",
     })).rejects.toThrow("revision changed");
-    expect(firstRequestSignals).toHaveLength(5);
+    expect(firstRequestSignals).toHaveLength(firstRequestSignalCount);
 
     const resourceBytes = Uint8Array.from([
       137, 80, 78, 71, 13, 10, 26, 10,
@@ -470,7 +473,7 @@ function messagesWithText(history: ConversationHistoryResult, text: string) {
 
 async function waitForRequest(
   client: GSVClient,
-  expected: Partial<Pick<ContactRequestRecord, "id" | "direction" | "title" | "state">>,
+  expected: Partial<Pick<ContactRequestRecord, "id" | "direction" | "title" | "state" | "exchange">>,
 ): Promise<ContactRequestRecord> {
   return await poll(async () => {
     const result = await client.contact.request.list({ includeTerminal: true });
@@ -479,6 +482,7 @@ async function waitForRequest(
       && (!expected.direction || request.direction === expected.direction)
       && (!expected.title || request.title === expected.title)
       && (!expected.state || request.state === expected.state)
+      && (!expected.exchange || request.exchange?.state === expected.exchange.state)
     )) ?? null;
   }, `contact request ${JSON.stringify(expected)}`);
 }

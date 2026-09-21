@@ -44,6 +44,43 @@ function activateContact(store: FederationStore) {
 }
 
 describe("FederationStore", () => {
+  it("retains unsettled request outcomes beyond delivery retention and fences late receipts", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      const delivery = store.enqueue({
+        deliveryId: "delivery:complete", ownerUid: contact.ownerUid, contactId: contact.id,
+        contactGeneration: contact.generation, idempotencyKey: "complete", fingerprint: "complete",
+        payload: { kind: "request.update", requestId: "request:remote", expectedRevision: 2, state: "completed" },
+        now: 2_000,
+      }).record;
+      const request = store.createRequest({
+        id: "request:local", remoteId: "request:remote", contactId: contact.id,
+        contactGeneration: contact.generation, direction: "incoming", kind: "task", title: "Work",
+        state: "completed", exchange: { state: "pending", source: "local", deliveryId: delivery.deliveryId },
+        createdAtMs: 1_000, updatedAtMs: 2_000,
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toEqual([request]);
+      store.settleRequestDelivery({ ...delivery, state: "terminal", lastError: "Remote rejected the revision" });
+      store.markOutboxFailed(delivery.deliveryId, contact.generation, "pending", "Remote rejected the revision", null, true, 3_000);
+      store.prune({ now: 10_000, receiptCutoff: 4_000, requestCutoff: 0, batchSize: 100 });
+      expect(store.outbox(delivery.deliveryId)).toBeNull();
+      expect(store.request(request.id)?.exchange).toEqual({
+        state: "failed", source: "local", deliveryId: delivery.deliveryId, lastError: "Remote rejected the revision",
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toHaveLength(1);
+
+      store.updateRequest({
+        requestId: request.id, expectedRevision: 1, state: "cancelled", updatedAtMs: 11_000,
+        exchange: { state: "acknowledged" },
+      });
+      expect(store.settleRequestDelivery({ ...delivery, state: "delivered" })).toBeNull();
+      expect(store.request(request.id)).toMatchObject({
+        state: "cancelled", revision: 2, exchange: { state: "acknowledged" },
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toEqual([]);
+    });
+  });
+
   it("keeps a local alias separate from refreshed remote identity", async () => {
     await withStore((store) => {
       const contact = activateContact(store);

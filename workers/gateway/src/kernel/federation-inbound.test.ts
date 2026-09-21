@@ -121,6 +121,35 @@ describe("federation inbound boundary", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ["incoming", "offered", "accepted"],
+    ["incoming", "offered", "rejected"],
+    ["incoming", "accepted", "active"],
+    ["incoming", "active", "completed"],
+    ["incoming", "accepted", "cancelled"],
+    ["outgoing", "offered", "cancelled"],
+  ] as const)("rejects a signed remote %s action from %s to %s without creating a conversation", async (direction, state, next) => {
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      instance.federation.createRequest({
+        id: "request:local", remoteId: direction === "incoming" ? "request:remote" : undefined,
+        contactId: contact.id, contactGeneration: contact.generation, direction,
+        kind: "task", title: "Participant-owned work", state, createdAtMs: 1_000, updatedAtMs: 1_000,
+      });
+    });
+    const response = await deliver(await signedEnvelope({
+      kind: "request.update", requestId: direction === "incoming" ? "request:remote" : "request:local",
+      expectedRevision: 1, state: next,
+    }, "delivery:wrong-role"));
+    expect(response.status).toBe(409);
+    await response.arrayBuffer();
+    expect(getConversationById).not.toHaveBeenCalled();
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    expect(messages).toEqual([]);
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      expect(instance.federation.request("request:local")).toMatchObject({ state, revision: 1 });
+    });
+  });
+
   it("coordinates concurrent duplicates and replays their signed receipt", async () => {
     const receivedAtMs = 50_000;
     vi.spyOn(Date, "now").mockReturnValue(receivedAtMs);
