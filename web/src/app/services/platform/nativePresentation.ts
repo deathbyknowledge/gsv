@@ -30,7 +30,9 @@ export function sameNativePresentation(a: NativeSnapshot | null, b: NativeSnapsh
     || Math.sign(a.scroll_velocity) !== Math.sign(b.scroll_velocity)) return false;
   if (a.gesture_context.mode !== b.gesture_context.mode
     || (a.gesture_context.mode === "active" && b.gesture_context.mode === "active"
-      && (a.gesture_context.voice_request_id !== b.gesture_context.voice_request_id || a.gesture_context.muted !== b.gesture_context.muted))) return false;
+      && (a.gesture_context.voice_request_id !== b.gesture_context.voice_request_id || a.gesture_context.muted !== b.gesture_context.muted))
+    || (a.gesture_context.mode === "practice" && b.gesture_context.mode === "practice"
+      && a.gesture_context.lesson_id !== b.gesture_context.lesson_id)) return false;
   if (a.gesture_progress?.candidate !== b.gesture_progress?.candidate
     || a.gesture_progress?.progress_permille !== b.gesture_progress?.progress_permille) return false;
   if (a.gesture_practice?.lesson_id !== b.gesture_practice?.lesson_id

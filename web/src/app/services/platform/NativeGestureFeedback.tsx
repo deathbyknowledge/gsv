@@ -1,4 +1,5 @@
 import type { GestureCandidate, NativeSnapshot } from "./PlatformProvider";
+import { voicePreparation } from "./nativePresentation";
 
 const candidates = {
   arm: "enable hands-free", disarm: "turn hands-free off", start_transcription: "listen",
@@ -46,9 +47,17 @@ export function gestureFeedback(snapshot: NativeSnapshot): GestureFeedback {
   };
   if (snapshot.gesture_needs_reset) return { message: "Make a fist to reset", progress: null, action };
   const { gesture_context: context } = snapshot;
-  const message = context.mode === "disarmed" ? "Off"
-    : context.mode === "disabled" ? "Preparing · both fists to stop"
-    : context.mode === "standby" ? "Ready"
-    : "Listening · fist between commands";
+  let message: string;
+  switch (context.mode) {
+    case "disarmed": message = "Off"; break;
+    case "disabled": message = "Preparing · both fists to stop"; break;
+    case "standby": message = "Ready"; break;
+    case "active": message = "Listening · fist between commands"; break;
+    case "practice":
+      message = snapshot.voice?.phase === "listening" ? "Listening · fist between commands"
+        : snapshot.voice?.phase === "finishing" ? "Pausing…"
+        : voicePreparation(snapshot.voice)?.message ?? "Ready";
+      break;
+  }
   return { message, progress: null, action };
 }

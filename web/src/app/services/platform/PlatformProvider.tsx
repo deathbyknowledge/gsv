@@ -32,7 +32,8 @@ export type GesturePractice = {
 };
 export type GestureContext =
   | { mode: "disarmed" | "disabled" | "standby" }
-  | { mode: "active"; voice_request_id: number; muted: boolean };
+  | { mode: "active"; voice_request_id: number; muted: boolean }
+  | { mode: "practice"; lesson_id: number };
 export type NativeSnapshot = {
   lease: string;
   voice: NativeVoice | null;

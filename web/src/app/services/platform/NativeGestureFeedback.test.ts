@@ -11,6 +11,20 @@ const snapshot = (overrides: Partial<NativeSnapshot> = {}): NativeSnapshot => ({
 });
 
 describe("gesture feedback", () => {
+  it("derives practice readiness from the voice state and observes lesson changes", () => {
+    const ready = snapshot({ gesture_context: { mode: "practice", lesson_id: 17 } });
+    const voice = {
+      request_id: 1, segment_id: 0, revision: 0, text: "", phase: "listening",
+      progress: null, muted: false, pending: null,
+    };
+    expect(gestureFeedback(ready).message).toBe("Ready");
+    expect(gestureFeedback({ ...ready, voice }).message).toBe("Listening · fist between commands");
+    expect(gestureFeedback({ ...ready, voice: { ...voice, phase: "downloading", progress: 0.42 } }).message)
+      .toBe("Downloading voice model · 42%");
+    expect(gestureFeedback({ ...ready, voice: { ...voice, phase: "finishing" } }).message).toBe("Pausing…");
+    expect(sameNativePresentation(ready, { ...ready, gesture_context: { mode: "practice", lesson_id: 18 } })).toBe(false);
+  });
+
   it("explains a wrong practice count without advertising its ordinary action", () => {
     const rejected = snapshot({
       gesture_needs_reset: true,

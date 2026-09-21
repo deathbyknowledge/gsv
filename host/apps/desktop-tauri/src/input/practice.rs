@@ -221,6 +221,22 @@ mod tests {
     }
 
     #[test]
+    fn tutorial_snapshot_keeps_voice_readiness_separate_from_helper_authority() {
+        for listening in [false, true] {
+            let (state, _commands) = practice(PracticeTarget::Listen, listening);
+            let lesson_id = state.snapshot.gesture_practice.as_ref().unwrap().lesson_id;
+            assert_eq!(
+                serde_json::to_value(state.helper_context()).unwrap(),
+                serde_json::json!({ "mode": "practice", "lesson_id": lesson_id })
+            );
+            assert_eq!(
+                serde_json::to_value(state.snapshot()).unwrap()["gesture_context"]["mode"],
+                if listening { "active" } else { "standby" }
+            );
+        }
+    }
+
+    #[test]
     fn wrong_counts_report_feedback_without_starting_or_editing_voice() {
         for listening in [false, true] {
             let (mut state, commands) = practice(PracticeTarget::Listen, listening);
