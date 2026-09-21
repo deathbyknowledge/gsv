@@ -52,7 +52,7 @@ export async function processScopeMessages(ctx: KernelContext): Promise<void> {
         },
       };
       const response = await sendFrameToProcess(ctx.installationId, scope.rootPid, request);
-      if (!response?.ok) throw new Error("Helper event admission is unconfirmed");
+      if (response?.type !== "res" || !response.ok || response.id !== request.id) throw new Error("Helper event admission is unconfirmed");
       admission.admitted(item, policy);
     } catch {
       admission.failed(item);

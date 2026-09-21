@@ -29,7 +29,7 @@ or deploy merely because an intermediate batch is ready.
 | 1. Federation correctness | Participant authority, durable delivery and generation fencing. | Kernel federation, protocol and clients | Implemented; CI green through c28fe6fe; human trial pending |
 | 2. Shared contracts and storage | Versioned messages/provenance/replies, participant-owned work streams, contact Conversations without handlers. | SDK, Kernel and Conversation | Implemented; CI green; human trial pending |
 | 3. Profiles and first contact | Explicit profiles and bounded images, signed approaches, durable accept/decline/block and pairing. | Gateway, Kernel and web | Implemented; CI green; human trial pending |
-| 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented except scoped Ship help below; CI green for completed slices; human trial pending |
+| 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented, including scoped Ship help below; final CI and human trial pending |
 | 5. Shared relationship context | Mutually consented connections, attributed statements, selected subscriptions, withdrawal and deliberate introductions. | Kernel, protocol and People | Implemented; CI green through c28fe6fe; human trial pending |
 | 6. Private message search | Selected Conversation SQLite/FTS, bounded historical indexing and visible coverage; no extra Search DO. | Conversation and Kernel | Implemented; CI green; human trial pending |
 | 7. Scoped assistance | Fresh Process context, inherited restrictions, exact draft approval and optional bounded helpers. | Kernel, Process, protocol and People | Runtime, private assistance UI, exact drafts and optional automatic admission implemented; CI and final integration/UI audit in progress |
@@ -84,6 +84,19 @@ checks, a model verdict, or a new bespoke authorization mechanism.
   complete agreed feature and explicit visibility of remaining limitations.
 
 ## Current checkpoint
+
+All seven feature batches are implemented in source. The integrated private-help
+and exact-approval runtime/UI passed full CI at `46dbb888`. Automatic admission
+landed in `d887f717`; CI required a new fixture in the exhaustive SDK event
+registry, supplied in `369033dc`. `43065d98` adds scoped Zen follow-up controls,
+the return to reply review, and a real Conversation → draft → outbox regression.
+Their CI results and the final integrated review remain pending. No local test,
+typecheck, lint, build, browser or model call was run. Production is unchanged;
+GitHub's existing preview workflow deploys this draft PR for human acceptance.
+
+The readable [human trial guide](social-review.html) covers a fresh two-space
+flow and recovery/authority checks. The implementation notes below are historical
+checkpoints, not a claim that earlier unfinished slices are still missing.
 
 The worktree was created from `origin/main` at
 `e917c3f4d47ee835b45140ea9dc63ff7e3768984`. The existing RFC documentation commit

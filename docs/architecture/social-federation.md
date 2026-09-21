@@ -37,7 +37,7 @@ explicit acceptance creates a responsibility; remote state updates continue to
 advance existing commitments. V056 retains the previous global attention
 settings for an upgrade notice while retiring those implicit producers. It does
 not remove existing responsibilities. Scoped assistance is a separate admission
-path and remains under implementation.
+path, described in [Process scopes](process-scopes.md).
 
 Relationship preferences stay in Kernel federation storage. Saving and muting
 are private, revision-checked preferences independent of transport state.
@@ -52,9 +52,9 @@ at capacity; an existing block remains enforced and can always be removed.
 V2 message and receipt signatures include distinct `gsv-federation/2/delivery`
 and `gsv-federation/2/receipt` domains. Payloads require their origin actor,
 origin message ID, thread and submission provenance. The sender derives human
-or Process submission from authenticated runtime context. Exact draft approval
-will use the separate approved provenance once its authority path is implemented;
-it cannot be supplied through `contact.send` arguments.
+or Process submission from authenticated runtime context. Exact human draft
+approval uses separate approved provenance bound to the immutable review;
+it cannot be supplied through `contact.send` arguments. See [reviewed replies](social-drafts.md).
 
 The recipient validates the message actor against its pinned contact and the
 thread against the active generation. A reply may name either participant in
@@ -68,9 +68,9 @@ the same message metadata. Old messages are not assigned invented origin IDs or
 provenance. V1 immutable resource transfer remains the resource carrier, with its
 existing exact revision, contact generation, byte and cancellation fences.
 
-The current implementation advertises only completed wire features. Profiles,
-approaches, work operations and shared context will be advertised when their
-corresponding handlers and recovery paths are present.
+The current v2 implementation advertises messages, approaches, work operations
+and shared context. Each has its own handlers, admission rules and recovery
+state. Version selection does not grant access to any of them.
 
 ## Public profile publication
 
@@ -105,7 +105,9 @@ Settings owns the draft editor, preview and explicit publication actions. The
 selected section reads only the signed-in account, preserves edits on failures
 or section changes, and treats concurrent revisions as conflicts. The public
 page uses the Instrument fonts without loading the authenticated application.
-Media and the public approach/handoff flow remain subsequent parts of batch 3.
+Profile images are explicitly uploaded and validated bounded PNGs in scoped R2;
+remote image URLs are not accepted. Public approach and own-space handoff flows
+are described in [first contact](social-approaches.md).
 
 ## Public egress release boundary
 

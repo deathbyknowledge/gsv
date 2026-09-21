@@ -92,5 +92,6 @@ and review the agreed introduction separately for each conversation. The human
 confirms what both people agreed to disclose; no model interprets “yes” as a
 permission grant. Private aliases, source replies and files are not copied into
 the draft. An optional public profile is resolved only for the deliberately
-selected pinned contact. The separate scoped-assistance batch remains in progress.
+selected pinned contact. [Scoped assistance](process-scopes.md) and
+[reviewed replies](social-drafts.md) use independent human grants.
 CI and maintainer acceptance, rather than this document, establish validation.

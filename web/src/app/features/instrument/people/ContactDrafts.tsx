@@ -24,11 +24,20 @@ export function ReplyReview({ contact, reply, onDirty, onClose, account }: {
   const [attachments, setAttachments] = useState<Set<number>>(new Set());
   const [intent, setIntent] = useState<ContactDraftCreateArgs | null>(null);
   const [draft, setDraft] = useState<ContactDraft | null>(null);
+  const saved = useQuery({ queryKey: [...draftKey(contact.id), "selected", draft?.id],
+    enabled: connected && !!draft && canConfigure(account, "contact.draft.get"),
+    queryFn: () => client.contact.draft.get({ draftId: draft!.id }) });
   const save = useMutation({ mutationFn: (args: ContactDraftCreateArgs) => client.contact.draft.create(args), onSuccess: ({ draft: value }) => {
     setDraft(value); void cache.invalidateQueries({ queryKey: draftKey(contact.id) });
   } });
   useDraftGuard(!draft, onDirty);
-  if (draft) return <><DraftDecision contact={contact} draft={draft} account={account} onChanged={setDraft} /><button class="people-action" onClick={onClose}>back to private help</button></>;
+  if (draft) {
+    const live = saved.data?.draft;
+    const current = !live || draft.revision > live.revision || draft.result && !live.result ? draft : live;
+    return <><DraftDecision contact={contact} draft={current} account={account} onChanged={setDraft} />
+      {saved.error && <p class="people-error" role="alert">{saved.error.message}<button class="people-action" disabled={!connected} onClick={() => void saved.refetch()}>refresh saved review</button></p>}
+      <button class="people-action" onClick={onClose}>back to private help</button></>;
+  }
   const tooLong = new TextEncoder().encode(text).byteLength > 32_768;
   return <section class="people-assistance" aria-labelledby="review-reply-title"><div class="people-kicker">Ship-assisted reply</div><h2 id="review-reply-title">Make this reply yours</h2>
     <p class="people-note">To <strong>{contactDisplayName(contact)}</strong> · {contact.remoteOrigin}. Saving the review keeps it private. You will approve the exact message next.</p>
@@ -63,10 +72,10 @@ function DraftDecision({ contact, draft, account, onChanged }: { contact: Contac
   const active = contact.state === "active" && contact.generation === draft.content.expectedGeneration;
   const pending = approve.isPending || discard.isPending || refresh.isPending;
   return <article class="people-draft-review" aria-label="Exact draft approval">
-    <header><div class="people-kicker">{draft.state === "sent" ? "Submitted reply" : "Private draft"}</div><h3>To {contactDisplayName(contact)}</h3><p class="people-note">{contact.remoteOrigin} · sent as your approved Ship-assisted reply</p></header>
+    <header><div class="people-kicker">{draft.state === "sent" ? "Submitted reply" : "Private draft"}</div><h3>To {contactDisplayName(contact)}</h3><p class="people-note">{contact.remoteOrigin} · {draft.state === "sent" ? "submitted as" : "will be attributed as"} your approved Ship-assisted reply</p></header>
     <pre class="people-evidence-preview">{draft.content.text}</pre>
     {!!draft.content.media?.length && <ul class="people-draft-files">{draft.content.media.map((file, index) => <li key={index}>{file.filename || "Unnamed file"} · {file.ref.contentType} · {Math.ceil(file.ref.size / 1024)} KiB</li>)}</ul>}
-    {draft.state === "sent" ? <><p class="people-note" role="status">Saved to the conversation for delivery.</p><MessageDelivery delivery={delivery.data?.delivery ?? undefined} mayRetry={canConfigure(account, "contact.delivery.retry")} /></>
+    {draft.state === "sent" ? <><p class="people-note" role="status">Submitted for delivery.</p><MessageDelivery delivery={delivery.data?.delivery ?? undefined} mayRetry={canConfigure(account, "contact.delivery.retry")} /></>
       : draft.state === "discarded" ? <p class="people-note">Discarded without sending.</p>
       : expired ? <p class="people-note">This review expired. Check the conversation for any previously submitted delivery before preparing a new reply.</p>
       : <>
@@ -91,7 +100,7 @@ export function ContactDrafts({ contact, account }: { contact: ContactSummary; a
     {drafts.isPending && connected && <LoadingState>Loading reviews…</LoadingState>}
     {drafts.error && <p class="people-error" role="alert">{drafts.error.message}<button class="people-action" disabled={!connected} onClick={() => void drafts.refetch()}>retry</button></p>}
     {drafts.data && !drafts.data.pages.some((page) => page.drafts.length) && <p class="people-note">No saved reply reviews.</p>}
-    {drafts.data?.pages.flatMap((page) => page.drafts).map((draft) => <details key={draft.id} open={draft.state === "review" || draft.state === "sending"}><summary>{draft.state === "review" ? "Waiting for your review" : draft.state === "sending" ? "Submission unconfirmed" : draft.state === "sent" ? "Submitted reply" : "Discarded reply"} · {new Date(draft.createdAtMs).toLocaleString()}</summary><DraftDecision contact={contact} draft={draft} account={account} onChanged={() => void cache.invalidateQueries({ queryKey: draftKey(contact.id) })} /></details>)}
+    {drafts.data?.pages.flatMap((page) => page.drafts).map((draft) => <details key={draft.id} open={draft.state === "review" || draft.state === "sending"}><summary>{draft.state === "review" ? "Waiting for your review" : draft.state === "sending" ? "Submission unconfirmed" : draft.state === "sent" ? "Submitted reply" : draft.state === "expired" ? "Expired review" : "Discarded reply"} · {new Date(draft.createdAtMs).toLocaleString()}</summary><DraftDecision contact={contact} draft={draft} account={account} onChanged={() => void cache.invalidateQueries({ queryKey: draftKey(contact.id) })} /></details>)}
     {drafts.hasNextPage && <button class="people-action" disabled={drafts.isFetchingNextPage} onClick={() => void drafts.fetchNextPage()}>more reviews</button>}
   </section>;
 }
