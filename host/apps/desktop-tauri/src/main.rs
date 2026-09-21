@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use input::{InputCommand, InputRuntime, Snapshot};
+use input::{InputCommand, InputRuntime, InputUpdate, Snapshot};
 use session::{Session, SessionStore};
 use tauri::{Manager, State, WebviewWindow, WebviewWindowBuilder};
 use tokio::sync::Mutex;
@@ -61,6 +61,7 @@ async fn input_attach(
     window: WebviewWindow,
     host: State<'_, Host>,
     generation: String,
+    updates: tauri::ipc::Channel<InputUpdate>,
 ) -> Result<Snapshot, String> {
     main_window(&window)?;
     let session = host.session.lock().await;
@@ -69,18 +70,19 @@ async fn input_attach(
     {
         return Err("The configured space has changed.".into());
     }
-    host.input.attach().await
+    host.input.attach(updates).await
 }
 
 #[tauri::command]
-async fn input_poll(
+async fn input_acknowledge(
     window: WebviewWindow,
     host: State<'_, Host>,
     lease: String,
+    revision: u64,
     ack: u64,
-) -> Result<Snapshot, String> {
+) -> Result<(), String> {
     main_window(&window)?;
-    host.input.poll(lease, ack).await
+    host.input.acknowledge(lease, revision, ack).await
 }
 
 #[tauri::command]
@@ -154,7 +156,7 @@ fn main() {
             desktop_open,
             desktop_quit,
             input_attach,
-            input_poll,
+            input_acknowledge,
             input_command
         ])
         .setup(|app| {

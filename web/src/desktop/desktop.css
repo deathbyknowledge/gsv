@@ -10,19 +10,3 @@
 .desktop-connect button { padding: 10px; }
 .desktop-error { position: fixed; bottom: 0; z-index: 200; padding: 14px; background: #542c38; color: white; width: 100%; }
 .desktop-error button { margin-left: 20px; }
-.native-input-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; }
-.native-input-controls button, .native-input-controls select { color: inherit; background: transparent; border: 0; font: inherit; cursor: pointer; }
-.native-input-controls button:disabled { opacity: .4; cursor: default; }
-.native-input-controls button[aria-pressed="true"] { text-decoration: underline; }
-.native-input-controls .native-notice { flex-basis: 100%; }
-.native-gesture-feedback { flex-basis: 100%; min-width: 0; border-top: 1px solid var(--border); padding-top: 8px; color: var(--text-dim); }
-.native-gesture-heading, .native-gesture-recognition { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 24px; }
-.native-gesture-heading .is-armed, .native-gesture-action { color: var(--accent); }
-.native-gesture-recognition progress { width: 100px; height: 6px; accent-color: var(--accent); }
-.native-gesture-percent { font-variant-numeric: tabular-nums; }
-.native-gesture-guide { margin-top: 4px; }
-.native-gesture-guide summary { cursor: pointer; width: fit-content; }
-.native-gesture-guide table { border-collapse: collapse; margin-top: 12px; width: 100%; }
-.native-gesture-guide th, .native-gesture-guide td { padding: 4px 12px 4px 0; text-align: left; vertical-align: top; }
-.native-gesture-guide th { font-weight: 500; color: var(--text-hi); }
-.native-gesture-guide p { margin: 8px 0; max-width: 72ch; line-height: 1.5; }

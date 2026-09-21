@@ -10,6 +10,7 @@ use gesture_protocol::{
     LifecycleState, ScrollState, VoiceRequestGestureIntent,
 };
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -57,7 +58,7 @@ pub enum InputCommand {
     Detach,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct VoiceState {
     pub request_id: u64,
     pub segment_id: u64,
@@ -74,14 +75,14 @@ pub struct VoiceState {
     expected_mute: Option<bool>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct Device {
     id: String,
     name: String,
     is_default: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct InputEvent {
     pub id: u64,
     pub request_id: u64,
@@ -91,7 +92,7 @@ pub struct InputEvent {
     pub text: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct Snapshot {
     pub lease: String,
     pub voice: Option<VoiceState>,
@@ -102,17 +103,40 @@ pub struct Snapshot {
     pub gesture_progress: Option<GestureProgress>,
     pub gesture_action: Option<GestureCandidate>,
     pub scroll_velocity: i16,
+    pub scroll_sequence: u64,
     pub devices: Vec<Device>,
+    pub devices_loading: bool,
     pub notice: Option<String>,
     pub events: Vec<InputEvent>,
 }
 
+#[derive(Clone, Serialize)]
+pub struct InputUpdate {
+    revision: u64,
+    sent_at_ms: u64,
+    scroll_age_ms: u64,
+    snapshot: Snapshot,
+}
+
+struct Delivery {
+    channel: Channel<InputUpdate>,
+    sent: Snapshot,
+    revision: u64,
+    acknowledged: u64,
+    event_ack: u64,
+    sent_at: Instant,
+}
+
 enum Request {
-    Attach(oneshot::Sender<Result<Snapshot, String>>),
-    Poll {
-        lease: String,
-        ack: u64,
+    Attach {
+        updates: Channel<InputUpdate>,
         reply: oneshot::Sender<Result<Snapshot, String>>,
+    },
+    Acknowledge {
+        lease: String,
+        revision: u64,
+        ack: u64,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     Command {
         lease: String,
@@ -134,19 +158,24 @@ impl InputRuntime {
         Self { sender }
     }
 
-    pub async fn attach(&self) -> Result<Snapshot, String> {
+    pub async fn attach(&self, updates: Channel<InputUpdate>) -> Result<Snapshot, String> {
         let (reply, received) = oneshot::channel();
         self.sender
-            .send(Request::Attach(reply))
+            .send(Request::Attach { updates, reply })
             .await
             .map_err(|_| "Native input is closed.")?;
         received.await.map_err(|_| "Native input is closed.")?
     }
 
-    pub async fn poll(&self, lease: String, ack: u64) -> Result<Snapshot, String> {
+    pub async fn acknowledge(&self, lease: String, revision: u64, ack: u64) -> Result<(), String> {
         let (reply, received) = oneshot::channel();
         self.sender
-            .send(Request::Poll { lease, ack, reply })
+            .send(Request::Acknowledge {
+                lease,
+                revision,
+                ack,
+                reply,
+            })
             .await
             .map_err(|_| "Native input is closed.")?;
         received.await.map_err(|_| "Native input is closed.")?
@@ -183,8 +212,8 @@ impl InputRuntime {
 struct State {
     snapshot: Snapshot,
     voice_commands: VoiceCommandSender,
-    last_poll: Instant,
-    last_poll_wall: SystemTime,
+    last_seen: Instant,
+    last_seen_wall: SystemTime,
     scroll_at: Instant,
     next_id: u64,
     events: VecDeque<(Instant, InputEvent)>,
@@ -196,6 +225,7 @@ struct State {
     gesture_action: Option<(Instant, GestureCandidate)>,
     device_request: Option<u64>,
     selected_device: Option<String>,
+    delivery: Option<Delivery>,
 }
 
 impl State {
@@ -211,13 +241,15 @@ impl State {
                 gesture_progress: None,
                 gesture_action: None,
                 scroll_velocity: 0,
+                scroll_sequence: 0,
                 devices: Vec::new(),
+                devices_loading: false,
                 notice: None,
                 events: Vec::new(),
             },
             voice_commands,
-            last_poll: Instant::now(),
-            last_poll_wall: SystemTime::now(),
+            last_seen: Instant::now(),
+            last_seen_wall: SystemTime::now(),
             scroll_at: Instant::now(),
             next_id: 0,
             events: VecDeque::new(),
@@ -229,6 +261,7 @@ impl State {
             gesture_action: None,
             device_request: None,
             selected_device: None,
+            delivery: None,
         }
     }
 
@@ -240,9 +273,9 @@ impl State {
     fn fresh(&self, lease: &str) -> bool {
         !lease.is_empty()
             && self.snapshot.lease == lease
-            && self.last_poll.elapsed() <= LEASE_TIMEOUT
+            && self.last_seen.elapsed() <= LEASE_TIMEOUT
             && self
-                .last_poll_wall
+                .last_seen_wall
                 .elapsed()
                 .is_ok_and(|elapsed| elapsed <= LEASE_TIMEOUT)
     }
@@ -259,6 +292,7 @@ impl State {
     }
 
     fn reset(&mut self) {
+        self.delivery = None;
         self.snapshot.armed = false;
         self.snapshot.lease.clear();
         self.cancel_voice();
@@ -336,7 +370,97 @@ impl State {
                 .gesture_action
                 .and_then(|(at, action)| (at.elapsed() <= ACTION_FEEDBACK_AGE).then_some(action)),
             events: self.events.iter().map(|(_, event)| event.clone()).collect(),
+            devices_loading: self.device_request.is_some(),
+            scroll_sequence: if self.snapshot.scroll_velocity != 0 {
+                self.scroll_sequence
+            } else {
+                0
+            },
             ..self.snapshot.clone()
+        }
+    }
+
+    fn attach(&mut self, channel: Channel<InputUpdate>) -> Snapshot {
+        self.reset();
+        self.snapshot.lease = Uuid::new_v4().to_string();
+        self.last_seen = Instant::now();
+        self.last_seen_wall = SystemTime::now();
+        let initial = self.snapshot();
+        self.delivery = Some(Delivery {
+            channel,
+            sent: initial.clone(),
+            revision: 0,
+            acknowledged: 0,
+            event_ack: 0,
+            sent_at: Instant::now(),
+        });
+        initial
+    }
+
+    fn acknowledge(&mut self, lease: &str, revision: u64, ack: u64) -> Result<(), String> {
+        self.watchdog();
+        if !self.fresh(lease) {
+            return Err("Native input session ended. Reconnect input to continue.".into());
+        }
+        let delivery = self
+            .delivery
+            .as_mut()
+            .ok_or("Native input is disconnected.")?;
+        let event_limit = if revision == delivery.revision {
+            delivery
+                .sent
+                .events
+                .last()
+                .map_or(delivery.event_ack, |event| event.id)
+        } else {
+            delivery.event_ack
+        };
+        if revision > delivery.revision || ack > event_limit {
+            return Err("Native input acknowledgement is ahead of delivery.".into());
+        }
+        delivery.acknowledged = delivery.acknowledged.max(revision);
+        delivery.event_ack = delivery.event_ack.max(ack);
+        delivery.sent.events.retain(|event| event.id > ack);
+        self.last_seen = Instant::now();
+        self.last_seen_wall = SystemTime::now();
+        while self
+            .events
+            .front()
+            .is_some_and(|(_, event)| event.id <= ack)
+        {
+            self.events.pop_front();
+        }
+        self.sync_context();
+        Ok(())
+    }
+
+    fn publish(&mut self) {
+        let Some(delivery) = &self.delivery else {
+            return;
+        };
+        // One unacknowledged frame bounds IPC while replace-latest state coalesces here.
+        if delivery.revision != delivery.acknowledged {
+            return;
+        }
+        let next = self.snapshot();
+        if next == delivery.sent {
+            return;
+        }
+        let delivery = self.delivery.as_mut().unwrap();
+        delivery.revision += 1;
+        delivery.sent = next.clone();
+        delivery.sent_at = Instant::now();
+        let update = InputUpdate {
+            revision: delivery.revision,
+            sent_at_ms: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            scroll_age_ms: self.scroll_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            snapshot: next,
+        };
+        if delivery.channel.send(update).is_err() {
+            self.reset();
         }
     }
 
@@ -871,6 +995,10 @@ impl State {
             self.snapshot.scroll_velocity = 0;
         }
         if (!self.snapshot.lease.is_empty() && !self.fresh(&self.snapshot.lease))
+            || self.delivery.as_ref().is_some_and(|delivery| {
+                delivery.revision != delivery.acknowledged
+                    && delivery.sent_at.elapsed() > LEASE_TIMEOUT
+            })
             || self
                 .events
                 .front()
@@ -892,21 +1020,13 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
     loop {
         tokio::select! {
             request = requests.recv() => match request {
-                Some(Request::Attach(reply)) => {
-                    state.reset();
-                    state.snapshot.lease = Uuid::new_v4().to_string();
-                    state.last_poll = Instant::now();
-                    state.last_poll_wall = SystemTime::now();
-                    if reply.send(Ok(state.snapshot())).is_err() { state.reset(); }
+                Some(Request::Attach { updates, reply }) => {
+                    let initial = state.attach(updates);
+                    if reply.send(Ok(initial)).is_err() { state.reset(); }
                 }
-                Some(Request::Poll { lease, ack, reply }) => {
-                    state.watchdog();
-                    if !state.fresh(&lease) { let _ = reply.send(Err("Native input session ended. Reconnect input to continue.".into())); continue; }
-                    state.last_poll = Instant::now();
-                    state.last_poll_wall = SystemTime::now();
-                    while state.events.front().is_some_and(|(_, e)| e.id <= ack) { state.events.pop_front(); }
-                    state.sync_context();
-                    let _ = reply.send(Ok(state.snapshot()));
+                Some(Request::Acknowledge { lease, revision, ack, reply }) => {
+                    let result = state.acknowledge(&lease, revision, ack);
+                    let _ = reply.send(result);
                 }
                 Some(Request::Command { lease, command, reply }) => {
                     state.watchdog();
@@ -944,6 +1064,7 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
             },
             _ = tick.tick() => state.watchdog(),
         }
+        state.publish();
     }
     state.reset();
     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
@@ -982,6 +1103,23 @@ fn voice_error_message(code: VoiceErrorCode, phase: Option<&str>) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn updates() -> (Channel<InputUpdate>, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let received = messages.clone();
+        let channel = Channel::new(move |body| {
+            let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+                panic!("expected JSON input update")
+            };
+            received
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&json).unwrap());
+            Ok(())
+        });
+        (channel, messages)
+    }
 
     fn attached() -> (State, std::sync::mpsc::Receiver<VoiceCommand>) {
         let (commands, receiver) = VoiceCommandSender::channel_for_test();
@@ -991,12 +1129,101 @@ mod tests {
     }
 
     #[test]
+    fn push_delivery_coalesces_partials_until_acknowledged() {
+        let (mut state, _commands) = attached();
+        let (channel, messages) = updates();
+        let initial = state.attach(channel);
+        state.publish();
+        assert!(messages.lock().unwrap().is_empty());
+        state.start_voice(None).unwrap();
+        let started = state.events.front().unwrap().1.clone();
+        state.publish();
+        for (revision, text) in [(1, "first"), (2, "latest")] {
+            state.voice_event(VoiceEvent::Partial {
+                request_id: started.request_id,
+                segment_id: 0,
+                revision,
+                committed: text.into(),
+                tentative: String::new(),
+            });
+            state.publish();
+        }
+        assert_eq!(messages.lock().unwrap().len(), 1);
+        state.acknowledge(&initial.lease, 1, started.id).unwrap();
+        state.publish();
+        let received = messages.lock().unwrap();
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[1]["snapshot"]["voice"]["text"], "latest");
+        assert_eq!(received[1]["revision"], 2);
+        drop(received);
+        state.acknowledge(&initial.lease, 2, started.id).unwrap();
+        state.publish();
+        assert_eq!(messages.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn heartbeat_cannot_keep_an_unconsumed_update_alive() {
+        let (mut state, commands) = attached();
+        let (channel, _) = updates();
+        state.attach(channel);
+        state.start_voice(None).unwrap();
+        let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
+        state.publish();
+        state.delivery.as_mut().unwrap().sent_at =
+            Instant::now() - LEASE_TIMEOUT - Duration::from_millis(1);
+        state.last_seen = Instant::now();
+        state.last_seen_wall = SystemTime::now();
+        state.watchdog();
+        assert!(state.delivery.is_none());
+        assert!(state.snapshot.voice.is_none());
+        assert!(state.snapshot.lease.is_empty());
+        assert!(commands
+            .try_iter()
+            .any(|command| command == VoiceCommand::Cancel { request_id }));
+    }
+
+    #[test]
+    fn acknowledgements_cannot_discard_events_not_delivered_to_the_view() {
+        let (mut state, _commands) = attached();
+        let (channel, _) = updates();
+        let initial = state.attach(channel);
+        state.start_voice(None).unwrap();
+        state.publish();
+        assert!(state.acknowledge(&initial.lease, 2, 0).is_err());
+        assert!(state.acknowledge(&initial.lease, 1, u64::MAX).is_err());
+        assert_eq!(state.events.len(), 1);
+        assert_eq!(state.delivery.as_ref().unwrap().acknowledged, 0);
+    }
+
+    #[test]
+    fn steady_scroll_refreshes_freshness_without_idle_heartbeat_updates() {
+        let (mut state, _commands) = attached();
+        let (channel, messages) = updates();
+        let initial = state.attach(channel);
+        state.snapshot.armed = true;
+        state.snapshot.scroll_velocity = 600;
+        state.scroll_sequence = 1;
+        state.publish();
+        state.acknowledge(&initial.lease, 1, 0).unwrap();
+        state.scroll_sequence = 2;
+        state.publish();
+        assert_eq!(messages.lock().unwrap().len(), 2);
+        state.acknowledge(&initial.lease, 2, 0).unwrap();
+        state.snapshot.scroll_velocity = 0;
+        state.publish();
+        state.acknowledge(&initial.lease, 3, 0).unwrap();
+        state.scroll_sequence = 3;
+        state.publish();
+        assert_eq!(messages.lock().unwrap().len(), 3);
+    }
+
+    #[test]
     fn watchdog_cancels_voice_and_discards_pending_intents() {
         let (mut state, commands) = attached();
         state.start_voice(None).unwrap();
         let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
         state.snapshot.armed = true;
-        state.last_poll_wall = SystemTime::now() - Duration::from_secs(10);
+        state.last_seen_wall = SystemTime::now() - Duration::from_secs(10);
         state.watchdog();
         assert!(state.snapshot.voice.is_none());
         assert!(!state.snapshot.armed);

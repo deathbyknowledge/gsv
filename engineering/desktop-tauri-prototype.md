@@ -79,3 +79,64 @@ Framework references: [Tauri capabilities](https://v2.tauri.app/security/capabil
 [application command manifest](https://docs.rs/tauri-build/latest/tauri_build/struct.AppManifest.html),
 [Vite integration](https://v2.tauri.app/start/frontend/vite/),
 [window configuration](https://v2.tauri.app/reference/config/).
+
+## Zen refinement, 2026-09-21
+
+The first human pass confirmed functional dictation and gestures, but reported
+soft text at 200% and roughly 100–200 ms of perceived keyboard/typing latency.
+That is the human baseline, not an instrumented latency measurement. The running
+window stays untouched while the next build is prepared.
+
+The shared Instrument owns crisp layout zoom and immediate view navigation.
+Zen owns immediate typing, selection and scroll anchoring. Native input retains
+its existing lease/acknowledgement and cancellation boundaries, but its changing
+presentation must not rerender the transcript. Decorations must not compete with
+input by laying out a screen-sized text grid on every animation frame.
+
+The interaction design keeps the prompt exclusively for the person's draft.
+Voice and Gestures sit beside Attach as quiet, named disclosures. Their labels
+show active microphone/camera state; a recognized gesture gets a short action
+label and a hold indicator in that same affordance. One panel opens at a time,
+above the composer without resizing the conversation. Voice contains start,
+pause/resume, finish and microphone choice. Gestures contains camera control,
+explicit arming, and a compact hand guide. Only errors demand additional space.
+Opening either panel never starts a sensor. Closing it never stops a sensor;
+the active indicator and explicit stop controls remain available.
+
+No feedback or guide text is inserted into the draft, and no extra model or
+gateway request is needed for input presentation. Ordinary typing, Enter,
+attachments and gesture send retain the existing conversation owner.
+
+Source findings in the first build: navigation explicitly waits 150 ms; native input supplies a
+fresh state object every 100 ms; every draft character updates Zen; prompt
+measurement repeats synchronous layout reads/writes; and the star field replaces
+its entire text grid at 24 Hz. These justify the bounded changes above, but do
+not establish their share of observed latency. The XWayland/shared-memory launch
+workaround remains another variable for a later human comparison.
+
+The replacement native bridge uses a private Tauri channel established by the
+authorized attach command. Rust pushes changed state with a monotonic delivery
+revision and emission time. At most one update is in flight; newer partials and
+gesture status replace pending state while completion events stay in the bounded
+acknowledged lane. The frontend acknowledges after applying a delivery. A quiet
+one-second keepalive checks the lease but returns no state and causes no render.
+Unconsumed delivery, expired leases, stale emission times, scope changes and
+teardown still revoke input. Scroll updates retain source age and sequence so
+steady movement can refresh its freshness without rerendering the controls.
+The former polling command and capability are removed.
+
+The shared star field retains its seed, density, glyphs and palette, but caches
+positioned stars instead of rebuilding empty cells. Only changed glyphs are
+written, at most eight times per second, with half-speed twinkling and no
+animation while hidden, unfocused, offscreen, or under reduced motion. Shared
+message bodies, timestamps and receipts reuse their output when their inputs
+are unchanged. Prompt measurement is coalesced into one frame and dirty-state
+notification only changes when the draft becomes empty/nonempty.
+
+The old maintainer comment above `.instrument-scaled` describes transform
+scaling; it is preserved and followed by a note explaining the replacement.
+
+Prototype diagnostics expose `window.gsvInputTiming.read()` in the inspector.
+Only bounded keyboard/input dispatch and next-frame timings are retained in
+memory. No keys, text, targets or private content are recorded or transmitted.
+These timings do not measure final GPU/compositor presentation latency.

@@ -2,8 +2,8 @@ import type { GestureCandidate, NativeSnapshot } from "./PlatformProvider";
 
 const candidates: Record<GestureCandidate, string> = {
   arm: "arm gestures", disarm: "disarm gestures", start_transcription: "start voice",
-  stop_transcription: "finish voice", send: "send this segment", delete_backward: "delete one voice character",
-  clear_dictation: "clear unsent dictation", mute: "mute the microphone", unmute: "unmute the microphone",
+  stop_transcription: "finish voice", send: "send", delete_backward: "delete a character",
+  clear_dictation: "clear dictation", mute: "pause the mic", unmute: "resume the mic",
 };
 const accepted: Record<GestureCandidate, string> = {
   arm: "Gestures armed", disarm: "Gestures disarmed", start_transcription: "Starting voice",
@@ -48,37 +48,25 @@ export function gestureFeedback(snapshot: NativeSnapshot): { message: string; pr
   return { message, progress: null, action };
 }
 
-export function NativeGestureFeedback({ snapshot }: { snapshot: NativeSnapshot }) {
-  if (!snapshot.gestures_enabled && snapshot.gesture_status === "off") return null;
-  const feedback = gestureFeedback(snapshot);
-  return <section class="native-gesture-feedback" aria-label="Gesture feedback">
-    <div class="native-gesture-heading">
-      <span class={snapshot.armed ? "is-armed" : ""}>{snapshot.armed ? "gestures armed" : "gestures disarmed"}</span>
-      {snapshot.gesture_status === "ready" && <span>camera on</span>}
-      {feedback.action && <span class="native-gesture-action" role="status">{feedback.action}</span>}
-    </div>
-    <div class="native-gesture-recognition">
-      <span>{feedback.message}</span>
-      {feedback.progress !== null && <>
-        <progress max={1000} value={feedback.progress} aria-label={feedback.message} />
-        <span class="native-gesture-percent" aria-hidden="true">{Math.round(feedback.progress / 10)}%</span>
-      </>}
-    </div>
-    <details class="native-gesture-guide">
-      <summary>gesture guide</summary>
+export function GestureGuide() {
+  return <div class="native-gesture-guide">
+      <h3>Your action hand <span>right by default</span></h3>
+      <p>Hold until the indicator fills. Make a fist between commands.</p>
       <table>
-        <thead><tr><th>Gesture</th><th>Action</th><th>Hold</th></tr></thead>
+        <caption>Gesture guide</caption>
         <tbody>
-          <tr><td>Both hands in fists</td><td>Arm / disarm</td><td>0.7 s</td></tr>
-          <tr><td>1 · index finger</td><td>Start / finish voice</td><td>0.35 s</td></tr>
-          <tr><td>2 · index + middle</td><td>Send segment, keep listening</td><td>0.35 s</td></tr>
-          <tr><td>3 · add ring finger</td><td>Delete one dictated character</td><td>0.35 s</td></tr>
-          <tr><td>4 · four fingers, thumb closed</td><td>Clear unsent dictation</td><td>1 s</td></tr>
-          <tr><td>5 · all fingers open</td><td>Mute / unmute</td><td>0.35 s</td></tr>
+          <tr><th scope="row">Both fists</th><td>Arm / disarm <small>hold 0.7 s</small></td></tr>
+          <tr><th scope="row"><b>1</b> Index</th><td>Start / finish voice</td></tr>
+          <tr><th scope="row"><b>2</b> + middle</th><td>Send, keep listening</td></tr>
+          <tr><th scope="row"><b>3</b> + ring</th><td>Delete a dictated character</td></tr>
+          <tr><th scope="row"><b>4</b> Thumb closed</th><td>Clear dictation <small>hold 1 s</small></td></tr>
+          <tr><th scope="row"><b>5</b> Open hand</th><td>Pause / resume microphone</td></tr>
         </tbody>
       </table>
-      <p>Use your action hand (right by default). Make a fist between commands. Typed text and attachments stay when dictation is cleared.</p>
-      <p>To scroll, open your control palm and close your action fist. Let the pose settle, then tilt the line between your hands. Return to neutral to pause; release either hand to stop.</p>
-    </details>
-  </section>;
+      <details>
+        <summary>Scrolling and corrections</summary>
+        <p>Open your control palm and close your action fist. Let the pose settle, then tilt the line between your hands. Return to neutral to pause; release either hand to stop.</p>
+        <p>Clear and delete affect only unsent dictation. Typed text and attachments stay.</p>
+      </details>
+  </div>;
 }

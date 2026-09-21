@@ -1,9 +1,12 @@
-import type { NativeCommand, NativeInput, NativeSnapshot } from "../app/services/platform/PlatformProvider";
+import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
 import type { SessionStorage } from "../app/services/session/sessionService";
 
 declare global {
   interface Window {
-    __TAURI__?: { core: { invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> } };
+    __TAURI__?: { core: {
+      invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+      Channel: new<T>(receive?: (message: T) => void) => { onmessage: (message: T) => void };
+    } };
   }
 }
 
@@ -33,8 +36,19 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
 
 export function nativeInput(generation: string): NativeInput {
   return {
-    attach: () => invoke<NativeSnapshot>("input_attach", { generation }),
-    poll: (lease, ack) => invoke<NativeSnapshot>("input_poll", { lease, ack }),
+    subscribe: (receive) => {
+      if (!window.__TAURI__) throw new Error("Open this frontend in GSV Tauri Prototype.");
+      const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
+      const initial = invoke<NativeSnapshot>("input_attach", { generation, updates });
+      let disposed = false;
+      return { initial, dispose() {
+        if (disposed) return;
+        disposed = true;
+        updates.onmessage = () => {};
+        void initial.then(({ lease }) => invoke("input_command", { lease, command: { kind: "detach" } })).catch(() => {});
+      } };
+    },
+    acknowledge: (lease, revision, ack) => invoke<void>("input_acknowledge", { lease, revision, ack }),
     command: (lease: string, command: NativeCommand) => invoke<void>("input_command", { lease, command }),
   };
 }

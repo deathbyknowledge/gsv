@@ -10,7 +10,7 @@
     "allow-desktop-open",
     "allow-desktop-quit",
     "allow-input-attach",
-    "allow-input-poll",
+    "allow-input-acknowledge",
     "allow-input-command"
   ]
 }

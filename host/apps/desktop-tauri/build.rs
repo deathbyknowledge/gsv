@@ -7,7 +7,7 @@ fn main() {
             "desktop_open",
             "desktop_quit",
             "input_attach",
-            "input_poll",
+            "input_acknowledge",
             "input_command",
         ]),
     ))

@@ -92,15 +92,19 @@ excludes the mock. The real helpers are still real in development mode.
 
 1. Connect the production space yourself. Check Zen, theme, receipts, approvals,
    streaming, attachment send and optimistic message acknowledgement.
-2. Press Voice. Check preparation, partial text, finish, cancel, device selection,
+2. Open Voice beside Attach, then start listening. Check preparation, partial text, finish, cancel, device selection,
    and acknowledged mute. Type before/after the dictated range. Editing inside
    dictated text stops capture and preserves the correction; restart Voice to
-   continue. Send segment uses ordinary conversation sending and preserves files.
-3. Enable gestures: it starts disarmed. Deliberately arm, then check the existing
+   continue. Enter while listening uses ordinary conversation sending, preserves
+   files and keeps the microphone on. Opening controls alone must not capture
+   microphone audio; closing them must not silently stop active dictation.
+3. Open Gestures and enable the camera: it starts disarmed. Deliberately arm, then check the existing
    1–5 vocabulary (start/finish, send, delete, clear, mute), fist reset, scroll
-   chord and tracking loss. The feedback panel shows camera status, the current
-   hold's progress and recently accepted commands; open its gesture guide for
-   hand shapes and hold times. Clear/delete affect only unsent dictated text.
+   chord and tracking loss. The quiet gesture control shows camera/armed state,
+   a recognized hold's progress and accepted commands; its panel contains the
+   hand guide. Clear/delete affect only unsent dictated text. The panel closes
+   with Escape or an outside click, without resizing the conversation. All
+   feedback stays outside the editable draft.
 4. Try unfocused use and minimization. If the webview stops responding for three
    seconds, native input stops and disarms. Reconnect native input and explicitly
    restart it. No old action should arrive in a later draft. Repeat after sleep,
@@ -111,6 +115,23 @@ excludes the mock. The real helpers are still real in development mode.
    work and tears down the whole frontend.
 6. Quit and reopen. Camera/voice must be off and gestures disarmed. The independent
    daemon and installed Desktop should remain available.
+7. Cycle `x` through 100%, 150% and 200%. Check text sharpness, full-window fit,
+   prompt/caret alignment, and layout in Zen, Fleet, Memory and Settings.
+   Try `j`/`k`, typing and view navigation with both sensors off, then on. Check
+   a long conversation and scroll anchoring while new replies arrive.
+
+Optional local timing diagnostics in the webview inspector:
+
+```js
+window.gsvInputTiming.reset();
+// Type and navigate, then inspect the aggregate timings:
+window.gsvInputTiming.read();
+```
+
+This reports p95 dispatch delay, p95 time to the next animation frame, and the
+maximum next-frame delay for up to 200 keyboard and 200 input events. Samples
+stay in memory and contain no keys, text, targets or conversation content. This
+is a frontend scheduling diagnostic, not a measurement of final display latency.
 
 ## Current limits
 

@@ -36,7 +36,9 @@ export type NativeSnapshot = {
   gesture_progress: { candidate: GestureCandidate; progress_permille: number } | null;
   gesture_action: GestureCandidate | null;
   scroll_velocity: number;
+  scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];
+  devices_loading: boolean;
   notice: string | null;
   events: NativeEvent[];
 };
@@ -49,9 +51,11 @@ export type NativeCommand =
   | { kind: "gestures"; enabled: boolean }
   | { kind: "arm"; armed: boolean };
 
+export type NativeUpdate = { revision: number; sent_at_ms: number; scroll_age_ms: number; snapshot: NativeSnapshot };
+export type NativeSubscription = { initial: Promise<NativeSnapshot>; dispose(): void };
 export type NativeInput = {
-  attach(): Promise<NativeSnapshot>;
-  poll(lease: string, ack: number): Promise<NativeSnapshot>;
+  subscribe(receive: (update: NativeUpdate) => void): NativeSubscription;
+  acknowledge(lease: string, revision: number, ack: number): Promise<void>;
   command(lease: string, command: NativeCommand): Promise<void>;
 };
 

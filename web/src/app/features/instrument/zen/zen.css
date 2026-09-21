@@ -1,5 +1,6 @@
 /* Zen: the response is the page. */
 .zen {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
