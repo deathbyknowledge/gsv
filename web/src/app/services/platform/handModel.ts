@@ -17,7 +17,9 @@ const blend = (start: number, end: number, value: number) => {
   const t = Math.max(0, Math.min(1, (value - start) / (end - start)));
   return t * t * (3 - 2 * t);
 };
-const mix = (a: Vector, b: Vector, t: number): Vector => a.map((value, axis) => value + (b[axis] - value) * t) as Vector;
+const mapVector = ([x, y, z]: Vector, transform: (value: number, axis: number) => number): Vector =>
+  [transform(x, 0), transform(y, 1), transform(z, 2)];
+const mix = (a: Vector, b: Vector, t: number): Vector => mapVector(a, (value, axis) => value + (b[axis] - value) * t);
 const bump = (value: number, center: number, width: number) => Math.exp(-(((value - center) / width) ** 2));
 
 // Wrist, heel, thenar/hypothenar pads and the curved row of knuckles share a
@@ -87,7 +89,7 @@ function bonePath(joints: Vector[], stops: readonly number[]): (t: number) => Ve
       if (t < joint - rounding || t > joint + rounding) continue;
       const f = (t - joint + rounding) / (2 * rounding);
       const before = straight(joint - rounding), after = straight(joint + rounding);
-      return before.map((value, axis) => (1 - f) ** 2 * value + 2 * (1 - f) * f * joints[index][axis] + f * f * after[axis]) as Vector;
+      return mapVector(before, (value, axis) => (1 - f) ** 2 * value + 2 * (1 - f) * f * joints[index][axis] + f * f * after[axis]);
     }
     return straight(t);
   };
@@ -118,7 +120,7 @@ export function createHandModel(): HandModel {
       along[2] * around[0] - along[0] * around[2],
       along[0] * around[1] - along[1] * around[0],
     ]);
-    if (normal[0] * point[0] + normal[2] * point[2] < 0) normal = normal.map((value) => -value) as Vector;
+    if (normal[0] * point[0] + normal[2] * point[2] < 0) normal = mapVector(normal, (value) => -value);
     return [...point, ...normal];
   };
   const closed: number[] = [];
@@ -178,7 +180,7 @@ export function createHandModel(): HandModel {
       const crossZ = Math.sign(sine) * Math.abs(sine) ** exponent;
       const normalX = Math.sign(cosine) * Math.abs(cosine) ** (2 - exponent);
       const normalZ = Math.sign(sine) * Math.abs(sine) ** (2 - exponent) / roundness;
-      const normal = unit(side.map((value, axis) => value * normalX + front[axis] * normalZ - tangent[axis] * slope) as Vector);
+      const normal = unit(mapVector(side, (value, axis) => value * normalX + front[axis] * normalZ - tangent[axis] * slope));
       const offset = (part.offset + index * SIDES + step) * 6;
       for (let axis = 0; axis < 3; axis++) {
         mesh.vertices[offset + axis] = center[axis] + radius * (side[axis] * crossX + front[axis] * crossZ * roundness);
@@ -190,11 +192,11 @@ export function createHandModel(): HandModel {
     const pointAt = bonePath(points, stops);
     for (let index = 0; index <= part.rings; index++) {
       const t = index / part.rings, before = pointAt(t - 0.001), after = pointAt(t + 0.001);
-      const tangent = unit(after.map((value, axis) => value - before[axis]) as Vector);
+      const tangent = unit(mapVector(after, (value, axis) => value - before[axis]));
       let side: Vector = splay === undefined ? unit([-tangent[1], tangent[0], 0]) : [Math.cos(splay), Math.sin(splay), 0];
       if (roll) {
         const front: Vector = [tangent[1] * side[2] - tangent[2] * side[1], tangent[2] * side[0] - tangent[0] * side[2], tangent[0] * side[1] - tangent[1] * side[0]];
-        side = side.map((value, axis) => value * Math.cos(roll) + front[axis] * Math.sin(roll)) as Vector;
+        side = mapVector(side, (value, axis) => value * Math.cos(roll) + front[axis] * Math.sin(roll));
       }
       ring(part, index, pointAt(t), tangent, side);
     }
@@ -226,7 +228,7 @@ export function createHandModel(): HandModel {
         angle += angles[joint];
         const direction: Vector = [Math.sin(splay) * Math.cos(angle), -Math.cos(splay) * Math.cos(angle), Math.sin(angle)];
         const length = part.length * (stops[joint + 1] - stops[joint]);
-        points.push(points[joint].map((value, axis) => value + direction[axis] * length) as Vector);
+        points.push(mapVector(points[joint], (value, axis) => value + direction[axis] * length));
       }
       digit(part, points, stops, splay);
     }
@@ -241,7 +243,7 @@ export function createHandModel(): HandModel {
     for (let joint = 0; joint < 3; joint++) {
       const extended = unit(spread[joint]);
       const direction = unit(mix(unit(folded[joint]), extended, open));
-      points.push(points[joint].map((value, axis) => value + direction[axis] * lengths[joint]) as Vector);
+      points.push(mapVector(points[joint], (value, axis) => value + direction[axis] * lengths[joint]));
     }
     digit(thumb, points, [0, ...thumb.joints, 1], undefined, -0.48 + open * 0.18);
     // The base mesh is a palm-facing left hand; reflect it to make a right hand.

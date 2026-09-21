@@ -21,6 +21,10 @@ export function RetainedView({ active, children }: { active: boolean; children: 
   </div>;
 }
 
+function isUpdater<T>(change: StateUpdater<T>): change is (previous: T) => T {
+  return typeof change === "function";
+}
+
 /** Merge live state while away, publishing its latest snapshot when the view returns. */
 export function useViewSnapshot<T>(initial: T) {
   const active = useViewActive();
@@ -29,7 +33,7 @@ export function useViewSnapshot<T>(initial: T) {
   const latest = useRef(initial);
   const [snapshot, publish] = useState(() => initial);
   const update = useCallback((change: StateUpdater<T>) => {
-    const next = typeof change === "function" ? (change as (previous: T) => T)(latest.current) : change;
+    const next = isUpdater(change) ? change(latest.current) : change;
     latest.current = next;
     if (visible.current) publish(() => next);
   }, []);

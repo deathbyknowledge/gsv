@@ -5,10 +5,11 @@ const unspaced = /[\u0e00-\u0e7f\u1100-\u11ff\u2e80-\u2fff\u3040-\u30ff\u3130-\u
 function boundary(left: string, right: string): string {
   const a = Array.from(left).at(-1), b = Array.from(right)[0];
   if (!a || !b || /\s/u.test(a + b) || unspaced.test(a + b)
-    || /[.,!?;:%)\]}>’”]/u.test(b) || /[(\[{<‘“/\\\-–—_]/u.test(a)) return "";
-  return /[\p{L}\p{N}.,!?;:%)\]}>’”]/u.test(a) && /[\p{L}\p{N}(\[{<‘“]/u.test(b) ? " " : "";
+    || /[.,!?;:%)\]}>’”]/u.test(b) || /[([{<‘“/\\\-–—_]/u.test(a)) return "";
+  return /[\p{L}\p{N}.,!?;:%)\]}>’”]/u.test(a) && /[\p{L}\p{N}([{<‘“]/u.test(b) ? " " : "";
 }
-export function composeVoice(before: string, text: string, after: string): { value: string; caret: number } {
+type ComposedVoice = { value: string; caret: number };
+export function composeVoice(before: string, text: string, after: string): ComposedVoice {
   const voice = text.trim();
   const prefix = before + boundary(before, voice) + voice;
   return { value: prefix + boundary(voice, after) + after, caret: prefix.length };

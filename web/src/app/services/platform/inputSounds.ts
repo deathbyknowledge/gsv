@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /** Quiet, cached synthesis based on the original native desktop's audio.rs. */
 export type SoundPreferences = { keys: boolean; gestures: boolean };
 export type InputCue = "character" | "space" | "delete" | "commit" | "navigate"
@@ -5,11 +7,8 @@ export type InputCue = "character" | "space" | "delete" | "commit" | "navigate"
 const storageKey = "gsv.input-sounds";
 let preferences: SoundPreferences = { keys: true, gestures: true };
 try {
-  const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "null");
-  if (stored && typeof stored === "object") {
-    if ("keys" in stored && typeof stored.keys === "boolean") preferences.keys = stored.keys;
-    if ("gestures" in stored && typeof stored.gestures === "boolean") preferences.gestures = stored.gestures;
-  }
+  preferences = z.object({ keys: z.boolean().catch(true), gestures: z.boolean().catch(true) })
+    .parse(JSON.parse(localStorage.getItem(storageKey) ?? "null"));
 } catch { /* Sound preferences are optional when local storage is unavailable. */ }
 const listeners = new Set<() => void>();
 export const soundPreferences = () => preferences;
@@ -40,17 +39,18 @@ const profiles = {
   delete: [38, .025, .19, .041, .11], commit: [68, .030, .14, .027, .04],
   navigate: [94, .036, .065, .016, .012],
 } as const;
-const notes: Partial<Record<InputCue, readonly number[]>> = {
-  ready: [440, 660], listening: [520, 780], paused: [620, 440],
-  off: [440, 330, 220], accepted: [740], clear: [520, 390], attention: [280, 280],
-  practice_error: [240, 180],
-};
+const notes = new Map<InputCue, readonly number[]>([
+  ["ready", [440, 660]], ["listening", [520, 780]], ["paused", [620, 440]],
+  ["off", [440, 330, 220]], ["accepted", [740]], ["clear", [520, 390]], ["attention", [280, 280]],
+  ["practice_error", [240, 180]],
+]);
 function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   const cached = buffers.get(cue);
   if (cached) return cached;
   const rate = audio.sampleRate;
+  // SAFETY: the membership check restricts this lookup to the closed profile table.
   const profile = cue in profiles ? profiles[cue as keyof typeof profiles] : null;
-  const tones = notes[cue] ?? [];
+  const tones = notes.get(cue) ?? [];
   const toneSeconds = cue === "practice_error" ? [.085, .16] : tones.map(() => .065);
   const gap = cue === "practice_error" ? .035 : .01;
   const duration = profile ? profile[0] / 1000 : toneSeconds.reduce((sum, span) => sum + span + gap, .025);

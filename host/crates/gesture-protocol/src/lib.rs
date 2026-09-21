@@ -746,9 +746,9 @@ mod tests {
             lesson_id: 17,
             gesture: PracticeGesture::Three,
         };
-        let wire = serde_json::to_value(intent).unwrap();
+        let wire = serde_json::to_value(intent).expect("practice intent serializes");
         assert_eq!(
-            serde_json::from_value::<GestureIntent>(wire.clone()).unwrap(),
+            serde_json::from_value::<GestureIntent>(wire.clone()).expect("practice intent parses"),
             intent
         );
         assert!(wire.get("voice_request_id").is_none());
@@ -760,13 +760,14 @@ mod tests {
             "scope": "practice", "gesture": "three",
         }))
         .is_err());
-        let progress = GestureProgress::new(GestureCandidate::OpenPalm, 500).unwrap();
+        let progress = GestureProgress::new(GestureCandidate::OpenPalm, 500).expect("valid pose");
         let status = ControlStatus::Practice {
             lesson_id: 17,
             progress: Some(progress),
         };
+        let status_wire = serde_json::to_value(status).expect("practice status serializes");
         assert_eq!(
-            serde_json::from_value::<ControlStatus>(serde_json::to_value(status).unwrap()).unwrap(),
+            serde_json::from_value::<ControlStatus>(status_wire).expect("practice status parses"),
             status
         );
         assert!(progress.is_compatible_with(GestureContext::Practice { lesson_id: 17 }));

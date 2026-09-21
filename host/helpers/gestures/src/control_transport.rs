@@ -617,6 +617,7 @@ mod tests {
                 session_id: SESSION,
                 sequence: 3,
                 status: ControlStatus::Standby { progress: None },
+                reset_sequence: 0,
             })
         );
     }

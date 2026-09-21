@@ -343,7 +343,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const drainPendingRevokes = async (reason: string): Promise<void> => {
     const generation = reconnectGeneration;
     if (disposed || !client.isConnected() || pendingRevokes.length === 0) return;
-    for (const tokenId of [...pendingRevokes]) {
+    const requestedRevokes = [...pendingRevokes];
+    for (const tokenId of requestedRevokes) {
       if (disposed || generation !== reconnectGeneration || !client.isConnected()) return;
       try {
         const revoked = await revokeSessionToken(client, tokenId, reason);

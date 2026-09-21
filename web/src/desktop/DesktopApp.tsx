@@ -102,7 +102,7 @@ export function DesktopApp() {
   const [busy, setBusy] = useState(false);
   const mock = import.meta.env.DEV && new URLSearchParams(window.location.search).get("mock") === "1";
   useEffect(() => {
-    void invoke<DesktopSession>("desktop_session").then((value) => {
+    void invoke("desktop_session").then((value) => {
       if (mock) value = { ...value, origin: null, values: {
         "gsv.ui.session.token.v1": JSON.stringify({ username: "esteve", tokenId: "desktop-mock", token: "mock-session-token", expiresAt: null }),
       } };
@@ -135,7 +135,7 @@ export function DesktopApp() {
     {session && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
       <AuthScene setup={false}><form class="desktop-connect" onSubmit={(event) => {
         event.preventDefault(); setBusy(true); setError(null);
-        void invoke<DesktopSession>("desktop_configure", { origin }).then((next) => {
+        void invoke("desktop_configure", { origin }).then((next) => {
           window.sessionStorage.clear(); window.localStorage.clear(); setSession(next);
         }).catch(() => setError("Use an HTTPS space address, such as https://your-space.example. HTTP is allowed for localhost."))
           .finally(() => setBusy(false));

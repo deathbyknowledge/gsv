@@ -49,7 +49,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
     let subscription: NativeSubscription | null = null, pending: NativeUpdate | null = null;
     let acknowledging = false, acknowledgeAgain = false;
     let scrollVelocity = 0, scrollAt = 0, previousFrame = performance.now();
-    const fail = (error: unknown) => {
+    const fail = (message: string) => {
       if (!active) return;
       active = false;
       window.clearTimeout(timer);
@@ -60,7 +60,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
       state.current = null;
       scrollVelocity = 0;
       setSnapshot(null);
-      setError(String(error));
+      setError(message);
     };
     const acknowledge = async () => {
       if (!active || !ownedLease) return;
@@ -72,7 +72,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         const requestedAt = Date.now();
         await input.acknowledge(ownedLease, revision, ack);
         if (Date.now() - requestedAt > 1000) throw new Error("Native input paused while the view was suspended. Reconnect input to continue.");
-      } catch (error) { fail(error); }
+      } catch (error) { fail(String(error)); }
       finally {
         acknowledging = false;
         if (active) {
@@ -145,7 +145,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         revision = update.revision;
         apply(update.snapshot, Math.max(0, age) + update.scroll_age_ms);
         void acknowledge();
-      } catch (error) { fail(error); }
+      } catch (error) { fail(String(error)); }
     };
     try {
       subscription = input.subscribe(receive, practice);
@@ -157,8 +157,8 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         apply(next);
         if (pending) { const update = pending; pending = null; receive(update); }
         else void acknowledge();
-      }).catch(fail);
-    } catch (error) { fail(error); }
+      }).catch((error) => fail(String(error)));
+    } catch (error) { fail(String(error)); }
     return () => {
       active = false;
       window.clearTimeout(timer);

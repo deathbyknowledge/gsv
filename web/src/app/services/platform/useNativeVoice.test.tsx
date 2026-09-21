@@ -46,11 +46,11 @@ async function mounted() {
     },
     acknowledge: vi.fn(async () => {}), command: vi.fn(async () => {}),
   };
-  const prompt: { current: PromptLineHandle } = { current: {
+  const prompt = { current: {
     disabled: false, chip: null,
     selection: () => ({ value, start: value.length, end: value.length }),
     setValue: (next) => { value = next; }, append: () => {}, focus: () => {}, blur: () => {}, submit: () => {},
-  } };
+  } satisfies PromptLineHandle };
   const send = vi.fn(() => true);
   const scroll = vi.fn();
   function Probe({ scope }: { scope: string }) {

@@ -1,18 +1,18 @@
 import type { GestureCandidate, NativeSnapshot } from "./PlatformProvider";
 
-const candidates: Record<GestureCandidate, string> = {
+const candidates = {
   arm: "enable hands-free", disarm: "turn hands-free off", start_transcription: "listen",
   stop_transcription: "pause listening", send: "send", delete_backward: "delete a character",
   clear_dictation: "clear dictation", mute: "pause the mic", unmute: "resume the mic",
   open_palm: "confirm five fingers",
-};
-const accepted: Record<GestureCandidate, string> = {
+} satisfies Record<GestureCandidate, string>;
+const accepted = {
   arm: "Ready", disarm: "Off", start_transcription: "Starting listening",
   stop_transcription: "Pausing", send: "Send requested", delete_backward: "Delete requested",
   clear_dictation: "Clear requested", mute: "Mute requested", unmute: "Unmute requested",
   open_palm: "Five fingers detected",
-};
-const lifecycle: Record<string, string> = {
+} satisfies Record<GestureCandidate, string>;
+const lifecycle = new Map(Object.entries({
   off: "Off · camera and microphone stopped",
   starting: "Starting camera…",
   ready: "Camera on",
@@ -26,12 +26,14 @@ const lifecycle: Record<string, string> = {
   worker_unavailable: "The gesture helper could not start. Enable gestures to retry.",
   protocol_error: "The gesture helper is incompatible with this build.",
   interrupted: "The gesture helper stopped. Enable gestures to retry.",
-};
+}));
 
-export function gestureFeedback(snapshot: NativeSnapshot): { message: string; progress: number | null; action: string | null } {
+export type GestureFeedback = { message: string; progress: number | null; action: string | null };
+
+export function gestureFeedback(snapshot: NativeSnapshot): GestureFeedback {
   const action = snapshot.gesture_action ? accepted[snapshot.gesture_action] : null;
   if (snapshot.gesture_status !== "ready") return {
-    message: lifecycle[snapshot.gesture_status] ?? "Gesture control is unavailable.", progress: null, action: snapshot.gesture_status === "off" ? action : null,
+    message: lifecycle.get(snapshot.gesture_status) ?? "Gesture control is unavailable.", progress: null, action: snapshot.gesture_status === "off" ? action : null,
   };
   if (snapshot.gesture_progress) return {
     message: `Hold to ${candidates[snapshot.gesture_progress.candidate]}`,
