@@ -1715,12 +1715,13 @@ mod tests {
 
     #[test]
     fn a_scroll_release_cannot_become_a_number_without_a_new_fist() {
+        let two = counted(HandPose::TwoFingers, 0.95);
         let five = counted(HandPose::FiveFingers, 0.95);
         let fist = counted(HandPose::Fist, 0.95);
         let mut harness = Harness::new(ACTIVE);
         harness.control.latch_scroll_release();
 
-        assert!(harness.drive(20, &five).is_empty());
+        assert!(harness.drive(20, &two).is_empty());
         assert_eq!(
             harness.control.diagnostic(),
             ControlDiagnostic::AwaitingRelease {
@@ -1730,7 +1731,7 @@ mod tests {
         assert_eq!(harness.sample(&fist), None);
         assert!(harness.drive(10, &five).is_empty());
         assert_eq!(
-            harness.drive(10, &counted(HandPose::TwoFingers, 0.95)),
+            harness.drive(10, &two),
             vec![request(VoiceRequestGestureIntent::Send)]
         );
     }
