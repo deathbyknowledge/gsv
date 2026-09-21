@@ -1,4 +1,4 @@
-import { instrumentContactConversationKey, instrumentContactRequestsKey } from "./queryKeys";
+import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_ATTENTION_KEY } from "./queryKeys";
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../../testing/testHarness";
@@ -69,12 +69,15 @@ describe("contact detail notifications", () => {
     cleanup.push(() => cache.clear());
     const key = [...instrumentContactConversationKey("one"), "history", null];
     cache.setQueryData(key, ["message"]);
+    const attention = [...INSTRUMENT_ATTENTION_KEY, "summary"];
+    cache.setQueryData(attention, { readyCount: 1 });
     const load = vi.fn(async () => ["message"]);
     const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
     cleanup.push(observer.subscribe(() => undefined));
     await syncContactDetailSignal(cache, "conversation.changed", { conversationId: "one", viewOnly: true });
     expect(load).not.toHaveBeenCalled();
     expect(cache.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(cache.getQueryState(attention)?.isInvalidated).toBe(true);
   });
   it("refreshes a paginated history beneath its conversation key", async () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });

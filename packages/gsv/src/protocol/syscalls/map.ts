@@ -257,6 +257,7 @@ import type {
   MailStatusResult,
 } from "./mail";
 import type {
+  ConversationAttentionListArgs, ConversationAttentionListResult, ConversationAttentionDismissArgs, ConversationAttentionDismissResult,
   ConversationInboxArgs,
   ConversationInboxResult,
   ConversationViewGetArgs,
@@ -351,6 +352,8 @@ export type SyscallDomains = {
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
+  "conversation.attention.list": { args: ConversationAttentionListArgs; result: ConversationAttentionListResult };
+  "conversation.attention.dismiss": { args: ConversationAttentionDismissArgs; result: ConversationAttentionDismissResult };
   "conversation.inbox": { args: ConversationInboxArgs; result: ConversationInboxResult };
   "conversation.view.get": { args: ConversationViewGetArgs; result: ConversationViewGetResult };
   "conversation.view.update": { args: ConversationViewUpdateArgs; result: ConversationViewUpdateResult };

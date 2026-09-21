@@ -18,7 +18,7 @@ export const WORK_EXPLANATIONS = {
   dispute: "Tell the performer what needs attention. This preserves their result report and your response to it.",
   reconcile: "Resend your recorded statements to recover an uncertain delivery. This does not create another task or change the offer.",
 } as const;
-const STATEMENTS: Record<WorkAction, string> = { withdraw: "Asked to stop", accept: "Accepted", reject: "Declined", start: "Started", complete: "Reported completion", cancel: "Confirmed cancellation", acknowledge: "Acknowledged the result", dispute: "Disputed the result" };
+const STATEMENTS = { withdraw: "Asked to stop", accept: "Accepted", reject: "Declined", start: "Started", complete: "Reported completion", cancel: "Confirmed cancellation", acknowledge: "Acknowledged the result", dispute: "Disputed the result" } satisfies Record<WorkAction, string>;
 const STATUS = { offered: "Offer awaiting a decision", accepted: "Accepted", rejected: "Declined", active: "In progress", completed: "Result reported", cancelled: "Cancellation confirmed", withdrawn: "Withdrawal sent · awaiting confirmation", stop_requested: "Stop requested · awaiting confirmation" } as const;
 
 export function WorkRequestRow({ request, work, editable, busy, onAction, children }: {

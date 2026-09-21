@@ -1,5 +1,6 @@
 import type { RefObject } from "preact";
 import type { Distance } from "../Instrument";
+import { useAttentionSummary } from "../people/useAttentionSummary";
 import { Wordmark } from "./Wordmark";
 
 type InstrumentHeaderProps = {
@@ -15,6 +16,8 @@ type InstrumentHeaderProps = {
 };
 
 export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, onHelp, helpButtonRef }: InstrumentHeaderProps) {
+  const attention = useAttentionSummary();
+  const count = attention.data?.readyCount ?? 0;
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
@@ -23,7 +26,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
       </div>
       <nav class="keys" aria-label="Views">
         <button type="button" onClick={() => onNavigate(distance === "people" ? "zen" : "people")}>
-          <kbd>p</kbd>{distance === "people" ? "zen" : "people"}
+          <kbd>p</kbd>{distance === "people" ? "zen" : "people"}{distance !== "people" && count > 0 && <span class="instrument-attention-count" aria-label={`${count} conversations have alerts`}>{count > 99 ? "99+" : count}</span>}
         </button>
         <button type="button" onClick={() => onNavigate(distance === "fleet" ? "zen" : "fleet")}>
           <kbd>z</kbd>{distance === "fleet" ? "zen" : "fleet"}

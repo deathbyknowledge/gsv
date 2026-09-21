@@ -607,6 +607,14 @@ type ConversationSyscalls = {
     args: { pid: string };
     result: { conversation: ConversationSummary };
   };
+  "conversation.attention.list": {
+    args: { before?: { availableAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationAttentionEntry[]; readyCount: number; digestWaitingCount: number; nextDigestAt?: number; next?: { availableAt: number; conversationId: string } };
+  };
+  "conversation.attention.dismiss": {
+    args: { entries: { conversationId: string; throughSequence: number }[] };
+    result: Record<string, never>;
+  };
   "conversation.inbox": {
     args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
     result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
@@ -2283,3 +2291,5 @@ and rate limits. Permanent peer refusal, a revoked generation or expiry cannot
 be bypassed. The retained delivery status includes optional `messageId`,
 `messageSequence` and `retryable`. Receipt retention remains eight days; a missing
 old receipt is not evidence of confirmed delivery or a read receipt.
+
+`conversation.attention.list` and `.dismiss` expose private, durable message alerts and daily digests to the signed-in human. Dismissing an exact covered sequence does not mark messages read or send a receipt. See [social attention](../architecture/social-attention.md).

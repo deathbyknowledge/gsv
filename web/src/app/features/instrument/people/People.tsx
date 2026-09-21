@@ -10,6 +10,8 @@ import { canConfigure } from "../settings/settingsModel";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_INBOX_KEY } from "../wire/queryKeys";
 import { NewConversation } from "./NewConversation";
+import { ConversationAttention } from "./ConversationAttention";
+import { useAttentionSummary } from "./useAttentionSummary";
 import { BlockedPeople } from "./BlockedPeople";
 import { MessageRequest } from "./MessageRequest";
 import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
@@ -17,7 +19,7 @@ import "../fleet/fleet.css";
 import "./people.css";
 
 type PeopleView = "inbox" | "requests" | "contacts";
-type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" | "blocked" } | null;
+type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" | "blocked" | "attention" } | null;
 const NO_CONTACT_CURSOR: ContactListArgs["after"] = undefined;
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
@@ -25,11 +27,12 @@ const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: boolean) => void; onProfile: () => void }) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
+  const attention = useAttentionSummary();
   const [compose, setCompose] = useState(() => emptyApproachDraft(new URLSearchParams(window.location.search).get("compose") ?? ""));
   const [selection, updateSelection] = useState<Selection>(() => compose.url ? { kind: "compose" } : null);
   const [panelDirty, setPanelDirty] = useState(false);
   const setSelection = (next: Selection) => {
-    if (panelDirty && !window.confirm("Discard this unsent report?")) return;
+    if (panelDirty && !window.confirm("Discard these unsent changes?")) return;
     setPanelDirty(false); updateSelection(next);
   };
   const [view, setView] = useState<PeopleView>("inbox");
@@ -120,6 +123,9 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
   return <main class={`people${selection ? " has-selection" : ""}`} aria-label="People">
     <aside class="people-list" aria-label="People and conversations">
       <header class="people-list-heading"><h1>People</h1><button class="people-action" disabled={!connected || !account || busy || !canConfigure(account, "approach.create")} onClick={() => setSelection({ kind: "compose" })}>new conversation</button></header>
+      {account && canConfigure(account, "conversation.attention.list") && <div class="people-attention-link"><button class="people-action" onClick={() => setSelection({ kind: "attention" })}>
+        catch up{attention.data?.readyCount ? ` · ${attention.data.readyCount}` : ""}</button>
+        {!!attention.data?.digestWaitingCount && <span>digest gathering</span>}</div>}
       <nav class="people-tabs" aria-label="People sections">{(["inbox", "requests", "contacts"] as const).map((name) => <button key={name} aria-current={view === name ? "page" : undefined} disabled={busy} onClick={() => { setView(name); setFilter(""); }}>{name === "requests" ? "Requests" : name === "inbox" ? "Inbox" : "Contacts"}</button>)}</nav>
       {view === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
@@ -146,6 +152,7 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label="Selected conversation">
       {selection && <button class="people-action people-back" disabled={busy} onClick={() => setSelection(null)}>← back to {view}</button>}
       {selection?.kind === "compose" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} onOpen={openContact} onInvitation={() => setSelection({ kind: "invitation" })} />
+        : selection?.kind === "attention" ? <ConversationAttention account={account} onOpen={openContact} />
         : selection?.kind === "blocked" ? <BlockedPeople account={account} />
         : selection?.kind === "invitation" ? <AddContact account={account} onClose={() => setSelection(null)} onAdded={openContact} />
         : selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={view === "contacts" ? "details" : "messages"} onWorkDirty={setPanelDirty} onOpenContact={openContact} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />

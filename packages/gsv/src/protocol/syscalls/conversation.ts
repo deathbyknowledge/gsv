@@ -120,6 +120,33 @@ export type ConversationInboxResult = {
   next?: { updatedAt: number; conversationId: string };
 };
 
+export type ConversationAttentionEntry = {
+  conversationId: string;
+  contactId: string;
+  displayName: string;
+  origin: string;
+  throughSequence: number;
+  kind: "notify" | "digest";
+  availableAt: number;
+  preview: ConversationPreview;
+};
+export type ConversationAttentionListArgs = {
+  before?: { availableAt: number; conversationId: string };
+  limit?: number;
+};
+export type ConversationAttentionListResult = {
+  entries: ConversationAttentionEntry[];
+  readyCount: number;
+  digestWaitingCount: number;
+  nextDigestAt?: number;
+  next?: { availableAt: number; conversationId: string };
+};
+export type ConversationAttentionDismissArgs = {
+  entries: { conversationId: string; throughSequence: number }[];
+};
+export type ConversationAttentionDismissResult = Record<string, never>;
+export type ConversationAttentionChangedSignal = { digestId?: string };
+
 export type ConversationViewGetArgs = { conversationId: string };
 export type ConversationViewGetResult = { entry: ConversationInboxEntry };
 

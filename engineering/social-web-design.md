@@ -59,3 +59,17 @@ Verification is split by the standing work agreement: CI owns automated
 behavior and boundary checks; the maintainer trials the rendered UI, keyboard,
 mobile and two-space flows. These design decisions are not a claim that the
 entire experience is implemented or visually accepted.
+
+Catch up is a finite, private list of message alerts in People. The shared header
+shows the ready conversation count. Notify is immediate; Digest gathers a
+conversation's messages for 24 hours before it becomes ready. Each row opens the
+conversation or dismisses the exact covered alert. Dismissal does not mark the
+thread read. The UI explains queued digest timing and keeps unread conversation
+state separate. No browser notification permission or generated summary is needed.
+
+Work requests expose the immutable offer and two short participant statement
+lists. A stop request, cancellation confirmation, result report, dispute and
+acknowledgement have distinct language. Choosing an action opens a short review
+with an optional note; a changed request requires rereview, while an uncertain
+submission keeps its exact retry intent. Fleet remains the home for private
+execution details and responsibilities.

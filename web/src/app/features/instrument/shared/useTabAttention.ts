@@ -56,6 +56,11 @@ export function useTabAttention(): void {
   useEffect(() => {
     if (!connected || processes.isPending) return;
     return client.onSignal((signal, payload) => {
+      if (signal === "conversation.attention.changed") {
+        const digest = z.object({ digestId: z.string() }).safeParse(payload);
+        if (digest.success) attention.current?.arrived(`digest:${digest.data.digestId}`);
+        return;
+      }
       if (signal !== "message.committed") return;
       const committed = committedMessageSchema.safeParse(payload);
       if (!committed.success) return;

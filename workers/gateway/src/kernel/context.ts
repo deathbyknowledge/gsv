@@ -81,6 +81,7 @@ export type KernelContext = {
   approaches: ApproachStore;
   scheduleProfilePublication: (ownerUid: number) => Promise<void>;
   scheduleApproachMaintenance: () => Promise<void>;
+  scheduleConversationAttention: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   processId?: string;

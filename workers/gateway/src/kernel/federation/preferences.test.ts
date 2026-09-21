@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
+import { ConversationRegistry } from "../conversations";
 import { FederationStore } from "../federation-store";
 import { ApproachStore } from "../approach-store";
 import { ResponsibilityStore } from "../responsibility-store";
@@ -56,7 +57,7 @@ describe("contact policy authority", () => {
 function policyContext(storage: DurableObjectStorage, federation: FederationStore): KernelContext {
   const context = {
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] }), callerOwnerUid: OWNER.uid,
-    connection: {}, federation, approaches: new ApproachStore(storage), responsibilities: new ResponsibilityStore(storage),
+    connection: {}, federation, conversations: new ConversationRegistry(storage.sql), approaches: new ApproachStore(storage), responsibilities: new ResponsibilityStore(storage),
     auth: {
       getPasswdByUid: () => OWNER,
       getShadowByUsername: () => ({ hash: "unlocked" }),

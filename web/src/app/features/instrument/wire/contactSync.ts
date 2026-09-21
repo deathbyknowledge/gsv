@@ -1,6 +1,6 @@
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_INBOX_KEY, conversationViewKey, instrumentContactDeliveriesKey } from "./queryKeys";
+import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_INBOX_KEY, INSTRUMENT_ATTENTION_KEY, conversationViewKey, instrumentContactDeliveriesKey } from "./queryKeys";
 import type { QueryClient, QueryKey } from "@tanstack/preact-query";
 
 /** Discard any older snapshot, including an initial read that has not resolved. */
@@ -23,6 +23,7 @@ export async function syncContactDetailSignal(cache: QueryClient, signal: string
     const parsed = conversationChangeSchema.safeParse(payload);
     if (!parsed.success) return;
     await Promise.all([
+      refreshContactQuery(cache, INSTRUMENT_ATTENTION_KEY),
       cache.cancelQueries({ queryKey: INSTRUMENT_INBOX_KEY }).then(() => cache.invalidateQueries({ queryKey: INSTRUMENT_INBOX_KEY })),
       refreshContactQuery(cache, conversationViewKey(parsed.data.conversationId)),
     ]);

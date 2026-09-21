@@ -12,7 +12,13 @@ export function handleContactPreferencesUpdate(args: ContactPreferencesUpdateArg
   const ownerUid = requireContactHuman(ctx);
   if (!Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 1) throw new Error("Contact policy revision is invalid");
   const patch = contactPreferencesPatchSchema.parse(args.patch);
-  const contact = ctx.federation.transaction(() => ctx.federation.updatePreferences(ownerUid, { ...args, patch }));
+  const contact = ctx.federation.transaction(() => {
+    const previous = ctx.federation.get(args.contactId);
+    const updated = ctx.federation.updatePreferences(ownerUid, { ...args, patch });
+    if (previous && (previous.preferences.muted !== updated.preferences.muted
+      || previous.preferences.notifications !== updated.preferences.notifications)) ctx.conversations.attention.clear(ownerUid, updated.conversationId);
+    return updated;
+  });
   if (contact.preferences.revision !== args.expectedRevision) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return { contact: contactSummary(contact) };
 }

@@ -1956,7 +1956,10 @@ async function commitInboundMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId: inbox.deliveryId },
     createdAt: inbox.receivedAtMs,
   });
-  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  const currentContact = ctx.federation.get(contact.id);
+  const queueDigest = ctx.federation.transaction(() => ctx.conversations.recordContactMessage(appended.message,
+    currentContact?.preferences.muted ?? true, currentContact?.generation === contact.generation ? currentContact : undefined));
+  if (queueDigest) await ctx.scheduleConversationAttention();
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 
 }
@@ -2314,7 +2317,10 @@ async function commitLocalOutboxMessage(
     createdAt: local.createdAtMs,
   });
   ctx.federation.markLocalMessageCommitted(outbox.deliveryId, appended.message.sequence);
-  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  const currentContact = ctx.federation.get(contact.id);
+  const queueDigest = ctx.federation.transaction(() => ctx.conversations.recordContactMessage(appended.message,
+    currentContact?.preferences.muted ?? true, currentContact?.generation === contact.generation ? currentContact : undefined));
+  if (queueDigest) await ctx.scheduleConversationAttention();
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
@@ -2354,7 +2360,10 @@ async function appendContactSystemMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId },
     createdAt,
   });
-  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  const currentContact = ctx.federation.get(contact.id);
+  const queueDigest = ctx.federation.transaction(() => ctx.conversations.recordContactMessage(appended.message,
+    currentContact?.preferences.muted ?? true, currentContact?.generation === contact.generation ? currentContact : undefined));
+  if (queueDigest) await ctx.scheduleConversationAttention();
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 

@@ -141,3 +141,15 @@
 .people-work-editor label { display: flex; flex-direction: column; gap: 8px; margin-block: 18px; font: 14px/1.5 var(--gsv-font-prose); }
 .people-work-editor input, .people-work-editor textarea { padding: 12px; background: var(--void); border: 1px solid var(--border); color: var(--text); font: 16px/1.6 var(--gsv-font-prose); min-width: 0; resize: vertical; }
 @container instrument (max-width: 720px) { .people-work-statements { grid-template-columns: 1fr; gap: 12px; } }
+
+.people-attention-link { display: flex; align-items: baseline; justify-content: space-between; padding: 0 20px 16px; gap: 12px; }
+.people-attention-link > span { color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); }
+.people-attention { max-width: 46rem; width: 100%; padding-bottom: 24px; }
+.people-attention h2 { margin: 8px 0 18px; color: var(--text-title); font: 500 30px/1.3 var(--gsv-font-prose); }
+.people-attention-empty { padding-block: 30px; color: var(--text); font: 18px/1.7 var(--gsv-font-prose); }
+.people-attention-list { padding: 0; list-style: none; }
+.people-attention-list > li { padding-block: 22px; border-top: 1px solid var(--border); }
+.people-attention-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); }
+.people-attention-list h3 { margin: 12px 0; }
+.people-attention-list h3 .people-action { color: var(--text-title); font: 500 19px/1.5 var(--gsv-font-prose); }
+.people-attention-preview { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.7 var(--gsv-font-prose); color: var(--text); }

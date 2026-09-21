@@ -1,4 +1,6 @@
+import { ConversationAttention } from "./conversation-attention";
 import type {
+  ContactSummary,
   ConversationKind,
   ConversationMember,
   ConversationSummary,
@@ -29,7 +31,9 @@ type ConversationRow = {
 type InboxRow = ConversationRow & { inbox_contact_id: string };
 
 export class ConversationRegistry {
-  constructor(private readonly sql: SqlStorage) {}
+  readonly attention: ConversationAttention;
+
+  constructor(private readonly sql: SqlStorage) { this.attention = new ConversationAttention(sql); }
 
   ensureShip(ownerUid: number, handlerPid: string): ConversationSummary {
     const existing = this.getShip(ownerUid);
@@ -208,6 +212,7 @@ export class ConversationRegistry {
     if (!conversation) return;
     if (conversation.ownerUid !== ownerUid || conversation.kind !== "contact" || conversation.handlerPid) throw new Error("Conversation is not a message request");
     this.sql.exec("DELETE FROM conversation_members WHERE conversation_id = ?", id);
+    this.attention.clear(ownerUid, id);
     this.sql.exec("DELETE FROM conversations WHERE conversation_id = ?", id);
   }
 
@@ -260,7 +265,7 @@ export class ConversationRegistry {
     );
   }
 
-  recordContactMessage(message: ConversationMessage, muted: boolean): void {
+  recordContactMessage(message: ConversationMessage, muted: boolean, contact?: ContactSummary): boolean {
     const preview: ConversationPreview = {
       id: message.id, sequence: message.sequence, author: message.author,
       text: [...message.text].slice(0, 280).join(""), createdAt: message.createdAt,
@@ -282,6 +287,7 @@ export class ConversationRegistry {
       message.sequence, JSON.stringify(preview), message.sequence, message.sequence,
       message.createdAt, message.sequence, message.conversationId,
     );
+    return incoming && contact ? this.attention.record(contact, preview) : false;
   }
 
   inbox(ownerUid: number, args: ConversationInboxArgs): ConversationInboxEntry[] {
@@ -324,6 +330,8 @@ export class ConversationRegistry {
        WHERE conversation_id = ? AND owner_uid = ?`,
       nextRead, Number(archived), args.conversationId, ownerUid,
     );
+    if (archived) this.attention.clear(ownerUid, args.conversationId);
+    else this.attention.dismiss(ownerUid, args.conversationId, nextRead);
     return this.inboxEntry(ownerUid, args.conversationId)!;
   }
 

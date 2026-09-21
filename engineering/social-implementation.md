@@ -274,3 +274,13 @@ work composition and reviewed actions with optional notes, exact retry identity
 and navigation protection. Protocol, store/handler, two-space and UI decision
 regressions are added for CI. No local validation or UI trial was run. Shared
 relationship context, durable attention and scoped assistance remain in scope.
+
+The durable attention slice adds v066, one bounded alert per contact Conversation,
+a replay checkpoint, owner-scoped pages/counts and exact-sequence dismissal.
+Notify is immediate; Digest retains its first-message 24-hour deadline and uses
+the existing Kernel scheduler for a bounded announcement. Reading, archive and
+notification-policy changes suppress queued attention without public read
+receipts. People exposes Catch up and the shared header shows ready alerts.
+Storage reconstruction, stale dismissal, mute/archive, upgrade and capability
+regression sources are included for CI. This remains source implementation, not
+a rendered UI acceptance claim. Shared context and scoped assistance continue.

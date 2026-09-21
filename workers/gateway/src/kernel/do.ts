@@ -281,6 +281,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
   z.object({ callback: z.literal("onProfilePublication"), payload: z.number().int().min(1000) }),
   z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
+  z.object({ callback: z.literal("onConversationAttention"), payload: z.literal("digest") }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -578,6 +579,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.scheduleProfilePublication(ownerUid);
       }
       await this.scheduleApproachMaintenance();
+      await this.scheduleConversationAttention();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -703,6 +705,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (existing.time * 1000 <= due + 1000) return;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
+    });
+  }
+
+  async scheduleConversationAttention(runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("conversation-attention-schedule", async () => {
+      const next = this.conversations.attention.nextDigestAt();
+      if (next === null) return;
+      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), next);
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onConversationAttention", "digest", options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onConversationAttention", "digest", options);
     });
   }
 
@@ -868,6 +883,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onFederationDelivery":
         await this.federationRuntime.onFederationDelivery(task.payload);
         return;
+      case "onConversationAttention": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onConversationAttention", "digest", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        const owners = this.federation.transaction(() => this.conversations.attention.announceDue());
+        for (const ownerUid of owners) this.connectionRuntime.broadcastToUserUid(ownerUid, "conversation.attention.changed", { digestId: task.id });
+        await this.scheduleConversationAttention(task.id);
+        return;
+      }
       case "onApproachMaintenance": {
         const gate = await this.onboarding.managedWorkGate();
         if (!gate.allowed) {
@@ -1516,6 +1542,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       approaches: this.approaches,
       scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
+      scheduleConversationAttention: () => this.scheduleConversationAttention(),
       connection: options.connection ?? null,
       peer: options.peer,
       processId: options.processId,

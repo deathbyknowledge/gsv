@@ -58,6 +58,8 @@ const labels = {
   "contact.delivery.get": "checked contact delivery",
   "contact.request.list": "listed contact requests",
   "contact.request.create": "created a contact request",
+  "conversation.attention.list": "read message alerts",
+  "conversation.attention.dismiss": "dismissed message alerts",
   "contact.request.act": "updated a work request",
   "contact.request.update": "updated a contact request",
   "proc.spawn": "started a helper",

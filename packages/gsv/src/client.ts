@@ -279,6 +279,8 @@ const SYSCALL_NAMES = [
   "conversation.forProcess",
   "conversation.list",
   "conversation.inbox",
+  "conversation.attention.list",
+  "conversation.attention.dismiss",
   "conversation.view.get",
   "conversation.view.update",
   "conversation.history",

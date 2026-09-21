@@ -176,6 +176,7 @@ import {
   handleContactSend,
   openContactResourceSource,
 } from "./federation";
+import { handleConversationAttentionList, handleConversationAttentionDismiss } from "./conversation-attention";
 import { handleContactRequestAct } from "./federation/work";
 
 export type DispatchDeps = {
@@ -381,6 +382,12 @@ async function dispatchKernel(
         break;
       case "conversation.forProcess":
         data = await handleConversationForProcess(frame.args, ctx);
+        break;
+      case "conversation.attention.list":
+        data = handleConversationAttentionList(frame.args, ctx);
+        break;
+      case "conversation.attention.dismiss":
+        data = handleConversationAttentionDismiss(frame.args, ctx);
         break;
       case "conversation.inbox":
         data = handleConversationInbox(frame.args, ctx);
