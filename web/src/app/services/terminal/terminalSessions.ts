@@ -68,10 +68,12 @@ export class TerminalSessions {
     }
   }
 
-  start(command: string, target: string, scope: string): string {
+  start(command: string, target: string, scope: string, supportsSessions = true): string {
     if (!this.connected || this.disposed) throw new Error("Connect before running a command.");
     const id = `you:${crypto.randomUUID()}`;
-    const sessionId = target === "gsv" ? null : crypto.randomUUID();
+    // Browser targets run one command at a time and reject sessions outright,
+    // so they take the same sessionless path the cloud target does.
+    const sessionId = target === "gsv" || !supportsSessions ? null : crypto.randomUUID();
     const rows: TerminalSession[] = [...this.rows, { id, scope, target, command, sessionId, startedAt: Date.now(), endedAt: null,
       status: "starting", output: "", truncated: false, error: "", actionError: "", draft: "", inputOpen: false, action: null, stopRequested: false }];
     if (sessionId) {
@@ -84,7 +86,7 @@ export class TerminalSessions {
     }
     this.rows = rows;
     this.publish();
-    const input: TerminalCommandInput = { input: command, target, background: target !== "gsv", yieldMs: 1_000 };
+    const input: TerminalCommandInput = { input: command, target, background: sessionId !== null, yieldMs: 1_000 };
     if (sessionId) { input.sessionId = sessionId; input.start = true; }
     void this.execute(id, input);
     return id;

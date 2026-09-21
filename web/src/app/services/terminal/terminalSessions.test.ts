@@ -21,6 +21,37 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { for (const owner of owners.splice(0)) owner.dispose(); vi.useRealTimers(); });
 
 describe("direct shell session ownership", () => {
+  it("runs a sessionless target as a single call, the way the cloud target already does", async () => {
+    const { owner, execute, row } = harness();
+    execute.mockResolvedValueOnce(normalizeTranscriptEntry(
+      { status: "completed", output: "hello\n", exitCode: 0 },
+      Date.now(),
+      normalizeCommandInput({ input: "" }),
+    ));
+    owner.start("echo hello", "ham-chrome", "ship", false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const [input] = execute.mock.calls[0];
+    expect(input.sessionId).toBeUndefined();
+    expect(input.start).toBeUndefined();
+    expect(input.background).toBe(false);
+    expect(row()).toMatchObject({ sessionId: null, status: "completed", output: "hello\n" });
+
+    // Nothing to poll: a sessionless run is finished when its one call returns.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("still opens a session for targets that support one", async () => {
+    const { owner, execute } = harness();
+    owner.start("run tests", "macbook", "ship");
+    await vi.advanceTimersByTimeAsync(0);
+    const [input] = execute.mock.calls[0];
+    expect(input.start).toBe(true);
+    expect(input.background).toBe(true);
+    expect(typeof input.sessionId).toBe("string");
+  });
+
   it("keeps a running session live and appends incremental output until its terminal result", async () => {
     const { owner, execute, row } = harness();
     execute.mockResolvedValueOnce(result("first\n")).mockResolvedValueOnce(result("last\n", "completed"));

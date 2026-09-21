@@ -36,6 +36,8 @@ export type Place = {
   id: string;
   label: string;
   online: boolean;
+  /** Absent for the cloud place, which is addressed by id alone. */
+  kind?: string;
 };
 
 export const CLOUD_PLACE_ID = "gsv";
