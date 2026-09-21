@@ -226,11 +226,10 @@ export function createHandModel(): HandModel {
     const open = mask & 1 ? extension : 0;
     const points: Vector[] = [[-1.20, 1.80 - 0.20 * grip, 0.40]];
     const folded: Vector[] = [[-0.48, -0.82, 0.10 + grip * 0.45], [0.80, -0.25, 0.10 + grip * 0.45], [0.94, 0.10, 0.06 + grip * 0.12]];
-    const spread: Vector[] = [[-0.75, -0.66, 0.03], [-0.56, -0.82, 0.06], [-0.30, -0.95, 0.01]];
-    const raised: Vector[] = [[-0.43, -0.90, 0.05], [-0.12, -0.99, 0.10], [0.07, -0.995, -0.06]];
+    const spread: Vector[] = [[-0.82, -0.57, 0.05], [-0.70, -0.71, 0.10], [-0.61, -0.79, -0.03]];
     const lengths = [1.50, 1.22, 1.00];
     for (let joint = 0; joint < 3; joint++) {
-      const extended = unit(mix(unit(spread[joint]), unit(raised[joint]), grip));
+      const extended = unit(spread[joint]);
       const direction = unit(mix(unit(folded[joint]), extended, open));
       points.push(points[joint].map((value, axis) => value + direction[axis] * lengths[joint]) as Vector);
     }
