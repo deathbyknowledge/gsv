@@ -176,6 +176,7 @@ jobs:
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/apps/desktop/**'
+              - 'host/crates/desktop-native/**'
               - 'host/helpers/**'
               - 'host/packaging/**'
               - 'host/scripts/**'

@@ -137,21 +137,21 @@ impl VoiceCommandSender {
         self.0.send(command)
     }
 
-    #[cfg(test)]
-    pub(crate) fn closed_for_test() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn closed_for_test() -> Self {
         let (sender, receiver) = mpsc::channel();
         drop(receiver);
         Self(sender)
     }
 
-    #[cfg(test)]
-    pub(crate) fn channel_for_test() -> (Self, Receiver<VoiceCommand>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn channel_for_test() -> (Self, Receiver<VoiceCommand>) {
         let (sender, receiver) = mpsc::channel();
         (Self(sender), receiver)
     }
 }
 
-pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> Vec<VoiceEvent> {
+pub fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> Vec<VoiceEvent> {
     let mut coalesced = Vec::new();
     for event in events {
         let replace_last = matches!(event, VoiceEvent::Partial { .. })

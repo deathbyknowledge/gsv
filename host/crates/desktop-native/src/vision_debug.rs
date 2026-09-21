@@ -49,7 +49,7 @@ const HELPER_ENVIRONMENT: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VisionDebugError {
+pub enum VisionDebugError {
     InvalidOverride,
     NotInstalled,
     #[cfg(not(unix))]
@@ -71,10 +71,10 @@ impl fmt::Display for VisionDebugError {
     }
 }
 
-pub(crate) type VisionContext = GestureContext;
+pub type VisionContext = GestureContext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum VisionEvent {
+pub enum VisionEvent {
     Lifecycle(LifecycleState),
     Status {
         sequence: u64,
@@ -138,7 +138,7 @@ impl VisionSnapshotEvent {
 /// before entering the reliable lane.
 /// The same cell carries fresh absolute scroll-control velocity; both snapshot
 /// variants can be coalesced without replaying work.
-pub(crate) struct VisionEventReceiver {
+pub struct VisionEventReceiver {
     reliable: tokio_mpsc::Receiver<VisionEvent>,
     status: watch::Receiver<Option<VisionSnapshotEvent>>,
     reliable_closed: bool,
@@ -147,7 +147,7 @@ pub(crate) struct VisionEventReceiver {
 }
 
 impl VisionEventReceiver {
-    pub(crate) async fn recv(&mut self) -> Option<VisionEvent> {
+    pub async fn recv(&mut self) -> Option<VisionEvent> {
         loop {
             if self.prefer_reliable {
                 tokio::select! {
@@ -207,17 +207,17 @@ impl VisionEventReceiver {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum VisionContextError {
+pub enum VisionContextError {
     Closed,
 }
 
 #[derive(Clone)]
-pub(crate) struct VisionContextSender {
+pub struct VisionContextSender {
     state: Arc<ContextState>,
 }
 
 impl VisionContextSender {
-    pub(crate) fn set_context(&self, context: VisionContext) -> Result<(), VisionContextError> {
+    pub fn set_context(&self, context: VisionContext) -> Result<(), VisionContextError> {
         self.state.set(context)
     }
 
@@ -225,34 +225,34 @@ impl VisionContextSender {
     /// This is intentionally distinct from ordinary replace-if-changed
     /// synchronization: a rejected or idempotent reliable intent still needs
     /// one new context frame so the helper can leave its pending state.
-    pub(crate) fn reassert_context(
+    pub fn reassert_context(
         &self,
         context: VisionContext,
     ) -> Result<(), VisionContextError> {
         self.state.reassert(context)
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test() -> Self {
         Self {
             state: Arc::new(ContextState::new()),
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn revision_for_test(&self) -> u64 {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn revision_for_test(&self) -> u64 {
         self.state.lock().snapshot.revision
     }
 
-    #[cfg(test)]
-    pub(crate) fn context_for_test(&self) -> VisionContext {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn context_for_test(&self) -> VisionContext {
         self.state.lock().snapshot.context
     }
 }
 
-pub(crate) struct VisionHandle {
-    pub(crate) context: VisionContextSender,
-    pub(crate) events: VisionEventReceiver,
+pub struct VisionHandle {
+    pub context: VisionContextSender,
+    pub events: VisionEventReceiver,
     shutdown: Arc<AtomicBool>,
     supervisor: Option<JoinHandle<()>>,
 }
@@ -397,7 +397,7 @@ enum LaunchMode {
     Debug,
 }
 
-pub(crate) fn start_for_desktop() -> Result<Option<VisionHandle>, VisionDebugError> {
+pub fn start_for_desktop() -> Result<Option<VisionHandle>, VisionDebugError> {
     let current_executable = env::current_exe().ok();
     let Some(mode) = launch_mode(
         env::var_os("GSV_GESTURES").as_deref(),

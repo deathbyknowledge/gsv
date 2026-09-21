@@ -1733,6 +1733,7 @@ version = "0.6.0"
 dependencies = [
  "async-trait",
  "daemon-protocol",
+ "desktop-native",
  "desktop-protocol",
  "dirs 5.0.1",
  "gateway-client",
@@ -1758,6 +1759,18 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "usvg",
+ "uuid",
+]
+
+[[package]]
+name = "desktop-native"
+version = "0.6.0"
+dependencies = [
+ "gesture-protocol",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "uuid",
 ]
 
