@@ -565,6 +565,7 @@ client; Process and adapter service callers use private Kernel-owned admission p
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.search` | Conversation DO through Kernel | Searches one authorized conversation with literal terms, newest-first pagination, plain-text excerpts and explicit historical coverage. Never searches attachments or calls an external provider. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -614,6 +615,15 @@ type ConversationSyscalls = {
     args: { conversationId: string; beforeSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
+  "conversation.search": {
+    args: { conversationId: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversationId: string;
+      matches: { messageId: string; sequence: number; excerpt: string; createdAt: number }[];
+      nextBeforeSequence?: number;
+      coverage: { state: "complete" | "building" | "limited" | "error"; indexedMessages: number; truncatedMessages: number; omittedMessages: number; historicalBeforeSequence: number; latestSequence: number };
+    };
+  };
   "conversation.send": {
     args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
@@ -624,6 +634,12 @@ type ConversationSyscalls = {
   };
 };
 ```
+
+`conversation.search` accepts 1–512 characters and up to 16 literal terms. Pages
+default to 25 matches and are capped at 50. `message search --with CONTACT_OR_CONVERSATION
+--query TEXT [--before SEQUENCE] [--limit N] [--json]` exposes the same contract.
+Search and history permit the owner's canonical Ship with the corresponding
+capability; other Processes require a separately scoped admission path.
 
 `conversation.send` and `proc.send` accept optional `selectedTarget` message context.
 The Kernel checks the caller's target visibility, including offline targets. The

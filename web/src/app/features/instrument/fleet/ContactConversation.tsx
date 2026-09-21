@@ -1,6 +1,6 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
 import { useInfiniteQuery } from "@tanstack/preact-query";
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
@@ -10,6 +10,7 @@ import { instrumentContactConversationKey } from "../wire/queryKeys";
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";
 import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
+import { ConversationSearch } from "./ConversationSearch";
 
 const NO_SEQUENCE: number | null = null;
 
@@ -25,6 +26,8 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
 }) {
   const { client, connected } = useGateway();
   const mayRead = !!account && canConfigure(account, "conversation.history");
+  const maySearch = mayRead && !!account && canConfigure(account, "conversation.search");
+  const [focusSequence, setFocusSequence] = useState<number | null>(null);
   const maySend = !!account && canConfigure(account, "contact.send")
     && (account.uid === 0 || account.uid === contact.ownerUid) && contact.state === "active";
   const disabled = !connected || !maySend || draft.pending;
@@ -33,9 +36,9 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
   const follow = useRef(true);
   const olderHeight = useRef<number | null>(null);
   const history = useInfiniteQuery({
-    queryKey: instrumentContactConversationKey(contact.conversationId),
+    queryKey: [...instrumentContactConversationKey(contact.conversationId), "history", focusSequence],
     enabled: connected && mayRead,
-    initialPageParam: NO_SEQUENCE,
+    initialPageParam: focusSequence === null ? NO_SEQUENCE : focusSequence + 1,
     queryFn: ({ pageParam }) => client.conversation.history({
       conversationId: contact.conversationId,
       limit: 50,
@@ -65,6 +68,12 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
   };
 
   return <section class="fleet-contact-conversation" aria-label="Contact messages">
+    {maySearch && <ConversationSearch key={contact.conversationId} conversationId={contact.conversationId} onOpen={(sequence) => {
+      follow.current = true;
+      olderHeight.current = null;
+      setFocusSequence(sequence);
+    }} />}
+    {focusSequence !== null && <p class="note">Viewing an earlier message. <button class="fleet-text-action" type="button" onClick={() => { follow.current = true; setFocusSequence(null); }}>back to latest</button></p>}
     {!mayRead && <p class="note">Your account cannot read this conversation.</p>}
     {mayRead && <div class="fleet-contact-history" ref={scroll} onScroll={(event) => {
       const element = event.currentTarget;
@@ -77,7 +86,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       {history.isPending && connected && <LoadingState variant="panel">Loading messages…</LoadingState>}
       {history.error && <p class="error" role="alert">{history.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
       {history.data && messages.length === 0 && <p class="note">No messages yet.</p>}
-      {messages.map((message) => <article key={message.id} class="fleet-contact-message">
+      {messages.map((message) => <article key={message.id} class={`fleet-contact-message${message.sequence === focusSequence ? " fleet-contact-message-focused" : ""}`}>
         <header><span>{message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "Ship" : "you"}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}

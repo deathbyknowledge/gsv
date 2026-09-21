@@ -68,6 +68,7 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message search --with CONTACT_OR_CONVERSATION --query TEXT [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield

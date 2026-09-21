@@ -138,7 +138,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">contact · {contact.state}</div>
     <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>

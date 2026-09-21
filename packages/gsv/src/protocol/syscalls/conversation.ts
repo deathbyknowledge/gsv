@@ -101,6 +101,29 @@ export type ConversationHistoryResult = {
   hasMore: boolean;
 };
 
+export type ConversationSearchArgs = {
+  conversationId: string;
+  query: string;
+  beforeSequence?: number;
+  limit?: number;
+};
+
+export type ConversationSearchCoverage = {
+  state: "complete" | "building" | "limited" | "error";
+  indexedMessages: number;
+  truncatedMessages: number;
+  omittedMessages: number;
+  historicalBeforeSequence: number;
+  latestSequence: number;
+};
+
+export type ConversationSearchResult = {
+  conversationId: string;
+  matches: { messageId: string; sequence: number; excerpt: string; createdAt: number }[];
+  nextBeforeSequence?: number;
+  coverage: ConversationSearchCoverage;
+};
+
 export type ConversationSendArgs = {
   conversationId: string;
   text: string;

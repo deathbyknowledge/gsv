@@ -3,6 +3,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipResult,
   ConversationListResult,
   ConversationMediaReadArgs,
@@ -90,6 +92,17 @@ export async function handleConversationHistory(
     messages: history.messages,
     hasMore: history.hasMore,
   };
+}
+
+export async function handleConversationSearch(args: ConversationSearchArgs, ctx: KernelContext): Promise<ConversationSearchResult> {
+  requireConversationReader(ctx);
+  const conversation = ownedConversation(args?.conversationId, ctx);
+  const result = await getConversationById(ctx.installationId, conversation.id).search({
+    query: args.query, beforeSequence: args.beforeSequence, limit: args.limit,
+  });
+  requireConversationReader(ctx);
+  ownedConversation(conversation.id, ctx);
+  return result;
 }
 
 export async function handleConversationSend(

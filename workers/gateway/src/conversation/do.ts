@@ -6,6 +6,8 @@ import type {
   ConversationMessage,
   ResourceBlock,
   OriginMessageRef,
+  ConversationSearchArgs,
+  ConversationSearchResult,
 } from "@humansandmachines/gsv/protocol";
 import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
@@ -76,6 +78,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private get storage(): R2Bucket { return this.namedRuntime().storage; }
   private archiveTransition: Promise<void> = Promise.resolve();
   private appendTransition: Promise<void> = Promise.resolve();
+  private searchTransition: Promise<void> = Promise.resolve();
 
   constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
     super(state, env);
@@ -116,7 +119,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   async quiesceInstallationResource(input: InstallationDeletionRequest) {
     const record = this.retirement.begin(input);
     if (record.phase !== "quiescing") return record;
-    await Promise.allSettled([this.appendTransition, this.archiveTransition]);
+    await Promise.allSettled([this.appendTransition, this.archiveTransition, this.searchTransition]);
     await this.retirement.drain();
     if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
     return this.retirement.quiesced();
@@ -236,6 +239,47 @@ export class Conversation extends DurableObject<GatewayEnv> {
   async compact(): Promise<void> {
     this.retirement.assertActive();
     await this.scheduleArchive();
+  }
+
+  async search(input: Omit<ConversationSearchArgs, "conversationId">): Promise<ConversationSearchResult> {
+    this.retirement.assertActive();
+    const limit = input.limit ?? 25;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Conversation search limit must be between 1 and 50");
+    const latest = this.store.latestSequence();
+    const before = normalizeBeforeSequence(input.beforeSequence, latest + 1);
+    const result = this.store.search.search(input.query, before, limit);
+    if (this.store.search.needsBackfill() && await this.ctx.storage.getAlarm() === null) {
+      await this.ctx.storage.setAlarm(Date.now() + 100);
+    }
+    return { conversationId: this.conversationId, ...result, coverage: this.store.search.coverage(latest) };
+  }
+
+  async alarm(): Promise<void> {
+    if (this.retirement.state) return;
+    this.searchTransition = this.backfillSearch();
+    await this.searchTransition;
+  }
+
+  private async backfillSearch(): Promise<void> {
+    if (!this.store.search.needsBackfill()) return;
+    try {
+      const before = this.store.search.state().backfill_before;
+      let messages = this.store.listHot(before, 100);
+      if (!messages.length) {
+        const segment = this.store.archiveSegmentsBefore(before, 1)[0];
+        if (segment) messages = (await this.readArchive(segment))
+          .filter((message) => message.sequence < before).slice(-100).reverse();
+      }
+      this.retirement.assertActive();
+      this.ctx.storage.transactionSync(() => {
+        for (const message of messages) this.store.search.index(message);
+        this.store.search.finishBatch(messages.length ? Math.min(...messages.map((message) => message.sequence)) : 1);
+      });
+      if (this.store.search.needsBackfill()) await this.ctx.storage.setAlarm(Date.now() + 1_000);
+    } catch (error) {
+      if (!this.retirement.state) this.store.search.failBackfill();
+      throw error;
+    }
   }
 
   private scheduleArchive(): Promise<void> {

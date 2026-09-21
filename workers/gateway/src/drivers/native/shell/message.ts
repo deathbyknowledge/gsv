@@ -27,7 +27,7 @@ import {
   handleContactList,
   handleContactSend,
 } from "../../../kernel/federation";
-import { handleConversationHistory } from "../../../kernel/conversation-handlers";
+import { handleConversationHistory, handleConversationSearch } from "../../../kernel/conversation-handlers";
 import {
   type VisibleAdapterMessageDestination,
   adapterMessageDestinationId,
@@ -90,6 +90,8 @@ async function runMessageCommand(
       return attachToReply(rest, shellCtx, fs, ctx);
     case "history":
       return await showMessageHistory(rest, ctx);
+    case "search":
+      return await searchMessages(rest, ctx);
     case "delivery":
       return showMessageDelivery(rest, ctx);
     case "send":
@@ -123,14 +125,7 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
     }
   }
   if (!target) throw new Error("message history requires --with CONTACT_OR_CONVERSATION");
-  let conversationId = target.trim();
-  if (conversationId.startsWith("contact:")) {
-    requireCommandCapability(ctx, "contact.list");
-    const contact = handleContactList({ includeRevoked: true }, ctx).contacts
-      .find(({ id }) => id === conversationId);
-    if (!contact) throw new Error(`Contact not found: ${conversationId}`);
-    conversationId = contact.conversationId;
-  }
+  const conversationId = resolveMessageConversation(target, ctx);
   const result = await handleConversationHistory({
     conversationId,
     limit,
@@ -149,6 +144,46 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
   if (result.messages.length === 0) lines.push("(no messages)");
   lines.push("");
   return completed(lines.join("\n"));
+}
+
+function resolveMessageConversation(target: string, ctx: KernelContext): string {
+  const id = target.trim();
+  if (!id.startsWith("contact:")) return id;
+  requireCommandCapability(ctx, "contact.list");
+  const contact = handleContactList({ includeRevoked: true }, ctx).contacts.find((contact) => contact.id === id);
+  if (!contact) throw new Error(`Contact not found: ${id}`);
+  return contact.conversationId;
+}
+
+async function searchMessages(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  requireCommandCapability(ctx, "conversation.search");
+  let target: string | undefined;
+  let query: string | undefined;
+  let beforeSequence: number | undefined;
+  let limit = 25;
+  let outputJson = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--json") { outputJson = true; continue; }
+    const value = requireShellOptionValue(args[++index], option);
+    if (option === "--with") target = value;
+    else if (option === "--query") query = value;
+    else if (option === "--before") beforeSequence = parsePositiveInteger(value, option);
+    else if (option === "--limit") limit = parsePositiveInteger(value, option);
+    else throw new Error(`unexpected search option: ${option}`);
+  }
+  if (!target || !query) throw new Error("message search requires --with CONTACT_OR_CONVERSATION --query TEXT");
+  const result = await handleConversationSearch({ conversationId: resolveMessageConversation(target, ctx), query, beforeSequence, limit }, ctx);
+  if (outputJson) return completed(`${JSON.stringify(result, null, 2)}\n`);
+  return completed([
+    `conversation=${result.conversationId}`,
+    `coverage=${result.coverage.state}`,
+    ...(result.coverage.state !== "complete" ? ["Results do not cover the complete conversation text."] : []),
+    ...(result.nextBeforeSequence ? [`next_before=${result.nextBeforeSequence}`] : []),
+    ...result.matches.map((match) => `#${match.sequence} ${new Date(match.createdAt).toISOString()} ${match.messageId}\n${match.excerpt}`),
+    ...(result.matches.length ? [] : ["(no matches in indexed text)"]),
+    "",
+  ].join("\n"));
 }
 
 function showMessageDelivery(args: string[], ctx: KernelContext): ExecResult {
@@ -934,6 +969,7 @@ function messageUsage(): string {
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
     "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "  message search --with CONTACT_OR_CONVERSATION --query TEXT [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",

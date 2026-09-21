@@ -22,6 +22,7 @@ const labels = {
   "conversation.forProcess": "found a process conversation",
   "conversation.list": "listed conversations",
   "conversation.history": "read a conversation",
+  "conversation.search": "searched a conversation",
   "conversation.send": "sent a message",
   "conversation.media.read": "opened a message attachment",
   "contact.identity": "checked contact identity",

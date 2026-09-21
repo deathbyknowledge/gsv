@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
 import type { SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
@@ -69,6 +69,9 @@ describe("Conversation Durable Object", () => {
     expect(archived.messages[0]?.social).toEqual(social);
     expect(await stub.resolveOrigin(social.reference, social.threadId)).toEqual({ messageId: "msg:1", sequence: 1 });
     expect(await stub.resolveOrigin(social.reference, "thread:other")).toBeNull();
+    const found = await stub.search({ query: "message 1" });
+    expect(found.matches.map((match) => match.messageId)).toEqual(["msg:1"]);
+    expect(found.coverage.state).toBe("complete");
     expect(await stub.append({ ...message(1), selectedTarget: "macbook", social })).toEqual({
       message: archived.messages[0],
       created: false,
@@ -76,7 +79,55 @@ describe("Conversation Durable Object", () => {
     await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({
       ...message(1), selectedTarget: "macbook", social: { ...social, provenance: { kind: "process", processId: "proc:forged" } },
     }))).rejects.toThrow("idempotency key payload changed");
+
+    await runInDurableObject(stub, (instance: Conversation) => {
+      instance.ctx.storage.sql.exec("DELETE FROM message_search");
+      instance.ctx.storage.sql.exec(`UPDATE message_search_state SET backfill_before = 1002,
+        indexed_messages = 0, indexed_bytes = 0, truncated_messages = 0, omitted_messages = 0, capacity_reached = 0`);
+    });
+    await evictDurableObject(stub);
+    const rebuilding = await stub.search({ query: "message 1" });
+    expect(rebuilding.matches).toEqual([]);
+    expect(rebuilding.coverage.state).toBe("building");
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let batch = 0; batch < 12; batch += 1) {
+        await instance.alarm();
+        await instance.ctx.storage.deleteAlarm();
+      }
+    });
+    const rebuilt = await stub.search({ query: "message 1" });
+    expect(rebuilt.matches).toEqual(found.matches);
+    expect(rebuilt.coverage).toMatchObject({ state: "complete", indexedMessages: 1001 });
   }, 30_000);
+
+  it("searches literal terms with stable pages and bounds without interpreting FTS operators", async () => {
+    const stub = conversation("search");
+    await stub.initialize({ ownerUid: 1000, kind: "contact" });
+    for (let index = 1; index <= 3; index += 1) await stub.append({ ...message(index), text: `Café recovery ${index}` });
+    await stub.append({ ...message(4), text: "unrelated" });
+    const first = await stub.search({ query: "cafe recovery", limit: 2 });
+    expect(first.matches.map((match) => match.sequence)).toEqual([3, 2]);
+    const second = await stub.search({ query: "cafe recovery", limit: 2, beforeSequence: first.nextBeforeSequence });
+    expect(second.matches.map((match) => match.sequence)).toEqual([1]);
+    expect(second.nextBeforeSequence).toBeUndefined();
+    expect((await stub.search({ query: "recovery OR unrelated" })).matches).toEqual([]);
+    expect((await stub.search({ query: 'recovery " OR unrelated' })).matches).toEqual([]);
+    await expect(stub.search({ query: "recovery", limit: 51 })).rejects.toThrow("between 1 and 50");
+  });
+
+  it("keeps canonical appends available when the derived search index reaches its budget", async () => {
+    const stub = conversation("search-capacity");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await runInDurableObject(stub, (instance: Conversation) => {
+      instance.ctx.storage.sql.exec("UPDATE message_search_state SET indexed_bytes = ?", 64 * 1024 * 1024);
+    });
+    const appended = await stub.append(message(1));
+    expect(appended.created).toBe(true);
+    expect((await stub.history()).messages).toEqual([appended.message]);
+    expect(await stub.search({ query: "message" })).toMatchObject({ matches: [], coverage: { state: "limited", omittedMessages: 1 } });
+    await stub.append(message(1));
+    expect((await stub.search({ query: "message" })).coverage.omittedMessages).toBe(1);
+  });
 
   it("keeps legacy conversation-owned media readable", async () => {
     const stub = conversation("legacy-media");

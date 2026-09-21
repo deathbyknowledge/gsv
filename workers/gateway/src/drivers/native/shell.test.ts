@@ -4383,6 +4383,31 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain("hello from Flynn");
   });
 
+  it("searches one owned Contact conversation and exposes incomplete history", async () => {
+    const contact = makeContact();
+    const search = vi.fn(async () => ({
+      conversationId: contact.conversationId,
+      matches: [{ messageId: "message:found", sequence: 3, excerpt: "password recovery", createdAt: 1 }],
+      coverage: { state: "building", indexedMessages: 1, truncatedMessages: 0, omittedMessages: 0, historicalBeforeSequence: 3, latestSequence: 4 },
+    }));
+    getConversationByIdMock.mockReturnValue({ search });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.list", "conversation.search"],
+      federation: { list: vi.fn(() => [contact]) },
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      get: vi.fn(() => ({ id: contact.conversationId, kind: "contact", ownerUid: IDENTITY.uid, title: null, latestSequence: 4, createdAt: 1, updatedAt: 1 })),
+    });
+    const result = await handleShellExec({ input: `message search --with ${contact.id} --query 'password recovery' --limit 3` }, ctx);
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("coverage=building");
+    expect(result.stdout).toContain("Results do not cover the complete conversation text.");
+    expect(search).toHaveBeenCalledExactlyOnceWith({ query: "password recovery", beforeSequence: undefined, limit: 3 });
+    const denied = await handleShellExec({ input: "message search --with arbitrary --query private" }, makeContext({ capabilities: ["shell.exec"] }));
+    expect(denied.exitCode).toBe(1);
+    expect(search).toHaveBeenCalledOnce();
+  });
+
   it("reports Contact delivery acceptance and later state separately", async () => {
     const contact = makeContact();
     const outbox = vi.fn(() => ({

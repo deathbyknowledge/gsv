@@ -200,6 +200,9 @@ describe("cross-GSV federation integration", () => {
     expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstMessageMetadata);
     expect(firstHistory.conversation.handlerPid).toBeUndefined();
     expect(secondHistory.conversation.handlerPid).toBeUndefined();
+    const searched = await second.conversation.search({ conversationId: secondContact.conversationId, query: "hello first" });
+    expect(searched.matches.map((match) => match.messageId)).toEqual([messagesWithText(secondHistory, messageArgs.text)[0].id]);
+    expect(searched.coverage.state).toBe("complete");
     expect(messagesWithText(secondHistory, messageArgs.text)[0]).toMatchObject({
       author: {
         kind: "contact",

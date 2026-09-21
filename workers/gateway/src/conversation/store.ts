@@ -9,6 +9,7 @@ import type {
   OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
 import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
+import { ConversationSearchStore } from "./search";
 
 type MetaRow = {
   conversation_id: string;
@@ -63,7 +64,11 @@ export type ConversationArchiveSegment = {
 };
 
 export class ConversationStore {
-  constructor(private readonly sql: SqlStorage) {}
+  readonly search: ConversationSearchStore;
+
+  constructor(private readonly sql: SqlStorage) {
+    this.search = new ConversationSearchStore(sql);
+  }
 
   initialize(conversationId: string, ownerUid: number, kind: ConversationKind): MetaRow {
     this.sql.exec(
@@ -138,6 +143,7 @@ export class ConversationStore {
       throw new Error("Conversation message idempotency key was reused");
     }
     const message = toMessage(meta.conversation_id, row);
+    this.search.index(message);
     if (input.social) {
       this.sql.exec(`INSERT INTO message_origins
         (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
@@ -230,7 +236,7 @@ export class ConversationStore {
     ).toArray().map((row) => toMessage(meta.conversation_id, row));
   }
 
-  archiveSegmentsBefore(beforeSequence: number): ConversationArchiveSegment[] {
+  archiveSegmentsBefore(beforeSequence: number, limit = Number.MAX_SAFE_INTEGER): ConversationArchiveSegment[] {
     return this.sql.exec<{
       segment_id: string;
       from_sequence: number;
@@ -242,8 +248,9 @@ export class ConversationStore {
     }>(
       `SELECT * FROM archive_segments
        WHERE from_sequence < ?
-       ORDER BY to_sequence DESC`,
+       ORDER BY to_sequence DESC LIMIT ?`,
       beforeSequence,
+      limit,
     ).toArray().map((row) => ({
       segmentId: row.segment_id,
       fromSequence: row.from_sequence,

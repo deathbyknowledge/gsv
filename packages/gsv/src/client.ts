@@ -277,6 +277,7 @@ const SYSCALL_NAMES = [
   "conversation.forProcess",
   "conversation.list",
   "conversation.history",
+  "conversation.search",
   "conversation.send",
   "contact.identity",
   "contact.invite.create",

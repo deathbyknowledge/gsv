@@ -31,7 +31,7 @@ or deploy merely because an intermediate batch is ready.
 | 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Pending |
 | 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Pending |
 | 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
-| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Scope simplified by Esteve; pending |
+| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Implemented in source; CI and human trial pending |
 | 7. Scoped assistance | Generic Process scope/context propagation, exact approved drafts, optional bounded support helpers, resource/recipient enforcement through all syscall presentations and descendants. | Kernel authority, Process context/execution, protocol, web | Pending |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
@@ -151,3 +151,19 @@ old authority. Block pagination and row budgets are explicit. UI integration,
 notification delivery and conversation view state belong to batch 4 and remain
 unfinished. Source regression cases cover foreign/stale edits, preference
 retention, blocked re-pairing, queued work and resource cleanup; CI is pending.
+
+Relationship policy is committed as `b50b0050`. That checkpoint also corrects
+stale shell fixtures, missing syscall activity labels, and v2 discovery's handling
+of empty POST body streams identified while following CI failures. Latest-head
+checks are still in progress; the branch is not ready for acceptance or merge.
+
+Conversation search now uses migration v006, atomically indexes new messages,
+retains index entries across archival, and backfills history through a durable
+Conversation alarm cursor. It returns explicit building/limited/error coverage
+and caps index rows/text, query terms, pages and excerpts. The Kernel checks the
+same owner on both sides of the RPC. Contact threads expose search and reopening
+the matching history; SDK, CodeMode and `message search` use the same syscall.
+Regression sources cover archive retention, interrupted backfill, old-schema
+upgrades, literal query syntax, permission checks and continued message admission
+at index capacity. No local validation was run. This slice advances batch 6
+while the broader profiles, inbox, shared context and assistance work continues.
