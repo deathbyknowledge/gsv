@@ -7,7 +7,7 @@ import { useNativeVoice } from "./useNativeVoice";
 
 const idle = (lease = "view-1"): NativeSnapshot => ({
   lease, voice: null, gestures_enabled: false, gesture_status: "off",
-  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0,
+  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0, gesture_needs_reset: false, gesture_reset_after_action: 0,
   scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [],
 });
 const voice = (text: string, segment = 0, revision = 1): NativeVoice => ({

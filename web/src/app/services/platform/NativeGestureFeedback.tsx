@@ -40,6 +40,7 @@ export function gestureFeedback(snapshot: NativeSnapshot): { message: string; pr
     message: snapshot.scroll_velocity < 0 ? "Scrolling up · return to neutral to pause" : "Scrolling down · return to neutral to pause",
     progress: null, action,
   };
+  if (snapshot.gesture_needs_reset) return { message: "Make a fist to reset", progress: null, action };
   const { gesture_context: context } = snapshot;
   const message = context.mode === "disarmed" ? "Hands-free off"
     : context.mode === "disabled" ? "Preparing · both fists to stop"

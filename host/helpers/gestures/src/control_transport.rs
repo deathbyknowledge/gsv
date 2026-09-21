@@ -33,7 +33,7 @@ enum EventPayload {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SnapshotPayload {
-    Status(ControlStatus),
+    Status(ControlStatus, u64),
     Scroll(ScrollState),
 }
 
@@ -165,8 +165,8 @@ impl HelperControl {
     /// events use a separate, prioritized queue.
     /// Scroll control position is absolute and heartbeated, so it is safe to
     /// share this replace-latest lane without replaying dropped deltas.
-    pub fn publish_status(&self, status: ControlStatus) -> bool {
-        self.publish_snapshot(SnapshotPayload::Status(status))
+    pub fn publish_status(&self, status: ControlStatus, reset_sequence: u64) -> bool {
+        self.publish_snapshot(SnapshotPayload::Status(status, reset_sequence))
     }
 
     fn publish_snapshot(&self, snapshot: SnapshotPayload) -> bool {
@@ -297,10 +297,11 @@ fn write_snapshot(
 ) -> bool {
     let sequence = take_sequence(next_sequence);
     let event = match snapshot {
-        SnapshotPayload::Status(status) => HelperEvent::Status {
+        SnapshotPayload::Status(status, reset_sequence) => HelperEvent::Status {
             session_id,
             sequence,
             status,
+            reset_sequence,
         },
         SnapshotPayload::Scroll(state) => HelperEvent::Scroll {
             session_id,
@@ -552,7 +553,7 @@ mod tests {
         let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
         let control = test_control(events, snapshots, snapshot_receiver.clone());
 
-        assert!(control.publish_status(ControlStatus::Standby { progress: None }));
+        assert!(control.publish_status(ControlStatus::Standby { progress: None }, 0));
         let latest = ScrollState::Active {
             instance_id: 4,
             velocity_milliunits: 325,
@@ -570,7 +571,7 @@ mod tests {
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
         let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
         let control = test_control(events, snapshots, snapshot_receiver.clone());
-        assert!(control.publish_status(ControlStatus::Standby { progress: None }));
+        assert!(control.publish_status(ControlStatus::Standby { progress: None }, 0));
         assert!(control.publish_intent(GestureIntent::StartTranscription));
         assert!(control.publish_intent(GestureIntent::VoiceRequest {
             voice_request_id: 91,

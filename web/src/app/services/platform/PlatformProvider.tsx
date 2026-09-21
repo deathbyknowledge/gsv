@@ -34,6 +34,8 @@ export type NativeSnapshot = {
   gesture_progress: { candidate: GestureCandidate; progress_permille: number } | null;
   gesture_action: GestureCandidate | null;
   gesture_action_sequence: number;
+  gesture_needs_reset: boolean;
+  gesture_reset_after_action: number;
   scroll_velocity: number;
   scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];

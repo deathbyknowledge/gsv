@@ -476,6 +476,7 @@ pub struct GestureControl {
     state: ControlState,
     pending: Option<ControlIntent>,
     release_latched: Option<Chord>,
+    reset_sequence: u64,
     scroll_release_latched: bool,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
@@ -504,6 +505,7 @@ impl GestureControl {
             state,
             pending: None,
             release_latched: None,
+            reset_sequence: 0,
             scroll_release_latched: false,
             diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
@@ -517,6 +519,12 @@ impl GestureControl {
     #[must_use]
     pub const fn state(&self) -> ControlState {
         self.state
+    }
+
+    /// Counts confirmed command releases; transport may coalesce snapshots without losing the acknowledgement.
+    #[must_use]
+    pub const fn reset_sequence(&self) -> u64 {
+        self.reset_sequence
     }
 
     #[must_use]
@@ -627,6 +635,9 @@ impl GestureControl {
             PairReading::Reset { quality } => {
                 self.candidate = None;
                 if quality >= ENTER_SCORE {
+                    if self.release_latched.is_some() {
+                        self.reset_sequence += 1;
+                    }
                     self.release_latched = None;
                     self.scroll_release_latched = false;
                     self.diagnostic = ControlDiagnostic::AwaitingPose;
@@ -1590,7 +1601,11 @@ mod tests {
             harness.control.diagnostic(),
             ControlDiagnostic::AwaitingRelease { .. }
         ));
+        assert_eq!(harness.control.reset_sequence(), 0);
         assert_eq!(harness.sample(&reset), None);
+        assert_eq!(harness.control.reset_sequence(), 1);
+        assert!(harness.drive(10, &reset).is_empty());
+        assert_eq!(harness.control.reset_sequence(), 1);
         assert_eq!(
             harness.drive(10, &two),
             vec![request(VoiceRequestGestureIntent::Send)]

@@ -568,3 +568,37 @@ sound effects or tutorial analytics.
 
 Compilation and reopening are authorized; interaction and audio/performance
 acceptance remain with the user. Local tests and typechecks are not run.
+
+
+## Tutorial fit, anatomy, and automatic progression
+
+The tutorial reserves its live feedback and navigation rows independently of the
+lesson. Its illustration fits the available width and height through glyph sizing,
+without a transformed text layer. Size queries compact spacing when zoom reduces
+the available viewport; only the practice surface needed by the current lesson is
+mounted. Long practice text and extremely small viewports retain local overflow,
+but detection feedback cannot scroll out of view.
+
+The procedural hand uses straight phalanges with localized rounded hinges, a
+fist whose fingertips return to the palm, shaped finger pads and knuckles, a
+convex back, and separately articulated thumb bones. Open and cupped palm geometry
+and normals are prepared once. The mesh topology, glyph resolution and 18 Hz
+animation budget remain unchanged.
+
+The helper status now includes a monotonic count of confirmed fist resets. It
+advances only when a confident reset pose releases a command latch; holding the
+same fist never increments it again. The shared supervisor retains helper session,
+wire sequence and authority fences. Tauri maps a fresh reset after an accepted
+action to that action's presentation sequence. This is feedback, not another input
+command or a source of gesture authority. The private helper launch marker moves
+to v8 so an older executable cannot silently omit reset acknowledgements.
+Recognition thresholds, hold evidence, and fist-reset rules are unchanged; the
+counter observes the existing reset rather than changing when it is accepted.
+
+Practice advances automatically once each gesture's operation and actual fist
+reset are complete. The fist is shown and acknowledged before a short transition.
+Dictation waits for text to settle; scrolling requires movement followed by a
+stop. The final two-fist exit stops capture and closes the tutorial after feedback.
+Back, step selection and Skip remain available, but the practice pipeline requires
+no keyboard or mouse after Start practice. Tests were updated in source; local
+execution remains deferred to the human testing workflow.

@@ -80,6 +80,7 @@ pub enum VisionEvent {
         sequence: u64,
         received_at: Instant,
         status: ControlStatus,
+        reset_sequence: u64,
     },
     Intent {
         sequence: u64,
@@ -99,6 +100,7 @@ enum VisionSnapshotEvent {
         sequence: u64,
         received_at: Instant,
         status: ControlStatus,
+        reset_sequence: u64,
     },
     Scroll {
         sequence: u64,
@@ -114,10 +116,12 @@ impl VisionSnapshotEvent {
                 sequence,
                 received_at,
                 status,
+                reset_sequence,
             } => VisionEvent::Status {
                 sequence,
                 received_at,
                 status,
+                reset_sequence,
             },
             Self::Scroll {
                 sequence,
@@ -768,12 +772,14 @@ fn send_vision_event(
         sequence,
         received_at,
         status,
+        reset_sequence,
     } = event
     {
         statuses.send_replace(Some(VisionSnapshotEvent::Status {
             sequence,
             received_at,
             status,
+            reset_sequence,
         }));
         return Ok(());
     }
@@ -839,30 +845,37 @@ fn translate_event(
     match event {
         HelperEvent::Lifecycle { state, .. } => Ok(Some(VisionEvent::Lifecycle(state))),
         HelperEvent::Status {
+            reset_sequence,
             status: status @ ControlStatus::Disarmed { .. },
             ..
         } if context == VisionContext::Disarmed => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
             status,
+            reset_sequence,
         })),
         HelperEvent::Status {
+            reset_sequence,
             status: status @ ControlStatus::Disabled { .. },
             ..
         } if context == VisionContext::Disabled => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
             status,
+            reset_sequence,
         })),
         HelperEvent::Status {
+            reset_sequence,
             status: status @ ControlStatus::Standby { .. },
             ..
         } if context == VisionContext::Standby => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
             status,
+            reset_sequence,
         })),
         HelperEvent::Status {
+            reset_sequence,
             status:
                 status @ ControlStatus::Active {
                     voice_request_id,
@@ -882,6 +895,7 @@ fn translate_event(
                 sequence,
                 received_at,
                 status,
+                reset_sequence,
             }))
         }
         HelperEvent::Status { .. } => Ok(None),
@@ -1519,6 +1533,7 @@ mod tests {
     fn semantic_status_is_session_sequence_and_context_fenced() {
         let received_at = Instant::now();
         let status = |session_id, sequence, status| HelperEvent::Status {
+            reset_sequence: 0,
             session_id,
             sequence,
             status,
@@ -1565,6 +1580,7 @@ mod tests {
                 active_context,
             ),
             Ok(Some(VisionEvent::Status {
+                reset_sequence: 0,
                 sequence: 2,
                 received_at,
                 status: active_status,
@@ -1615,6 +1631,7 @@ mod tests {
                 &events,
                 &statuses,
                 VisionEvent::Status {
+                    reset_sequence: 0,
                     sequence,
                     received_at: stale,
                     status: ControlStatus::Active {
@@ -1649,6 +1666,7 @@ mod tests {
             &events,
             &statuses,
             VisionEvent::Status {
+                reset_sequence: 0,
                 sequence: 6,
                 received_at: final_received_at,
                 status: final_status,
@@ -1663,6 +1681,7 @@ mod tests {
             assert_eq!(
                 receiver.recv().await,
                 Some(VisionEvent::Status {
+                    reset_sequence: 0,
                     sequence: 6,
                     received_at: final_received_at,
                     status: final_status,
@@ -1672,6 +1691,7 @@ mod tests {
                 &events,
                 &statuses,
                 VisionEvent::Status {
+                    reset_sequence: 0,
                     sequence: 7,
                     received_at: Instant::now(),
                     status: final_status,
@@ -1684,7 +1704,11 @@ mod tests {
             );
             assert!(matches!(
                 receiver.recv().await,
-                Some(VisionEvent::Status { sequence: 7, .. })
+                Some(VisionEvent::Status {
+                    reset_sequence: 0,
+                    sequence: 7,
+                    ..
+                })
             ));
             assert!(matches!(
                 receiver.recv().await,
@@ -1715,6 +1739,7 @@ mod tests {
             &events,
             &snapshots,
             VisionEvent::Status {
+                reset_sequence: 0,
                 sequence: 1,
                 received_at: Instant::now(),
                 status: ControlStatus::Standby { progress: None },
@@ -1765,6 +1790,7 @@ mod tests {
             &events,
             &statuses,
             VisionEvent::Status {
+                reset_sequence: 0,
                 sequence: 2,
                 received_at: Instant::now(),
                 status: ControlStatus::Active {

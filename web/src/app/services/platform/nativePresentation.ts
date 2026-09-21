@@ -5,6 +5,7 @@ export function sameNativePresentation(a: NativeSnapshot | null, b: NativeSnapsh
   if (!a || a.lease !== b.lease || a.gestures_enabled !== b.gestures_enabled
     || a.gesture_status !== b.gesture_status || a.gesture_action !== b.gesture_action || a.notice !== b.notice
     || a.gesture_action_sequence !== b.gesture_action_sequence
+    || a.gesture_needs_reset !== b.gesture_needs_reset || a.gesture_reset_after_action !== b.gesture_reset_after_action
     || a.devices_loading !== b.devices_loading
     || Math.sign(a.scroll_velocity) !== Math.sign(b.scroll_velocity)) return false;
   if (a.gesture_context.mode !== b.gesture_context.mode

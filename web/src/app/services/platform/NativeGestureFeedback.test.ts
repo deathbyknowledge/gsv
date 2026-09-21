@@ -4,7 +4,7 @@ import type { NativeSnapshot } from "./PlatformProvider";
 
 const snapshot = (overrides: Partial<NativeSnapshot> = {}): NativeSnapshot => ({
   lease: "view", voice: null, gestures_enabled: true, gesture_status: "ready",
-  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0,
+  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0, gesture_needs_reset: false, gesture_reset_after_action: 0,
   scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [], ...overrides,
 });
 

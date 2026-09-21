@@ -9,8 +9,9 @@ system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
 `delete backward`, and `clear dictation` intents, plus
 replace-latest absolute scroll-control velocity and semantic control status with
-bounded candidate progress. Every active action identifies the exact voice
-request, and every event is scoped to
+bounded candidate progress and a monotonic acknowledgement of confirmed fist
+resets. Reset status is presentation-only and cannot trigger a command. Every
+active action identifies the exact voice request, and every event is scoped to
 the random helper session. Reliable lifecycle and intent events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.

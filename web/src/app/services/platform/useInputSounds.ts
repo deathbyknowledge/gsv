@@ -22,6 +22,7 @@ export function useNativeSoundFeedback(snapshot: NativeSnapshot | null) {
     else if (before.voice && !snapshot.voice) playInputCue(snapshot.notice ? "attention" : "paused");
     else if (snapshot.gesture_status === "ready" && before.gesture_status !== "ready") playInputCue("ready");
     else if (snapshot.notice && snapshot.notice !== before.notice) playInputCue("attention");
+    else if (snapshot.gesture_reset_after_action > before.gesture_reset_after_action) playInputCue("accepted");
     else if (snapshot.gesture_action_sequence !== before.gesture_action_sequence) {
       const action = snapshot.gesture_action;
       if (action === "send") playInputCue("commit");

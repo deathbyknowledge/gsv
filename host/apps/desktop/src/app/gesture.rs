@@ -249,6 +249,7 @@ impl GsvApp {
                 sequence,
                 received_at,
                 status,
+                ..
             } => {
                 if sequence == 0 || sequence <= self.vision_status_sequence {
                     return;
@@ -1057,6 +1058,7 @@ mod tests {
                 app.update(cx, |app, cx| {
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 1,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby {
@@ -1323,6 +1325,7 @@ mod tests {
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 2,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby { progress: None },
@@ -1375,6 +1378,7 @@ mod tests {
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 3,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby { progress: None },

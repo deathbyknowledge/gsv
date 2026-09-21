@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v7-relative-angle-scroll";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v8-fist-reset";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -491,6 +491,7 @@ pub enum HelperEvent {
         session_id: SessionId,
         sequence: u64,
         status: ControlStatus,
+        reset_sequence: u64,
     },
     Intent {
         session_id: SessionId,
@@ -657,7 +658,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v7-relative-angle-scroll"
+            "gsv-vision-control-v8-fist-reset"
         );
         for stale in [
             "1",
@@ -670,6 +671,7 @@ mod tests {
             "gsv-vision-control-v4-armed-one-hand",
             "gsv-vision-control-v5-fist-drag-scroll",
             "gsv-vision-control-v6-modifier-fist-continuous-scroll",
+            "gsv-vision-control-v7-relative-angle-scroll",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -707,6 +709,7 @@ mod tests {
                 state: LifecycleState::Ready,
             },
             HelperEvent::Status {
+                reset_sequence: 0,
                 session_id: SESSION,
                 sequence: 2,
                 status: ControlStatus::Disarmed {
@@ -716,6 +719,7 @@ mod tests {
                 },
             },
             HelperEvent::Status {
+                reset_sequence: 0,
                 session_id: SESSION,
                 sequence: 3,
                 status: ControlStatus::Disabled {
@@ -726,6 +730,7 @@ mod tests {
                 },
             },
             HelperEvent::Status {
+                reset_sequence: 0,
                 session_id: SESSION,
                 sequence: 4,
                 status: ControlStatus::Standby {
@@ -736,6 +741,7 @@ mod tests {
                 },
             },
             HelperEvent::Status {
+                reset_sequence: 0,
                 session_id: SESSION,
                 sequence: 5,
                 status: ControlStatus::Active {
