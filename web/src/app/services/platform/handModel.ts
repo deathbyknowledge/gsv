@@ -29,7 +29,7 @@ const sections = [
   [-1.2, 1.87, 0.48, 0.67, 0.02], [-1.68, 1.46, 0.30, 0.42, 0.02],
 ] as const;
 const knuckleRow = [[-1.38, -1.34], [-0.46, -1.53], [0.49, -1.39], [1.36, -1.07]] as const;
-const WRIST_BEND = 0.22;
+const WRIST_BEND = -0.22;
 
 // Keep the palm upright; the forearm meets it through a gently extended wrist.
 function bendWrist([x, y, z]: Vector): Vector {
