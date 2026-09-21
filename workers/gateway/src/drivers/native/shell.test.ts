@@ -4372,6 +4372,7 @@ describe("native administration shell commands", () => {
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({
       get: vi.fn(() => conversation),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     });
 
     const history = await handleShellExec({
