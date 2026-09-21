@@ -1,4 +1,5 @@
 import type { useNativeVoice } from "./useNativeVoice";
+import { NativeGestureFeedback } from "./NativeGestureFeedback";
 
 export function NativeVoiceControls({ control, disabled }: { control: ReturnType<typeof useNativeVoice>; disabled: boolean }) {
   if (!control.available) return null;
@@ -25,9 +26,10 @@ export function NativeVoiceControls({ control, disabled }: { control: ReturnType
     <button type="button" disabled={busy} aria-pressed={snapshot?.gestures_enabled ?? false}
       onClick={() => void command({ kind: "gestures", enabled: !snapshot?.gestures_enabled })}>{snapshot?.gestures_enabled ? "camera off" : "enable gestures"}</button>
     {snapshot?.gestures_enabled && <>
-      <button type="button" aria-pressed={snapshot.armed} onClick={() => void command({ kind: "arm", armed: !snapshot.armed })}>{snapshot.armed ? "disarm gestures" : "arm gestures"}</button>
-      <span>{snapshot.gesture_status} · {snapshot.armed ? "armed" : "disarmed"}</span>
+      <button type="button" disabled={busy || (!snapshot.armed && snapshot.gesture_status !== "ready")} aria-pressed={snapshot.armed}
+        onClick={() => void command({ kind: "arm", armed: !snapshot.armed })}>{snapshot.armed ? "disarm gestures" : "arm gestures"}</button>
     </>}
+    {snapshot && <NativeGestureFeedback snapshot={snapshot} />}
     {(error || snapshot?.notice) && <span class="native-notice" role="status">{error || snapshot?.notice}</span>}
   </div>;
 }

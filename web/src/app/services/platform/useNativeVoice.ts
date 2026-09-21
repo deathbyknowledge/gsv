@@ -25,6 +25,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, scroll }: {
   const command = async (value: NativeCommand): Promise<void> => {
     if (!input || !lease.current) return;
     const id = lease.current;
+    setError(null);
     try { await input.command(id, value); }
     catch (error) { if (lease.current === id) setError(String(error)); }
   };

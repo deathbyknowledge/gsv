@@ -98,7 +98,9 @@ excludes the mock. The real helpers are still real in development mode.
    continue. Send segment uses ordinary conversation sending and preserves files.
 3. Enable gestures: it starts disarmed. Deliberately arm, then check the existing
    1–5 vocabulary (start/finish, send, delete, clear, mute), fist reset, scroll
-   chord and tracking loss. Clear/delete affect only unsent dictated text.
+   chord and tracking loss. The feedback panel shows camera status, the current
+   hold's progress and recently accepted commands; open its gesture guide for
+   hand shapes and hold times. Clear/delete affect only unsent dictated text.
 4. Try unfocused use and minimization. If the webview stops responding for three
    seconds, native input stops and disarms. Reconnect native input and explicitly
    restart it. No old action should arrive in a later draft. Repeat after sleep,

@@ -2,10 +2,13 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime};
 
 use desktop_native::transcription::{
-    self, VoiceCommand, VoiceCommandSender, VoiceEvent, VoicePhase,
+    self, VoiceCommand, VoiceCommandSender, VoiceErrorCode, VoiceEvent, VoicePhase,
 };
 use desktop_native::vision_debug::{self, VisionEvent, VisionHandle};
-use gesture_protocol::{GestureContext, GestureIntent, ScrollState, VoiceRequestGestureIntent};
+use gesture_protocol::{
+    ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
+    LifecycleState, ScrollState, VoiceRequestGestureIntent,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -13,6 +16,8 @@ use uuid::Uuid;
 const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 const INTENT_MAX_AGE: Duration = Duration::from_millis(500);
 const SCROLL_MAX_AGE: Duration = Duration::from_millis(250);
+const STATUS_MAX_AGE: Duration = Duration::from_secs(1);
+const ACTION_FEEDBACK_AGE: Duration = Duration::from_secs(3);
 const MAX_EVENTS: usize = 16;
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -93,6 +98,9 @@ pub struct Snapshot {
     pub gestures_enabled: bool,
     pub armed: bool,
     pub gesture_status: String,
+    pub gesture_context: GestureContext,
+    pub gesture_progress: Option<GestureProgress>,
+    pub gesture_action: Option<GestureCandidate>,
     pub scroll_velocity: i16,
     pub devices: Vec<Device>,
     pub notice: Option<String>,
@@ -183,6 +191,9 @@ struct State {
     vision: Option<VisionHandle>,
     intent_sequence: u64,
     scroll_sequence: u64,
+    status_sequence: u64,
+    gesture_progress: Option<(Instant, GestureContext, GestureProgress)>,
+    gesture_action: Option<(Instant, GestureCandidate)>,
     device_request: Option<u64>,
     selected_device: Option<String>,
 }
@@ -196,6 +207,9 @@ impl State {
                 gestures_enabled: false,
                 armed: false,
                 gesture_status: "off".into(),
+                gesture_context: GestureContext::Disarmed,
+                gesture_progress: None,
+                gesture_action: None,
                 scroll_velocity: 0,
                 devices: Vec::new(),
                 notice: None,
@@ -210,6 +224,9 @@ impl State {
             vision: None,
             intent_sequence: 0,
             scroll_sequence: 0,
+            status_sequence: 0,
+            gesture_progress: None,
+            gesture_action: None,
             device_request: None,
             selected_device: None,
         }
@@ -248,6 +265,8 @@ impl State {
         self.vision = None;
         self.snapshot.gestures_enabled = false;
         self.snapshot.gesture_status = "off".into();
+        self.gesture_progress = None;
+        self.gesture_action = None;
         self.device_request = None;
     }
 
@@ -275,9 +294,16 @@ impl State {
         }
     }
 
-    fn sync_context(&self) {
+    fn sync_context(&mut self) {
+        let context = self.context();
+        if self
+            .gesture_progress
+            .is_some_and(|(_, owner, _)| owner != context)
+        {
+            self.gesture_progress = None;
+        }
         if let Some(vision) = &self.vision {
-            let _ = vision.context.set_context(self.context());
+            let _ = vision.context.set_context(context);
         }
     }
 
@@ -294,7 +320,21 @@ impl State {
     }
 
     fn snapshot(&self) -> Snapshot {
+        let context = self.context();
+        let gesture_progress = self.gesture_progress.and_then(|(at, owner, progress)| {
+            (self.snapshot.gesture_status == "ready"
+                && self.fresh(&self.snapshot.lease)
+                && owner == context
+                && at.elapsed() <= STATUS_MAX_AGE
+                && progress.is_compatible_with(context))
+            .then_some(progress)
+        });
         Snapshot {
+            gesture_context: context,
+            gesture_progress,
+            gesture_action: self
+                .gesture_action
+                .and_then(|(at, action)| (at.elapsed() <= ACTION_FEEDBACK_AGE).then_some(action)),
             events: self.events.iter().map(|(_, event)| event.clone()).collect(),
             ..self.snapshot.clone()
         }
@@ -316,7 +356,7 @@ impl State {
         self.voice_commands
             .send(VoiceCommand::Start {
                 request_id,
-                locale: "en".into(),
+                locale: "auto".into(),
                 device: None,
                 exact_device: device_id.is_some(),
                 device_id,
@@ -437,6 +477,8 @@ impl State {
                 self.vision = None;
                 self.snapshot.gestures_enabled = false;
                 self.snapshot.gesture_status = "off".into();
+                self.gesture_progress = None;
+                self.gesture_action = None;
                 if enabled {
                     self.vision = tokio::task::spawn_blocking(vision_debug::start_for_desktop)
                         .await
@@ -446,19 +488,22 @@ impl State {
                     self.snapshot.gesture_status = if self.vision.is_some() {
                         "starting"
                     } else {
-                        "disabled by GSV_GESTURES"
+                        "disabled"
                     }
                     .into();
                     self.intent_sequence = 0;
                     self.scroll_sequence = 0;
+                    self.status_sequence = 0;
                 }
             }
             InputCommand::Arm { armed } => {
-                if armed && self.vision.is_none() {
-                    return Err("Enable gestures first.".into());
+                if armed && (self.vision.is_none() || self.snapshot.gesture_status != "ready") {
+                    return Err("Enable gestures and wait for the camera to be ready.".into());
                 }
                 self.snapshot.armed = armed;
                 self.snapshot.scroll_velocity = 0;
+                self.gesture_progress = None;
+                self.gesture_action = None;
             }
             InputCommand::Detach => self.reset(),
         }
@@ -485,7 +530,7 @@ impl State {
             VoiceEvent::Error { request_id, code } => {
                 if request_id.is_none() || request_id == self.device_request {
                     self.device_request = None;
-                    self.snapshot.notice = Some(format!("Microphone helper: {code:?}"));
+                    self.snapshot.notice = Some(voice_error_message(code, None).into());
                 }
                 if request_id.is_none()
                     || self
@@ -494,9 +539,19 @@ impl State {
                         .as_ref()
                         .is_some_and(|v| Some(v.request_id) == request_id)
                 {
+                    let phase = self
+                        .snapshot
+                        .voice
+                        .as_ref()
+                        .map(|voice| voice.phase.as_str());
+                    let message = voice_error_message(code, phase);
+                    eprintln!(
+                        "voice input failed: code={code:?}, phase={}",
+                        phase.unwrap_or("idle")
+                    );
                     self.cancel_voice();
                     self.snapshot.notice = Some(format!(
-                        "Voice input stopped: {code:?}. You can keep typing."
+                        "{message} Your unsent text is still in the prompt."
                     ));
                 }
             }
@@ -633,10 +688,24 @@ impl State {
     fn vision_event(&mut self, event: VisionEvent) {
         match event {
             VisionEvent::Lifecycle(state) => {
-                self.snapshot.gesture_status = format!("{state:?}");
-                if !matches!(state, gesture_protocol::LifecycleState::Ready) {
+                self.snapshot.gesture_status = match state {
+                    LifecycleState::Ready => "ready",
+                    LifecycleState::Stopped => "stopped",
+                    LifecycleState::AssetsUnavailable => "assets_unavailable",
+                    LifecycleState::CameraUnavailable => "camera_unavailable",
+                    LifecycleState::CameraStopped => "camera_stopped",
+                    LifecycleState::InferenceUnavailable => "inference_unavailable",
+                    LifecycleState::WindowUnavailable => "window_unavailable",
+                    LifecycleState::WorkerUnavailable => "worker_unavailable",
+                    LifecycleState::ProtocolError => "protocol_error",
+                    LifecycleState::Interrupted => "interrupted",
+                }
+                .into();
+                self.gesture_progress = None;
+                if state != LifecycleState::Ready {
                     self.snapshot.armed = false;
                     self.snapshot.scroll_velocity = 0;
+                    self.gesture_action = None;
                 }
             }
             VisionEvent::Intent {
@@ -648,54 +717,80 @@ impl State {
                     return;
                 }
                 self.intent_sequence = sequence;
-                if received_at.elapsed() > INTENT_MAX_AGE || !self.fresh(&self.snapshot.lease) {
-                    self.sync_context();
-                    return;
-                }
-                let result = match intent {
-                    GestureIntent::SetArmed { armed } => {
-                        self.snapshot.armed = armed;
-                        self.snapshot.scroll_velocity = 0;
-                        Ok(())
-                    }
-                    GestureIntent::StartTranscription
-                        if self.context() == GestureContext::Standby =>
-                    {
-                        self.start_voice(self.selected_device.clone())
-                    }
-                    GestureIntent::VoiceRequest {
-                        voice_request_id,
-                        action,
-                    } => {
-                        if !matches!(self.context(), GestureContext::Active { voice_request_id: id, .. } if id == voice_request_id)
-                        {
-                            self.sync_context();
-                            return;
+                let action = match intent {
+                    GestureIntent::SetArmed { armed: true } => GestureCandidate::Arm,
+                    GestureIntent::SetArmed { armed: false } => GestureCandidate::Disarm,
+                    GestureIntent::StartTranscription => GestureCandidate::StartTranscription,
+                    GestureIntent::VoiceRequest { action, .. } => match action {
+                        VoiceRequestGestureIntent::StopTranscription => {
+                            GestureCandidate::StopTranscription
                         }
-                        match action {
-                            VoiceRequestGestureIntent::StopTranscription => {
-                                self.stop(voice_request_id)
-                            }
-                            VoiceRequestGestureIntent::Mute => self.mute(voice_request_id, true),
-                            VoiceRequestGestureIntent::Unmute => self.mute(voice_request_id, false),
-                            action => {
-                                let segment_id =
-                                    self.snapshot.voice.as_ref().map_or(0, |v| v.segment_id);
-                                let action = match action {
-                                    VoiceRequestGestureIntent::Send => SegmentAction::Send,
-                                    VoiceRequestGestureIntent::DeleteBackward => {
-                                        SegmentAction::Delete
-                                    }
-                                    _ => SegmentAction::Clear,
-                                };
-                                self.segment(voice_request_id, segment_id, action)
-                            }
+                        VoiceRequestGestureIntent::Send => GestureCandidate::Send,
+                        VoiceRequestGestureIntent::DeleteBackward => {
+                            GestureCandidate::DeleteBackward
                         }
-                    }
-                    _ => Ok(()),
+                        VoiceRequestGestureIntent::ClearDictation => {
+                            GestureCandidate::ClearDictation
+                        }
+                        VoiceRequestGestureIntent::Mute => GestureCandidate::Mute,
+                        VoiceRequestGestureIntent::Unmute => GestureCandidate::Unmute,
+                    },
                 };
-                if let Err(error) = result {
-                    self.snapshot.notice = Some(error);
+                let result = if received_at.elapsed() > INTENT_MAX_AGE
+                    || !self.fresh(&self.snapshot.lease)
+                    || self.snapshot.gesture_status != "ready"
+                {
+                    None
+                } else {
+                    match intent {
+                        GestureIntent::SetArmed { armed } => {
+                            self.snapshot.armed = armed;
+                            self.snapshot.scroll_velocity = 0;
+                            Some(Ok(()))
+                        }
+                        GestureIntent::StartTranscription
+                            if self.context() == GestureContext::Standby =>
+                        {
+                            Some(self.start_voice(self.selected_device.clone()))
+                        }
+                        GestureIntent::VoiceRequest {
+                            voice_request_id,
+                            action,
+                        } if matches!(self.context(), GestureContext::Active { voice_request_id: id, .. } if id == voice_request_id) => {
+                            Some(match action {
+                                VoiceRequestGestureIntent::StopTranscription => {
+                                    self.stop(voice_request_id)
+                                }
+                                VoiceRequestGestureIntent::Mute => {
+                                    self.mute(voice_request_id, true)
+                                }
+                                VoiceRequestGestureIntent::Unmute => {
+                                    self.mute(voice_request_id, false)
+                                }
+                                action => {
+                                    let segment_id =
+                                        self.snapshot.voice.as_ref().map_or(0, |v| v.segment_id);
+                                    let action = match action {
+                                        VoiceRequestGestureIntent::Send => SegmentAction::Send,
+                                        VoiceRequestGestureIntent::DeleteBackward => {
+                                            SegmentAction::Delete
+                                        }
+                                        _ => SegmentAction::Clear,
+                                    };
+                                    self.segment(voice_request_id, segment_id, action)
+                                }
+                            })
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(result) = result {
+                    self.gesture_progress = None;
+                    if let Err(error) = result {
+                        self.snapshot.notice = Some(error);
+                    } else {
+                        self.gesture_action = Some((Instant::now(), action));
+                    }
                 }
                 if let Some(vision) = &self.vision {
                     let _ = vision.context.reassert_context(self.context());
@@ -727,7 +822,42 @@ impl State {
                     0
                 };
             }
-            VisionEvent::Status { .. } => {}
+            VisionEvent::Status {
+                sequence,
+                received_at,
+                status,
+            } => {
+                if sequence <= self.status_sequence {
+                    return;
+                }
+                self.status_sequence = sequence;
+                let (context, progress) = match status {
+                    ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
+                    ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
+                    ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
+                    ControlStatus::Active {
+                        voice_request_id,
+                        muted,
+                        progress,
+                    } => (
+                        GestureContext::Active {
+                            voice_request_id,
+                            muted,
+                        },
+                        progress,
+                    ),
+                };
+                if context == self.context() {
+                    self.gesture_progress = progress
+                        .filter(|progress| progress.is_compatible_with(context))
+                        .filter(|_| {
+                            self.snapshot.gesture_status == "ready"
+                                && self.fresh(&self.snapshot.lease)
+                                && received_at.elapsed() <= STATUS_MAX_AGE
+                        })
+                        .map(|progress| (received_at, context, progress));
+                }
+            }
         }
     }
 
@@ -806,12 +936,47 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
                 state.snapshot.gestures_enabled = false;
                 state.snapshot.armed = false;
                 state.snapshot.scroll_velocity = 0;
+                state.gesture_progress = None;
+                state.gesture_action = None;
+                if matches!(state.snapshot.gesture_status.as_str(), "ready" | "starting") {
+                    state.snapshot.gesture_status = "interrupted".into();
+                }
             },
             _ = tick.tick() => state.watchdog(),
         }
     }
     state.reset();
     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
+}
+
+fn voice_error_message(code: VoiceErrorCode, phase: Option<&str>) -> &'static str {
+    match code {
+        VoiceErrorCode::NotInstalled => "The voice helper is missing from this build.",
+        VoiceErrorCode::HelperUnavailable => "The voice helper could not start. Try voice again.",
+        VoiceErrorCode::MicrophoneUnavailable => {
+            "The microphone could not open. Choose an available microphone."
+        }
+        VoiceErrorCode::MicrophoneSilent => {
+            "No microphone audio arrived. Check the selected input and its mute setting."
+        }
+        VoiceErrorCode::AudioOverflow => "Voice input could not keep up. Try voice again.",
+        VoiceErrorCode::DownloadFailed => {
+            "The speech model could not download. Check your connection and try again."
+        }
+        VoiceErrorCode::ModelInvalid => {
+            "The speech model could not load. Try voice again to verify it."
+        }
+        VoiceErrorCode::EngineFailed if matches!(phase, Some("listening" | "finishing")) => {
+            "The speech engine stopped during transcription. Try voice again."
+        }
+        VoiceErrorCode::EngineFailed => "The speech engine could not start. Try voice again.",
+        VoiceErrorCode::Busy => "Voice input is busy. Try again when it is ready.",
+        VoiceErrorCode::NotActive => "Voice input has already stopped.",
+        VoiceErrorCode::Interrupted => "Voice input was interrupted. Try voice again.",
+        VoiceErrorCode::InvalidCommand => {
+            "The voice helper could not accept this action. Restart voice to continue."
+        }
+    }
 }
 
 #[cfg(test)]
@@ -891,5 +1056,96 @@ mod tests {
         assert!(!state.fresh("view-one"));
         assert!(state.fresh("view-two"));
         assert_eq!(state.context(), GestureContext::Disarmed);
+    }
+
+    #[test]
+    fn gesture_progress_is_presentation_only_and_expires() {
+        let (mut state, commands) = attached();
+        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
+        let progress = GestureProgress::new(GestureCandidate::Arm, 600).unwrap();
+        state.vision_event(VisionEvent::Status {
+            sequence: 1,
+            received_at: Instant::now(),
+            status: ControlStatus::Disarmed {
+                progress: Some(progress),
+            },
+        });
+        assert_eq!(state.snapshot().gesture_progress, Some(progress));
+        assert!(!state.snapshot.armed);
+        assert!(commands.try_recv().is_err());
+        assert!(state.events.is_empty());
+        state.vision_event(VisionEvent::Status {
+            sequence: 1,
+            received_at: Instant::now(),
+            status: ControlStatus::Disarmed { progress: None },
+        });
+        assert_eq!(state.snapshot().gesture_progress, Some(progress));
+        state.gesture_progress.as_mut().unwrap().0 =
+            Instant::now() - STATUS_MAX_AGE - Duration::from_millis(1);
+        assert!(state.snapshot().gesture_progress.is_none());
+        state.vision_event(VisionEvent::Status {
+            sequence: 2,
+            received_at: Instant::now(),
+            status: ControlStatus::Disarmed {
+                progress: Some(progress),
+            },
+        });
+        state.vision_event(VisionEvent::Lifecycle(LifecycleState::CameraStopped));
+        assert!(state.snapshot().gesture_progress.is_none());
+    }
+
+    #[test]
+    fn gesture_progress_cannot_cross_voice_requests_or_authority_changes() {
+        let (mut state, _commands) = attached();
+        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
+        state.start_voice(None).unwrap();
+        state.events.clear();
+        state.snapshot.armed = true;
+        let voice = state.snapshot.voice.as_mut().unwrap();
+        voice.phase = "listening".into();
+        voice.muted = Some(false);
+        let request_id = voice.request_id;
+        let progress = GestureProgress::new(GestureCandidate::Mute, 400).unwrap();
+        for (sequence, voice_request_id) in [(1, request_id + 1), (2, request_id)] {
+            state.vision_event(VisionEvent::Status {
+                sequence,
+                received_at: Instant::now(),
+                status: ControlStatus::Active {
+                    voice_request_id,
+                    muted: false,
+                    progress: Some(progress),
+                },
+            });
+            assert_eq!(
+                state.snapshot().gesture_progress.is_some(),
+                voice_request_id == request_id
+            );
+        }
+        state.snapshot.voice.as_mut().unwrap().mute_pending = true;
+        state.sync_context();
+        state.snapshot.voice.as_mut().unwrap().mute_pending = false;
+        assert!(state.snapshot().gesture_progress.is_none());
+    }
+
+    #[test]
+    fn only_accepted_gesture_intents_produce_action_feedback() {
+        let (mut state, _) = attached();
+        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
+        state.vision_event(VisionEvent::Intent {
+            sequence: 1,
+            received_at: Instant::now() - INTENT_MAX_AGE - Duration::from_millis(1),
+            intent: GestureIntent::SetArmed { armed: true },
+        });
+        assert!(!state.snapshot.armed);
+        assert!(state.snapshot().gesture_action.is_none());
+        state.vision_event(VisionEvent::Intent {
+            sequence: 2,
+            received_at: Instant::now(),
+            intent: GestureIntent::SetArmed { armed: true },
+        });
+        assert!(state.snapshot.armed);
+        assert_eq!(state.snapshot().gesture_action, Some(GestureCandidate::Arm));
+        state.reset();
+        assert!(state.snapshot().gesture_action.is_none());
     }
 }
