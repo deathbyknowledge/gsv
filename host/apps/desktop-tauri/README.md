@@ -18,6 +18,19 @@ cargo build --manifest-path host/Cargo.toml --locked --package desktop-tauri --f
 ./host/target/debug/gsv-desktop-tauri
 ```
 
+If startup exits with a Wayland `Error 71` or opens a blank window with
+`Failed to create GBM buffer`, use this launch command from the repository root:
+
+```bash
+GDK_BACKEND=x11 WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 ./host/target/debug/gsv-desktop-tauri
+```
+
+This selects XWayland and WebKit's shared-memory buffer transport for this
+process only. It avoids the failing graphics-buffer path observed on the local
+prototype machine; it is not a performance baseline or a system-wide setting.
+See the [upstream Wry report](https://github.com/tauri-apps/wry/issues/1366) and
+[WebKit's transport selection](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/gtk/AcceleratedBackingStore.cpp).
+
 The helpers must be beside the executable. The speech helper may download its
 checksum-pinned model on the first explicit Voice request; the vision models are
 embedded in `gsv-vision`. Nothing starts the camera or microphone at app launch.
