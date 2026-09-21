@@ -3,10 +3,17 @@ import type { SessionStorage } from "../app/services/session/sessionService";
 
 declare global {
   interface Window {
-    __TAURI__?: { core: {
-      invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
-      Channel: new<T>(receive?: (message: T) => void) => { onmessage: (message: T) => void };
-    } };
+    __TAURI__?: {
+      core: {
+        invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+        Channel: new<T>(receive?: (message: T) => void) => { onmessage: (message: T) => void };
+      };
+      window: {
+        getCurrentWindow(): {
+          onCloseRequested(handler: (event: { preventDefault(): void }) => void): Promise<() => void>;
+        };
+      };
+    };
   }
 }
 

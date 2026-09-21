@@ -4,6 +4,8 @@
   "local": true,
   "windows": ["main"],
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-desktop-session",
     "allow-desktop-configure",
     "allow-desktop-store",

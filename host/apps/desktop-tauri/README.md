@@ -63,10 +63,12 @@ is built into the app. Native session data lives under the platform application
 data directory for `es.humansandmachines.gsv.tauri-prototype`; it does not read
 `~/.gsv/config.toml`. Only one prototype instance can own this directory.
 
-Close minimizes the window on Linux and hides the application on macOS. Use the
-visible Quit action to end the prototype and its helpers. The ordinary installed
-Desktop can be opened as usual. `gsv desktop` continues to address that installed
-application: this prototype does not claim its local CLI control endpoint.
+Closing the window, including Super+W on the prototype Linux machine, exits the
+prototype and shuts down its helpers. Close and the visible Quit action use the
+same path, confirming only when a retained view has unsaved work. The ordinary
+installed Desktop can be opened as usual. `gsv desktop` continues to address
+that installed application: this prototype does not claim its local CLI control
+endpoint.
 
 ## Development mock
 
@@ -115,6 +117,9 @@ excludes the mock. The real helpers are still real in development mode.
    work and tears down the whole frontend.
 6. Quit and reopen. Camera/voice must be off and gestures disarmed. The independent
    daemon and installed Desktop should remain available.
+   Repeat with the window manager's Close action (Super+W): with no unsaved work
+   it should exit directly; with a draft it should offer Keep working or Quit.
+   Keep working must preserve the draft, including one in a hidden view.
 7. Cycle `x` through 100%, 150% and 200%. Check text sharpness, full-window fit,
    prompt/caret alignment, and layout in Zen, Fleet, Memory and Settings.
    At each size, open Voice and Gestures: their panels should use the available

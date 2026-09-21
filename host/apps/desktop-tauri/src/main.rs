@@ -188,15 +188,6 @@ fn main() {
                 .build()?;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                #[cfg(target_os = "macos")]
-                let _ = window.app_handle().hide();
-                #[cfg(not(target_os = "macos"))]
-                let _ = window.minimize();
-            }
-        })
         .build(tauri::generate_context!())
         .expect("start GSV Tauri Prototype");
     app.run(|app, event| match event {

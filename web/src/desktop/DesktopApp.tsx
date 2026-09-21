@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { App } from "../app/App";
 import { AuthScene } from "../app/features/session/AuthLayout";
 import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
@@ -12,6 +12,33 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
   const [confirmation, setConfirmation] = useState<"disconnect" | "quit" | null>(null);
+  const quitting = useRef(false);
+  const quit = useCallback(() => {
+    if (quitting.current) return;
+    quitting.current = true;
+    void invoke("desktop_quit").catch(() => {
+      quitting.current = false;
+      onError("Could not quit the prototype.");
+    });
+  }, [onError]);
+  const requestQuit = useCallback(() => {
+    // Reuse every retained view's unload guard without navigating or unloading the page.
+    if (window.dispatchEvent(new Event("beforeunload", { cancelable: true }))) quit();
+    else setConfirmation("quit");
+  }, [quit]);
+  useEffect(() => {
+    if (!window.__TAURI__) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void window.__TAURI__.window.getCurrentWindow().onCloseRequested((event) => {
+      event.preventDefault();
+      if (!disposed) requestQuit();
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch(() => onError("Could not connect the window close action. Use Quit to exit."));
+    return () => { disposed = true; unlisten?.(); };
+  }, [onError, requestQuit]);
   const input = useMemo(() => nativeInput(session.generation), [session.generation]);
   const storage = useMemo(() => nativeSessionStorage(session, onError, mock), [session.generation]);
   const factory = useMemo(() => (client: Parameters<typeof createSessionService>[0]) => {
@@ -46,14 +73,14 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
       {locked && !mock && <button type="button" onClick={() => void invoke("desktop_open", { url: `${session.origin}/recover-member` }).catch(() => onError("Could not open your browser."))}>recover in browser</button>}
       <InputTimingPanel />
       <button type="button" onClick={() => setConfirmation("disconnect")}>disconnect space</button>
-      <button type="button" onClick={() => setConfirmation("quit")}>quit</button>
+      <button type="button" onClick={requestQuit}>quit</button>
     </div>
     {confirmation && <div class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?">
       <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
       <button type="button" onClick={() => setConfirmation(null)}>keep working</button>
       <button type="button" onClick={() => {
         if (confirmation === "disconnect") void disconnect();
-        else void invoke("desktop_quit").catch(() => onError("Could not quit the prototype."));
+        else quit();
       }}>{confirmation === "disconnect" ? "disconnect" : "quit"}</button>
     </div>}
     <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>

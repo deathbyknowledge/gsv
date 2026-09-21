@@ -333,3 +333,23 @@ signal accumulation, and disabled query notifications/invalidation reads. It
 has not been run locally under the human-testing workflow. The next acceptance
 pass should cover drafts, selected items and scroll in all four views, live
 replies arriving while away, and input responsiveness after visiting them all.
+
+## Window close means exit
+
+The user requested normal Close behavior after Super+W appeared ineffective on
+Hyprland. The prototype previously intercepted Close and minimized on Linux or
+hid the app on macOS. That interception is removed for the prototype. The
+frontend listens through Tauri's
+[window close API](https://v2.tauri.app/reference/javascript/api/namespacewindow/#oncloserequested)
+and routes Close and the visible Quit action through the existing native quit
+command, which shuts down input before exiting. Only event listen/unlisten
+permissions are added to the packaged main window; window destruction and
+remote capabilities remain unavailable to frontend commands.
+
+An explicit close consults the retained views' existing unload guards with a
+cancelable synthetic event. Clean state quits directly; unsaved work opens the
+existing confirmation. Repeated requests cannot start overlapping quit commands.
+Before the configured frontend mounts, ordinary native close falls through to
+the host's existing exit cleanup. No window-manager binding or installed GPUI
+behavior changes. Compilation and source review are complete; the Super+W and
+draft-confirmation acceptance flow remains for the human tester.
