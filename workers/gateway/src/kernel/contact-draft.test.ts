@@ -39,7 +39,7 @@ describe("exact contact drafts", () => {
       const store = new FederationStore(storage);
       const draft = store.transaction(() => store.drafts.create(1000, "proc:helper", content(), "fingerprint:one"));
       // SAFETY: the review handlers here use this real store and authenticated owner; transport is observed at its owning send boundary.
-      const ctx = { federation: store, peer: testPeer({ account: OWNER, calls: ["contact.send"] }) } as KernelContext;
+      const ctx = { federation: store, broadcastToUserUid: vi.fn(), peer: testPeer({ account: OWNER, calls: ["contact.send"] }) } as KernelContext;
       const send = vi.spyOn(federation, "handleContactSend");
       send.mockRejectedValueOnce(new Error("Response lost")).mockResolvedValue({ deliveryId: "delivery:one", conversationId: "conversation:one", state: "queued" });
       const decision = { draftId: draft.id, expectedRevision: 1 };

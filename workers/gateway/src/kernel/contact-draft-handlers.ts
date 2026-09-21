@@ -58,6 +58,7 @@ export async function handleContactDraftCreate(raw: ContactDraftCreateArgs, ctx:
     if (ctx.conversations.get(conversation.id)?.ownerUid !== ownerUid) throw new Error("Helper conversation is no longer available");
     return ctx.federation.drafts.create(ownerUid, processId, args, fingerprint);
   });
+  ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return { draft };
 }
 
@@ -73,7 +74,9 @@ export function handleContactDraftList(args: ContactDraftListArgs, ctx: KernelCo
 
 export function handleContactDraftDiscard(args: ContactDraftDecisionArgs, ctx: KernelContext): ContactDraftResult {
   const ownerUid = draftOwner(ctx);
-  return { draft: ctx.federation.transaction(() => ctx.federation.drafts.decide(ownerUid, args.draftId, args.expectedRevision, "discard")) };
+  const draft = ctx.federation.transaction(() => ctx.federation.drafts.decide(ownerUid, args.draftId, args.expectedRevision, "discard"));
+  ctx.broadcastToUserUid(ownerUid, "contact.changed");
+  return { draft };
 }
 
 export async function handleContactDraftApprove(args: ContactDraftDecisionArgs, ctx: KernelContext): Promise<ContactDraftResult> {
@@ -81,6 +84,7 @@ export async function handleContactDraftApprove(args: ContactDraftDecisionArgs, 
   if (!hasCapability(principalOf(ctx)?.calls ?? [], "contact.send")) throw new Error("Your account cannot send contact messages");
   const draft = ctx.federation.transaction(() => ctx.federation.drafts.decide(ownerUid, args.draftId, args.expectedRevision, "approve"));
   if (draft.result) return { draft };
+  ctx.broadcastToUserUid(ownerUid, "contact.changed");
   const result = await handleContactSend({
     contactId: draft.content.contactId, expectedGeneration: draft.content.expectedGeneration,
     text: draft.content.text, media: draft.content.media, replyTo: draft.content.replyTo,
@@ -89,5 +93,7 @@ export async function handleContactDraftApprove(args: ContactDraftDecisionArgs, 
     processId: draft.processId, approvalId: draft.id,
     assertCurrent: () => { ctx.federation.drafts.assertSending(ownerUid, draft.id); },
   });
-  return { draft: ctx.federation.transaction(() => ctx.federation.drafts.sent(ownerUid, draft.id, result)) };
+  const sent = ctx.federation.transaction(() => ctx.federation.drafts.sent(ownerUid, draft.id, result));
+  ctx.broadcastToUserUid(ownerUid, "contact.changed");
+  return { draft: sent };
 }

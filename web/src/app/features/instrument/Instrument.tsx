@@ -296,7 +296,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         ) : distance === "settings" ? (
           <Settings initialSection={settingsEntry} onDirtyChange={setSettingsDirty} />
         ) : distance === "people" ? (
-          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry("profile"); }} />
+          <People onDirtyChange={setPeopleDirty} onOpenHelper={(pid) => { if (move("zen")) { setZenTarget(null); setZenPrefill(null); setZenPid(pid); } }} onProfile={() => { if (move("settings")) setSettingsEntry("profile"); }} />
         ) : (
           <Fleet
             onCommand={(target) => { if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); } }}

@@ -61,9 +61,9 @@ scoped family. `proc.scope.revoke` requires a direct signed-in human and the
 reviewed revision. Changing a grant requires creating a fresh helper; it cannot
 retroactively clean a broader Process history.
 
-This is the runtime foundation for social assistance. The People selection UI,
-durable exact-draft approval and optional bounded incoming-message admission are
-the remaining integration batch. A scoped contact send already requires a causal
-reply reference, but automatic participation is not enabled by creating a contact.
+People uses this runtime for selected-message assistance, private helper replies
+and durable exact-draft review. See social-drafts.md. Optional bounded incoming-
+message admission remains in progress. A scoped contact send requires a causal
+reply reference; creating a contact never enables automatic participation.
 CI and the user's two-space trial validate the integrated feature. No local
 checks or browser trial have been run by the agent.

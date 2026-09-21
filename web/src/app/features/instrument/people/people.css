@@ -1,4 +1,29 @@
 .people { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); min-height: 0; height: 100%; padding-top: var(--instrument-header-height); box-sizing: border-box; }
+.people-assistance { display: flex; flex-direction: column; align-items: stretch; gap: 16px; min-width: 0; padding-block: 8px 32px; }
+.people-assistance h2 { margin: 0; color: var(--text-title); font: 400 28px/1.2 var(--gsv-font-prose); }
+.people-assistance h3 { color: var(--text-title); font: 500 20px/1.35 var(--gsv-font-prose); }
+.people-assistance > label, .people-helper-limits label { display: flex; flex-direction: column; gap: 8px; color: var(--text-dim); font: 12px/1.6 var(--gsv-font-mono); }
+.people-assistance select { min-width: 0; max-width: 100%; min-height: 42px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 10px; font: 14px/1.5 var(--gsv-font-prose); }
+.people-assistance summary { cursor: pointer; padding-block: 10px; color: var(--text-dim); font: 12px/1.6 var(--gsv-font-mono); overflow-wrap: anywhere; }
+.people-assistance fieldset { margin: 0; padding: 14px 0; border: 0; border-block: 1px solid var(--border); min-width: 0; }
+.people-assistance legend { color: var(--text-dim); font-size: 12px; }
+.people-assistance .people-setting { flex-direction: row; align-items: start; font: 15px/1.5 var(--gsv-font-prose); }
+.people-assistance .people-setting input { flex: none; margin-top: 5px; }
+.people-helper-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.people-helper-access { padding-block: 8px; color: var(--text-dim); font: 13px/1.6 var(--gsv-font-prose); }
+.people-helper-access dl, dl.people-helper-access { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr); gap: 8px 20px; }
+.people-helper-access dt { color: var(--faint); }
+.people-helper-access dd { margin: 0; overflow-wrap: anywhere; }
+.people-helper-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding-top: 20px; border-top: 1px solid var(--border); }
+.people-helper-message { border-top: 1px solid var(--rule-inner); padding-block: 20px; min-width: 0; }
+.people-helper-message > header { color: var(--faint); font: 10px/1.6 var(--gsv-font-mono); margin-bottom: 10px; }
+.people-helper-message .text { font: 16px/1.65 var(--gsv-font-prose); color: var(--text); overflow-wrap: anywhere; }
+.people-helper-message .text pre { overflow-x: auto; font: 12px/1.6 var(--gsv-font-mono); }
+.people-saved-drafts { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 12px; }
+.people-draft-review { padding-block: 14px 24px; }
+.people-draft-review h3 { margin: 6px 0; }
+.people-draft-files { padding-left: 18px; color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .people-helper-limits { grid-template-columns: 1fr; } .people-helper-access dl, dl.people-helper-access { grid-template-columns: 1fr; gap: 2px; } .people-helper-access dd { margin-bottom: 12px; } }
 .people-list { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; border-right: 1px solid var(--border); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .people-list-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; padding: 24px 20px 14px; }
 .people-list-heading h1 { margin: 0; color: var(--text-title); font: 500 25px/1.2 var(--gsv-font-prose); letter-spacing: -.02em; }

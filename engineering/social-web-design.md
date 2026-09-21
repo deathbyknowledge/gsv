@@ -84,3 +84,18 @@ the exact wording, audience and expiry before committing. Selected-message
 sharing exposes at most three reviewed excerpts, with no implicit file grants.
 Delivery receipts and exact retries distinguish a saved proposal from a
 received proposal and from the person's eventual consent decision.
+
+Ship help has a tab within each contact. Message selection opens a review of
+exact copied text, separately checked incoming files and optional pasted material.
+Reading the entire conversation, including future messages, is a separate choice.
+The default private helper can make 32 model requests, expires after a day and
+cannot send to the contact. Its immutable initial instruction is retained with
+its selected materials so a lost start response can be recovered after reload.
+
+The tab keeps private replies beside access, remaining allowances, expiry and a
+stop control. Full work opens in the existing Zen work surface. A reply can be
+adopted into an editable human draft; saving freezes it for a second, exact
+send review. Attachments require selection again. Saved reviews survive browser
+navigation, show uncertain submission explicitly, and link ordinary delivery
+state. Incoming contact files are supported; files in private native storage
+still require selected text material in this initial grant implementation.
