@@ -4,6 +4,22 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("ProcessRegistry", () => {
+  it("recovers an exact spawn after eviction and never reuses a removed pid", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const registry = new ProcessRegistry(sql);
+      storage.transactionSync(() => {
+        registry.spawn("proc:original", { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, {});
+        registry.recordSpawnReceipt(1000, "intent:one", "fingerprint:one", "proc:original");
+      });
+      const recovered = new ProcessRegistry(sql);
+      expect(recovered.spawnReceipt(1000, "intent:one", "fingerprint:one")?.processId).toBe("proc:original");
+      expect(recovered.spawnReceipt(1001, "intent:one", "fingerprint:one")).toBeNull();
+      expect(() => recovered.spawnReceipt(1000, "intent:one", "fingerprint:changed")).toThrow("different input");
+      recovered.kill("proc:original");
+      expect(() => recovered.spawnReceipt(1000, "intent:one", "fingerprint:one")).toThrow("was removed");
+      expect(recovered.count()).toBe(0);
+    });
+  });
   const registryTest = it.extend<{ registry: ProcessRegistry }>({
     registry: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => use(new ProcessRegistry(sql)));

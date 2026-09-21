@@ -332,3 +332,11 @@ shell access, stale contexts, descendants and private context assembly. This
 batch has not run locally; CI is next. The People assistance UI, durable exact
 approval, optional automatic participation and final lifecycle/UX consolidation
 remain in scope and implementation continues.
+
+The scope foundation is `3bafbfcd`; its first CI found one readonly-array type
+mismatch, corrected by `640643da` while Gateway tests continue. Helper creation
+now adds bounded seven-day spawn receipts and idempotent first initialization,
+so retrying a lost creation response does not create another helper or overwrite
+later Process settings. Initial input remains the existing durable Conversation
+message path. This is a generic Process fix needed by the People flow, not a
+second social workflow runtime.

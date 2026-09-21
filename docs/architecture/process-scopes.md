@@ -14,6 +14,15 @@ conversations, sixteen resources, sixteen materials, and 96 KiB per policy.
 Retained scopes are capped at 64 per owner and 512 per installation. Orphaned
 grants are pruned after a day when another grant is created.
 
+`proc.spawn.idempotencyKey` recovers one exact creation for seven days without
+resetting a live Process or reusing a killed pid. Creation with this key takes
+no initial prompt: send the first input through the existing idempotent
+`conversation.send` path. The Kernel commits the receipt, scope and registry
+entry together, then retries identity initialization without replacing later
+preferences or history. Receipts are bounded at 256 per owner and 4,096 per
+installation. `proc.list.conversationId` finds the owner's existing helpers for
+a selected contact thread, including after a browser reload.
+
 The registry captures the scope before Process initialization. A child inherits
 the same grant and counters, including when changing its run-as account. Forking
 is limited to history already within the scope. IPC and Process history/control

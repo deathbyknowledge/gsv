@@ -78,6 +78,28 @@ export class ProcessRegistry {
     this.scopes = new ProcessScopeStore(sql);
   }
 
+  spawnReceipt(ownerUid: number, intent: string, fingerprint: string, now = Date.now()): ProcessRecord | null {
+    const row = this.sql.exec<{ process_id: string; fingerprint: string }>(
+      "SELECT process_id, fingerprint FROM process_spawn_receipts WHERE owner_uid = ? AND intent_id = ? AND created_at > ?",
+      ownerUid, intent, now - 7 * 86_400_000,
+    ).toArray()[0];
+    if (!row) return null;
+    if (row.fingerprint !== fingerprint) throw new Error("Process creation identity was already used for different input");
+    const process = this.get(row.process_id);
+    if (!process) throw new Error("The original process was removed; use a new creation identity");
+    return process;
+  }
+
+  recordSpawnReceipt(ownerUid: number, intent: string, fingerprint: string, pid: string, now = Date.now()): void {
+    this.sql.exec("DELETE FROM process_spawn_receipts WHERE created_at <= ?", now - 7 * 86_400_000);
+    const count = this.sql.exec<{ total: number; owned: number }>(
+      "SELECT count(*) AS total, coalesce(sum(owner_uid = ?), 0) AS owned FROM process_spawn_receipts", ownerUid,
+    ).one();
+    if (count.total >= 4096 || count.owned >= 256) throw new Error("Process creation receipt capacity reached");
+    this.sql.exec("INSERT INTO process_spawn_receipts (owner_uid, intent_id, fingerprint, process_id, created_at) VALUES (?, ?, ?, ?, ?)",
+      ownerUid, intent, fingerprint, pid, now);
+  }
+
   spawn(
     processId: string,
     identity: ProcessIdentity,

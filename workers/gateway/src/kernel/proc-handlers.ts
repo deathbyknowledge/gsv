@@ -45,6 +45,8 @@ import { invalidatePersonalControllerReadiness } from "./personal-controller";
 import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 import { resolveSelectedMessageTarget } from "./targets";
 import { assertScopedProcess, currentProcessScope, validateScopePolicy } from "./process-scope";
+import { processScopePolicySchema } from "@humansandmachines/gsv/protocol";
+import { stableOpaqueId } from "../shared/stable-id";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -70,10 +72,15 @@ export function handleProcList(
   const uid = isRoot ? args.uid : callerOwnerUid;
 
   const scope = currentProcessScope(ctx);
-  const records = ctx.procs.list(uid).filter((record) => !scope || ctx.procs.scopes.forProcess(record.processId)?.id === scope.id);
+  const records = ctx.procs.list(uid).filter((record) => {
+    if (scope && record.scopeId !== scope.id) return false;
+    if (!args.conversationId) return true;
+    return !!record.scopeId && !!ctx.procs.scopes.get(record.scopeId)?.policy.conversations.some((grant) => grant.conversationId === args.conversationId);
+  });
 
   const processes: ProcListEntry[] = records.map((r) => ({
     pid: r.processId,
+    ...(r.scopeId ? { scopeId: r.scopeId } : undefined),
     uid: r.ownerUid,
     username: r.username,
     interactive: r.interactive,
@@ -96,7 +103,11 @@ export async function handleProcSpawn(
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
   const identity = principalOf(ctx)!;
-  const pid = `proc:${crypto.randomUUID()}`;
+  let pid = `proc:${crypto.randomUUID()}`;
+  const intent = args.idempotencyKey?.trim();
+  if (intent !== undefined && (!intent || intent.length > 160)) return { ok: false, error: "Process creation identity must contain 1 to 160 characters" };
+  if (intent && args.prompt) return { ok: false, error: "Recoverable process creation takes no initial prompt; use conversation.send with its own message identity" };
+  if (args.scope) args = { ...args, scope: processScopePolicySchema.parse(args.scope) };
   const runAs = args.runAs?.trim();
   const explicitRunAs = Boolean(runAs);
   const label = args.label?.trim() || undefined;
@@ -138,6 +149,7 @@ export async function handleProcSpawn(
   // caller's personal agent. A delegated child inherits this identity unless
   // a specialized agent is selected explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  const fingerprint = intent ? await stableOpaqueId("spawn", [ctx.processId, JSON.stringify(args)]) : "";
   const aiError = args.ai && processAiConfigInputError(args.ai);
   if (aiError) return { ok: false, error: aiError };
   const ai = args.ai ? createProcessAiConfig(args.ai) : null;
@@ -181,7 +193,7 @@ export async function handleProcSpawn(
     baseIdentity = provision.identity;
   }
 
-  const spawnIdentity: ProcessIdentity = {
+  let spawnIdentity: ProcessIdentity = {
     ...baseIdentity,
     cwd: inheritedScope || args.scope ? "/materials" : resolveSpawnCwd(args.cwd, baseIdentity),
   };
@@ -190,6 +202,12 @@ export async function handleProcSpawn(
   try {
     const register = () => {
       currentProcessScope(ctx);
+      const existing = intent ? ctx.procs.spawnReceipt(ownerUid, intent, fingerprint) : null;
+      if (existing) {
+        pid = existing.processId;
+        spawnIdentity = ctx.procs.getIdentity(pid)!;
+        return;
+      }
       if (args.scope) validateScopePolicy(args.scope, ownerUid, ctx);
       const scope = inheritedScope
         ? ctx.procs.scopes.requireActive(inheritedScope.id, inheritedScope.revision)
@@ -207,8 +225,9 @@ export async function handleProcSpawn(
         cwd: spawnIdentity.cwd,
         ...(scope ? { scopeId: scope.id } : undefined),
       });
+      if (intent) ctx.procs.recordSpawnReceipt(ownerUid, intent, fingerprint, pid);
     };
-    if (args.scope || inheritedScope) ctx.federation.transaction(register);
+    if (args.scope || inheritedScope || intent) ctx.federation.transaction(register);
     else register();
     registered = true;
     const registeredScope = args.scope || inheritedScope ? ctx.procs.scopes.forProcess(pid) : null;
@@ -219,6 +238,7 @@ export async function handleProcSpawn(
       identity: spawnIdentity,
       interactive,
       autoTitle: label === undefined && !inheritedScope && !args.scope,
+      ...(intent ? { ifUninitialized: true } : undefined),
     };
     if (label) identityArgs.title = label;
     if (ai) {
@@ -259,6 +279,7 @@ export async function handleProcSpawn(
       });
     }
   } catch (error) {
+    if (intent && registered) return { ok: false, error: `Process initialization is unconfirmed; retry the same creation identity: ${error instanceof Error ? error.message : String(error)}` };
     if (!registered) {
       return {
         ok: false,
