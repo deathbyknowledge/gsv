@@ -18,6 +18,8 @@ export type PromptLineProps = {
   disabled?: boolean;
   onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   allowEmpty?: boolean;
+  /** A native composer can finalize its current segment before ordinary submission. */
+  interceptSubmit?: () => boolean;
   onFiles?: (files: File[]) => void;
   /** Called when the chip is pressed, to change the place. */
   onPlace?: () => void;
@@ -36,7 +38,8 @@ export type PromptLineHandle = {
   disabled: boolean;
   /** The place chip, so the picker it opens can tell a press on it from one outside. */
   chip: HTMLButtonElement | null;
-  setValue(value: string): void;
+  setValue(value: string, caret?: number): void;
+  selection(): { value: string; start: number; end: number };
   /** Add text after what is already there and start editing; how a paste from outside the prompt lands. */
   append(text: string): void;
   focus(): void;
@@ -52,7 +55,7 @@ export type PromptLineHandle = {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
@@ -136,9 +139,11 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   useImperativeHandle(ref, () => ({
     disabled: Boolean(disabled),
     get chip() { return chipRef.current; },
-    setValue(value) {
+    selection: () => ({ value: read(), start: inputRef.current?.selectionStart ?? 0, end: inputRef.current?.selectionEnd ?? 0 }),
+    setValue(value, caret) {
       if (!inputRef.current) return;
       inputRef.current.value = value;
+      if (caret !== undefined) inputRef.current.setSelectionRange(caret, caret);
       changed();
     },
     append(text) {
@@ -155,6 +160,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const send = async () => {
     const input = inputRef.current;
     if (!input || disabled || submitting.current) return;
+    if (interceptSubmit?.()) return;
     const text = input.value.trim();
     if (!text && !allowEmpty) return;
     const sentRevision = revision.current;

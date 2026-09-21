@@ -1,0 +1,97 @@
+# GSV Tauri Prototype
+
+An isolated executable hosting the real Instrument/Zen frontend. It reuses the
+production native helper supervisors through `desktop-native`. Production GPUI
+Desktop, its credentials, daemon, CLI endpoint and installer remain separate.
+The ownership record is [here](../../../../engineering/desktop-tauri-prototype.md).
+
+## Build and open on Linux
+
+From the repository root, with Rust, Node/npm and the
+[Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux):
+
+```bash
+npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+npm run gsv:build
+npm run build --workspace web -- --config vite.desktop.config.ts
+cargo build --manifest-path host/Cargo.toml --locked --package desktop-tauri --features custom-protocol --package transcriber --package gestures
+./host/target/debug/gsv-desktop-tauri
+```
+
+The helpers must be beside the executable. The speech helper may download its
+checksum-pinned model on the first explicit Voice request; the vision models are
+embedded in `gsv-vision`. Nothing starts the camera or microphone at app launch.
+Enable gestures or start voice explicitly. Existing `GSV_GESTURES=0` and
+`GSV_GESTURE_DEBUG=1` switches remain supported by the shared supervisor.
+
+Enter the HTTPS origin of the space, then sign in through the ordinary shared
+login form. HTTP is supported for localhost only. No production URL or credential
+is built into the app. Native session data lives under the platform application
+data directory for `es.humansandmachines.gsv.tauri-prototype`; it does not read
+`~/.gsv/config.toml`. Only one prototype instance can own this directory.
+
+Close minimizes the window on Linux and hides the application on macOS. Use the
+visible Quit action to end the prototype and its helpers. The ordinary installed
+Desktop can be opened as usual. `gsv desktop` continues to address that installed
+application: this prototype does not claim its local CLI control endpoint.
+
+## Development mock
+
+In one terminal from the repository root:
+
+```bash
+npm run dev --workspace web -- --config vite.desktop.config.ts
+```
+
+In another:
+
+```bash
+cargo run --manifest-path host/Cargo.toml --package desktop-tauri
+```
+
+The development server uses port 5186 and refuses to take an occupied port. Choose
+“open the development mock” on the space-address screen. `/run`, `/stream`,
+`/reply` and `/approve` use the existing in-memory gateway. Mock selection and
+credentials are never written to the native session file. The production build
+excludes the mock. The real helpers are still real in development mode.
+
+## Human acceptance pass
+
+1. Connect the production space yourself. Check Zen, theme, receipts, approvals,
+   streaming, attachment send and optimistic message acknowledgement.
+2. Press Voice. Check preparation, partial text, finish, cancel, device selection,
+   and acknowledged mute. Type before/after the dictated range. Editing inside
+   dictated text stops capture and preserves the correction; restart Voice to
+   continue. Send segment uses ordinary conversation sending and preserves files.
+3. Enable gestures: it starts disarmed. Deliberately arm, then check the existing
+   1–5 vocabulary (start/finish, send, delete, clear, mute), fist reset, scroll
+   chord and tracking loss. Clear/delete affect only unsent dictated text.
+4. Try unfocused use and minimization. If the webview stops responding for three
+   seconds, native input stops and disarms. Reconnect native input and explicitly
+   restart it. No old action should arrive in a later draft. Repeat after sleep,
+   reload, Process selection change and logout.
+5. Disconnect the space, then select another destination. Its username may also
+   be `root`; it must show fresh sign-in with no old history, draft, uploads,
+   pending sends or terminal recovery. The disconnect action warns about unsent
+   work and tears down the whole frontend.
+6. Quit and reopen. Camera/voice must be off and gestures disarmed. The independent
+   daemon and installed Desktop should remain available.
+
+## Current limits
+
+- Minimized webview suspension interrupts dictation. This is explicit fail-closed
+  behavior for the prototype, not production native parity.
+- Desktop CLI controls, tray, automatic local machine enrollment, persistent
+  microphone preference and native global shortcuts are not yet connected.
+  Fleet's ordinary enrollment UI remains available. Chat requires no daemon.
+- OAuth, password recovery, invitations and onboarding links open in the external
+  browser. The prototype does not accept external deep links or remote webviews.
+- Linux is the initial build. macOS permission descriptions are included for a
+  later isolated app bundle; this is not a signed/notarized macOS artifact and
+  does not advertise Windows Desktop support.
+- No performance improvement is claimed. Compare the whole host, webview and
+  helpers against GPUI for startup, idle load, input/IME and long conversations.
+
+The user's latest instruction authorizes building and opening the app locally;
+interaction testing is performed by the user. Added boundary tests are for CI
+and have not been run locally.

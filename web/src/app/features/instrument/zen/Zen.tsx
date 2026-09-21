@@ -1,3 +1,5 @@
+import { useNativeVoice } from "../../../services/platform/useNativeVoice";
+import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
 import type { JSX } from "preact";
@@ -630,6 +632,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where],
   );
 
+  const nativeVoice = useNativeVoice({
+    prompt: promptRef, scope: `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`,
+    enabled: connected && pid !== null && pendingHil === null,
+    send: say, scroll: scrolling.move,
+  });
+
   const runDirectly = useCallback(
     (command: string) => {
       try {
@@ -1016,7 +1024,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}
-            onInput={onPromptInput}
+            onInput={(value) => { onPromptInput(value); nativeVoice.onInput(value); }}
+            interceptSubmit={nativeVoice.interceptSubmit}
             onKeyIntercept={onPromptKey}
             onPlace={openPicker}
             place={currentPlace}
@@ -1036,6 +1045,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             onFiles={addFiles}
             onHistory={onHistory}
           />
+          <NativeVoiceControls control={nativeVoice} disabled={!connected || !pid || pendingHil !== null} />
           <div class="zen-compose-actions">
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";

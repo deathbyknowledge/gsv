@@ -74,6 +74,16 @@ function session(phase: SessionPhase, username: string): SessionSnapshot {
 }
 
 describe("authenticated query isolation", () => {
+  it("does not reuse an account's queries at a different gateway", () => {
+    const first = session("ready", "root");
+    const second = { ...first, url: "wss://another-space.test/ws" };
+    const current = resolveScopedWebQueryClient(null, webQuerySessionScope(first));
+    current.client.setQueryData(PRIVATE_QUERY_KEY, { owner: "first-space" });
+    const next = resolveScopedWebQueryClient(current, webQuerySessionScope(second));
+    expect(next.client).not.toBe(current.client);
+    expect(next.client.getQueryData(PRIVATE_QUERY_KEY)).toBeUndefined();
+  });
+
   it("does not reuse fresh private Work data across Alice lock and Bob login", async () => {
     const queryKey = ["processes", "gsv-console"] as const;
     const alice = resolveScopedWebQueryClient(

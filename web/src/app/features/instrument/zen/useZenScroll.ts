@@ -133,7 +133,16 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     };
   }, [ready, moments.length === 0, scrolled, stopFollowing, sync]);
 
+  const move = useCallback((delta: number) => {
+    const element = viewport.current;
+    if (!element || !current.current.ready) return;
+    stopFollowing();
+    write(element.scrollTop + delta);
+    capture();
+    if (element.scrollTop < 80) readOlder();
+  }, [capture, readOlder, stopFollowing, write]);
+
   const selectedIndex = selected === null ? -1 : moments.findIndex((moment) => key(moment.id) === selected);
   const browse = promptFocused || moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;
-  return { viewport, content, browse, select, page, follow, stopFollowing, readOlder };
+  return { viewport, content, browse, select, page, follow, stopFollowing, readOlder, move };
 }

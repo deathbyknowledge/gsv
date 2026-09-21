@@ -15,3 +15,7 @@ docs/.vitepress/cache/
 
 # OS junk
 .DS_Store
+
+# Isolated desktop prototype artifacts
+web/dist-tauri/
+host/apps/desktop-tauri/gen/

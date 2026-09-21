@@ -70,8 +70,10 @@ Likely shared-file conflicts: `App.tsx`, `AppProviders.tsx`, `sessionService.ts`
 `GatewayProvider.tsx`, `Zen.tsx`, `PromptLine.tsx`, `host/Cargo.lock`. No social,
 adapter, gateway policy, prompt or standing-context work belongs in this batch.
 
-The handoff explicitly defers local builds, typechecks, lint, tests and runtime
-verification to the user/CI. Source inspection is not a passing test result.
+The handoff initially deferred local verification to the user/CI. The user then
+explicitly authorized local compilation and launch on 2026-09-21, with the user
+acting as the testing proxy and entering their own production space. No local
+test suites, lint, automated interaction or production probes are run.
 
 Framework references: [Tauri capabilities](https://v2.tauri.app/security/capabilities/),
 [application command manifest](https://docs.rs/tauri-build/latest/tauri_build/struct.AppManifest.html),

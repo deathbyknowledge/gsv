@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-input-poll"
+description = "Enables the input_poll command without any pre-configured scope."
+commands.allow = ["input_poll"]
+
+[[permission]]
+identifier = "deny-input-poll"
+description = "Denies the input_poll command without any pre-configured scope."
+commands.deny = ["input_poll"]

@@ -1,3 +1,4 @@
+import { gatewayHttpOrigin } from "../platform/gatewayOrigin";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   AdapterConnectResult,
@@ -708,7 +709,7 @@ export async function addConsoleMcpServer(
   }
 
   const transport = input.transport === "streamable-http" || input.transport === "sse" ? input.transport : "auto";
-  const callbackHost = globalThis.window?.location.origin;
+  const callbackHost = gatewayHttpOrigin();
   const result = await client.call("sys.mcp.add", {
     name,
     url,
