@@ -259,6 +259,24 @@ pub struct VisionHandle {
 }
 
 impl VisionHandle {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test() -> Self {
+        let (_, reliable) = tokio_mpsc::channel(EVENT_CAPACITY);
+        let (_, status) = watch::channel(None);
+        Self {
+            context: VisionContextSender::for_test(),
+            events: VisionEventReceiver {
+                reliable,
+                status,
+                reliable_closed: false,
+                status_closed: false,
+                prefer_reliable: false,
+            },
+            shutdown: Arc::new(AtomicBool::new(false)),
+            supervisor: None,
+        }
+    }
+
     fn stop(&mut self) {
         self.events.close();
         self.context.state.close();

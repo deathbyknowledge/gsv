@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use desktop_native::transcription::{
@@ -12,6 +14,7 @@ use gesture_protocol::{
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 use uuid::Uuid;
 
 mod practice;
@@ -217,6 +220,13 @@ impl InputRuntime {
     }
 }
 
+type VisionLaunch = Result<Option<VisionHandle>, String>;
+
+struct VisionStartup {
+    cancelled: Arc<AtomicBool>,
+    task: JoinHandle<VisionLaunch>,
+}
+
 struct State {
     snapshot: Snapshot,
     voice_commands: VoiceCommandSender,
@@ -226,6 +236,8 @@ struct State {
     next_id: u64,
     events: VecDeque<(Instant, InputEvent)>,
     vision: Option<VisionHandle>,
+    vision_start: Option<VisionStartup>,
+    vision_stops: JoinSet<()>,
     intent_sequence: u64,
     scroll_sequence: u64,
     status_sequence: u64,
@@ -266,6 +278,8 @@ impl State {
             next_id: 0,
             events: VecDeque::new(),
             vision: None,
+            vision_start: None,
+            vision_stops: JoinSet::new(),
             intent_sequence: 0,
             scroll_sequence: 0,
             status_sequence: 0,
@@ -320,8 +334,81 @@ impl State {
         self.snapshot.gesture_needs_reset = false;
         self.snapshot.gesture_reset_after_action = 0;
         self.cancel_voice();
-        self.vision = None;
+        self.stop_vision();
         self.gesture_progress = None;
+    }
+
+    fn stop_vision(&mut self) {
+        if let Some(vision) = self.vision.take() {
+            let _ = vision.context.set_context(GestureContext::Disarmed);
+            self.vision_stops.spawn_blocking(move || drop(vision));
+        }
+        if let Some(startup) = self.vision_start.take() {
+            startup.cancelled.store(true, Ordering::Release);
+            self.vision_stops.spawn(async move {
+                if let Ok(result) = startup.task.await {
+                    let _ = tokio::task::spawn_blocking(move || drop(result)).await;
+                }
+            });
+        }
+    }
+
+    fn start_vision(&mut self, launch: impl FnOnce() -> VisionLaunch + Send + 'static) {
+        self.stop_vision();
+        self.snapshot.scroll_velocity = 0;
+        self.snapshot.gestures_enabled = true;
+        self.snapshot.gesture_status = "starting".into();
+        self.snapshot.notice = None;
+        self.gesture_progress = None;
+        self.gesture_action = None;
+        self.intent_sequence = 0;
+        self.scroll_sequence = 0;
+        self.status_sequence = 0;
+        self.reset_sequence = 0;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let mut stopping = std::mem::take(&mut self.vision_stops);
+        let task = tokio::spawn(async move {
+            // Serialize capture ownership while acknowledgements and cancellation stay available.
+            while stopping.join_next().await.is_some() {}
+            tokio::task::spawn_blocking(move || {
+                if worker_cancelled.load(Ordering::Acquire) {
+                    return Ok(None);
+                }
+                let result = launch();
+                if worker_cancelled.load(Ordering::Acquire) {
+                    drop(result);
+                    return Ok(None);
+                }
+                result
+            })
+            .await
+            .map_err(|_| "Gesture helper could not start.")?
+        });
+        self.vision_start = Some(VisionStartup { cancelled, task });
+    }
+
+    fn vision_started(&mut self, result: Result<VisionLaunch, JoinError>) {
+        self.vision_start = None;
+        self.watchdog();
+        let result = result.unwrap_or_else(|_| Err("Gesture helper could not start.".into()));
+        if !self.snapshot.gestures_enabled || !self.fresh(&self.snapshot.lease) {
+            self.vision_stops.spawn_blocking(move || drop(result));
+            return;
+        }
+        match result {
+            Ok(Some(vision)) => self.vision = Some(vision),
+            Ok(None) => {
+                self.snapshot.gestures_enabled = false;
+                self.snapshot.gesture_status = "disabled".into();
+            }
+            Err(error) => {
+                self.snapshot.gestures_enabled = false;
+                self.snapshot.gesture_status = "worker_unavailable".into();
+                self.snapshot.notice = Some(error);
+            }
+        }
+        self.sync_context();
     }
 
     fn context(&self) -> GestureContext {
@@ -597,7 +684,7 @@ impl State {
         Ok(())
     }
 
-    async fn command(&mut self, command: InputCommand) -> Result<(), String> {
+    fn command(&mut self, command: InputCommand) -> Result<(), String> {
         match command {
             InputCommand::Start { device_id } => self.start_voice(device_id)?,
             InputCommand::Stop { request_id } => self.stop(request_id)?,
@@ -623,30 +710,14 @@ impl State {
                     self.gesture_action = None;
                     return Ok(());
                 }
-                if self.snapshot.gestures_enabled && self.snapshot.gesture_status == "ready" {
+                if self.snapshot.gestures_enabled
+                    && matches!(self.snapshot.gesture_status.as_str(), "ready" | "starting")
+                {
                     return Ok(());
                 }
-                self.snapshot.scroll_velocity = 0;
-                self.vision = None;
-                self.snapshot.gestures_enabled = false;
-                self.snapshot.gesture_status = "off".into();
-                self.gesture_progress = None;
-                self.gesture_action = None;
-                self.vision = tokio::task::spawn_blocking(vision_debug::start_for_desktop)
-                    .await
-                    .map_err(|_| "Gesture helper could not start.")?
-                    .map_err(|error| error.to_string())?;
-                self.snapshot.gestures_enabled = self.vision.is_some();
-                self.snapshot.gesture_status = if self.vision.is_some() {
-                    "starting"
-                } else {
-                    "disabled"
-                }
-                .into();
-                self.intent_sequence = 0;
-                self.scroll_sequence = 0;
-                self.status_sequence = 0;
-                self.reset_sequence = 0;
+                self.start_vision(|| {
+                    vision_debug::start_for_desktop().map_err(|error| error.to_string())
+                });
             }
             InputCommand::Practice { expected } => {
                 let lesson_id = self.id();
@@ -1095,9 +1166,17 @@ impl State {
     }
 }
 
-async fn run(mut requests: mpsc::Receiver<Request>) {
-    let mut voice = transcription::start();
-    let mut state = State::new(voice.commands.clone());
+async fn run(requests: mpsc::Receiver<Request>) {
+    let voice = transcription::start();
+    let state = State::new(voice.commands.clone());
+    run_requests(requests, state, voice.events).await;
+}
+
+async fn run_requests(
+    mut requests: mpsc::Receiver<Request>,
+    mut state: State,
+    mut voice_events: mpsc::Receiver<VoiceEvent>,
+) {
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     loop {
         tokio::select! {
@@ -1112,7 +1191,7 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
                 }
                 Some(Request::Command { lease, command, reply }) => {
                     state.watchdog();
-                    let result = if state.fresh(&lease) { state.command(command).await }
+                    let result = if state.fresh(&lease) { state.command(command) }
                         else { Err("Native input session ended.".into()) };
                     let _ = reply.send(result);
                 }
@@ -1120,21 +1199,29 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
                 Some(Request::Shutdown(reply)) => {
                     state.reset();
                     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
+                    while state.vision_stops.join_next().await.is_some() {}
                     // Wait for the supervisor's terminal channel close before exiting the host.
-                    while voice.events.recv().await.is_some() {}
+                    while voice_events.recv().await.is_some() {}
                     let _ = reply.send(());
                     break;
                 }
                 None => break,
             },
-            event = voice.events.recv() => if let Some(event) = event { state.watchdog(); state.voice_event(event); } else { break; },
+            event = voice_events.recv() => if let Some(event) = event { state.watchdog(); state.voice_event(event); } else { break; },
+            result = async {
+                match &mut state.vision_start {
+                    Some(startup) => (&mut startup.task).await,
+                    None => std::future::pending().await,
+                }
+            } => state.vision_started(result),
+            _ = state.vision_stops.join_next(), if !state.vision_stops.is_empty() => {},
             event = async {
                 match &mut state.vision {
                     Some(vision) => vision.events.recv().await,
                     None => std::future::pending().await,
                 }
             } => if let Some(event) = event { state.vision_event(event); } else {
-                state.vision = None;
+                state.stop_vision();
                 state.snapshot.gestures_enabled = false;
                 state.cancel_voice();
                 state.snapshot.scroll_velocity = 0;
@@ -1150,6 +1237,7 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
     }
     state.reset();
     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
+    while state.vision_stops.join_next().await.is_some() {}
 }
 
 fn voice_error_message(code: VoiceErrorCode, phase: Option<&str>) -> &'static str {
@@ -1208,6 +1296,136 @@ mod tests {
         let mut state = State::new(commands);
         state.snapshot.lease = "view-one".into();
         (state, receiver)
+    }
+
+    #[tokio::test]
+    async fn slow_gesture_start_keeps_requests_live_and_cannot_cross_a_replaced_lease() {
+        let (mut state, commands) = attached();
+        let (channel, _) = updates();
+        let initial = state.attach(channel, false);
+        let vision = VisionHandle::for_test();
+        let context = vision.context.clone();
+        let (started, starting) = oneshot::channel();
+        let (release, waiting) = std::sync::mpsc::channel();
+        state.start_vision(move || {
+            let _ = started.send(());
+            let _ = waiting.recv();
+            Ok(Some(vision))
+        });
+        let (sender, requests) = mpsc::channel(16);
+        let (_voice_sender, voice_events) = mpsc::channel(1);
+        let runtime = InputRuntime { sender };
+        let task = tokio::spawn(run_requests(requests, state, voice_events));
+        let deadline = Duration::from_secs(1);
+        tokio::time::timeout(deadline, starting)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(deadline, async {
+            runtime
+                .acknowledge(initial.lease.clone(), 0, 0)
+                .await
+                .unwrap();
+            runtime
+                .command(
+                    initial.lease.clone(),
+                    InputCommand::Start { device_id: None },
+                )
+                .await
+                .unwrap();
+            runtime
+                .command(initial.lease.clone(), InputCommand::Cancel)
+                .await
+                .unwrap();
+            runtime
+                .command(
+                    initial.lease.clone(),
+                    InputCommand::Gestures { enabled: false },
+                )
+                .await
+                .unwrap();
+            runtime
+                .command(initial.lease.clone(), InputCommand::Detach)
+                .await
+                .unwrap();
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(VoiceCommand::Start { .. })
+        ));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(VoiceCommand::Cancel { .. })
+        ));
+        let (channel, delivered) = updates();
+        let replacement = tokio::time::timeout(deadline, runtime.attach(channel, false))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(initial.lease, replacement.lease);
+        release.send(()).unwrap();
+        tokio::time::timeout(deadline, async {
+            while context.set_context(GestureContext::Disarmed).is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        runtime.acknowledge(replacement.lease, 0, 0).await.unwrap();
+        assert!(delivered
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|update| { update["snapshot"]["gestures_enabled"] == false }));
+        drop(runtime);
+        tokio::time::timeout(deadline, task).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_restart_does_not_launch_another_helper() {
+        let (mut state, _commands) = attached();
+        let (started, starting) = oneshot::channel();
+        let (release, waiting) = std::sync::mpsc::channel();
+        state.start_vision(move || {
+            let _ = started.send(());
+            let _ = waiting.recv();
+            Ok(None)
+        });
+        starting.await.unwrap();
+        state.disable_hands_free();
+        let relaunched = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&relaunched);
+        state.start_vision(move || {
+            observed.store(true, Ordering::Release);
+            Ok(None)
+        });
+        state.disable_hands_free();
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while state.vision_stops.join_next().await.is_some() {}
+        })
+        .await
+        .unwrap();
+        assert!(!relaunched.load(Ordering::Acquire));
+        assert!(!state.snapshot.gestures_enabled);
+        assert_eq!(state.snapshot.gesture_status, "off");
+    }
+
+    #[tokio::test]
+    async fn asynchronous_gesture_start_failure_is_reported_to_the_current_view() {
+        let (mut state, _commands) = attached();
+        state.start_vision(|| Err("Gesture helper could not start.".into()));
+        assert_eq!(state.snapshot.gesture_status, "starting");
+        let result = (&mut state.vision_start.as_mut().unwrap().task).await;
+        state.vision_started(result);
+        assert!(!state.snapshot.gestures_enabled);
+        assert_eq!(state.snapshot.gesture_status, "worker_unavailable");
+        assert_eq!(
+            state.snapshot.notice.as_deref(),
+            Some("Gesture helper could not start.")
+        );
     }
 
     #[test]
