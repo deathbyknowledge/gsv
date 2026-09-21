@@ -169,7 +169,7 @@ export class CapabilityStore {
  *   "sys.mcp.*"   matches nested syscalls under "sys.mcp."
  */
 export function hasCapability(
-  capabilities: string[],
+  capabilities: readonly string[],
   syscall: string,
 ): boolean {
   for (const cap of capabilities) {
