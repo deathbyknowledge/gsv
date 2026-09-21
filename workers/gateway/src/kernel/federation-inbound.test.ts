@@ -30,6 +30,7 @@ import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import { syncFederationRequestResponsibility } from "./federation/requests";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -769,17 +770,7 @@ describe("federation inbound boundary", () => {
       );
     });
     const requestId = "request:stable-responsibility";
-    const offered = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: requestId,
-        kind: "task",
-        title: "Keep one responsibility",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:request-lifecycle-offered");
-    expect((await deliver(offered)).status).toBe(200);
+    await seedOutgoingRequest(requestId, true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
     const states = ["accepted", "active", "completed"] as const;
@@ -822,7 +813,7 @@ describe("federation inbound boundary", () => {
       },
     });
     expect(result.transitions.map((transition) => transition.afterState)).toEqual([
-      "open",
+      "waiting",
       "active",
       "active",
       "resolved",
@@ -831,17 +822,7 @@ describe("federation inbound boundary", () => {
 
   it.each([false, true])("controls missing request responsibility creation after a source toggle and removal=%s", async (removed) => {
     const requestId = "request:source-toggle";
-    const offered = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: requestId,
-        kind: "task",
-        title: "An existing request without a tracking responsibility",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:source-toggle-offered");
-    expect((await deliver(offered)).status).toBe(200);
+    await seedOutgoingRequest(requestId, false);
     await runInDurableObject(kernel, async (instance: Kernel) => {
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
       instance.responsibilitySources.set(OWNER.uid, "federation.received", true);
@@ -872,7 +853,7 @@ describe("federation inbound boundary", () => {
         });
       });
     }
-    expect(messages).toHaveLength(4);
+    expect(messages).toHaveLength(3);
   });
 
   it("keeps exact contact content in Conversation history rather than responsibility details", async () => {
@@ -1094,6 +1075,20 @@ describe("federation inbound boundary", () => {
         jsonValueSchema.parse(unsigned),
       ),
     };
+  }
+
+  async function seedOutgoingRequest(requestId: string, tracked: boolean): Promise<void> {
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const now = Date.now();
+      const request = instance.federation.createRequest({
+        id: requestId, contactId: contact.id, contactGeneration: contact.generation,
+        direction: "outgoing", kind: "task", title: "Track work performed by the remote participant",
+        state: "offered", exchange: { state: "acknowledged", source: "local" }, createdAtMs: now, updatedAtMs: now,
+      });
+      if (tracked) syncFederationRequestResponsibility({
+        request, contact, conversationId: contact.conversationId, remoteInput: false, createAllowed: true, now,
+      }, instance.buildKernelContext({}));
+    });
   }
 
   async function deliver(envelope: FederationDeliveryEnvelope): Promise<Response> {
