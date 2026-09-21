@@ -32,6 +32,7 @@ export * from "./social";
 export * from "./shared-context";
 export * from "./work";
 export * from "./process-scope";
+export * from "./contact-draft";
 export * from "./approaches";
 export type * from "./syscalls/map";
 export * from "./adapters";

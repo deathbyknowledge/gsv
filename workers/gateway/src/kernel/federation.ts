@@ -613,7 +613,9 @@ export async function handleContactRevoke(
 export async function handleContactSend(
   args: ContactSendArgs,
   ctx: KernelContext,
+  approval?: { processId: string; approvalId: string; assertCurrent: () => void },
 ): Promise<ContactSendResult> {
+  if (approval) { requireContactHuman(ctx); approval.assertCurrent(); }
   const scope = assertScopedSend(ctx, args.contactId);
   const ownerUid = requireContactCaller(ctx, false);
   const now = Date.now();
@@ -647,6 +649,7 @@ export async function handleContactSend(
     text,
     media: requestedMedia ?? [],
     ...(replyTo ? { replyTo } : undefined),
+    ...(approval ? { approval: { processId: approval.processId, approvalId: approval.approvalId } } : undefined),
   }));
   const existing = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
   if (existing) {
@@ -667,6 +670,7 @@ export async function handleContactSend(
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
   contact = await negotiateContactProtocol(contact, ctx);
   const v2Messages = contact.protocol?.version === 2 && contact.protocol.features.includes("messages");
+  if (approval && !v2Messages) throw new Error("Approved drafts require federation v2 message support from this contact");
   if (replyTo && !v2Messages) throw new Error("Replies require federation v2 message support from this contact");
   if (replyTo && !await getConversationById(ctx.installationId, contact.conversationId).resolveOrigin(replyTo, contact.threadId)) {
     throw new Error("Reply must reference a message in this contact conversation");
@@ -707,7 +711,7 @@ export async function handleContactSend(
     localMessage.social = {
       threadId: contact.threadId,
       reference: { actor: { shipId: document.shipId, subjectId: subject.id }, messageId },
-      provenance: localMessage.author.kind === "process"
+      provenance: approval ? { kind: "approved", processId: approval.processId, approvalId: approval.approvalId } : localMessage.author.kind === "process"
         ? { kind: "process", processId: localMessage.author.pid } : { kind: "human" },
       ...(replyTo ? { replyTo } : undefined),
     };
@@ -715,6 +719,7 @@ export async function handleContactSend(
   ctx.requestSignal?.throwIfAborted();
   const admitted = ctx.federation.transaction(() => {
     ctx.requestSignal?.throwIfAborted();
+    approval?.assertCurrent();
     assertScopedSend(ctx, args.contactId);
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     const concurrent = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);

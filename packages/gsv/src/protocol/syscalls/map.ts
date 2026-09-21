@@ -1,4 +1,5 @@
 import type { ContactContextListArgs, ContactContextListResult, ContactContextSourcesArgs, ContactContextSourcesResult, ContactContextSubscribeArgs, ContactContextSubscribeResult, ContactContextSyncArgs, ContactContextSyncResult, ContactContextPublicationsArgs, ContactContextPublicationsResult, ContactContextPublishArgs, ContactContextPublishResult, ContactContextWithdrawArgs, ContactContextWithdrawResult, ContactContextConsentArgs, ContactContextConsentResult } from "../shared-context";
+import type { ContactDraftCreateArgs, ContactDraftResult, ContactDraftGetArgs, ContactDraftListArgs, ContactDraftListResult, ContactDraftDecisionArgs } from "../contact-draft";
 import type { ProcScopeGetArgs, ProcScopeGetResult, ProcScopeRevokeArgs, ProcScopeRevokeResult } from "../process-scope";
 import type {
   FsCopyArgs,
@@ -331,6 +332,11 @@ import type {
 import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
+  "contact.draft.create": { args: ContactDraftCreateArgs; result: ContactDraftResult };
+  "contact.draft.get": { args: ContactDraftGetArgs; result: ContactDraftResult };
+  "contact.draft.list": { args: ContactDraftListArgs; result: ContactDraftListResult };
+  "contact.draft.approve": { args: ContactDraftDecisionArgs; result: ContactDraftResult };
+  "contact.draft.discard": { args: ContactDraftDecisionArgs; result: ContactDraftResult };
   "contact.context.list": { args: ContactContextListArgs; result: ContactContextListResult };
   "contact.context.sources": { args: ContactContextSourcesArgs; result: ContactContextSourcesResult };
   "contact.context.subscribe": { args: ContactContextSubscribeArgs; result: ContactContextSubscribeResult };

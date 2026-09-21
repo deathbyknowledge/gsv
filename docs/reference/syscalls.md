@@ -2312,3 +2312,19 @@ be bypassed. The retained delivery status includes optional `messageId`,
 old receipt is not evidence of confirmed delivery or a read receipt.
 
 `conversation.attention.list` and `.dismiss` expose private, durable message alerts and daily digests to the signed-in human. Dismissing an exact covered sequence does not mark messages read or send a receipt. See [social attention](../architecture/social-attention.md).
+
+### Reviewed contact drafts
+
+`contact.draft.create` saves immutable `contactId`, `expectedGeneration`,
+`source: { conversationId, messageId, sequence }`, `text`, optional `media` and
+`replyTo`, plus an `idempotencyKey`. The source must be a committed private
+reply by a scoped helper for this contact. It returns `{ draft }` without sending.
+
+`contact.draft.get { draftId }` returns `{ draft }`.
+`contact.draft.list { contactId, after?, limit? }` returns `{ drafts, next? }`.
+`contact.draft.approve { draftId, expectedRevision }` submits that exact draft;
+`contact.draft.discard` takes the same arguments and discards an unsubmitted
+review. All require a direct human; approval also requires `contact.send`.
+An uncertain approval retries the original revision and content. Drafts last
+seven days, require federation v2 for approved attribution, and cannot be edited.
+See [reviewed replies](../architecture/social-drafts.md).

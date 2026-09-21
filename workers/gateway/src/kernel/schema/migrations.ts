@@ -1,6 +1,7 @@
 import { KERNEL_V066_CONVERSATION_ATTENTION } from "./v066_conversation_attention";
 import { KERNEL_V067_SELECTED_SHARED_CONTEXT } from "./v067_selected_shared_context";
 import { KERNEL_V068_PROCESS_SCOPES } from "./v068_process_scopes";
+import { KERNEL_V070_CONTACT_DRAFTS } from "./v070_contact_drafts";
 import { KERNEL_V069_PROCESS_SPAWN_RECEIPTS } from "./v069_process_spawn_receipts";
 import { KERNEL_V065_PARTICIPANT_WORK_STREAMS } from "./v065_participant_work_streams";
 import { KERNEL_V064_CONTACT_ADDRESS_BOOK } from "./v064_contact_address_book";
@@ -181,6 +182,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V067_SELECTED_SHARED_CONTEXT,
   KERNEL_V068_PROCESS_SCOPES,
   KERNEL_V069_PROCESS_SPAWN_RECEIPTS,
+  KERNEL_V070_CONTACT_DRAFTS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

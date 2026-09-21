@@ -340,3 +340,11 @@ so retrying a lost creation response does not create another helper or overwrite
 later Process settings. Initial input remains the existing durable Conversation
 message path. This is a generic Process fix needed by the People flow, not a
 second social workflow runtime.
+
+Exact draft review now has Kernel-owned immutable records, owner and source
+checks, revision-bound human approval, a stable ordinary outbox send, and v2
+approved provenance. Crossed discard and uncertain submission preserve exact
+content. Store and handler regressions are source-only until CI runs. The People
+review UI and optional automatic admission are still being implemented.
+CI at 640643da found synchronous filesystem denial promise adoption and an older
+incomplete registry fixture; e7594981 addresses those, awaiting CI confirmation.

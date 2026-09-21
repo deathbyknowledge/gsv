@@ -1,3 +1,4 @@
+import { handleContactDraftCreate, handleContactDraftGet, handleContactDraftList, handleContactDraftApprove, handleContactDraftDiscard } from "./contact-draft-handlers";
 import { handleContactContextList, handleContactContextSources, handleContactContextSubscribe, handleContactContextSync, handleContactContextPublications, handleContactContextPublish, handleContactContextWithdraw, handleContactContextConsent } from "./shared-context";
 /**
  * Kernel syscall dispatcher.
@@ -724,6 +725,22 @@ async function dispatchKernel(
         break;
       case "r12y.source.update":
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
+        break;
+
+      case "contact.draft.create":
+        data = await handleContactDraftCreate(frame.args, ctx);
+        break;
+      case "contact.draft.get":
+        data = handleContactDraftGet(frame.args, ctx);
+        break;
+      case "contact.draft.list":
+        data = handleContactDraftList(frame.args, ctx);
+        break;
+      case "contact.draft.approve":
+        data = await handleContactDraftApprove(frame.args, ctx);
+        break;
+      case "contact.draft.discard":
+        data = handleContactDraftDiscard(frame.args, ctx);
         break;
 
       case "contact.context.list":

@@ -1,3 +1,4 @@
+import { ContactDraftStore } from "./contact-draft-store";
 import type {
   ActorRef,
   WorkRecord,
@@ -413,10 +414,12 @@ type RequestRow = {
 };
 
 export class FederationStore {
+  readonly drafts: ContactDraftStore;
   private readonly sql: SqlStorage;
 
   constructor(private readonly storage: DurableObjectStorage) {
     this.sql = storage.sql;
+    this.drafts = new ContactDraftStore(storage.sql);
   }
 
   transaction<Value>(callback: () => Value): Value {
