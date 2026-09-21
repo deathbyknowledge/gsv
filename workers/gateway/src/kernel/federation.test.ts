@@ -735,6 +735,7 @@ function inviteCode(origin: string): string {
 
 function focusedContext(overrides: Partial<KernelContext>): KernelContext {
   const base = {
+    env: {},
     installationId: "installation:test",
     installationIdentity: {
       installationId: "installation:test",

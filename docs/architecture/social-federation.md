@@ -74,21 +74,25 @@ corresponding handlers and recovery paths are present.
 
 ## Public egress release boundary
 
-All federation HTTP uses the Workers public Internet fetch path, explicit
-redirect refusal, bounded bodies and deadlines. Public intake must additionally
-reject non-HTTPS, credentials, non-public literal addresses and local names.
-Development origins require an explicit local-only configuration; they cannot
-be admitted through production public profiles.
+All federation HTTP uses one Workers public Internet fetch path, explicit
+redirect refusal, bounded JSON bodies and deadlines. The boundary rejects
+non-HTTPS, credentials, non-public literal addresses and local names before I/O.
+The development configs explicitly set `GSV_FEDERATION_LOCAL_DEVELOPMENT=1`;
+this permits only loopback peers when the installation itself has a loopback
+origin. It does not permit arbitrary LAN destinations. Production composition
+refuses that setting.
 
-The production deployment must use a Worker with no privileged origin fallback
-and no private-network outbound override. Service bindings remain separate from
-federation egress. Cloudflare documents public-only global fetch for Workers
+The Gateway deployment and Wrangler production configurations enforce
+`global_fetch_strictly_public`, eliminating privileged origin fallback.
+Service bindings remain separate from federation egress. Cloudflare documents public-only global fetch for Workers
 without a privileged origin, and workerd's default Internet network restricts
 actual connections to public addresses. This is the connection-time boundary;
 an application DNS precheck is not used as its replacement. A self-hosted runtime
-must preserve `allow = ["public"]` or provide an equivalently constrained egress
-service. The deployment composition and acceptance cases still need to enforce
-this gate before public intake is enabled.
+must preserve `allow = ["public"]` and must not install a private-network
+`globalOutbound` override, or must provide an equivalently constrained egress
+service. URL checks are an additional rejection layer; the runtime enforces
+the actual connection. CI and two-space acceptance remain required.
 
 References: [Cloudflare binding security](https://blog.cloudflare.com/workers-environment-live-object-bindings/)
+[strictly public fetch configuration](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)
 and [workerd network configuration](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp).

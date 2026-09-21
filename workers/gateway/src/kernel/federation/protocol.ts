@@ -46,7 +46,7 @@ export async function negotiateContactProtocol(contact: FederationContactRecord,
   try {
     document = federationShipDocumentV2Schema.parse(await fetchFederationJson(`${contact.remoteOrigin}${SHIP_DOCUMENT_V2_PATH}`, {
       method: "POST", headers: { accept: "application/json" }, signal: ctx.requestSignal,
-    }));
+    }, ctx));
   } catch (error) {
     if (!(error instanceof FederationHttpError) || ![404, 410, 501].includes(error.status)) throw error;
     if (contact.protocol?.version === 2) throw new Error("A previously negotiated v2 peer no longer advertises v2");

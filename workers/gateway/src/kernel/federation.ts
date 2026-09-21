@@ -113,7 +113,7 @@ import {
 } from "./federation/pairing";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
-import { fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
+import { fetchFederation, fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
 import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
 import {
   assertDeliveryReplay,
@@ -354,6 +354,7 @@ export async function handleContactInviteAccept(
       headers: { accept: "application/json" },
       signal: ctx.requestSignal,
     },
+    ctx,
   ));
   await verifyShipDocument(remoteDocument);
   if (remoteDocument.shipId !== invite.shipId || remoteDocument.origin !== remoteOrigin) {
@@ -400,6 +401,7 @@ export async function handleContactInviteAccept(
         }),
         signal: ctx.requestSignal,
       },
+      ctx,
     ));
   } catch (error) {
     if (error instanceof FederationHttpError && isTerminalFederationError(error)) {
@@ -981,6 +983,7 @@ export async function processFederationDelivery(
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify(envelope),
       },
+      ctx,
     ));
     if (receipt.deliveryId !== record.deliveryId) {
       throw new Error("Remote Ship returned a receipt for another delivery");
@@ -1247,12 +1250,12 @@ export async function handleContactResourceSend(
     jsonValue(requestFields),
   );
   requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
-  const response = await fetch(`${contact.remoteOrigin}${path}`, {
+  const response = await fetchFederation(`${contact.remoteOrigin}${path}`, {
     method: "GET",
     headers: resourceRequestHeaders(requestFields, signature),
     redirect: "manual",
     signal: ctx.requestSignal,
-  });
+  }, ctx, 120_000);
   if (!isCurrentFederationContact(contact.id, contact.generation, ctx)) {
     await response.body?.cancel("Contact generation changed during resource read").catch(() => {});
     throw new Error("Contact generation changed during resource read");

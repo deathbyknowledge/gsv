@@ -12,6 +12,7 @@
     "required": []
   },
   "vars": {
+    "GSV_FEDERATION_LOCAL_DEVELOPMENT": "1",
     "GSV_ACCOUNT_ORIGIN": "http://localhost:8976"
   },
   "define": {

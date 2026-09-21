@@ -67,7 +67,7 @@ describe("federation version negotiation", () => {
 
 function protocolContext(identity: FederationIdentity): KernelContext {
   // SAFETY: these tests exercise only protocol identity and the supplied federation store method.
-  return { federationIdentity: identity, installationIdentity: { canonicalOrigin: "https://remote.example" } } as KernelContext;
+  return { env: {}, federationIdentity: identity, installationIdentity: { canonicalOrigin: "https://remote.example" } } as KernelContext;
 }
 
 function remoteContact(shipId: string, publicKey: FederationContactRecord["remotePublicKey"]): FederationContactRecord {

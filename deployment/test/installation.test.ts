@@ -122,7 +122,9 @@ describe("public operator composition", () => {
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
     await run(GsvDeployment(input, dependencies));
     expect(recorded.databases).toEqual([{ name: "directory-db", migrationsDir: "public/migrations", migrationsTable: "installation_migrations" }]);
-    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env;
+    const gatewayWorker = recorded.workers.find((worker) => worker.id === "FixtureGateway");
+    expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
+    const gateway = gatewayWorker?.props.env;
     expect(gateway).toHaveProperty("INFERENCE_EXECUTION");
     expect(gateway).not.toHaveProperty("AI");
     expect(gateway).not.toHaveProperty("MANAGED_INFERENCE");
@@ -229,6 +231,16 @@ describe("public operator composition", () => {
     await expect(run(GsvRuntime({ ...input, services: { installationDirectory: undefined!, inferenceExecution: undefined! } }, dependencies))).rejects.toThrow(/requires an installation directory/);
     expect(recorded.workers).toEqual([]);
     expect(recorded.databases).toEqual([]);
+  });
+
+  it("refuses the local federation setting in a deployed runtime", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const executor = await run(dependencies.Cloudflare.Worker("Inference", { name: "inference", main: "inference.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvRuntime({ ...input, services: { installationDirectory: directory,
+      inferenceExecution: executor, extraBindings: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1" } } }, dependencies)))
+      .rejects.toThrow("only available in the development configuration");
+    expect(recorded.workers).toEqual([]);
   });
 
   it("derives application scopes while keeping external cleanup explicitly unknown", async () => {

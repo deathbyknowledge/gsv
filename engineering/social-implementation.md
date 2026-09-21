@@ -167,3 +167,12 @@ Regression sources cover archive retention, interrupted backfill, old-schema
 upgrades, literal query syntax, permission checks and continued message admission
 at index capacity. No local validation was run. This slice advances batch 6
 while the broader profiles, inbox, shared context and assistance work continues.
+
+The public egress boundary now uses a shared HTTP helper for discovery, pairing,
+delivery and resource reads. Production Gateway composition and Wrangler configs
+enforce strictly public global fetch. Application checks reject local/private
+destinations, credentials, non-HTTPS and redirects; explicit development settings
+allow loopback peers only for a loopback installation. Regression sources cover
+address spellings, mapped IPv6, redirect cancellation and production configuration.
+The required runtime connection-time guarantee is documented in the architecture
+guide. This does not yet enable public approaches.
