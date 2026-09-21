@@ -37,6 +37,9 @@
 .native-gesture-lessons button[aria-pressed="true"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
 .native-gesture-lessons b { font-weight: normal; color: var(--accent); }
 .native-gesture-example { margin: 8px 0 0; container-type: inline-size; }
+.native-gesture-viewer { cursor: grab; touch-action: pan-y; user-select: none; }
+.native-gesture-viewer[data-dragging] { cursor: grabbing; }
+.instrument .native-gesture-viewer:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] {
   --ascii-nebula: color-mix(in srgb, var(--glyph) 64%, transparent);
   --ascii-foreground: var(--glyph);

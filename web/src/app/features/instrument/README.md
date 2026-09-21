@@ -137,9 +137,15 @@ render on opening.
 The guide uses an original 3D hand mesh with a shaped palm, independently curling
 fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
 depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
-runs at 18 fps; held poses reuse one frame and a theme change replaces the cached
-palette. The hand scene owns articulation; the shared raster owns projection and
-shading. Gesture recognition remains independent of these illustrations.
+runs at 18 fps and turns once every 40 seconds around the vertical axis. Dragging
+horizontally holds the pose and turns each hand in place; releasing resumes from
+that angle. Left/Right and Home provide keyboard rotation and reset. Manual turns
+also work while paused or with reduced motion. Each mounted lesson keeps at most
+128 recent frames, and a theme change replaces the cached palette. The hand scene
+owns articulation and rotation; the shared raster owns projection and shading.
+Interaction invalidates the glyph host directly, coalesced to one animation frame,
+without rerendering the guide or conversation. Gesture recognition remains
+independent of these illustrations.
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
