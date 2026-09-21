@@ -49,12 +49,6 @@ function storedScale(): Scale {
     return 1;
   }
 }
-const MOVE_MS = 150;
-
-function reducedMotion(): boolean {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-}
-
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
   const { service, snapshot } = useSession();
@@ -66,7 +60,6 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
-  const [phase, setPhase] = useState<"still" | "leaving" | "arriving">("still");
   const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
@@ -96,11 +89,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
-  const moving = useRef(false);
 
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
-      if (moving.current) return false;
       if (to === distance) {
         if (reference) setFleetReference(reference);
         return true;
@@ -115,22 +106,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       setMemoryDirty(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
-      if (reducedMotion()) {
-        setDistance(to);
-        return true;
-      }
-      moving.current = true;
-      setPhase("leaving");
-      window.setTimeout(() => {
-        setDistance(to);
-        setPhase("arriving");
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => {
-            setPhase("still");
-            moving.current = false;
-          }),
-        );
-      }, MOVE_MS);
+      setDistance(to);
       return true;
     },
     [distance, settingsDirty, zenDirty, fleetDirty, memoryDirty],
@@ -187,8 +163,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cycleScale, distance, move, toggleTheme]);
-
-  const phaseClass = phase === "leaving" ? " is-leaving" : phase === "arriving" ? " is-arriving" : "";
 
   return (
     <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
@@ -269,7 +243,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           </>}
         </aside>
       ) : null}
-      <div class={`distance${phaseClass}`}>
+      <div class="distance">
         {distance === "zen" ? (
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (!move("memory")) return;

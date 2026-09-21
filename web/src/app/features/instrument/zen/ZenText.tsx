@@ -1,11 +1,14 @@
 import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
+import { memo } from "preact/compat";
 import type { JSX } from "preact";
 import { renderMarkdownHtml, renderPlainTextHtml } from "../shared/markdown";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
+import { linkPlaceReferences, type Place } from "./zenModel";
 
-export function ZenText({ text, markdown, progress, tick, onClick }: {
+export const ZenText = memo(function ZenText({ text, markdown, places, progress, tick, onClick }: {
   text: string;
   markdown: boolean;
+  places?: readonly Place[];
   /** null is settled; negative means the tail of a live reply. */
   progress: number | null;
   tick: number;
@@ -15,7 +18,7 @@ export function ZenText({ text, markdown, progress, tick, onClick }: {
   const content = useRef<HTMLDivElement>(null);
   const reveal = useRef<GlyphReveal | null>(null);
   const streaming = progress !== null && progress < 0;
-  const html = useMemo(() => markdown ? renderMarkdownHtml(text) : renderPlainTextHtml(text), [markdown, text]);
+  const html = useMemo(() => markdown ? renderMarkdownHtml(places ? linkPlaceReferences(text, places) : text) : renderPlainTextHtml(text), [markdown, places, text]);
   useLayoutEffect(() => {
     const element = content.current;
     if (!element) return;
@@ -52,4 +55,4 @@ export function ZenText({ text, markdown, progress, tick, onClick }: {
     reveal.current?.paint(progress);
   }, [html, progress, tick]);
   return <div class="text zen-resolving-text" ref={ref} onClick={onClick}><div ref={content} /></div>;
-}
+});

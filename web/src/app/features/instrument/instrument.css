@@ -6,6 +6,7 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
+  --instrument-height: 100dvh;
   --instrument-header-height: 44px;
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
@@ -76,14 +77,14 @@
 
 /* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
  * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
+/* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size. */
 .instrument-scaled {
   position: absolute;
   top: 0;
   left: 0;
-  width: calc(100% / var(--type-scale));
-  height: calc(100% / var(--type-scale));
-  transform: scale(var(--type-scale));
-  transform-origin: 0 0;
+  width: calc(100vw / var(--type-scale));
+  height: calc(var(--instrument-height) / var(--type-scale));
+  zoom: var(--type-scale);
   container-type: inline-size;
   container-name: instrument;
 }
@@ -94,16 +95,6 @@
   inset: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  transition: opacity var(--dur-move) ease, transform var(--dur-move) ease;
-}
-.distance.is-leaving {
-  opacity: 0;
-  transform: scale(0.985);
-  pointer-events: none;
-}
-.distance.is-arriving {
-  opacity: 0;
-  transform: scale(1.015);
 }
 
 /* ---------- shared chrome ---------- */

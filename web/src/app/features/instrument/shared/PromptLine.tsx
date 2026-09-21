@@ -67,26 +67,39 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
   const [focused, setFocused] = useState(false);
   const [caret, setCaret] = useState({ x: 0, y: 0, visible: true });
+  const measureFrame = useRef(0);
+  const revealPending = useRef(false);
+  const metrics = useRef<{ fontSize: number; lineHeight: number } | null>(null);
+  const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean } | null>(null);
   const measure = useCallback((reveal = false) => {
     const input = inputRef.current;
     const mirror = mirrorRef.current;
     const field = fieldRef.current;
     const chip = chipRef.current;
     if (!input || !mirror || !field || !chip) return;
-    field.style.setProperty("--prompt-indent", `${chip.offsetWidth + 12}px`);
-    const style = getComputedStyle(input);
-    const fontSize = parseFloat(style.fontSize);
-    const lineHeight = parseFloat(style.lineHeight);
-    field.style.setProperty("--prompt-font-size", style.fontSize);
-    // Form controls can have a different computed font size on narrow screens.
-    mirror.style.font = style.font;
-    mirror.style.letterSpacing = style.letterSpacing;
-    mirror.style.textIndent = style.textIndent;
+    if (!metrics.current) {
+      field.style.setProperty("--prompt-indent", `${chip.offsetWidth + 12}px`);
+      const style = getComputedStyle(input);
+      metrics.current = { fontSize: parseFloat(style.fontSize), lineHeight: parseFloat(style.lineHeight) };
+      field.style.setProperty("--prompt-font-size", style.fontSize);
+      // Form controls can have a different computed font size on narrow screens.
+      mirror.style.font = style.font;
+      mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.textIndent = style.textIndent;
+      measured.current = null;
+    }
+    const { fontSize, lineHeight } = metrics.current;
+    const width = input.clientWidth;
     const at = input.selectionStart;
+    const previous = measured.current;
+    if (previous && previous.value === input.value && previous.start === at && previous.end === input.selectionEnd
+      && previous.width === width && previous.top === input.scrollTop && previous.left === input.scrollLeft
+      && (!reveal || previous.reveal)) return;
+    measured.current = { value: input.value, start: at, end: input.selectionEnd, width, top: input.scrollTop, left: input.scrollLeft, reveal };
     const marker = document.createElement("span");
     // Keep the suffix in the mirror: word wrapping depends on text after the caret too.
     marker.textContent = input.value.slice(at) || "\u200b";
-    mirror.style.width = `${input.clientWidth}px`;
+    mirror.style.width = `${width}px`;
     mirror.replaceChildren(document.createTextNode(input.value.slice(0, at)), marker);
     const height = `${mirror.offsetHeight}px`;
     if (input.style.height !== height) input.style.height = height;
@@ -105,7 +118,19 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     };
     setCaret((current) => current.x === next.x && current.y === next.y && current.visible === next.visible ? current : next);
   }, []);
+  const scheduleMeasure = useCallback((reveal = false, refresh = false) => {
+    if (refresh) metrics.current = null;
+    revealPending.current ||= reveal;
+    if (measureFrame.current) return;
+    measureFrame.current = requestAnimationFrame(() => {
+      measureFrame.current = 0;
+      const reveal = revealPending.current;
+      revealPending.current = false;
+      measure(reveal);
+    });
+  }, [measure]);
   useLayoutEffect(() => {
+    metrics.current = null;
     measure(true);
     const input = inputRef.current;
     if (input && document.activeElement === input) setFocused(true);
@@ -118,7 +143,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   useEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
-    const refresh = () => measure(true);
+    const refresh = () => scheduleMeasure(true, true);
     const observer = new ResizeObserver(refresh);
     observer.observe(field);
     if (chipRef.current) observer.observe(chipRef.current);
@@ -126,15 +151,16 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     return () => {
       observer.disconnect();
       document.fonts.removeEventListener("loadingdone", refresh);
+      cancelAnimationFrame(measureFrame.current);
     };
-  }, [measure]);
+  }, [scheduleMeasure]);
   const read = (): string => inputRef.current?.value ?? "";
   const changed = (): void => {
     revision.current++;
     const value = read();
     setCommand(value.startsWith("$"));
     onInput?.(value);
-    measure(true);
+    scheduleMeasure(true);
   };
   useImperativeHandle(ref, () => ({
     disabled: Boolean(disabled),
@@ -224,10 +250,10 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           spellcheck={false}
           disabled={disabled}
           onKeyDown={onKeyDown}
-          onKeyUp={() => measure(true)}
-          onClick={() => measure(true)}
-          onSelect={() => measure(true)}
-          onScroll={() => measure()}
+          onKeyUp={() => scheduleMeasure(true)}
+          onClick={() => scheduleMeasure(true)}
+          onSelect={() => scheduleMeasure(true)}
+          onScroll={() => scheduleMeasure()}
           onInput={changed}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData?.files ?? []);
@@ -235,7 +261,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           }}
           onFocus={() => {
             setFocused(true);
-            measure(true);
+            scheduleMeasure(true);
             onFocusChange?.(true);
           }}
           onBlur={() => {

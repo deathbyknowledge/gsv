@@ -29,7 +29,8 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     const element = viewport.current;
     if (!element) return;
     const all = nodes();
-    const first = all.findIndex((node) => node.offsetTop + node.offsetHeight > element.scrollTop + inset());
+    const top = element.scrollTop + inset();
+    const first = all.findIndex((node) => node.offsetTop + node.offsetHeight > top);
     anchors.current = all.slice(Math.max(0, first), Math.max(0, first) + 3).map((node) => ({
       id: key(node.dataset.momentId!), offset: node.offsetTop - element.scrollTop,
     }));
@@ -111,7 +112,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     if (element.scrollTop < 80) readOlder();
   }, [capture, inset, readOlder, write]);
 
-  useLayoutEffect(sync);
+  useLayoutEffect(sync, [sync, moments, ready]);
   useLayoutEffect(() => {
     const element = viewport.current;
     const body = content.current;

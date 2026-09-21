@@ -12,7 +12,6 @@ type StarGrid = {
   cols: number;
   rows: number;
   stars: Star[];
-  buffer: string[];
 };
 
 const FONT_SIZE = 8;
@@ -57,42 +56,21 @@ function buildGrid(cols: number, rows: number, density: number): StarGrid {
     cols,
     rows,
     stars,
-    buffer: Array.from({ length: total }),
   };
 }
 
-function renderGrid(grid: StarGrid, elapsed: number): string {
-  grid.buffer.fill(" ");
-
-  for (const star of grid.stars) {
-    const twinkle = 0.5 + 0.5 * Math.sin(elapsed * star.rate + star.phase);
-    const level = star.base + twinkle * 0.62;
-    let char = " ";
-
-    if (star.bright) {
-      char = level > 0.95 ? "*" : level > 0.72 ? "+" : level > 0.48 ? "·" : level > 0.27 ? "." : " ";
-    } else {
-      char = level > 0.8 ? "+" : level > 0.52 ? "·" : level > 0.32 ? "." : " ";
-    }
-
-    grid.buffer[star.idx] = char;
-  }
-
-  let output = "";
-  for (let y = 0; y < grid.rows; y += 1) {
-    let line = "";
-    const base = y * grid.cols;
-    for (let x = 0; x < grid.cols; x += 1) {
-      line += grid.buffer[base + x];
-    }
-    output += `${y ? "\n" : ""}${line}`;
-  }
-  return output;
+function starGlyph(star: Star, elapsed: number): string {
+  const twinkle = 0.5 + 0.5 * Math.sin(elapsed * star.rate * 0.5 + star.phase);
+  const level = star.base + twinkle * 0.62;
+  return star.bright
+    ? level > 0.95 ? "*" : level > 0.72 ? "+" : level > 0.48 ? "·" : level > 0.27 ? "." : " "
+    : level > 0.8 ? "+" : level > 0.52 ? "·" : level > 0.32 ? "." : " ";
 }
 
 const STYLE = `
 .gsv-glyph-stars {
   overflow: hidden;
+  contain: layout paint;
 }
 .gsv-glyph-stars pre {
   position: absolute;
@@ -111,6 +89,11 @@ const STYLE = `
   transform: translate(-50%, -50%);
   white-space: pre;
   -webkit-font-smoothing: none;
+}
+.gsv-glyph-stars pre span {
+  position: absolute;
+  width: ${CHAR_WIDTH}px;
+  height: ${FONT_SIZE}px;
 }
 `;
 
@@ -135,12 +118,36 @@ export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: Glyp
     const initialSize = gridSize(root);
     let grid = buildGrid(initialSize.cols, initialSize.rows, density);
     let raf = 0;
+    let timer = 0;
     let lastFrame = 0;
-    let start = performance.now();
-    const frameMs = 1000 / 24;
+    let elapsed = 0;
+    let visible = true;
+    const frameMs = 1000 / 8;
+    let painted: { star: Star; text: Text; glyph: string }[] = [];
+
+    const mount = () => {
+      const fragment = document.createDocumentFragment();
+      painted = grid.stars.map((star) => {
+        const cell = document.createElement("span");
+        cell.style.left = `${star.idx % grid.cols * CHAR_WIDTH}px`;
+        cell.style.top = `${Math.floor(star.idx / grid.cols) * FONT_SIZE}px`;
+        const text = document.createTextNode("");
+        cell.append(text);
+        fragment.append(cell);
+        return { star, text, glyph: "" };
+      });
+      pre.style.width = `${grid.cols * CHAR_WIDTH}px`;
+      pre.style.height = `${grid.rows * FONT_SIZE}px`;
+      pre.replaceChildren(fragment);
+    };
 
     const draw = (elapsed: number) => {
-      pre.textContent = renderGrid(grid, elapsed);
+      for (const cell of painted) {
+        const glyph = starGlyph(cell.star, elapsed);
+        if (glyph === cell.glyph) continue;
+        cell.text.data = glyph;
+        cell.glyph = glyph;
+      }
     };
 
     const resize = () => {
@@ -149,34 +156,49 @@ export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: Glyp
         return;
       }
       grid = buildGrid(size.cols, size.rows, density);
-      start = performance.now();
-      draw(0);
+      mount();
+      draw(elapsed);
     };
 
     const loop = (now: number) => {
-      if (now - lastFrame >= frameMs) {
-        lastFrame = now;
-        draw((now - start) / 1000);
-      }
-      raf = window.requestAnimationFrame(loop);
+      if (lastFrame) elapsed += (now - lastFrame) / 1000;
+      lastFrame = now;
+      draw(elapsed);
+      timer = window.setTimeout(() => { raf = window.requestAnimationFrame(loop); }, frameMs);
     };
     const followMotion = () => {
       window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+      lastFrame = 0;
       if (motion?.matches) draw(0);
-      else raf = window.requestAnimationFrame(loop);
+      else if (!document.hidden && document.hasFocus() && visible) raf = window.requestAnimationFrame(loop);
     };
 
     const observer = globalThis.ResizeObserver ? new ResizeObserver(resize) : null;
     observer?.observe(root);
+    const intersection = globalThis.IntersectionObserver ? new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      followMotion();
+    }) : null;
+    intersection?.observe(root);
+    mount();
     resize();
     draw(0);
 
     motion?.addEventListener("change", followMotion);
+    document.addEventListener("visibilitychange", followMotion);
+    window.addEventListener("focus", followMotion);
+    window.addEventListener("blur", followMotion);
     followMotion();
 
     return () => {
       observer?.disconnect();
+      intersection?.disconnect();
       motion?.removeEventListener("change", followMotion);
+      document.removeEventListener("visibilitychange", followMotion);
+      window.removeEventListener("focus", followMotion);
+      window.removeEventListener("blur", followMotion);
+      window.clearTimeout(timer);
       if (raf) {
         window.cancelAnimationFrame(raf);
       }
