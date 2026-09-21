@@ -23,6 +23,11 @@ The Kernel owns the conversation directory and membership:
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
   members. Current authorization remains owner-scoped, while the membership schema can represent
   later multi-user and multi-Process conversations.
+- **Contact** is an owner-scoped conversation with a pinned remote actor. It has no Process handler.
+  `contact.send` delivers to that actor; `conversation.send` rejects contact threads so a message
+  intended for another person cannot become local Ship input. Text delivery and incoming resource
+  references do not create a Process. Explicit outbound attachments retain their revisions through
+  the existing personal archive owner without admitting an inference run.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more

@@ -98,6 +98,9 @@ export async function handleConversationSend(
 ): Promise<ConversationSendResult> {
   requireConversationClient(ctx);
   const conversation = ownedConversation(args?.conversationId, ctx);
+  if (conversation.kind === "contact") {
+    throw new Error("Use contact.send to message a contact; conversation.send submits input to a local process");
+  }
   const text = args.text;
   if (!text.trim() && !(Array.isArray(args.media) && args.media.length > 0)) {
     throw new Error("conversation.send requires text or media");

@@ -13,14 +13,15 @@ export type ConversationMember = {
 
 export type ConversationSummary = {
   id: string;
-  kind: ConversationKind;
   ownerUid: number;
   title: string | null;
-  handlerPid: string;
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
-};
+} & (
+  | { kind: "ship" | "work" | "group"; handlerPid: string }
+  | { kind: "contact"; handlerPid?: string }
+);
 
 export type ConversationMessageAuthor =
   | { kind: "user"; uid: number }

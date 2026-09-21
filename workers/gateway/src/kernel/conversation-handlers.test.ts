@@ -96,6 +96,14 @@ function canonicalMessage(input: any): ConversationMessage {
 }
 
 describe("conversation handlers", () => {
+  it("does not turn a message to a contact into input for Ship, including a legacy handler record", async () => {
+    const ctx = context();
+    vi.mocked(ctx.conversations.get).mockReturnValue({ ...SHIP, kind: "contact" });
+    await expect(handleConversationSend({ conversationId: SHIP.id, text: "Hello Alice" }, ctx))
+      .rejects.toThrow("Use contact.send");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     getConversationByIdMock.mockReset();
     sendFrameToProcessMock.mockReset();

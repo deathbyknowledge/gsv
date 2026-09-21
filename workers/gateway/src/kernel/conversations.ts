@@ -9,7 +9,7 @@ type ConversationRow = {
   owner_uid: number;
   kind: ConversationKind;
   title: string | null;
-  handler_pid: string;
+  handler_pid: string | null;
   latest_sequence: number;
   created_at: number;
   updated_at: number;
@@ -93,7 +93,6 @@ export class ConversationRegistry {
 
   ensureContact(
     ownerUid: number,
-    handlerPid: string,
     title: string,
     conversationId: string,
   ): ConversationSummary {
@@ -101,9 +100,6 @@ export class ConversationRegistry {
     if (existing) {
       if (existing.ownerUid !== ownerUid || existing.kind !== "contact") {
         throw new Error("Contact conversation identity does not match its contact");
-      }
-      if (existing.handlerPid !== handlerPid) {
-        this.setHandler(existing.id, handlerPid);
       }
       if (existing.title !== title) {
         this.setTitle(existing.id, title);
@@ -115,7 +111,6 @@ export class ConversationRegistry {
       ownerUid,
       kind: "contact",
       title,
-      handlerPid,
     });
   }
 
@@ -124,8 +119,10 @@ export class ConversationRegistry {
     ownerUid: number;
     kind: ConversationKind;
     title: string | null;
-    handlerPid: string;
+    handlerPid?: string;
   }): ConversationSummary {
+    if (input.kind !== "contact" && !input.handlerPid) throw new Error("This conversation requires a process handler");
+    if (input.kind === "contact" && input.handlerPid) throw new Error("Contact conversations do not dispatch to a process handler");
     const now = Date.now();
     this.sql.exec(
       `INSERT INTO conversations
@@ -135,12 +132,12 @@ export class ConversationRegistry {
       input.ownerUid,
       input.kind,
       input.title,
-      input.handlerPid,
+      input.handlerPid ?? null,
       now,
       now,
     );
     this.addMember(input.id, { kind: "account", id: String(input.ownerUid), role: "member" });
-    this.addMember(input.id, { kind: "process", id: input.handlerPid, role: "handler" });
+    if (input.handlerPid) this.addMember(input.id, { kind: "process", id: input.handlerPid, role: "handler" });
     return this.get(input.id)!;
   }
 
@@ -196,6 +193,7 @@ export class ConversationRegistry {
   setHandler(id: string, handlerPid: string): void {
     const current = this.get(id);
     if (!current) throw new Error("Conversation does not exist");
+    if (current.kind === "contact") throw new Error("Contact conversations do not dispatch to a process handler");
     this.sql.exec(
       `UPDATE conversation_members
        SET role = 'observer'
@@ -274,14 +272,15 @@ export class ConversationRegistry {
 }
 
 function toSummary(row: ConversationRow): ConversationSummary {
-  return {
+  const common = {
     id: row.conversation_id,
     ownerUid: row.owner_uid,
-    kind: row.kind,
     title: row.title,
-    handlerPid: row.handler_pid,
     latestSequence: row.latest_sequence,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.kind === "contact") return { ...common, kind: "contact" };
+  if (!row.handler_pid) throw new Error("Conversation is missing its process handler");
+  return { ...common, kind: row.kind, handlerPid: row.handler_pid };
 }

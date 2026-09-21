@@ -91,6 +91,7 @@ import { KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS } from "./v050_retain_revoked
 import { KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY } from "./v051_continue_outbound_mail_recovery";
 import { KERNEL_V052_ADD_LEDGER_PURPOSE } from "./v052_add_ledger_purpose";
 import { KERNEL_V053_TRACK_REQUEST_EXCHANGES } from "./v053_track_request_exchanges";
+import { KERNEL_V054_DETACH_CONTACT_HANDLERS } from "./v054_detach_contact_handlers";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -149,6 +150,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY,
   KERNEL_V052_ADD_LEDGER_PURPOSE,
   KERNEL_V053_TRACK_REQUEST_EXCHANGES,
+  KERNEL_V054_DETACH_CONTACT_HANDLERS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

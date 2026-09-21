@@ -608,14 +608,13 @@ export async function handleContactSend(
     return contactSendResult(replay, replayContact);
   }
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
-  const processId = await ensurePersonalController(ownerUid, ctx);
-  const process = ctx.procs.get(processId);
-  if (!process) throw new Error("Personal intelligence is unavailable");
+  const processId = requestedMedia?.length ? await ensurePersonalController(ownerUid, ctx) : undefined;
   // Media is persisted under the handler's archive, so only the handler and
   // the work it delegated may attach it. Reject here so a delegated child
   // learns at send time instead of after every background retry fails.
   if (
     requestedMedia?.length
+    && processId
     && ctx.processId
     && ctx.processId !== processId
     && !ctx.procs.isDescendant(ctx.processId, processId)
@@ -1010,13 +1009,11 @@ async function advanceFederationMessagePreparation(
   ctx: KernelContext,
 ): Promise<FederationOutboxRecord> {
   if (record.state !== "preparing") return record;
-  const processId = await ensurePersonalController(record.ownerUid, ctx);
-  const retained = await retainConversationResources(
-    record.preparation.resources,
-    processId,
-    ctx,
-    record.deliveryId,
-  ) ?? [];
+  const processId = record.preparation.resources.length > 0
+    ? await ensurePersonalController(record.ownerUid, ctx) : undefined;
+  const retained = processId
+    ? await retainConversationResources(record.preparation.resources, processId, ctx, record.deliveryId) ?? []
+    : [];
   if (retained.length !== record.preparation.resources.length) {
     throw new Error("Personal intelligence retained an incomplete resource batch");
   }
@@ -1037,7 +1034,7 @@ async function advanceFederationMessagePreparation(
     const localMessage: FederationOutboxLocalMessage = {
       ...current.preparation.localMessage,
       ...(resources.length ? { media: retained } : undefined),
-      ...(current.preparation.localMessage.author.kind === "user"
+      ...(current.preparation.localMessage.author.kind === "user" && processId
         ? { processId }
         : undefined),
     };
@@ -2142,8 +2139,9 @@ async function commitLocalOutboxMessage(
   const local = outbox.localMessage;
   if (!local || outbox.localSequence !== undefined) return;
   const conversation = await ensureContactConversation(contact, ctx);
-  const process = ctx.procs.get(conversation.handlerPid);
-  if (!process) throw new Error("Contact conversation handler is unavailable");
+  const archivePid = local.media?.length ? await ensurePersonalController(contact.ownerUid, ctx) : undefined;
+  const process = archivePid ? ctx.procs.get(archivePid) : undefined;
+  if (local.media?.length && !process) throw new Error("Contact media archive owner is unavailable");
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId: local.messageId,
     idempotencyKey: `federation-local:${outbox.deliveryId}`,
@@ -2152,11 +2150,11 @@ async function commitLocalOutboxMessage(
     media: local.media,
     // The handler's archive owns the bytes; the pid names the sender that the
     // send-time lineage check admitted, which may be a delegated subprocess.
-    ...(local.media?.length
+    ...(local.media?.length && archivePid && process
       ? {
         mediaOwner: {
-          ...processMediaOwner(conversation.handlerPid, process),
-          pid: local.processId ?? conversation.handlerPid,
+          ...processMediaOwner(archivePid, process),
+          pid: local.processId ?? archivePid,
         },
       }
       : undefined),
@@ -2174,10 +2172,8 @@ async function ensureContactConversation(
   contact: FederationContactRecord,
   ctx: KernelContext,
 ) {
-  const handlerPid = await ensurePersonalController(contact.ownerUid, ctx);
   const conversation = ctx.conversations.ensureContact(
     contact.ownerUid,
-    handlerPid,
     contactDisplayName(contact),
     contact.conversationId,
   );
@@ -2266,7 +2262,7 @@ function localOutboundMessage(input: {
   messageId: string;
   text: string;
   media?: ResourceBlock[];
-  handlerPid: string;
+  handlerPid?: string;
   ownerUid: number;
   contact: FederationContactRecord;
   deliveryId: string;

@@ -575,7 +575,7 @@ type ConversationSummary = {
   kind: ConversationKind;
   ownerUid: number;
   title: string | null;
-  handlerPid: string;
+  handlerPid?: string; // Required for ship, work and group; absent for contact threads.
   latestSequence: number;
   createdAt: number;
   updatedAt: number;

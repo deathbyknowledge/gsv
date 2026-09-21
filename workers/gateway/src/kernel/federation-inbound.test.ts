@@ -171,6 +171,10 @@ describe("federation inbound boundary", () => {
     expect(await concurrent.json()).toEqual(await first.clone().json());
     expect(await replay.json()).toEqual(await first.json());
     expect(messages).toHaveLength(1);
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      expect(instance.conversations.get(contact.conversationId)?.handlerPid).toBeUndefined();
+    });
     expect(messages[0]).toMatchObject({
       text: "Hello from another Ship",
       author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
