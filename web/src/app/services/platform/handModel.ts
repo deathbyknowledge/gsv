@@ -1,8 +1,8 @@
 import type { AsciiMaterial, AsciiMesh } from "../../components/ui/asciiMesh";
 
 type Vector = [number, number, number];
-type Tube = { offset: number; rings: number; radius: number; length: number };
-type Finger = Tube & { base: Vector; splay: number };
+type Tube = { offset: number; rings: number; radius: number; length: number; joints: readonly [number, number]; thumb: boolean };
+type Finger = Tube & { base: Vector; splay: number; flex: number };
 export type HandModel = { mesh: AsciiMesh; pose: (mask: number, extension: number, mirror: boolean) => void };
 
 const SIDES = 12;
@@ -18,42 +18,71 @@ const blend = (start: number, end: number, value: number) => {
   return t * t * (3 - 2 * t);
 };
 const mix = (a: Vector, b: Vector, t: number): Vector => a.map((value, axis) => value + (b[axis] - value) * t) as Vector;
+const bump = (value: number, center: number, width: number) => Math.exp(-(((value - center) / width) ** 2));
 
 // Wrist, heel, thenar/hypothenar pads and the curved row of knuckles share a
 // continuous palm surface. Coordinates face the camera, with +z on the palm.
 const sections = [
-  [4.4, 1.09, 0.68, 0.60, -0.06], [3.4, 1.13, 0.71, 0.62, -0.06],
-  [2.6, 1.48, 0.83, 0.67, -0.10], [1.4, 1.80, 0.76, 0.56, -0.05],
-  [0.1, 1.94, 0.62, 0.50, 0.02], [-1.0, 1.89, 0.56, 0.53, 0.06],
-  [-1.45, 1.42, 0.39, 0.41, 0.03],
+  [4.4, 1.04, 0.66, 0.60, -0.08], [3.45, 1.10, 0.74, 0.68, -0.05],
+  [2.7, 1.38, 0.92, 0.78, -0.08], [1.65, 1.76, 0.90, 0.92, -0.05],
+  [0.5, 1.96, 0.70, 1.00, -0.015], [-0.45, 1.97, 0.57, 0.87, 0.025],
+  [-1.2, 1.87, 0.48, 0.67, 0.02], [-1.68, 1.46, 0.30, 0.42, 0.02],
 ] as const;
+const knuckleRow = [[-1.38, -1.34], [-0.46, -1.53], [0.49, -1.39], [1.36, -1.07]] as const;
 
-function palmPoint(t: number, angle: number): Vector {
-  const y = 4.4 - t * 5.85;
+function palmPoint(t: number, angle: number, grip: number): Vector {
+  const y = 4.4 - t * 6.08;
   let index = 0;
   while (index < sections.length - 2 && y < sections[index + 1][0]) index++;
   const a = sections[index], b = sections[index + 1];
-  const fraction = Math.max(0, Math.min(1, (a[0] - y) / (a[0] - b[0])));
-  const width = a[1] + (b[1] - a[1]) * fraction;
+  const fraction = blend(0, 1, (a[0] - y) / (a[0] - b[0]));
+  const width = (a[1] + (b[1] - a[1]) * fraction) * (1 - grip * 0.035);
   const facing = Math.sin(angle);
   const depth = facing >= 0 ? a[2] + (b[2] - a[2]) * fraction : a[3] + (b[3] - a[3]) * fraction;
   const centerZ = a[4] + (b[4] - a[4]) * fraction;
   const x = Math.cos(angle) * width;
-  const thenar = 0.42 * Math.exp(-((x + 1.05) ** 2 / 0.72 + (y - 1.45) ** 2 / 1.7));
-  const hypothenar = 0.24 * Math.exp(-((x - 1.15) ** 2 / 0.50 + (y - 1.4) ** 2 / 2));
-  const hollow = 0.16 * Math.exp(-(x * x / 0.70 + (y - 0.45) ** 2 / 1.2));
-  const knuckles = [-1.38, -0.46, 0.49, 1.36].reduce((height, knuckle) =>
-    height + 0.12 * Math.exp(-((x - knuckle) ** 2 / 0.12 + (y + 0.85) ** 2 / 0.38)), 0);
-  const z = centerZ + Math.sign(facing) * Math.abs(facing) ** 0.92 * depth
-    + (thenar + hypothenar - hollow) * Math.max(0, facing) ** 3
-    - knuckles * Math.max(0, -facing) ** 3;
-  return [x, y + blend(0.7, 1, t) * (0.22 * (x / width) ** 2 + 0.10 * x / width), z];
+  const thenar = 0.48 * Math.exp(-((x + 1.02) ** 2 / 0.65 + (y - 1.35) ** 2 / 1.55));
+  const hypothenar = 0.29 * Math.exp(-((x - 1.2) ** 2 / 0.43 + (y - 1.3) ** 2 / 1.8));
+  const hollow = 0.19 * Math.exp(-(x * x / 0.75 + (y - 0.5) ** 2 / 1.3));
+  const knuckles = knuckleRow.reduce((height, [kx, ky]) =>
+    height + bump(x, kx, 0.34) * bump(y, ky + 0.12, 0.42), 0);
+  const tendons = knuckleRow.reduce((height, [kx]) => height + bump(x, kx * 0.8, 0.10), 0)
+    * bump(y, 0.25, 1.15) * 0.055;
+  const back = Math.max(0, -facing);
+  const z = centerZ + Math.sign(facing) * Math.abs(facing) ** 0.96 * depth
+    + (thenar + hypothenar - hollow + grip * 0.12 * (x / width) ** 2) * Math.max(0, facing) ** 3
+    - ((0.22 + grip * 0.20) * knuckles + tendons) * back ** 3;
+  const crown = blend(0.7, 1, t) * (0.22 * (x / width) ** 2 + 0.10 * x / width);
+  return [x, y + crown - (0.08 + grip * 0.16) * knuckles * back ** 2, z];
 }
 
-function radiusAt(t: number, radius: number): number {
-  const knuckles = 1 + 0.045 * Math.exp(-(((t - 0.44) / 0.07) ** 2)) + 0.025 * Math.exp(-(((t - 0.74) / 0.06) ** 2));
-  const tip = Math.max(0, (t - 0.87) / 0.13);
-  return radius * (1 - 0.24 * t) * knuckles * Math.sqrt(Math.max(0.0001, 1 - tip * tip));
+function radiusAt(t: number, part: Tube): number {
+  const [first, second] = part.joints;
+  const joints = 0.14 * bump(t, first, 0.052) + 0.10 * bump(t, second, 0.042);
+  const taper = part.thumb ? 1.35 - 0.60 * t : 1 - 0.21 * t + 0.07 * bump(t, 0.04, 0.10);
+  const pad = 0.045 * bump(t, 0.60, 0.10) + 0.07 * bump(t, 0.89, 0.07);
+  const tip = Math.max(0, (t - 0.90) / 0.10);
+  return part.radius * (taper + joints + pad) * Math.sqrt(Math.max(0.0001, 1 - tip * tip));
+}
+
+/** Straight phalanges, with a short soft transition around each joint. */
+function bonePath(joints: Vector[], stops: readonly number[]): (t: number) => Vector {
+  const straight = (t: number): Vector => {
+    const clamped = Math.max(0, Math.min(1, t));
+    let index = 0;
+    while (index < stops.length - 2 && clamped > stops[index + 1]) index++;
+    return mix(joints[index], joints[index + 1], (clamped - stops[index]) / (stops[index + 1] - stops[index]));
+  };
+  return (t) => {
+    for (let index = 1; index < stops.length - 1; index++) {
+      const joint = stops[index], rounding = 0.045;
+      if (t < joint - rounding || t > joint + rounding) continue;
+      const f = (t - joint + rounding) / (2 * rounding);
+      const before = straight(joint - rounding), after = straight(joint + rounding);
+      return before.map((value, axis) => (1 - f) ** 2 * value + 2 * (1 - f) * f * joints[index][axis] + f * f * after[axis]) as Vector;
+    }
+    return straight(t);
+  };
 }
 
 /** Original articulated hand geometry; all poses deform one reusable mesh. */
@@ -70,115 +99,142 @@ export function createHandModel(): HandModel {
   };
 
   const palmRings = 20, palmSides = 24;
+  const palmVertex = (t: number, angle: number, grip: number): number[] => {
+    const point = palmPoint(t, angle, grip);
+    const before = palmPoint(t - 0.001, angle, grip), after = palmPoint(t + 0.001, angle, grip);
+    const left = palmPoint(t, angle - 0.001, grip), right = palmPoint(t, angle + 0.001, grip);
+    const along = after.map((value, axis) => value - before[axis]);
+    const around = right.map((value, axis) => value - left[axis]);
+    let normal = unit([
+      along[1] * around[2] - along[2] * around[1],
+      along[2] * around[0] - along[0] * around[2],
+      along[0] * around[1] - along[1] * around[0],
+    ]);
+    if (normal[0] * point[0] + normal[2] * point[2] < 0) normal = normal.map((value) => -value) as Vector;
+    return [...point, ...normal];
+  };
+  const closed: number[] = [];
   for (let ring = 0; ring <= palmRings; ring++) {
     for (let side = 0; side < palmSides; side++) {
       const t = ring / palmRings, angle = side / palmSides * Math.PI * 2;
-      const point = palmPoint(t, angle);
-      const before = palmPoint(t - 0.001, angle), after = palmPoint(t + 0.001, angle);
-      const left = palmPoint(t, angle - 0.001), right = palmPoint(t, angle + 0.001);
-      const along = after.map((value, axis) => value - before[axis]);
-      const around = right.map((value, axis) => value - left[axis]);
-      let normal = unit([
-        along[1] * around[2] - along[2] * around[1],
-        along[2] * around[0] - along[0] * around[2],
-        along[0] * around[1] - along[1] * around[0],
-      ]);
-      if (normal[0] * point[0] + normal[2] * point[2] < 0) normal = normal.map((value) => -value) as Vector;
-      vertices.push(...point, ...normal);
+      vertices.push(...palmVertex(t, angle, 0));
+      closed.push(...palmVertex(t, angle, 1));
     }
   }
   connect(0, palmRings, palmSides, () => SKIN);
   for (const ring of [0, palmRings]) {
     const center = vertices.length / 6;
-    vertices.push(0, ring === 0 ? 4.4 : -1.45, ring === 0 ? sections[0][4] : sections[sections.length - 1][4], 0, ring === 0 ? 1 : -1, 0);
+    const cap = [0, ring === 0 ? 4.4 : -1.68, ring === 0 ? sections[0][4] : sections[sections.length - 1][4], 0, ring === 0 ? 1 : -1, 0];
+    vertices.push(...cap);
+    closed.push(...cap);
     for (let side = 0; side < palmSides; side++) {
       indices.push(center, ring * palmSides + side, ring * palmSides + (side + 1) % palmSides);
       materials.push(SKIN);
     }
   }
-  const palm = new Float32Array(vertices);
+  const palm = new Float32Array(vertices), closedPalm = new Float32Array(closed);
 
-  const tube = (length: number, radius: number, rings: number): Tube => {
+  const tube = (length: number, radius: number, rings: number, thumb = false): Tube => {
     const offset = vertices.length / 6;
+    const joints: readonly [number, number] = thumb ? [1.5 / 3.72, 2.72 / 3.72] : [0.46, 0.76];
     for (let index = 0; index < (rings + 1) * SIDES * 6; index++) vertices.push(0);
     connect(offset, rings, SIDES, (ring, side) => {
       const t = (ring + 0.5) / rings, angle = (side + 0.5) / SIDES * Math.PI * 2;
       if (t > 0.81 && t < 0.96 && Math.sin(angle) < -0.75) return NAIL;
-      if ((Math.abs(t - 0.44) < 0.024 || Math.abs(t - 0.74) < 0.02) && Math.sin(angle) > 0.5) return CREASE;
+      if (joints.some((joint) => Math.abs(t - joint) < 0.024) && Math.sin(angle) > 0.5) return CREASE;
       return SKIN;
     });
-    return { offset, rings, radius, length };
+    return { offset, rings, radius, length, joints, thumb };
   };
   const fingers: Finger[] = [
-    { ...tube(3.55, 0.43, 22), base: [-1.38, -1.16, 0.18], splay: -0.14 },
-    { ...tube(3.95, 0.45, 22), base: [-0.46, -1.43, 0.10], splay: -0.035 },
-    { ...tube(3.68, 0.43, 22), base: [0.49, -1.30, 0.03], splay: 0.065 },
-    { ...tube(2.83, 0.34, 20), base: [1.36, -0.94, -0.10], splay: 0.20 },
+    { ...tube(3.55, 0.43, 22), base: [-1.38, -1.34, 0.12], splay: -0.14, flex: 0 },
+    { ...tube(3.95, 0.45, 22), base: [-0.46, -1.53, 0.06], splay: -0.035, flex: 0.02 },
+    { ...tube(3.68, 0.43, 22), base: [0.49, -1.39, 0.10], splay: 0.065, flex: 0.065 },
+    { ...tube(2.83, 0.34, 20), base: [1.36, -1.07, 0.20], splay: 0.20, flex: 0.10 },
   ];
-  const thumb = tube(3.50, 0.51, 24);
+  const thumb = tube(3.72, 0.51, 24, true);
   const mesh: AsciiMesh = { vertices: new Float32Array(vertices), indices: new Uint32Array(indices), materials };
 
   const ring = (part: Tube, index: number, center: Vector, tangent: Vector, side: Vector) => {
     const front: Vector = [tangent[1] * side[2] - tangent[2] * side[1], tangent[2] * side[0] - tangent[0] * side[2], tangent[0] * side[1] - tangent[1] * side[0]];
-    const t = index / part.rings, radius = radiusAt(t, part.radius);
-    const roundness = 0.96;
-    const slope = (radiusAt(Math.min(1, t + 0.001), part.radius) - radiusAt(Math.max(0, t - 0.001), part.radius)) / (0.002 * part.length);
+    const t = index / part.rings, radius = radiusAt(t, part);
+    const joint = Math.max(bump(t, part.joints[0], 0.052), bump(t, part.joints[1], 0.042));
+    const slope = (radiusAt(Math.min(1, t + 0.001), part) - radiusAt(Math.max(0, t - 0.001), part)) / (0.002 * part.length);
     for (let step = 0; step < SIDES; step++) {
       const angle = step / SIDES * Math.PI * 2, cosine = Math.cos(angle), sine = Math.sin(angle);
-      const normal = unit(side.map((value, axis) => value * cosine + front[axis] * sine / roundness - tangent[axis] * slope) as Vector);
+      const roundness = sine > 0 ? 0.94 + 0.12 * bump(t, 0.88, 0.12) : 0.80 + 0.18 * joint;
+      const exponent = 0.86;
+      const crossX = Math.sign(cosine) * Math.abs(cosine) ** exponent;
+      const crossZ = Math.sign(sine) * Math.abs(sine) ** exponent;
+      const normalX = Math.sign(cosine) * Math.abs(cosine) ** (2 - exponent);
+      const normalZ = Math.sign(sine) * Math.abs(sine) ** (2 - exponent) / roundness;
+      const normal = unit(side.map((value, axis) => value * normalX + front[axis] * normalZ - tangent[axis] * slope) as Vector);
       const offset = (part.offset + index * SIDES + step) * 6;
       for (let axis = 0; axis < 3; axis++) {
-        mesh.vertices[offset + axis] = center[axis] + radius * (side[axis] * cosine + front[axis] * sine * roundness);
+        mesh.vertices[offset + axis] = center[axis] + radius * (side[axis] * crossX + front[axis] * crossZ * roundness);
         mesh.vertices[offset + 3 + axis] = normal[axis];
       }
     }
   };
+  const digit = (part: Tube, points: Vector[], stops: readonly number[], splay?: number, roll = 0) => {
+    const pointAt = bonePath(points, stops);
+    for (let index = 0; index <= part.rings; index++) {
+      const t = index / part.rings, before = pointAt(t - 0.001), after = pointAt(t + 0.001);
+      const tangent = unit(after.map((value, axis) => value - before[axis]) as Vector);
+      let side: Vector = splay === undefined ? unit([-tangent[1], tangent[0], 0]) : [Math.cos(splay), Math.sin(splay), 0];
+      if (roll) {
+        const front: Vector = [tangent[1] * side[2] - tangent[2] * side[1], tangent[2] * side[0] - tangent[0] * side[2], tangent[0] * side[1] - tangent[1] * side[0]];
+        side = side.map((value, axis) => value * Math.cos(roll) + front[axis] * Math.sin(roll)) as Vector;
+      }
+      ring(part, index, pointAt(t), tangent, side);
+    }
+  };
 
   return { mesh, pose(mask, extension, mirror) {
-    mesh.vertices.set(palm);
     let grip = 0;
+    for (let finger = 0; finger < fingers.length; finger++) grip += (1 - (mask & (1 << (finger + 1)) ? extension : 0)) / 4;
+    // Both palm surfaces and their normals are prepared once; cupping adds no tessellation per frame.
+    for (let index = 0; index < palm.length; index += 6) {
+      for (let axis = 0; axis < 6; axis++) mesh.vertices[index + axis] = palm[index + axis] + (closedPalm[index + axis] - palm[index + axis]) * grip;
+      const normal = unit([mesh.vertices[index + 3], mesh.vertices[index + 4], mesh.vertices[index + 5]]);
+      mesh.vertices.set(normal, index + 3);
+    }
     for (let finger = 0; finger < fingers.length; finger++) {
       const part = fingers[finger];
       const open = mask & (1 << (finger + 1)) ? extension : 0;
-      grip += (1 - open) / 4;
-      const splay = part.splay * open;
-      const side: Vector = [Math.cos(splay), Math.sin(splay), 0];
-      const direction = (t: number): Vector => {
-        const curl = 1 - open;
-        const angle = 0.035 + curl * 0.97 + blend(0.35, 0.55, t) * (0.025 + curl * 1.27) + blend(0.66, 0.85, t) * (0.03 + curl * 0.62);
-        return [Math.sin(splay) * Math.cos(angle), -Math.cos(splay) * Math.cos(angle), Math.sin(angle)];
-      };
-      const center: Vector = [...part.base];
-      for (let index = 0; index <= part.rings; index++) {
-        if (index > 0) {
-          const step = direction((index - 0.5) / part.rings);
-          for (let axis = 0; axis < 3; axis++) center[axis] += step[axis] * part.length / part.rings;
-        }
-        ring(part, index, center, direction(index / part.rings), side);
+      const curl = 1 - open, splay = part.splay * open;
+      const stops = [0, ...part.joints, 1];
+      // The closed tip folds back to the palm instead of stopping in a hovering hook.
+      const angles = [
+        0.025 + part.flex * 0.35 + curl * (1.425 + part.flex * 0.65),
+        0.035 + curl * (1.665 - part.flex * 0.4),
+        0.025 + curl * 1.025,
+      ];
+      let angle = 0;
+      const points: Vector[] = [[part.base[0] * (1 - curl * 0.025), part.base[1], part.base[2]]];
+      for (let joint = 0; joint < 3; joint++) {
+        angle += angles[joint];
+        const direction: Vector = [Math.sin(splay) * Math.cos(angle), -Math.cos(splay) * Math.cos(angle), Math.sin(angle)];
+        const length = part.length * (stops[joint + 1] - stops[joint]);
+        points.push(points[joint].map((value, axis) => value + direction[axis] * length) as Vector);
       }
+      digit(part, points, stops, splay);
     }
 
     // Thumb opposition rotates across the palm, independently of the four
     // finger hinges. Keep bone lengths fixed while its direction changes.
     const open = mask & 1 ? extension : 0;
-    const joints: Vector[] = [[-1.22, 1.80, 0.34]];
-    const folded: Vector[] = [[-0.45, -0.84, 0.35 + grip * 0.35], [0.82, -0.34, 0.25 + grip * 0.50], [0.95, 0.10, 0.08 + grip * 0.13]];
-    const lengths = [1.45, 1.15, 0.90];
+    const points: Vector[] = [[-1.20, 1.80 - 0.20 * grip, 0.40]];
+    const folded: Vector[] = [[-0.48, -0.82, 0.10 + grip * 0.45], [0.80, -0.25, 0.10 + grip * 0.45], [0.94, 0.10, 0.06 + grip * 0.12]];
+    const spread: Vector[] = [[-0.75, -0.66, 0.03], [-0.56, -0.82, 0.06], [-0.30, -0.95, 0.01]];
+    const raised: Vector[] = [[-0.43, -0.90, 0.05], [-0.12, -0.99, 0.10], [0.07, -0.995, -0.06]];
+    const lengths = [1.50, 1.22, 1.00];
     for (let joint = 0; joint < 3; joint++) {
-      const direction = unit(mix(unit(folded[joint]), unit([-0.64, -0.77, -0.025]), open));
-      joints.push(joints[joint].map((value, axis) => value + direction[axis] * lengths[joint]) as Vector);
+      const extended = unit(mix(unit(spread[joint]), unit(raised[joint]), grip));
+      const direction = unit(mix(unit(folded[joint]), extended, open));
+      points.push(points[joint].map((value, axis) => value + direction[axis] * lengths[joint]) as Vector);
     }
-    const pointAt = (t: number): Vector => {
-      const position = Math.max(0, Math.min(1, t)) * 3, index = Math.min(2, Math.floor(position)), f = position - index;
-      const a = joints[Math.max(0, index - 1)], b = joints[index], c = joints[index + 1], d = joints[Math.min(3, index + 2)];
-      return b.map((value, axis) => 0.5 * (2 * value + (-a[axis] + c[axis]) * f + (2 * a[axis] - 5 * value + 4 * c[axis] - d[axis]) * f * f + (-a[axis] + 3 * value - 3 * c[axis] + d[axis]) * f * f * f)) as Vector;
-    };
-    for (let index = 0; index <= thumb.rings; index++) {
-      const t = index / thumb.rings, before = pointAt(t - 0.001), after = pointAt(t + 0.001);
-      const tangent = unit(after.map((value, axis) => value - before[axis]) as Vector);
-      const side = unit([-tangent[1], tangent[0], 0]);
-      ring(thumb, index, pointAt(t), tangent, side);
-    }
+    digit(thumb, points, [0, ...thumb.joints, 1], undefined, -0.48 + open * 0.18);
     if (mirror) {
       for (let index = 0; index < mesh.vertices.length; index += 6) {
         mesh.vertices[index] *= -1;
