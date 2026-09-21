@@ -216,6 +216,7 @@ export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvConversationNamespace = GsvClientNamespaces["conversation"];
 export type GsvContactNamespace = GsvClientNamespaces["contact"];
+export type GsvProfileNamespace = GsvClientNamespaces["profile"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
@@ -452,6 +453,7 @@ export class GSVClient {
   declare readonly codemode: GsvCodeModeNamespace;
   declare readonly conversation: GsvConversationNamespace;
   declare readonly contact: GsvContactNamespace;
+  declare readonly profile: GsvProfileNamespace;
   declare readonly fs: GsvFsNamespace;
   declare readonly mail: GsvMailNamespace;
   declare readonly proc: GsvProcNamespace;
