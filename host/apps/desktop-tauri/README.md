@@ -137,6 +137,14 @@ same zoom and window size. Include moving across long messages, opening and
 closing receipts, loading earlier messages, and leaving the prompt with Escape;
 the reading position and browse cursor should remain stable.
 
+The report also separates **j/k taps** from **j/k held** and shows medians. For
+the next comparison, make several individual presses about a second apart,
+then briefly hold each key. The navigation-work table measures synchronous
+scroll handling and Preact update queue/work while a navigation sample is
+pending. A low work duration with a high dispatch or frame delay directs the
+next investigation outside that measured code; it does not prove a GPU cause.
+The report includes a loaded-row count, and still contains no conversation data.
+
 The same input timings remain available in the webview inspector:
 
 ```js

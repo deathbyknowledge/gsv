@@ -216,3 +216,44 @@ never individual keys or text. The next human pass should compare j/k at the
 same zoom and window size, including long messages, older-page loading, expanded
 receipts and returning from the prompt. Source inspection and compilation do not
 establish a latency improvement; a fresh report is still needed.
+
+## Second timing report: separate navigation from typing
+
+The next human report had 38 navigation samples with 82 ms p95 dispatch, 109 ms
+p95 to the next animation callback and a 145 ms maximum. Its 103 input events
+took at most 17 ms to that callback. The aggregate keyboard p95 was only 19 ms,
+because navigation was a minority of the 150 keyboard samples. It must not be
+treated as a like-for-like improvement from 74 ms: the earlier report had no
+navigation category and the window width also changed from 2102 to 1901.
+There were no matching prompt pointer-down samples in this report.
+
+The delay before the capture listener runs can include work left over from a
+previous interaction or platform/renderer event delivery. The existing report
+does not establish the cost of the current navigation handler or a Preact
+update, and p95 over 38 samples describes the slow end rather than a typical
+press. The next diagnostic build retains medians and separates initial j/k
+presses from auto-repeat events.
+
+The shared browse handler emits one static-name User Timing measure for its
+synchronous selection and scroll work, immediately removing it from the global
+performance timeline. The prototype's observer retains only bounded durations.
+The prototype also wraps Preact's public update scheduler, preserving the
+installed scheduler or the current source's Promise-microtask default. It
+measures queue wait and update-flush duration only while navigation samples
+await their first animation callback. That flush includes component work and
+layout effects; it can include concurrent updates, and excludes later paint or
+GPU presentation. Phase percentiles describe different samples and must not be
+added or subtracted to assign the delay. A report includes the loaded row count
+without identities, text or other conversation data.
+
+The next human comparison should keep the current zoom/window size, pause
+between individual taps, then hold each browse key briefly before repeating
+the prompt input pass. This batch adds measurements; it does not claim another
+latency fix.
+
+The user reports that this build feels responsive. The aggregate also bounds
+the frequency of the outliers: these 38 navigation samples are a subset of 150
+keyboard samples, below the 200-sample cap. A keyboard p95 of 19 ms means at
+least 31 of the 38 navigation samples reached the next callback within roughly
+19 ms. The tail does not imply a consistent 109 ms delay. Further diagnostics
+are optional; this report alone is not a reason for another performance change.

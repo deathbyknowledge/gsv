@@ -13,6 +13,8 @@ function readReport() {
   };
   return {
     input: window.gsvInputTiming.read(),
+    work: window.gsvInputTiming.readWork(),
+    loadedMoments: document.querySelectorAll(".zen-content > [data-moment-id]").length,
     viewport: { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio },
     instrument: bounds(".instrument"),
     scaled: bounds(".instrument-scaled"),
@@ -55,18 +57,30 @@ export function InputTimingPanel() {
         if (event.key === "Escape") { event.preventDefault(); close(); }
       }}>
       <header><h2 id="desktop-input-timings-title">Input timings</h2><button type="button" onClick={close}>close</button></header>
-      <p>Clear samples, close this panel, then use j/k, click the prompt and type without sending. Reopen it to read the result.</p>
+      <p>Clear samples and close this panel. Tap j/k with a pause between presses, then briefly hold each key. Click the prompt and type without sending. Reopen it to read the result.</p>
       <table>
-        <thead><tr><th>Input</th><th>Samples</th><th>Dispatch p95</th><th>Next frame p95</th><th>Next frame max</th></tr></thead>
-        <tbody>{(["keyboard", "navigation", "typing", "promptClick"] as const).map((kind) => {
+        <thead><tr><th>Input</th><th>Samples</th><th>Dispatch p95</th><th>Frame median</th><th>Frame p95</th><th>Frame max</th></tr></thead>
+        <tbody>{(["keyboard", "navigation", "navigationTap", "navigationRepeat", "typing", "promptClick"] as const).map((kind) => {
           const sample = report.input[kind];
-          return <tr key={kind}><th>{kind === "promptClick" ? "prompt click" : kind === "navigation" ? "j/k navigation" : kind}</th><td>{sample?.count ?? 0}</td>
-            <td>{sample ? `${sample.dispatchP95Ms} ms` : "—"}</td>
+          const label = { keyboard: "keyboard", navigation: "j/k navigation", navigationTap: "j/k taps", navigationRepeat: "j/k held", typing: "typing", promptClick: "prompt click" }[kind];
+          return <tr key={kind}><th>{label}</th><td>{sample?.count ?? 0}</td>
+            <td>{sample ? `${sample.dispatchP95Ms} ms` : "—"}</td><td>{sample ? `${sample.nextFrameP50Ms} ms` : "—"}</td>
             <td>{sample ? `${sample.nextFrameP95Ms} ms` : "—"}</td>
             <td>{sample ? `${sample.nextFrameMaxMs} ms` : "—"}</td></tr>;
         })}</tbody>
       </table>
       <p>p95: 95% of samples were this fast or faster. Next frame measures JavaScript scheduling, before painting and display. A fast result can still accompany slow drawing.</p>
+      <table>
+        <thead><tr><th>Navigation work</th><th>Samples</th><th>Median</th><th>p95</th><th>Max</th></tr></thead>
+        <tbody>{(["navigationHandler", "navigationUpdateQueue", "navigationUpdate"] as const).map((kind) => {
+          const sample = report.work.phases[kind];
+          const label = { navigationHandler: "j/k handler", navigationUpdateQueue: "UI update wait", navigationUpdate: "UI update work" }[kind];
+          return <tr key={kind}><th>{label}</th><td>{sample?.count ?? 0}</td>
+            <td>{sample ? `${sample.p50Ms} ms` : "—"}</td><td>{sample ? `${sample.p95Ms} ms` : "—"}</td><td>{sample ? `${sample.maxMs} ms` : "—"}</td></tr>;
+        })}</tbody>
+      </table>
+      <p>The handler includes synchronous scroll measurements. UI update work measures Preact and its layout effects while navigation awaits a frame; it excludes later painting and presentation. These percentiles cannot be added or subtracted as one event.</p>
+      {!report.work.handlerSupported && <p>Handler timing is unavailable in this renderer.</p>}
       <div class="desktop-timing-actions">
         <button type="button" onClick={() => { window.gsvInputTiming.reset(); setReport(readReport()); setCopied(null); }}>clear samples</button>
         <button type="button" onClick={() => { setReport(readReport()); setCopied(null); }}>refresh</button>
