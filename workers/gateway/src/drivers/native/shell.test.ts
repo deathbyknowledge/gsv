@@ -149,6 +149,8 @@ function makeProcess(
 
 function makeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    blocked: false,
     id: "contact:friend",
     ownerUid: IDENTITY.uid,
     state: "active",
@@ -332,6 +334,7 @@ function makeContext(options?: {
     ),
     federation: focusedFixture<KernelContext["federation"]>({
       list: vi.fn(() => []),
+      attentionNotice: vi.fn(() => undefined),
       ...options?.federation,
     }),
     conversations: focusedFixture<KernelContext["conversations"]>(

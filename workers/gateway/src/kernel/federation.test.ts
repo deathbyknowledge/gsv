@@ -83,7 +83,7 @@ describe("federation outbound boundary", () => {
     const dismissAttentionNotice = vi.fn(() => true);
     const broadcastToUserUid = vi.fn();
     const ctx = focusedContext({ federation: focusedFixture({ dismissAttentionNotice }), broadcastToUserUid });
-    expect(() => handleContactNoticeDismiss({ ...ctx, processId: "proc:ship" })).toThrow("Only a signed-in human");
+    expect(() => handleContactNoticeDismiss({ ...ctx, processId: "proc:ship" })).toThrow("requires a signed-in human");
     expect(dismissAttentionNotice).not.toHaveBeenCalled();
     expect(handleContactNoticeDismiss(ctx)).toEqual({});
     expect(dismissAttentionNotice).toHaveBeenCalledExactlyOnceWith(OWNER.uid);
@@ -680,6 +680,8 @@ describe("federation outbound boundary", () => {
 
 function activeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    blocked: false,
     id: "contact:remote",
     ownerUid: OWNER.uid,
     state: "active",

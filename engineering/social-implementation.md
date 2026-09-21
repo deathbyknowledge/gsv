@@ -142,3 +142,12 @@ source producers and controls are removed; later scoped assistance will own
 its own admission. Fleet displays the notice with a human-only dismissal.
 Migration and inbound regression cases plus the two-space trial cover the new
 behavior. No local validation was run.
+
+The next relationship slice uses v057 to add private saved/muted/notification
+preferences and pinned-actor blocks to existing Kernel storage. Preference
+updates require the current revision. Human-only blocking retires transport,
+pending delivery/pairing and resources atomically; unblocking does not restore
+old authority. Block pagination and row budgets are explicit. UI integration,
+notification delivery and conversation view state belong to batch 4 and remain
+unfinished. Source regression cases cover foreign/stale edits, preference
+retention, blocked re-pairing, queued work and resource cleanup; CI is pending.

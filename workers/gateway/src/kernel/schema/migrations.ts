@@ -94,6 +94,7 @@ import { KERNEL_V053_TRACK_REQUEST_EXCHANGES } from "./v053_track_request_exchan
 import { KERNEL_V054_DETACH_CONTACT_HANDLERS } from "./v054_detach_contact_handlers";
 import { KERNEL_V055_VERSION_FEDERATION_DELIVERY } from "./v055_version_federation_delivery";
 import { KERNEL_V056_SEPARATE_SOCIAL_ATTENTION } from "./v056_separate_social_attention";
+import { KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS } from "./v057_contact_preferences_and_blocks";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -155,6 +156,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V054_DETACH_CONTACT_HANDLERS,
   KERNEL_V055_VERSION_FEDERATION_DELIVERY,
   KERNEL_V056_SEPARATE_SOCIAL_ATTENTION,
+  KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

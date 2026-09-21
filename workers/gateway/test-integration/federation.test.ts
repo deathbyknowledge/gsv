@@ -87,6 +87,8 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(firstDiscovery.status).toBe(200);
     expect(secondDiscovery.status).toBe(200);
+    const versionedDiscovery = await fetch(new URL("/.well-known/gsv/federation/v2/ship", firstOrigin), { method: "POST" });
+    expect(versionedDiscovery.status).toBe(200);
     const invalidAcceptance = await fetch(
       new URL("/_gsv/federation/v1/invites/accept", firstOrigin),
       {
@@ -377,6 +379,24 @@ describe("cross-GSV federation integration", () => {
       path: receivedResource.ref.path,
       revision: receivedResource.ref.revision,
     })).rejects.toThrow(/no longer active|not found/i);
+
+    const reconnectInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    const reconnected = (await second.contact.invite.accept({ code: reconnectInvite.code })).contact;
+    expect(reconnected.conversationId).toBe(secondContact.conversationId);
+    const preferences = await second.contact.preferences.update({
+      contactId: reconnected.id, expectedRevision: reconnected.preferences!.revision,
+      patch: { saved: false, muted: true },
+    });
+    expect(preferences.contact).toMatchObject({ state: "active", preferences: { saved: false, muted: true } });
+    const actor = { shipId: reconnected.remoteShipId, subjectId: reconnected.remoteSubject.id };
+    await second.contact.block.set({ actor, blocked: true });
+    expect((await second.contact.block.list({})).blocks).toEqual([expect.objectContaining({ actor })]);
+    expect((await second.contact.list({ includeRevoked: true })).contacts[0]).toMatchObject({ state: "revoked", blocked: true });
+    const blockedInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await expect(second.contact.invite.accept({ code: blockedInvite.code })).rejects.toThrow("pairing is unavailable");
+    await second.contact.block.set({ actor, blocked: false });
+    expect((await second.contact.list({ includeRevoked: true })).contacts[0]?.state).toBe("revoked");
+    expect(messagesWithText(await second.conversation.history({ conversationId: secondContact.conversationId }), messageArgs.text)).toHaveLength(1);
   });
 });
 

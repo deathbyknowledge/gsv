@@ -1,4 +1,9 @@
 import type {
+  ActorRef,
+  ContactBlock,
+  ContactBlockListResult,
+  ContactPreferences,
+  ContactPreferencesUpdateArgs,
   ContactRequestExchange,
   ContactRequestRecord,
   ContactRequestState,
@@ -27,10 +32,19 @@ import {
 import { z } from "zod";
 
 export type FederationContactRecord = ContactSummary & {
+  preferences: ContactPreferences;
+  blocked: boolean;
   remotePublicKey: FederationPublicKey;
   sharedSecret: string;
   threadId: string;
 };
+
+export class FederationActorBlockedError extends Error {
+  constructor() {
+    super("Contact pairing is unavailable");
+    this.name = "FederationActorBlockedError";
+  }
+}
 
 type FederationInviteBase = {
   inviteId: string;
@@ -278,7 +292,17 @@ type ContactRow = {
   protocol_version: 1 | 2;
   protocol_features_json: string;
   protocol_checked_at: number | null;
+  saved: number;
+  muted: number;
+  notification_policy: ContactPreferences["notifications"];
+  policy_revision: number;
+  actor_blocked: number;
 };
+
+const CONTACT_SELECT = `SELECT c.*, EXISTS (
+  SELECT 1 FROM federation_actor_blocks b
+  WHERE b.owner_uid = c.owner_uid AND b.ship_id = c.remote_ship_id AND b.subject_id = c.remote_subject_id
+) AS actor_blocked FROM federation_contacts c`;
 
 type InviteRow = {
   invite_id: string;
@@ -594,6 +618,9 @@ export class FederationStore {
     remotePublicKey: FederationPublicKey;
     now?: number;
   }): FederationPairingAttemptRecord {
+    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubjectId })) {
+      throw new FederationActorBlockedError();
+    }
     const existing = this.pairingAttempt(input.tokenHash);
     if (existing) {
       if (
@@ -743,8 +770,12 @@ export class FederationStore {
     pairingAttemptTokenHash?: string;
     preferredContactId?: string;
     preferredConversationId?: string;
+    saved?: boolean;
     now?: number;
   }): FederationContactRecord {
+    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubject.id })) {
+      throw new FederationActorBlockedError();
+    }
     const now = input.now ?? Date.now();
     const existing = this.getByRemote(
       input.ownerUid,
@@ -844,8 +875,8 @@ export class FederationStore {
          contact_id, owner_uid, state, generation, remote_ship_id,
          remote_subject_id, remote_display_name, remote_origin,
          remote_public_key_json, shared_secret, conversation_id, thread_id,
-         created_at, updated_at
-       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         created_at, updated_at, saved
+       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       contactId,
       input.ownerUid,
       input.generation,
@@ -859,6 +890,7 @@ export class FederationStore {
       input.threadId,
       now,
       now,
+      input.saved === false ? 0 : 1,
     );
     return this.get(contactId)!;
   }
@@ -896,7 +928,7 @@ export class FederationStore {
 
   get(contactId: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      "SELECT * FROM federation_contacts WHERE contact_id = ? LIMIT 1",
+      `${CONTACT_SELECT} WHERE c.contact_id = ? LIMIT 1`,
       contactId,
     ).toArray()[0];
     return row ? contactFromRow(row) : null;
@@ -908,8 +940,8 @@ export class FederationStore {
     remoteSubjectId: string,
   ): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `SELECT * FROM federation_contacts
-       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
+      `${CONTACT_SELECT}
+       WHERE c.owner_uid = ? AND c.remote_ship_id = ? AND c.remote_subject_id = ?
        LIMIT 1`,
       ownerUid,
       remoteShipId,
@@ -924,8 +956,7 @@ export class FederationStore {
     localSubjectId: string,
   ): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `SELECT c.*
-       FROM federation_contacts c
+      `${CONTACT_SELECT}
        JOIN federation_subjects s ON s.owner_uid = c.owner_uid
        WHERE c.remote_ship_id = ? AND c.remote_subject_id = ? AND s.subject_id = ?
        LIMIT 1`,
@@ -939,11 +970,62 @@ export class FederationStore {
   list(ownerUid: number, includeRevoked = false): FederationContactRecord[] {
     const condition = includeRevoked ? "" : "AND state = 'active'";
     return this.sql.exec<ContactRow>(
-      `SELECT * FROM federation_contacts
-       WHERE owner_uid = ? ${condition}
+      `${CONTACT_SELECT}
+       WHERE c.owner_uid = ? ${condition}
        ORDER BY updated_at DESC, created_at DESC`,
       ownerUid,
     ).toArray().map(contactFromRow);
+  }
+
+  updatePreferences(ownerUid: number, input: ContactPreferencesUpdateArgs): FederationContactRecord {
+    const current = this.get(input.contactId);
+    if (!current || current.ownerUid !== ownerUid) throw new Error("Contact not found");
+    if (current.preferences.revision !== input.expectedRevision) throw new Error("Contact preferences changed; reload before saving");
+    const next = {
+      saved: input.patch.saved ?? current.preferences.saved,
+      muted: input.patch.muted ?? current.preferences.muted,
+      notifications: input.patch.notifications ?? current.preferences.notifications,
+    };
+    if (next.saved === current.preferences.saved && next.muted === current.preferences.muted && next.notifications === current.preferences.notifications) return current;
+    this.sql.exec(`UPDATE federation_contacts SET saved = ?, muted = ?, notification_policy = ?, policy_revision = policy_revision + 1
+      WHERE contact_id = ? AND owner_uid = ? AND policy_revision = ?`,
+    next.saved ? 1 : 0, next.muted ? 1 : 0, next.notifications, current.id, ownerUid, input.expectedRevision);
+    return this.get(current.id)!;
+  }
+
+  isActorBlocked(ownerUid: number, actor: ActorRef): boolean {
+    return this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId).toArray().length > 0;
+  }
+
+  setActorBlock(ownerUid: number, actor: ActorRef, blocked: boolean, now = Date.now()): { block: ContactBlock | null; changed: boolean } {
+    const existing = this.sql.exec<{ created_at: number }>(
+      "SELECT created_at FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId,
+    ).toArray()[0];
+    if (blocked === Boolean(existing)) return { block: existing ? { actor, createdAtMs: existing.created_at } : null, changed: false };
+    if (blocked) {
+      const counts = this.sql.exec<{ owner_count: number; installation_count: number }>(
+        "SELECT COUNT(*) AS installation_count, COALESCE(SUM(owner_uid = ?), 0) AS owner_count FROM federation_actor_blocks", ownerUid,
+      ).one();
+      if (counts.owner_count >= 10_000 || counts.installation_count >= 20_000) throw new Error("Blocked actor capacity reached");
+      this.sql.exec("INSERT INTO federation_actor_blocks (owner_uid, ship_id, subject_id, created_at) VALUES (?, ?, ?, ?)", ownerUid, actor.shipId, actor.subjectId, now);
+      this.sql.exec(`UPDATE federation_pairing_attempts SET state = 'terminal', terminal_reason = 'actor-blocked', updated_at = ?
+        WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ? AND state = 'pending'`, now, ownerUid, actor.shipId, actor.subjectId);
+    } else {
+      this.sql.exec("DELETE FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId);
+    }
+    this.sql.exec(`UPDATE federation_contacts SET policy_revision = policy_revision + 1
+      WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?`, ownerUid, actor.shipId, actor.subjectId);
+    return { block: blocked ? { actor, createdAtMs: now } : null, changed: true };
+  }
+
+  listActorBlocks(ownerUid: number, limit: number, cursor?: ActorRef): ContactBlockListResult {
+    const rows = this.sql.exec<{ ship_id: string; subject_id: string; created_at: number }>(
+      `SELECT ship_id, subject_id, created_at FROM federation_actor_blocks WHERE owner_uid = ?
+       ${cursor ? "AND (ship_id, subject_id) > (?, ?)" : ""} ORDER BY ship_id, subject_id LIMIT ?`,
+      ownerUid, ...(cursor ? [cursor.shipId, cursor.subjectId] : []), limit + 1,
+    ).toArray();
+    const blocks = rows.slice(0, limit).map((row) => ({ actor: { shipId: row.ship_id, subjectId: row.subject_id }, createdAtMs: row.created_at }));
+    return { blocks, ...(rows.length > limit ? { nextCursor: blocks[blocks.length - 1].actor } : undefined) };
   }
 
   attentionNotice(ownerUid: number): { previousContactAdded: boolean; previousReceived: boolean } | undefined {
@@ -1776,6 +1858,8 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
       displayName: row.remote_display_name,
     },
     remoteOrigin: row.remote_origin,
+    preferences: { saved: row.saved === 1, muted: row.muted === 1, notifications: row.notification_policy, revision: row.policy_revision },
+    blocked: row.actor_blocked === 1,
     ...(row.local_alias !== null ? { localAlias: row.local_alias } : undefined),
     remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),
     sharedSecret: row.shared_secret,

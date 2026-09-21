@@ -115,6 +115,7 @@ import {
   handleAdapterSend,
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
+import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -710,6 +711,15 @@ async function dispatchKernel(
         break;
       case "contact.notice.dismiss":
         data = handleContactNoticeDismiss(ctx);
+        break;
+      case "contact.preferences.update":
+        data = handleContactPreferencesUpdate(frame.args, ctx);
+        break;
+      case "contact.block.set":
+        data = await handleContactBlockSet(frame.args, ctx);
+        break;
+      case "contact.block.list":
+        data = handleContactBlockList(frame.args, ctx);
         break;
       case "contact.alias.set":
         data = handleContactAliasSet(frame.args, ctx);

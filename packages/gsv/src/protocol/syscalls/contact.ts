@@ -1,7 +1,7 @@
 import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
-import type { FederationFeature, OriginMessageRef } from "../social";
+import type { ActorRef, FederationFeature, OriginMessageRef } from "../social";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
@@ -58,6 +58,30 @@ export type FederationSubject = {
 
 export type ContactState = "active" | "revoked";
 
+export type ContactPreferences = {
+  saved: boolean;
+  muted: boolean;
+  notifications: "notify" | "digest" | "quiet";
+  revision: number;
+};
+
+export const contactPreferencesPatchSchema = z.strictObject({
+  saved: z.optional(z.boolean()),
+  muted: z.optional(z.boolean()),
+  notifications: z.optional(z.enum(["notify", "digest", "quiet"])),
+});
+export type ContactPreferencesUpdateArgs = {
+  contactId: string;
+  expectedRevision: number;
+  patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "notifications">>;
+};
+export type ContactPreferencesUpdateResult = { contact: ContactSummary };
+export type ContactBlock = { actor: ActorRef; createdAtMs: number };
+export type ContactBlockSetArgs = { actor: ActorRef; blocked: boolean };
+export type ContactBlockSetResult = { block: ContactBlock | null };
+export type ContactBlockListArgs = { cursor?: ActorRef; limit?: number };
+export type ContactBlockListResult = { blocks: ContactBlock[]; nextCursor?: ActorRef };
+
 export type ContactSummary = {
   id: string;
   ownerUid: number;
@@ -74,6 +98,8 @@ export type ContactSummary = {
   lastReceivedAtMs?: number;
   lastDeliveredAtMs?: number;
   protocol?: { version: 1 | 2; features: FederationFeature[]; checkedAtMs: number };
+  preferences?: ContactPreferences;
+  blocked?: boolean;
 };
 
 export type ContactIdentityArgs = Record<string, never>;

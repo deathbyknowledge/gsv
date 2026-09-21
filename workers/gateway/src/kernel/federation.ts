@@ -27,7 +27,6 @@ import type {
   ContactRevokeResult,
   ContactSendArgs,
   ContactSendResult,
-  ContactSummary,
   ConversationMessage,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
@@ -72,17 +71,15 @@ import {
   handleFsTransferSend,
   type FsOpenedSource,
 } from "../drivers/native/fs";
-import { isLocked } from "../auth/shadow";
 import type { KernelContext } from "./context";
 import { kernelPeerContext } from "./peer";
-import { principalOf } from "./context";
-import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import {
   processMediaOwner,
   retainConversationResources,
 } from "./conversation-handlers";
 import {
+  FederationActorBlockedError,
   FederationRequestIdentityConflictError,
   type FederationContactRecord,
   type FederationInboxRecord,
@@ -114,6 +111,7 @@ import {
   requireCommittedPairingContact,
   revokeFederationContact,
 } from "./federation/pairing";
+import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
 import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
@@ -504,8 +502,7 @@ export function handleContactList(
 }
 
 export function handleContactNoticeDismiss(ctx: KernelContext): ContactNoticeDismissResult {
-  if (ctx.processId || !ctx.connection) throw new Error("Only a signed-in human can dismiss this notice");
-  const ownerUid = requireContactCaller(ctx, true);
+  const ownerUid = requireContactHuman(ctx);
   if (ctx.federation.dismissAttentionNotice(ownerUid)) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return {};
 }
@@ -1174,8 +1171,11 @@ export async function handleFederationHttpRequest(
   try {
     if (url.pathname === SHIP_DOCUMENT_V2_PATH && (request.method === "GET" || request.method === "POST")) {
       if (request.body) {
-        await request.body.cancel();
-        throw new PublicFederationError(400, "Ship discovery accepts no request body");
+        try {
+          await bodyToBytes({ stream: request.body }, 0, AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]));
+        } catch {
+          throw new PublicFederationError(400, "Ship discovery accepts no request body");
+        }
       }
       return jsonResponse(jsonValue(await localShipDocumentV2(ctx)));
     }
@@ -2379,93 +2379,6 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
   );
 }
 
-function requireContactCaller(ctx: KernelContext, directHuman: boolean): number {
-  if (principalOf(ctx)?.kind !== "human") throw new Error("Contact operations require a user");
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  if (directHuman) {
-    const process = ctx.processId ? ctx.procs.get(ctx.processId) : null;
-    const ownShip = process?.isPersonalController === true && process.ownerUid === ownerUid;
-    const directClient = Boolean(ctx.connection && !ctx.processId);
-    if (!directClient && !ownShip) {
-      throw new Error("This contact operation requires a signed-in human or their Ship");
-    }
-    const account = ctx.auth.getPasswdByUid(ownerUid);
-    const shadow = account ? ctx.auth.getShadowByUsername(account.username) : null;
-    if (
-      !account
-      || ownerUid < 1_000
-      || ctx.auth.isPersonalAgentUid(ownerUid)
-      || !shadow
-      || isLocked(shadow)
-    ) {
-      throw new Error("This contact operation requires a signed-in human or their Ship");
-    }
-  }
-  return ownerUid;
-}
-
-function requireOwnedActiveContact(
-  contactIdValue: string,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const contactId = contactIdValue.trim();
-  const contact = ctx.federation.get(contactId);
-  if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active") {
-    throw new Error(`Contact not found: ${contactId}`);
-  }
-  return contact;
-}
-
-function requireOwnedActiveContactGeneration(
-  expected: FederationContactRecord,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const current = requireOwnedActiveContact(expected.id, ownerUid, ctx);
-  if (current.generation !== expected.generation) {
-    throw new Error("Contact generation changed during operation");
-  }
-  return current;
-}
-
-function requireOwnedContact(
-  contactIdValue: string,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const contactId = contactIdValue.trim();
-  const contact = ctx.federation.get(contactId);
-  if (!contact || contact.ownerUid !== ownerUid) {
-    throw new Error(`Contact not found: ${contactId}`);
-  }
-  return contact;
-}
-
-function contactSummary(contact: FederationContactRecord): ContactSummary {
-  return {
-    id: contact.id,
-    ownerUid: contact.ownerUid,
-    state: contact.state,
-    generation: contact.generation,
-    remoteShipId: contact.remoteShipId,
-    remoteSubject: contact.remoteSubject,
-    remoteOrigin: contact.remoteOrigin,
-    ...(contact.protocol ? { protocol: contact.protocol } : undefined),
-    ...(contact.localAlias !== undefined ? { localAlias: contact.localAlias } : undefined),
-    conversationId: contact.conversationId,
-    createdAtMs: contact.createdAtMs,
-    updatedAtMs: contact.updatedAtMs,
-    ...(contact.revokedAtMs !== undefined ? { revokedAtMs: contact.revokedAtMs } : undefined),
-    ...(contact.lastReceivedAtMs !== undefined
-      ? { lastReceivedAtMs: contact.lastReceivedAtMs }
-      : undefined),
-    ...(contact.lastDeliveredAtMs !== undefined
-      ? { lastDeliveredAtMs: contact.lastDeliveredAtMs }
-      : undefined),
-  };
-}
-
 function contactInviteSummary(
   invite: FederationInviteRecord,
   now: number,
@@ -2634,6 +2547,7 @@ function assertCurrentTimestamp(timestampMs: number): void {
 }
 
 function publicFederationFailure(cause: unknown): PublicFederationFailure {
+  if (cause instanceof FederationActorBlockedError) return { status: 404, message: "Contact pairing is unavailable" };
   if (cause instanceof PublicFederationError) {
     return {
       status: cause.status,

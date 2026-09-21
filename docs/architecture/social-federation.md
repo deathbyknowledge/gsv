@@ -39,6 +39,16 @@ settings for an upgrade notice while retiring those implicit producers. It does
 not remove existing responsibilities. Scoped assistance is a separate admission
 path and remains under implementation.
 
+Relationship preferences stay in Kernel federation storage. Saving and muting
+are private, revision-checked preferences independent of transport state.
+Actor blocks use `(ownerUid, shipId, subjectId)` and survive contact generations.
+A direct human block atomically retires the current transport, resource grants,
+pending inbox/outbox work and pairing attempts; no dedicated block notification
+is sent. Unblocking permits a future explicit pairing and never restores an old
+generation or queued send. Blocks have separate bounded keyset pagination and
+limits of 10,000 per owner and 20,000 per installation. A new block fails visibly
+at capacity; an existing block remains enforced and can always be removed.
+
 V2 message and receipt signatures include distinct `gsv-federation/2/delivery`
 and `gsv-federation/2/receipt` domains. Payloads require their origin actor,
 origin message ID, thread and submission provenance. The sender derives human

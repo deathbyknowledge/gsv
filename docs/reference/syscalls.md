@@ -658,6 +658,9 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. Returns any pending social-attention upgrade notice with the preserved previous preferences. |
 | `contact.notice.dismiss` | Lets the signed-in human dismiss their own attention upgrade notice; does not change existing commitments or automation authority. |
+| `contact.preferences.update` | Human-only change to saved, muted and notification preferences with a required policy revision. Does not revoke communication or grant agent authority. |
+| `contact.block.set` | Human-only block/unblock by pinned actor. Blocking atomically revokes transport, grants and queued deliveries; unblocking does not reconnect. |
+| `contact.block.list` | Lists the caller's blocked actors using keyset pagination, with a default of 50 and maximum of 200 per page. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
@@ -726,6 +729,8 @@ type ContactSummary = {
   remoteSubject: FederationSubject;
   remoteOrigin: string;
   protocol?: { version: 1 | 2; features: Array<"messages" | "approaches" | "work" | "context">; checkedAtMs: number };
+  preferences?: { saved: boolean; muted: boolean; notifications: "notify" | "digest" | "quiet"; revision: number };
+  blocked?: boolean;
   localAlias?: string;
   conversationId: string;
   createdAtMs: number;
@@ -780,6 +785,18 @@ type ContactSyscalls = {
     result: { contacts: ContactSummary[]; attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean } };
   };
   "contact.notice.dismiss": { args: {}; result: {} };
+  "contact.preferences.update": {
+    args: { contactId: string; expectedRevision: number; patch: { saved?: boolean; muted?: boolean; notifications?: "notify" | "digest" | "quiet" } };
+    result: { contact: ContactSummary };
+  };
+  "contact.block.set": {
+    args: { actor: ActorRef; blocked: boolean };
+    result: { block: { actor: ActorRef; createdAtMs: number } | null };
+  };
+  "contact.block.list": {
+    args: { cursor?: ActorRef; limit?: number };
+    result: { blocks: { actor: ActorRef; createdAtMs: number }[]; nextCursor?: ActorRef };
+  };
   "contact.alias.set": {
     args: { contactId: string; alias: string | null };
     result: { contact: ContactSummary };

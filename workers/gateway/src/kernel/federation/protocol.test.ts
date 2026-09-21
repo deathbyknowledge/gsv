@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import type { KernelContext } from "../context";
 import { FederationIdentity } from "../federation-crypto";
+import { handleFederationHttpRequest } from "../federation";
 import type { FederationContactRecord } from "../federation-store";
 import { localShipDocumentV2, negotiateContactProtocol, verifyShipDocumentV2 } from "./protocol";
 
@@ -18,7 +19,8 @@ describe("federation version negotiation", () => {
       expect(await identity.ensure("https://remote.example")).toEqual(v1);
       const contact = remoteContact(v1.shipId, v1.publicKey);
       const setProtocol = vi.fn((_id: string, _generation: string, protocol: NonNullable<FederationContactRecord["protocol"]>) => ({ ...contact, protocol }));
-      context.federation = { setProtocol } as unknown as KernelContext["federation"];
+      // SAFETY: negotiation only calls setProtocol; its signature is checked against the store.
+      context.federation = { setProtocol } as KernelContext["federation"];
       vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(document));
       expect((await negotiateContactProtocol(contact, context)).protocol?.version).toBe(2);
       expect(setProtocol).toHaveBeenCalledWith(contact.id, contact.generation, expect.objectContaining({ version: 2, features: ["messages"] }));
@@ -36,7 +38,8 @@ describe("federation version negotiation", () => {
       const contact = remoteContact(v1.shipId, v1.publicKey);
       const context = protocolContext(identity);
       const setProtocol = vi.fn((_id: string, _generation: string, protocol: NonNullable<FederationContactRecord["protocol"]>) => ({ ...contact, protocol }));
-      context.federation = { setProtocol } as unknown as KernelContext["federation"];
+      // SAFETY: negotiation only calls setProtocol; its signature is checked against the store.
+      context.federation = { setProtocol } as KernelContext["federation"];
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
       expect((await negotiateContactProtocol(contact, context)).protocol?.version).toBe(1);
       vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 401 }));
@@ -45,6 +48,19 @@ describe("federation version negotiation", () => {
       await expect(negotiateContactProtocol({ ...contact, protocol: { version: 2, features: ["messages"], checkedAtMs: 0 } }, context))
         .rejects.toThrow("previously negotiated v2");
       expect(setProtocol).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("accepts an empty POST stream for discovery and rejects a nonempty body", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const context = protocolContext(new FederationIdentity(storage));
+      const url = "https://remote.example/.well-known/gsv/federation/v2/ship";
+      const empty = new Request(url, { method: "POST", body: new ReadableStream({ start(controller) { controller.close(); } }) });
+      const discovered = await handleFederationHttpRequest(empty, context);
+      expect(discovered.status).toBe(200);
+      expect(await discovered.json()).toMatchObject({ version: 2, features: ["messages"] });
+      const nonempty = await handleFederationHttpRequest(new Request(url, { method: "POST", body: "{}" }), context);
+      expect(nonempty.status).toBe(400);
     });
   });
 });
@@ -56,6 +72,8 @@ function protocolContext(identity: FederationIdentity): KernelContext {
 
 function remoteContact(shipId: string, publicKey: FederationContactRecord["remotePublicKey"]): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    blocked: false,
     id: "contact:remote", ownerUid: 1000, state: "active", generation: "generation:one",
     remoteShipId: shipId, remoteSubject: { id: "subject:remote", displayName: "Remote" },
     remoteOrigin: "https://remote.example", remotePublicKey: publicKey, sharedSecret: "fixture",
