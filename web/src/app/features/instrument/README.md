@@ -71,7 +71,8 @@ The receipt has three levels: work between messages, action purpose, evidence. C
 
 Fleet owns places, contacts, processes, activity, and their inspectors. Places always offers Connect, and Contacts always offers Add contact, subject to the signed-in account's permissions. A new place can be a computer or browser. A contact is another Ship and has its own list and inspector, separate from execution targets. Opening a connection form never creates a credential or invitation.
 
-The Fleet overview uses the full width. Browsing with j/k or the arrow keys only
+The Fleet overview uses the full width with modest side gutters on wide screens.
+Browsing with j/k or the arrow keys only
 moves browser focus: it does not change inspection, mount detail queries or read
 files. Click, Space or Enter explicitly opens the focused item in a centered
 dialog; folders expand in place and pagination runs only on activation. Closing
@@ -81,6 +82,9 @@ reopening the same item or form retains its draft. Opening a different item stil
 protects unsaved routine edits. Links from Zen explicitly open their requested
 inspector, including an unavailable process or place. Expanded files keep their
 full reading/editing surface and return to the preview on close.
+The dialog owns a definite height capped by the zoom-adjusted viewport. Grid
+tracks reserve its header and give the scrollable inspector the remaining space,
+avoiding a content-sized flex layout that collapses in WebKit.
 
 The place flow creates a ten-minute invitation and provides install/connection instructions for the active gateway. The name derives the target ID until it is customized. The invitation survives panel closure, navigation, reload and changes to the installation platform. Explicit cancellation invalidates an unused invitation without revoking a paired device. The CLI and extension persist their receiving credential before redemption, so a lost reply can be recovered without issuing another key. Connected places remain visible while adding another; existing device IDs require the explicit pair-again action.
 

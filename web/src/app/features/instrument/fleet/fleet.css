@@ -23,7 +23,7 @@
   scroll-padding-top: var(--instrument-header-height);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  padding: var(--instrument-header-height) 0 var(--space-5);
+  padding: var(--instrument-header-height) 24px var(--space-5);
 }
 .fleet-block {
   padding: 18px var(--space-5) 6px;
@@ -215,7 +215,7 @@
   box-sizing: border-box;
   width: min(720px, calc(100vw / var(--type-scale) - 32px));
   max-width: none;
-  height: fit-content;
+  height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px));
   max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
   margin: auto;
   padding: 0;
@@ -225,11 +225,10 @@
   font: inherit;
   overflow: hidden;
 }
-.fleet-dialog[open] { display: flex; flex-direction: column; }
+.fleet-dialog[open] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .fleet-dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .fleet-dialog-head {
   display: flex;
-  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -239,10 +238,8 @@
 .fleet-dialog-head > span { color: var(--faint); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
 .fleet-dialog-head button { white-space: nowrap; }
 .fleet-dialog-head kbd { margin-left: 8px; color: var(--faint); font: inherit; font-size: 10px; }
-.fleet-dialog > .instrument-view:not([hidden]) { display: flex; flex-direction: column; flex: 1; height: auto; min-height: 0; overflow: hidden; }
-.fleet-dialog:has(.fleet-contact-conversation) { height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px)); }
+.fleet-dialog > .instrument-view:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: auto; min-height: 0; overflow: hidden; }
 .fleet-inspector {
-  flex: 1;
   min-width: 0;
   min-height: 0;
   padding: 24px;
@@ -337,6 +334,7 @@
 .fleet-setup, .fleet-approval .line-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 320px; overflow-y: auto; }
 .fleet-approval:focus { outline: 1px solid var(--border-focus); outline-offset: 5px; }
 @container instrument (max-width: 900px) {
+  .fleet-manifest { padding-inline: 0; }
   .fleet-dialog-head { padding-inline: 18px; }
   .fleet-inspector { padding: 18px; min-height: 0; }
 }
