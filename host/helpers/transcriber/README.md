@@ -15,6 +15,10 @@ incompatible unshipped cutover without changing the numeric v2 protocol.
 
 Build it separately from the UI:
 
+On macOS, the build script links Xcode's compiler runtime for the Metal backend's
+Objective-C availability checks. Xcode Command Line Tools must be selected with
+`xcode-select`; the app does not need a separate runtime installation.
+
 ```bash
 cargo build --release --manifest-path host/helpers/transcriber/Cargo.toml
 ```
