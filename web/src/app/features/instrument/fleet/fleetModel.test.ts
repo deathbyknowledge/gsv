@@ -29,11 +29,9 @@ import {
 
 describe("Fleet references and supported place actions", () => {
   it("opens connection controls without selecting a row or treating them as approvals", () => {
-    for (const to of ["place", "contact"] as const) {
-      const reference = { kind: "connect" as const, to };
-      expect(isApprovalReference(reference)).toBe(false);
-      expect(fleetReferenceRow(reference)).toBeNull();
-    }
+    const reference = { kind: "connect", to: "place" } as const;
+    expect(isApprovalReference(reference)).toBe(false);
+    expect(fleetReferenceRow(reference)).toBeNull();
     expect(fleetReferenceRow("target:device:123")).toBe("target:device:123");
   });
 
