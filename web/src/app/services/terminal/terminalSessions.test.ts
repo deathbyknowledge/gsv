@@ -42,6 +42,25 @@ describe("direct shell session ownership", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it("stops an in-flight sessionless command instead of waiting for it", async () => {
+    const { owner, execute, row } = harness();
+    // A real request rejects when its signal aborts; a browser command that
+    // ignores the signal would hang here exactly as it does in the app.
+    execute.mockImplementationOnce((_input, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new Error("Command stopped")), { once: true });
+    }));
+    const id = owner.start("sleep 300", "ham-chrome", "ship", false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(row()).toMatchObject({ status: "starting", endedAt: null });
+
+    // Nothing to cancel server-side, so Stop must abort rather than await the request.
+    const stopped = owner.stop(id);
+    expect(execute.mock.calls[0][1]?.aborted).toBe(true);
+    await stopped;
+    expect(row()).toMatchObject({ status: "stopped", actionError: "", action: null });
+    expect(row().endedAt).not.toBeNull();
+  });
+
   it("still opens a session for targets that support one", async () => {
     const { owner, execute } = harness();
     owner.start("run tests", "macbook", "ship");

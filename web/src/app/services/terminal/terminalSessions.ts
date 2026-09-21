@@ -180,7 +180,9 @@ export class TerminalSessions {
     this.patch(id, { action: "stop", actionError: "" });
     const job = this.jobs.get(id);
     if (row.action === "input" || job?.starting) job?.controller.abort(new Error("Stopping the command"));
-    if (!row.sessionId && row.target === "gsv") {
+    // A sessionless command is a foreground request with nothing to cancel
+    // server-side: aborting it is the only way to stop it, whatever the target.
+    if (!row.sessionId) {
       this.patch(id, { stopRequested: true });
       this.jobs.get(id)?.controller.abort(new Error("Command stopped"));
     }
