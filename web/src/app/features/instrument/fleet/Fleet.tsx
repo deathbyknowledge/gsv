@@ -2,11 +2,8 @@ import { FileReader } from "./FileReader";
 import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
 import { RoutineEditor } from "./RoutineEditor";
 import { useDraftGuard } from "../shared/useDraftGuard";
-import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
-import { AddContact, ContactAttentionNotice, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -81,7 +78,7 @@ function useNow(): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "contact:", "work:", "routine:", "ledger:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "work:", "routine:", "ledger:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -93,11 +90,9 @@ function outcomeWord(outcome: string): string {
 }
 
 export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: FleetProps) {
-  const [contactDirty, setContactDirty] = useState(false);
   const [fileDirty, setFileDirty] = useState(false);
   const [workDirty, setWorkDirty] = useState(false);
-  useDraftGuard(contactDirty || fileDirty || workDirty, onDirtyChange);
-  const contactDrafts = useContactDrafts(setContactDirty);
+  useDraftGuard(fileDirty || workDirty, onDirtyChange);
   const { client, connected } = useGateway();
   const now = useNow();
   const initialRow = fleetReferenceRow(initialReference);
@@ -127,8 +122,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   const work = useFleetWork(viewer);
   const [workPanel, setWorkPanel] = useState<"new" | "sources" | null>(null);
 
-  const contactsQuery = useFleetContacts(viewer);
-  const contacts = contactsQuery.data?.contacts ?? [];
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
@@ -157,7 +150,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
 
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [creatingProcess, setCreatingProcess] = useState(false);
-  const [connecting, setConnecting] = useState<"place" | "contact" | null>(initialConnect);
+  const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
     setOpenFile(null);
@@ -165,7 +158,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     setConnecting(initialConnect);
   }, [initialReference]);
 
-  const selectedContact = selected?.startsWith("contact:") ? contacts.find((contact) => `contact:${contact.id}` === selected) : undefined;
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -235,7 +227,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
+  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
   useEffect(() => {
     if (!selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
@@ -299,7 +291,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     row?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  const connect = (to: "place" | "contact") => {
+  const connect = (to: "place") => {
     if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
     setWorkPanel(null);
     setSelected(null);
@@ -448,25 +440,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
             </div>
           </section>
 
-          <section class="fleet-block" aria-label="Contacts">
-            <h2>
-              <i /> Contacts
-              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
-              <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
-            </h2>
-            {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
-            {contactsQuery.data?.attentionNotice && <ContactAttentionNotice notice={contactsQuery.data.attentionNotice} account={viewer} />}
-            {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
-              : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
-              : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
-              : <div class="tablewrap"><table>
-                <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
-                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} class={selected === `contact:${contact.id}` ? "is-sel" : ""} onClick={() => selectRow(`contact:${contact.id}`)}>
-                  <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
-                </tr>)}</tbody>
-              </table></div>}
-          </section>
-
           <WorkSections work={work} account={viewer} processes={processes} selected={selected} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
 
           <section class="fleet-block">
@@ -531,13 +504,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
             <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
           ) : connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={() => setConnecting(null)} onConnected={(id) => selectConnected(targetRow(id))} />
-          ) : connecting === "contact" ? (
-            <AddContact account={viewer} onClose={() => setConnecting(null)} onAdded={(id) => selectConnected(`contact:${id}`)} />
-          ) : selectedContact && !openFile ? (
-            <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer}
-                  draft={contactDrafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT}
-                  onDraft={(change) => contactDrafts.update(selectedContact.id, change)}
-                  onSend={() => void contactDrafts.send(selectedContact)} onRetry={(id) => void contactDrafts.send(selectedContact, id)} onObserved={(ids) => contactDrafts.observed(selectedContact.id, ids)} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
           ) : selectedLine && !openFile ? (

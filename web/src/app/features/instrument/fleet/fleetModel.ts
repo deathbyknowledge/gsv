@@ -11,7 +11,7 @@ export const CLOUD_TARGET_ID = "gsv";
 export const CLOUD_TARGET_LABEL = "your cloud home";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
-export type FleetConnectReference = { kind: "connect"; to: "place" | "contact" };
+export type FleetConnectReference = { kind: "connect"; to: "place" };
 export type FleetReference = FleetRow | FleetApprovalReference | FleetConnectReference;
 
 export function isApprovalReference(reference: FleetReference | null): reference is FleetApprovalReference {

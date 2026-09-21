@@ -251,3 +251,16 @@ filtering to `contact.list`, exact identity/ID lookup, a paged People address bo
 and an explicit blocked-identities screen. V064 retains human-readable private
 block labels after request cleanup. Shell history now resolves the exact contact
 rather than searching a potentially incomplete list. This slice still needs CI.
+
+CI at `6a160123` passed the new avatar and address-book boundary cases and the
+previously hanging eviction recovery test (2,355 gateway cases passed). One
+filesystem-copy fixture lost its internal contact list during the paging change;
+it is restored in the next slice. Lint's named-return-contract findings are also
+addressed. This is not yet a passing complete integration run.
+
+Selected-evidence reports now have a two-step People review, explicit recipient,
+exact message copies and optional checked files. They use ordinary contact
+messages and the existing durable outbox, keep retry content stable and bind the
+reviewed recipient generation. Contact screens now live under People; Fleet's
+duplicate list and composer are removed. The People navigation guard also covers
+unsent report drafts. CI and human trials remain required for this slice.

@@ -79,6 +79,14 @@ describe("federation outbound boundary", () => {
     expect(updateRequest).not.toHaveBeenCalled();
   });
 
+  it("rejects a send approved for a retired connection before creating a delivery", async () => {
+    const contact = activeContact();
+    const enqueue = vi.fn();
+    const ctx = focusedContext({ federation: focusedFixture({ get: () => contact, enqueue }) });
+    await expect(handleContactSend({ contactId: contact.id, text: "Reviewed report", expectedGeneration: "generation:retired", idempotencyKey: "report:one" }, ctx)).rejects.toThrow("review the recipient");
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it("lets only the signed-in human dismiss their own social upgrade notice", () => {
     const dismissAttentionNotice = vi.fn(() => true);
     const broadcastToUserUid = vi.fn();

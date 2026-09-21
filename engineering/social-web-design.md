@@ -14,6 +14,18 @@ use the existing typefaces, color tokens and text actions. A focused compose or
 acceptance form may use a primary block button. No dashboard tiles, public
 activity stream, relationship score or automatic people discovery.
 
+Contact management has one home in People. Fleet no longer duplicates its list,
+composer or invitations. A selected conversation distinguishes ordinary Messages
+from Work requests; these are separate from first-contact Message requests.
+
+The report flow starts from selected message copies, or the first message of a
+request. The reporter chooses an active support/moderation contact, optionally
+checks exact attachments, adds a note and reviews the full outgoing message.
+Reporting uses ordinary authorized contact delivery, with stable retry identity;
+there is no implicit operator endpoint or new report database. Only deliberately
+checked files are forwarded, without their locally derived transcription. The
+recipient's conversation retains delivery state and the committed report.
+
 - **Inbox** shows established conversations, private unread position, the latest
   message and honest delivery state. Archive and mute have separate controls.
 - **Message requests** separates received requests from sent ones. A request

@@ -48,7 +48,6 @@ import type {
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
-  bodyToBytes,
   actorRefSchema,
   contactDisplayName,
   federationDeliveryEnvelopeSchema,
@@ -622,6 +621,7 @@ export async function handleContactSend(
     throw new Error("Contact message requires text or a resource");
   }
   let contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
+  if (args.expectedGeneration !== undefined && args.expectedGeneration !== contact.generation) throw new Error("Contact connection changed; review the recipient again before sending");
   const replyTo = args.replyTo ? originMessageRefSchema.parse(args.replyTo) : undefined;
   const fingerprint = await federationInputFingerprint(jsonValue({
     operation: "contact.send",

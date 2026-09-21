@@ -917,6 +917,7 @@ type ContactSyscalls = {
   "contact.send": {
     args: {
       contactId: string;
+      expectedGeneration?: string;
       text: string;
       replyTo?: OriginMessageRef;
       media?: ResourceBlock[];

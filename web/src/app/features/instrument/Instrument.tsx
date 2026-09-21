@@ -23,7 +23,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
@@ -266,10 +266,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
               <dt>⌘ / Ctrl + Enter</dt><dd>Save file edits</dd>
               <dt>Esc</dt><dd>Return to Fleet</dd>
             </dl>
-            <h4>Contact messages</h4>
-            <dl>
-              <dt>Enter</dt><dd>Send the message</dd>
-            </dl>
+          </>}
+          {distance === "people" && <>
+            <h4>People</h4><dl><dt>Enter</dt><dd>Send a message from the composer</dd><dt>Shift + Enter</dt><dd>Start a new line</dd><dt>Back</dt><dd>Return to the list on a narrow screen</dd></dl>
           </>}
           {distance === "settings" && <>
             <h4>Settings</h4>

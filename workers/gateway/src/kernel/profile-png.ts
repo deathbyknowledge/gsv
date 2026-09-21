@@ -6,9 +6,10 @@ const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
   return value >>> 0;
 });
+type ProfileImageDimensions = { width: number; height: number };
 
 /** A bounded static PNG envelope, following https://www.w3.org/TR/png-3/#5Chunk-layout. */
-export function profilePngDimensions(bytes: Uint8Array): { width: number; height: number } {
+export function profilePngDimensions(bytes: Uint8Array): ProfileImageDimensions {
   if (bytes.length > MAX_PROFILE_IMAGE_BYTES || bytes.length < 57 || SIGNATURE.some((byte, index) => bytes[index] !== byte)) {
     throw new Error("Choose a static PNG image no larger than 256 KiB");
   }

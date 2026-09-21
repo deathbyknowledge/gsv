@@ -1,25 +1,16 @@
 import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
 import { ContactRequests } from "./ContactRequests";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import { contactDisplayName, type ContactInviteCreateResult, type ContactListResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
-import { RelationshipPreferences } from "../people/RelationshipPreferences";
-import { ConversationViewControls } from "../people/ConversationViewControls";
+import { RelationshipPreferences } from "./RelationshipPreferences";
+import { ConversationViewControls } from "./ConversationViewControls";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "../shared/SetupCommand";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
-
-export function useFleetContacts(account: ConsoleAccount | undefined) {
-  const { client, connected } = useGateway();
-  return useQuery({
-    queryKey: CONTACTS_KEY,
-    enabled: connected && !!account && canConfigure(account, "contact.list"),
-    queryFn: () => client.contact.list({ includeRevoked: true }),
-  });
-}
 
 export function ContactAttentionNotice({ notice, account }: {
   notice: NonNullable<ContactListResult["attentionNotice"]>;
@@ -88,7 +79,7 @@ export function AddContact({ account, onClose, onAdded }: {
     <div class="fleet-place-form">
       <h4>Invite someone</h4>
       {issued ? <>
-        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted. Your new contact is in Fleet.</p>
+        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted. Your conversation is ready in People.</p>
           : currentInvite?.state === "expired" || currentInvite?.state === "cancelled" ? <p class="note" role="status">This invitation has {currentInvite.state === "expired" ? "expired" : "been cancelled"}.</p>
           : <>
             <p class="note">Share this one-use code with them. It expires {new Date(issued.expiresAtMs).toLocaleString()}.</p>
@@ -117,8 +108,10 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, onWorkDirty, onOpenContact }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
   const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
+  const [workDirty, setWorkDirty] = useState(false);
+  const workChanged = useCallback((dirty: boolean) => { setWorkDirty(dirty); onWorkDirty(dirty); }, [onWorkDirty]);
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";
@@ -140,8 +133,8 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
     <ConversationViewControls conversationId={contact.conversationId} account={account} />
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} />
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard this unsent report?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name}</button>)}</nav>
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} onWorkDirty={workChanged} onOpenContact={onOpenContact} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>

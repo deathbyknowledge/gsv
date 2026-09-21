@@ -19,6 +19,16 @@ function setup(initial: string[] | undefined, load: () => Promise<string[]>) {
 }
 
 describe("contact change notifications", () => {
+  it("invalidates filtered pages and exact identity lookups after a policy or alias change", async () => {
+    const cache = new QueryClient();
+    cleanup.push(() => cache.clear());
+    const keys = [[...KEY, "address-book", "Alice"], [...KEY, "by-id", ["contact:alice"]], [...KEY, "blocked"]];
+    for (const key of keys) cache.setQueryData(key, []);
+    cache.setQueryData(INVITES, []);
+    await refreshContactQuery(cache, KEY);
+    for (const key of keys) expect(cache.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(cache.getQueryState(INVITES)?.isInvalidated).toBe(false);
+  });
   it("refreshes only the affected list", async () => {
     const load = vi.fn(async () => ["new contact"]);
     const { cache } = setup([], load);

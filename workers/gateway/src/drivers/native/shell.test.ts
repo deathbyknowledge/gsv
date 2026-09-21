@@ -2828,7 +2828,7 @@ describe("fs copy", () => {
     }));
     const ctx = makeContext({
       capabilities: ["shell.exec", "fs.copy"],
-      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
+      federation: { list: vi.fn(() => [contact]), listPage: vi.fn(() => ({ contacts: [contact] })) },
     });
 
     const result = await handleShellExec({

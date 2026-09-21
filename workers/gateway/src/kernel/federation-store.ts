@@ -41,6 +41,7 @@ export type FederationContactRecord = ContactSummary & {
 };
 
 type ActorBlockChange = { block: ContactBlock | null; changed: boolean };
+type ContactPage = { contacts: FederationContactRecord[]; next?: string };
 
 export class FederationActorBlockedError extends Error {
   constructor() {
@@ -988,7 +989,7 @@ export class FederationStore {
     ).toArray().map(contactFromRow);
   }
 
-  listPage(ownerUid: number, input: ContactListArgs & { limit: number }): { contacts: FederationContactRecord[]; next?: string } {
+  listPage(ownerUid: number, input: ContactListArgs & { limit: number }): ContactPage {
     const clauses = ["c.owner_uid = ?"];
     const bindings: (string | number)[] = [ownerUid];
     if (!input.includeRevoked) clauses.push("c.state = 'active'");

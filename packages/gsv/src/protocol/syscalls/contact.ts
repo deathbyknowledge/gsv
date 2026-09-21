@@ -200,6 +200,7 @@ export type ContactRevokeResult = {
 
 export type ContactSendArgs = {
   contactId: string;
+  expectedGeneration?: string;
   text: string;
   replyTo?: OriginMessageRef;
   media?: ResourceBlock[];

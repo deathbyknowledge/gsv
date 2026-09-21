@@ -34,7 +34,7 @@ describe("Fleet references and supported place actions", () => {
       expect(isApprovalReference(reference)).toBe(false);
       expect(fleetReferenceRow(reference)).toBeNull();
     }
-    expect(fleetReferenceRow("contact:person:123")).toBe("contact:person:123");
+    expect(fleetReferenceRow("target:device:123")).toBe("target:device:123");
   });
 
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {

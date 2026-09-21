@@ -1,4 +1,4 @@
-import { MAX_FEDERATION_MESSAGE_RESOURCES, MAX_FEDERATION_MESSAGE_RESOURCE_BYTES, type ContactSummary, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
+import { MAX_FEDERATION_MESSAGE_RESOURCES, MAX_FEDERATION_MESSAGE_RESOURCE_BYTES, type ContactSummary, type ConversationMessage, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
 import { useInfiniteQuery, useQueries } from "@tanstack/preact-query";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -10,9 +10,10 @@ import { instrumentContactConversationKey, instrumentContactDeliveriesKey } from
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";
 import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
-import { useConversationReadPosition } from "../people/useConversationReadPosition";
-import { MessageDelivery } from "../people/MessageDelivery";
+import { useConversationReadPosition } from "./useConversationReadPosition";
+import { MessageDelivery } from "./MessageDelivery";
 import { ConversationSearch } from "./ConversationSearch";
+import { ReportEvidence } from "./ReportEvidence";
 
 const NO_SEQUENCE: number | null = null;
 
@@ -22,9 +23,11 @@ export type ContactComposerProps = {
   onSend: () => void;
   onRetry: (id: string) => void;
   onObserved: (messageIds: readonly string[]) => void;
+  onWorkDirty: (dirty: boolean) => void;
+  onOpenContact: (contactId: string) => void;
 };
 
-export function ContactConversation({ contact, account, draft, onDraft, onSend, onRetry, onObserved }: ContactComposerProps & {
+export function ContactConversation({ contact, account, draft, onDraft, onSend, onRetry, onObserved, onWorkDirty, onOpenContact }: ContactComposerProps & {
   contact: ContactSummary;
   account: ConsoleAccount | undefined;
 }) {
@@ -32,6 +35,8 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const mayRead = !!account && canConfigure(account, "conversation.history");
   const maySearch = mayRead && !!account && canConfigure(account, "conversation.search");
   const [focusSequence, setFocusSequence] = useState<number | null>(null);
+  const [selected, setSelected] = useState<ConversationMessage[]>([]);
+  const [reporting, setReporting] = useState(false);
   const maySend = !!account && canConfigure(account, "contact.send")
     && (account.uid === 0 || account.uid === contact.ownerUid) && contact.state === "active";
   const disabled = !connected || !maySend;
@@ -94,7 +99,9 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
     onDraft({ media: [...draft.media, ...files.map(zenAttachment)], error: null, status: null });
   };
 
+  if (reporting) return <ReportEvidence messages={selected} account={account} onDirty={onWorkDirty} onOpen={onOpenContact} onClose={() => { setReporting(false); setSelected([]); }} />;
   return <section class="fleet-contact-conversation" aria-label="Contact messages">
+    {selected.length > 0 && <div class="people-selection" role="region" aria-label="Selected messages"><span>{selected.length} selected</span><button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.send")} onClick={() => setReporting(true)}>report selected…</button><button class="people-action" onClick={() => setSelected([])}>clear selection</button></div>}
     {maySearch && <ConversationSearch key={contact.conversationId} conversationId={contact.conversationId} onOpen={(sequence) => {
       follow.current = true;
       olderHeight.current = null;
@@ -119,6 +126,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
         <footer class="people-message-actions">
+          <button class="fleet-text-action" type="button" aria-pressed={selected.some((entry) => entry.id === message.id)} disabled={selected.length >= 20 && !selected.some((entry) => entry.id === message.id)} onClick={() => setSelected((current) => current.some((entry) => entry.id === message.id) ? current.filter((entry) => entry.id !== message.id) : [...current, message])}>{selected.some((entry) => entry.id === message.id) ? "selected" : "select"}</button>
           {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
