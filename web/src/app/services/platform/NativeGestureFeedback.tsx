@@ -7,7 +7,7 @@ const candidates: Record<GestureCandidate, string> = {
   open_palm: "confirm five fingers",
 };
 const accepted: Record<GestureCandidate, string> = {
-  arm: "Ready", disarm: "Hands-free off", start_transcription: "Starting listening",
+  arm: "Ready", disarm: "Off", start_transcription: "Starting listening",
   stop_transcription: "Pausing", send: "Send requested", delete_backward: "Delete requested",
   clear_dictation: "Clear requested", mute: "Mute requested", unmute: "Unmute requested",
   open_palm: "Five fingers detected",
@@ -44,9 +44,9 @@ export function gestureFeedback(snapshot: NativeSnapshot): { message: string; pr
   };
   if (snapshot.gesture_needs_reset) return { message: "Make a fist to reset", progress: null, action };
   const { gesture_context: context } = snapshot;
-  const message = context.mode === "disarmed" ? "Hands-free off"
+  const message = context.mode === "disarmed" ? "Off"
     : context.mode === "disabled" ? "Preparing · both fists to stop"
-    : context.mode === "standby" ? "Ready · one finger to listen"
+    : context.mode === "standby" ? "Ready"
     : "Listening · fist between commands";
   return { message, progress: null, action };
 }

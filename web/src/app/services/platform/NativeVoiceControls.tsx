@@ -1,6 +1,6 @@
 import type { RefObject } from "preact";
 import { createPortal, forwardRef } from "preact/compat";
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
 import { gestureFeedback } from "./NativeGestureFeedback";
 import { GestureGuide } from "./GestureGuide";
@@ -22,6 +22,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const control = useNativeVoice({ ...options, enabled: options.enabled && !tutorial });
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const [panel, setPanel] = useState<Panel | null>(null);
+  const startTutorial = useCallback(() => { setPanel(null); setTutorial(true); }, []);
   const panelRef = useRef<HTMLElement>(null);
   const voiceButton = useRef<HTMLButtonElement>(null);
   const gestureButton = useRef<HTMLButtonElement>(null);
@@ -114,14 +115,11 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
         <p class="native-panel-footnote">Local transcription. Enter sends and keeps listening.</p>
       </> : <>
         <div class="native-panel-actions">
-          <button type="button" class={cameraOn ? "" : "native-primary"} disabled={busy}
-            onClick={() => void command({ kind: "gestures", enabled: !cameraOn })}>{cameraOn ? "turn off" : "enable hands-free"}</button>
+          <button type="button" class="native-primary native-hands-free-toggle" disabled={busy} aria-label={cameraOn ? "Disable hands-free" : "Enable hands-free"}
+            onClick={() => void command({ kind: "gestures", enabled: !cameraOn })}>{cameraOn ? "disable" : "enable"}</button>
           <span class="native-panel-state" role="status">{cameraOn ? feedback?.message : "Off"}</span>
         </div>
-        <button type="button" class="native-tutorial-launch" disabled={busy} onClick={() => { setPanel(null); setTutorial(true); }}>
-          Learn hands-free <span>guided practice →</span>
-        </button>
-        <GestureGuide />
+        <GestureGuide tutorialDisabled={busy} onStartTutorial={startTutorial} />
         <p class="native-panel-footnote">Camera stays on while ready. Camera and voice stay on this computer.</p>
       </>}
       <InputSoundSettings />

@@ -1,11 +1,10 @@
 import { memo } from "preact/compat";
-import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { AsciiAnimation } from "../../components/ui/AsciiAnimation";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { createGestureScene, GESTURE_FRAME_RATE, type GestureLesson } from "./gestureScene";
 
 export const GestureIllustration = memo(function GestureIllustration({ lesson, label }: { lesson: GestureLesson; label: string }) {
-  const [paused, setPaused] = useState(false);
   const { theme } = useColorTheme();
   const scene = useMemo(() => createGestureScene(lesson), [lesson]);
   const viewer = useRef<HTMLDivElement>(null);
@@ -50,12 +49,8 @@ export const GestureIllustration = memo(function GestureIllustration({ lesson, l
           if (event.key === "Home") scene.resetTurn();
           else scene.turnBy((event.key === "ArrowLeft" ? -1 : 1) * Math.PI / 12);
         }}>
-        <AsciiAnimation scene={scene} label={label} palette={theme} animate={!paused}
+        <AsciiAnimation scene={scene} label={label} palette={theme}
           frameRate={GESTURE_FRAME_RATE} fontSize={5.5} className="native-gesture-animation" />
       </div>
-      <figcaption>
-        <span>{(lesson === "scroll" || lesson === "roles") ? "right action · left control" : lesson === 0 ? "both hands" : "right action hand"} · drag to turn</span>
-        <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? "Play gesture demonstration" : "Pause gesture demonstration"}>{paused ? "play" : "pause"}</button>
-      </figcaption>
     </figure>;
 });

@@ -666,3 +666,14 @@ PerformanceObserver, and Preact scheduling wrapper have been removed. Shared Zen
 navigation and PromptLine no longer emit the prototype timing measures. The
 cursor measurement and rendering work remains in its original owners. Earlier
 investigation notes above describe the diagnostics while they were in use.
+
+## Compact hands-free guide
+
+The user's copy pass removes the guide's numeric labels and hand-role caption,
+puts Start tutorial beside the Quick guide heading, and uses one consistently
+styled enable/disable button. Demonstrations retain rotation and dragging without
+visible captions or pause controls; the shared renderer still respects reduced
+motion. Tutorial instructions and labels use the requested shorter wording and
+omit repeated practice qualifiers. Closing still releases its native input lease;
+the duplicate turn-off control is removed. Recognition, lesson progression and
+the isolated tutorial draft retain their existing owners and behavior.
