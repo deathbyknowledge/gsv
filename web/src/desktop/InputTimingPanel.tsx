@@ -31,9 +31,21 @@ export function InputTimingPanel() {
   };
   useDismissOnOutsideClick(report !== null, () => [button.current, panel.current], () => setReport(null));
   useLayoutEffect(() => { if (report) panel.current?.focus({ preventScroll: true }); }, [report !== null]);
+  useLayoutEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "F8" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCopied(null);
+      setReport((current) => current ? null : readReport());
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   return <>
     <button ref={button} type="button" aria-expanded={report !== null} aria-controls="desktop-input-timings"
+      title="Input timings (F8)" aria-keyshortcuts="F8"
       onKeyDown={(event) => event.stopPropagation()}
       onClick={() => { setCopied(null); setReport((current) => current ? null : readReport()); }}>timings</button>
     {report && <section ref={panel} id="desktop-input-timings" class="desktop-timings" role="dialog"

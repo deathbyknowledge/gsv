@@ -1,6 +1,7 @@
-.desktop-root { height: 100%; }
-.desktop-strip { position: relative; z-index: 100; height: 30px; display: flex; align-items: center; gap: 18px; padding: 0 16px; font: 11px monospace; border-bottom: 1px solid currentColor; }
-.desktop-strip span { flex: 1; }
+.desktop-root { height: 100%; color: var(--text); background: var(--void); }
+.desktop-strip { position: relative; z-index: 100; height: 30px; display: flex; align-items: center; gap: 18px; padding: 0 16px; font: 12px monospace; color: var(--text); background: var(--header-bar); border-bottom: 1px solid var(--border-raised); }
+.desktop-strip > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-strip > button { flex-shrink: 0; white-space: nowrap; }
 .desktop-strip button, .desktop-error button { color: inherit; background: transparent; border: 0; text-decoration: underline; cursor: pointer; }
 .desktop-root:has(.desktop-strip) .instrument { --instrument-height: calc(100dvh - 30px); top: 30px; height: var(--instrument-height); }
 .desktop-confirm { position: fixed; z-index: 201; top: 36px; right: 12px; max-width: 400px; padding: 20px; border: 1px solid currentColor; background: #191727; color: white; }

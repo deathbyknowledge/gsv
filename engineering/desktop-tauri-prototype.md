@@ -180,3 +180,8 @@ aggregates and window/layout dimensions. It can distinguish delayed dispatch
 from delayed animation-frame scheduling, but it ends before paint and cannot
 prove end-to-end latency. Copying is an explicit local clipboard action, with
 selectable report text if clipboard access is unavailable.
+
+The prototype strip is outside Instrument's theme. It must set its own foreground
+and background colors; relying on inherited text color left its actions dark on
+the dark page. F8 also opens the timing report directly, including while the
+prompt is focused, without inserting text or changing the active space.

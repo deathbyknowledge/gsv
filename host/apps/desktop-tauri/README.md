@@ -122,7 +122,9 @@ excludes the mock. The real helpers are still real in development mode.
    Try `j`/`k`, typing and view navigation with both sensors off, then on. Check
    a long conversation and scroll anchoring while new replies arrive.
 
-For local timing diagnostics, open **timings** in the prototype bar. Clear the
+For local timing diagnostics, press **F8** or open **timings** in the in-app
+prototype bar. This strip is part of the page, independent of window-manager
+title bars. Clear the
 samples, close the panel, then compare wheel scrolling with `j`/`k`, click the
 prompt and type without sending. Reopen **timings** and copy the report. It
 includes dispatch and next-frame delays plus window/layout dimensions; no keys,
