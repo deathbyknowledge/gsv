@@ -31,7 +31,7 @@ or deploy merely because an intermediate batch is ready.
 | 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Pending |
 | 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Pending |
 | 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
-| 6. Private message search | Owner-scoped full-text search across eligible hot and archived messages, durable indexing/backfill, correct authorization/deletion and visible coverage. | Search projection/DO, Conversation source jobs, lifecycle, web | Pending |
+| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Scope simplified by Esteve; pending |
 | 7. Scoped assistance | Generic Process scope/context propagation, exact approved drafts, optional bounded support helpers, resource/recipient enforcement through all syscall presentations and descendants. | Kernel authority, Process context/execution, protocol, web | Pending |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
@@ -64,6 +64,10 @@ checks, a model verdict, or a new bespoke authorization mechanism.
   promises. Local relationship context does not become a network-wide graph.
 - Managed web search is independent of private message search. Private content
   does not go to Exa or a model to implement lexical search.
+- Prefer a clear product limitation for secondary features over extra
+  infrastructure. Keep behavior in its existing owner until an observed need
+  justifies a separate component. This does not weaken authorization or durable
+  messaging guarantees.
 - Coordinate shared frontend/session/protocol edits with the independent
   `feat/desktop-tauri` workstream; do not modify its worktree.
 - Protected prompt/standing-context files remain read-only without a specific
@@ -102,3 +106,21 @@ upgrades, with the two-space trial updated for confirmation-aware actions.
 Source changes and protocol generation are complete for batch 1. No local tests,
 lint, typechecks, builds or browser/live probes were run. CI and user acceptance
 remain outstanding. No merge or deployment has occurred.
+
+Draft integration PR: https://github.com/deathbyknowledge/gsv/pull/330.
+Esteve explicitly simplified batch 6 to search inside the existing Conversation
+DO only. No additional Search DO, account-wide index, indexing transport, or
+cross-conversation query fan-out. New message/index rows can commit together;
+older history uses bounded local backfill with visible coverage. The RFC and
+storage diagram now reflect this decision. Other messaging batches continue.
+Batch 1 is commit `940f0dd6`. Its first CI passed workspace, adapter and lint
+checks; four existing inbound fixtures expected a requester to report performer
+states. Commit `26600137` corrects those fixtures to use outgoing offers and a
+remote performer, preserving the lifecycle and removal assertions.
+
+Batch 2's handler separation is commit `41cd4de4` (v054): contact text threads
+no longer create or dispatch input to a personal Process. Attachments continue
+to use the existing durable archive owner without admitting an inference run.
+The v2 message/receipt paths, protocol negotiation, provenance, reply references
+and archive-preserved origin mappings are under implementation. See
+`docs/architecture/social-federation.md` for version and egress decisions.
