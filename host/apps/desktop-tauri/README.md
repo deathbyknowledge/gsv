@@ -38,6 +38,17 @@ cargo build --manifest-path host/Cargo.toml --locked --package desktop-tauri --f
 ./host/target/debug/gsv-desktop-tauri
 ```
 
+A private local styling trial can set `GSV_DESKTOP_PREVIEW_CSS` to an absolute
+CSS file path when building the desktop web assets. Its relative font URLs are
+bundled by Vite. Keep the stylesheet and licensed font files outside the checkout;
+neither is needed by the default build. The resulting preview executable embeds
+those private assets and must stay within their licensed use. This option applies
+only to the desktop prototype build, not the public web build.
+
+```bash
+GSV_DESKTOP_PREVIEW_CSS=/absolute/private/preview.css npm run build --workspace web -- --config vite.desktop.config.ts
+```
+
 If startup exits with a Wayland `Error 71` or opens a blank window with
 `Failed to create GBM buffer`, use this launch command from the repository root:
 
