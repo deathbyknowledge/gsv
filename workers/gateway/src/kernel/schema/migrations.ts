@@ -1,3 +1,4 @@
+import { KERNEL_V065_PARTICIPANT_WORK_STREAMS } from "./v065_participant_work_streams";
 import { KERNEL_V064_CONTACT_ADDRESS_BOOK } from "./v064_contact_address_book";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
@@ -171,6 +172,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V062_RETRY_CONTACT_MESSAGES,
   KERNEL_V063_PROFILE_IMAGES,
   KERNEL_V064_CONTACT_ADDRESS_BOOK,
+  KERNEL_V065_PARTICIPANT_WORK_STREAMS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

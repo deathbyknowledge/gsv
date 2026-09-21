@@ -1,7 +1,10 @@
-import type { ContactRequestRecord, ContactRequestState, ContactSummary, JsonValue } from "@humansandmachines/gsv/protocol";
-import { contactRequestTransitions } from "@humansandmachines/gsv/protocol";
+import { RequestDetails } from "./RequestDetails";
+import { WorkRequestRow } from "./WorkRequestRow";
+import { WorkRequestEditor, type WorkEditorSelection } from "./WorkRequestEditor";
+import type { ContactRequestRecord, ContactRequestState, ContactSummary } from "@humansandmachines/gsv/protocol";
+import { contactRequestTransitions, projectWork } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -11,14 +14,6 @@ import { instrumentContactRequestsKey } from "../wire/queryKeys";
 
 type NextState = Exclude<ContactRequestState, "offered">;
 const LABELS = { accepted: "accept", rejected: "reject", active: "start", completed: "complete", cancelled: "cancel" } satisfies Record<NextState, string>;
-
-function RequestDetails({ value }: { value: JsonValue }) {
-  if (value === null) return <span>—</span>;
-  if (Array.isArray(value)) return <ul>{value.map((entry, index) => <li key={index}><RequestDetails value={entry} /></li>)}</ul>;
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JsonValue is the parsed recursive protocol union; objects contain request detail fields.
-  if (typeof value === "object") return <dl>{Object.entries(value).map(([key, entry]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><RequestDetails value={entry} /></dd></div>)}</dl>;
-  return <span>{String(value)}</span>;
-}
 
 function RequestRow({ request, editable }: { request: ContactRequestRecord; editable: boolean }) {
   const { client } = useGateway();
@@ -50,27 +45,44 @@ function RequestRow({ request, editable }: { request: ContactRequestRecord; edit
   </article>;
 }
 
-export function ContactRequests({ contact, account }: { contact: ContactSummary; account: ConsoleAccount | undefined }) {
+export function ContactRequests({ contact, account, onDirty }: { contact: ContactSummary; account: ConsoleAccount | undefined; onDirty: (dirty: boolean) => void }) {
+  const [editor, setEditor] = useState<WorkEditorSelection | null>(null);
   const { client, connected } = useGateway();
   const mayRead = !!account && canConfigure(account, "contact.request.list");
   const editable = connected && contact.state === "active" && !!account
-    && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.request.update");
+    && (account.uid === 0 || account.uid === contact.ownerUid);
+  const legacyEditable = editable && !!account && canConfigure(account, "contact.request.update");
+  const workEditable = editable && !!account && canConfigure(account, "contact.request.act");
+  const mayCreate = editable && !!account && canConfigure(account, "contact.request.create");
   const query = useQuery({
     queryKey: instrumentContactRequestsKey(contact.id),
     enabled: connected && mayRead,
     queryFn: async () => (await client.contact.request.list({ contactId: contact.id, includeTerminal: true })).requests,
   });
-  const terminal = (request: ContactRequestRecord) => ["completed", "rejected", "cancelled"].includes(request.state)
-    && request.exchange?.state !== "pending" && request.exchange?.state !== "failed";
+  const terminal = (request: ContactRequestRecord) => contact.state !== "active" || request.contactGeneration !== contact.generation
+    || ["completed", "rejected", "cancelled"].includes(request.state)
+    && request.exchange?.state !== "pending" && request.exchange?.state !== "failed"
+    && (!request.work || request.state !== "completed" || projectWork(request.work).outcome === "acknowledged");
   const open = query.data?.filter((request) => !terminal(request)) ?? [];
   const closed = query.data?.filter(terminal) ?? [];
-  return <section class="fleet-contact-requests" aria-label="Contact requests">
+  const editing = editor?.kind === "action" ? query.data?.find((request) => request.id === editor.request.id) : undefined;
+  const form = editor && <WorkRequestEditor key={editor.kind === "action" ? `${editor.request.id}:${editor.action}` : "offer"}
+    selection={editor} contact={contact} currentRevision={editing?.revision} allowed={editor.kind === "offer" ? mayCreate : workEditable}
+    onClose={() => setEditor(null)} onDirty={onDirty} />;
+  const renderRequest = (request: ContactRequestRecord) => request.work ? <WorkRequestRow key={request.id} request={request} work={request.work}
+    editable={workEditable && request.contactGeneration === contact.generation} busy={!!editor} onAction={(action) => setEditor({ kind: "action", request, action })}>
+    {editor?.kind === "action" && editor.request.id === request.id && form}
+  </WorkRequestRow> : <RequestRow key={request.id} request={request} editable={legacyEditable && !editor && request.contactGeneration === contact.generation} />;
+  return <section class="fleet-contact-requests" aria-label="Work requests">
+    <p class="note">Offers and explicit status reports with this person. Your private execution details stay in Fleet.</p>
+    {!editor && <button class="fleet-text-action" disabled={!mayCreate} onClick={() => setEditor({ kind: "offer" })}>offer work…</button>}
+    {editor?.kind === "offer" && form}
     {!mayRead && <p class="note">Your account cannot read requests.</p>}
     {query.isPending && mayRead && connected && <LoadingState variant="panel">Loading requests…</LoadingState>}
     {query.error && <p class="error" role="alert">{query.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void query.refetch()}>retry</button></p>}
     {query.data && open.length === 0 && <p class="note">No open requests.</p>}
-    {open.map((request) => <RequestRow key={request.id} request={request} editable={editable} />)}
-    {closed.length > 0 && <details class="fleet-contact-closed"><summary>{closed.length} past {closed.length === 1 ? "request" : "requests"}</summary>{closed.map((request) => <RequestRow key={request.id} request={request} editable={false} />)}</details>}
+    {open.map(renderRequest)}
+    {closed.length > 0 && <details class="fleet-contact-closed"><summary>{closed.length} past {closed.length === 1 ? "request" : "requests"}</summary>{closed.map(renderRequest)}</details>}
     {!connected && <p class="note">Reconnecting…</p>}
   </section>;
 }

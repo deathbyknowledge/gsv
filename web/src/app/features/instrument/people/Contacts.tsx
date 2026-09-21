@@ -133,9 +133,9 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
     <ConversationViewControls conversationId={contact.conversationId} account={account} />
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard this unsent report?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name}</button>)}</nav>
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard these unsent changes?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name}</button>)}</nav>
     {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} onWorkDirty={workChanged} onOpenContact={onOpenContact} />
-      : section === "requests" ? <ContactRequests contact={contact} account={account} />
+      : section === "requests" ? <ContactRequests contact={contact} account={account} onDirty={workChanged} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
     <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); if (allowed("contact.alias.set") && !pending) save.mutate(alias.trim()); }}>

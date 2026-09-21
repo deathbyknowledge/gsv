@@ -1,6 +1,10 @@
 import { z } from "zod/mini";
+import type { FederationWorkDelivery, WorkRecord } from "./work";
 import {
   federationPublicKeySchema,
+  federationRequestDetailsSchema,
+  federationRequestKindSchema,
+  federationRequestTitleSchema,
   federationResourceDescriptorSchema,
   MAX_FEDERATION_MESSAGE_BYTES,
   MAX_FEDERATION_MESSAGE_RESOURCES,
@@ -43,7 +47,7 @@ export type FederationShipDocumentV2 = {
 export type FederationMessageDeliveryV2 = FederationMessageDelivery & {
   social: SocialMessageMetadata;
 };
-export type FederationDeliveryPayloadV2 = FederationMessageDeliveryV2 | FederationContactRevokedDelivery;
+export type FederationDeliveryPayloadV2 = FederationMessageDeliveryV2 | FederationContactRevokedDelivery | FederationWorkDelivery;
 export type FederationDeliveryEnvelopeV2 = Omit<FederationDeliveryEnvelope, "version" | "payload"> & {
   version: 2;
   domain: "gsv-federation/2/delivery";
@@ -95,7 +99,26 @@ export const federationShipDocumentV2Schema = z.strictObject({
 }) satisfies z.ZodMiniType<FederationShipDocumentV2>;
 
 const encoder = new TextEncoder();
+export const workActionSchema = z.enum(["withdraw", "accept", "reject", "start", "complete", "cancel", "acknowledge", "dispute"]);
+export const workOfferSchema = z.strictObject({
+  reference: z.strictObject({ actor: actorRefSchema, id: socialIdSchema }),
+  kind: federationRequestKindSchema,
+  title: federationRequestTitleSchema,
+  details: z.optional(federationRequestDetailsSchema),
+  createdAtMs: z.int().check(z.nonnegative()),
+});
+export const workOperationSchema = z.strictObject({
+  id: socialIdSchema, revision: z.int().check(z.minimum(1), z.maximum(8)), action: workActionSchema,
+  observedPeerRevision: z.int().check(z.nonnegative(), z.maximum(8)),
+  note: z.optional(z.string().check(z.maxLength(1024), z.refine((value) => encoder.encode(value).length <= 1024))),
+});
+const workStreamSchema = z.array(workOperationSchema).check(z.maxLength(8));
+export const workRecordSchema = z.strictObject({ offer: workOfferSchema, requester: workStreamSchema, performer: workStreamSchema }) satisfies z.ZodMiniType<WorkRecord>;
+export const federationWorkDeliverySchema = z.strictObject({
+  kind: z.literal("work"), offer: workOfferSchema, participant: z.enum(["requester", "performer"]), operations: workStreamSchema,
+}) satisfies z.ZodMiniType<FederationWorkDelivery>;
 export const federationDeliveryPayloadV2Schema = z.discriminatedUnion("kind", [
+  federationWorkDeliverySchema,
   z.strictObject({
     kind: z.literal("message"),
     messageId: socialIdSchema,

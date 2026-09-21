@@ -1,4 +1,4 @@
-import type { FederationDeliveryEnvelope } from "@humansandmachines/gsv/protocol";
+import type { FederationTransportPayload } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationRateLimit } from "../federation-store";
 import { PublicFederationError } from "./errors";
@@ -102,7 +102,7 @@ export function consumeOutboundDeliveryRate(
 
 export function assertInboundCapacity(
   contact: FederationContactRecord,
-  payload: FederationDeliveryEnvelope["payload"],
+  payload: FederationTransportPayload,
   ctx: KernelContext,
   now: number,
 ): void {

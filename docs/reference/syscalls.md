@@ -776,6 +776,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
+| `contact.request.act` | Records a v2 participant statement or reconciles the latest bounded stream. Withdrawal requests a stop; completion reports do not imply requester acknowledgement. |
 | `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
 
 `contact.send` reports `queued` when the sender has durably accepted the work
@@ -948,11 +949,16 @@ type ContactSyscalls = {
   "contact.request.create": {
     args: {
       contactId: string;
+      expectedGeneration?: string;
       kind: string;
       title: string;
       details?: JsonObject;
       idempotencyKey?: string;
     };
+    result: { request: ContactRequestRecord; deliveryId: string };
+  };
+  "contact.request.act": {
+    args: { requestId: string; expectedRevision: number; action: "withdraw" | "accept" | "reject" | "start" | "complete" | "cancel" | "acknowledge" | "dispute" | "reconcile"; note?: string; idempotencyKey?: string };
     result: { request: ContactRequestRecord; deliveryId: string };
   };
   "contact.request.update": {

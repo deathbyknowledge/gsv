@@ -176,6 +176,8 @@ import {
   handleContactSend,
   openContactResourceSource,
 } from "./federation";
+import { handleContactRequestAct } from "./federation/work";
+
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, KernelConnection<KernelConnectionState>>;
@@ -798,6 +800,9 @@ async function dispatchKernel(
         break;
       case "contact.request.create":
         data = await handleContactRequestCreate(frame.args, ctx);
+        break;
+      case "contact.request.act":
+        data = await handleContactRequestAct(frame.args, ctx);
         break;
       case "contact.request.update":
         data = await handleContactRequestUpdate(frame.args, ctx);

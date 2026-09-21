@@ -2,6 +2,7 @@ import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
 import type { ActorRef, FederationFeature, OriginMessageRef } from "../social";
+import type { WorkAction, WorkRecord } from "../work";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
@@ -12,17 +13,17 @@ export const MAX_FEDERATION_REQUEST_TITLE_BYTES = 1_024;
 export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32 * 1024;
 
 const federationTextEncoder = new TextEncoder();
-const federationRequestKindSchema = z.string().check(
+export const federationRequestKindSchema = z.string().check(
   z.maxLength(MAX_FEDERATION_REQUEST_KIND_BYTES),
   z.regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i),
 );
-const federationRequestTitleSchema = z.string()
+export const federationRequestTitleSchema = z.string()
   .check(z.minLength(1), z.maxLength(MAX_FEDERATION_REQUEST_TITLE_BYTES))
   .check(z.refine((value: string) => (
     value.trim().length > 0
       && federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_REQUEST_TITLE_BYTES
   )));
-const federationRequestDetailsSchema = jsonObjectSchema.check(
+export const federationRequestDetailsSchema = jsonObjectSchema.check(
   z.refine((value: JsonObject) => (
     federationTextEncoder.encode(JSON.stringify(value)).byteLength
       <= MAX_FEDERATION_REQUEST_DETAILS_BYTES
@@ -262,6 +263,7 @@ export type ContactRequestRecord = {
   revision: number;
   /** Confirmation of this revision, independent of its locally recorded work state. */
   exchange?: ContactRequestExchange;
+  work?: WorkRecord;
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -295,6 +297,7 @@ export type ContactRequestListResult = {
 
 export type ContactRequestCreateArgs = {
   contactId: string;
+  expectedGeneration?: string;
   kind: string;
   title: string;
   details?: JsonObject;
@@ -317,6 +320,14 @@ export type ContactRequestUpdateArgs = {
 export type ContactRequestUpdateResult = {
   request: ContactRequestRecord;
   deliveryId: string;
+};
+
+export type ContactRequestActArgs = {
+  requestId: string;
+  expectedRevision: number;
+  action: WorkAction | "reconcile";
+  note?: string;
+  idempotencyKey?: string;
 };
 
 export type FederationResourceDescriptor = {

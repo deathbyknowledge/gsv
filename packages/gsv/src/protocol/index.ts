@@ -29,6 +29,7 @@ export * from "./syscalls/contact";
 export * from "./syscalls/profile";
 export * from "./syscalls/approach";
 export * from "./social";
+export * from "./work";
 export * from "./approaches";
 export type * from "./syscalls/map";
 export * from "./adapters";

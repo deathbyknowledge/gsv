@@ -313,6 +313,7 @@ const SYSCALL_NAMES = [
   "contact.request.list",
   "contact.request.create",
   "contact.request.update",
+  "contact.request.act",
   "proc.spawn",
   "proc.kill",
   "proc.list",

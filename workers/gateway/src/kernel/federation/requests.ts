@@ -4,7 +4,7 @@ import type {
   FederationRequestDelivery,
   JsonObject,
 } from "@humansandmachines/gsv/protocol";
-import { contactRequestTransitions } from "@humansandmachines/gsv/protocol";
+import { contactRequestTransitions, projectWork } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord } from "../federation-store";
 
@@ -20,13 +20,18 @@ export function syncFederationRequestResponsibility(input: {
   const dedupeKey = `federation.request:${input.contact.id}:${input.request.id}`;
   const existing = ctx.responsibilities.getByDedupeKey(input.contact.ownerUid, dedupeKey);
   if (!existing && !input.createAllowed) return;
+  const work = input.request.work ? projectWork(input.request.work) : null;
   const state = responsibilityState(input.request);
   const blocker = state === "waiting"
     ? input.request.exchange?.state === "failed"
       ? "The request update was not confirmed by the contact; the exchange is unsettled"
       : input.request.exchange?.state === "pending"
         ? "Awaiting delivery confirmation from the contact"
-        : "Awaiting the contact's response"
+        : work?.status === "withdrawn" || work?.status === "stop_requested"
+          ? "A stop was requested; awaiting the performer's cancellation or result report"
+          : work?.outcome === "disputed" ? "The requester disputed the reported result"
+            : work?.state === "completed" && input.request.direction === "outgoing" ? "The requester needs to review the reported result"
+              : "Awaiting the contact's response"
     : undefined;
   const resolution = state === "resolved" || state === "cancelled"
     ? {
@@ -47,6 +52,7 @@ export function syncFederationRequestResponsibility(input: {
     state: input.request.state,
     revision: input.request.revision,
     exchangeState: input.request.exchange?.state ?? "unconfirmed",
+    ...(work ? { workStatus: work.status, outcomeReview: work.outcome } : undefined),
     remoteDisplayName: input.contact.remoteSubject.displayName,
     contentTrust: input.remoteInput ? "untrusted" : "local",
     ...(input.deliveryId ? { latestDeliveryId: input.deliveryId } : undefined),
@@ -167,6 +173,11 @@ export function isRequestTransitionAllowed(
 }
 
 function responsibilityState(request: ContactRequestRecord) {
+  if (request.work) {
+    const work = projectWork(request.work);
+    if (work.status === "withdrawn" || work.status === "stop_requested"
+      || work.state === "completed" && work.outcome !== "acknowledged") return "waiting";
+  }
   if (request.exchange?.state === "failed") return "waiting";
   if (request.exchange?.state === "pending"
     && ["rejected", "completed", "cancelled"].includes(request.state)) return "waiting";

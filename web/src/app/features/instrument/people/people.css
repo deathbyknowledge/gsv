@@ -127,3 +127,17 @@
 .people-recipient span { font: 11px/1.5 var(--gsv-font-mono); color: var(--text-dim); overflow-wrap: anywhere; }
 .people-report-recipient { font: 16px/1.6 var(--gsv-font-prose); padding-block: 12px; }
 .people-evidence-preview { white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; max-height: 420px; border-block: 1px solid var(--border); padding-block: 16px; font: 14px/1.7 var(--gsv-font-prose); }
+
+.people-work-request h4 { font: 500 20px/1.4 var(--gsv-font-prose); color: var(--text-title); margin: 12px 0; }
+.people-work-request > .sub { line-height: 1.6; }
+.people-work-statements { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-block: 20px; }
+.people-work-statements h5 { margin: 0 0 12px; color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
+.people-work-statements ol { list-style: none; padding: 0; margin: 0; }
+.people-work-statements li { border-left: 1px solid var(--border); padding: 0 0 16px 14px; font: 14px/1.6 var(--gsv-font-prose); }
+.people-work-statements strong { font-weight: 500; }
+.people-work-statements p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); }
+.people-work-editor { padding-block: 20px; border-top: 1px solid var(--border); margin-top: 18px; }
+.people-work-editor h4 { font: 500 19px/1.4 var(--gsv-font-prose); color: var(--text-title); }
+.people-work-editor label { display: flex; flex-direction: column; gap: 8px; margin-block: 18px; font: 14px/1.5 var(--gsv-font-prose); }
+.people-work-editor input, .people-work-editor textarea { padding: 12px; background: var(--void); border: 1px solid var(--border); color: var(--text); font: 16px/1.6 var(--gsv-font-prose); min-width: 0; resize: vertical; }
+@container instrument (max-width: 720px) { .people-work-statements { grid-template-columns: 1fr; gap: 12px; } }

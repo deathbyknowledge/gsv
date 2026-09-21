@@ -36,7 +36,8 @@ import type {
   ConversationMessageOrigin,
   FederationTransportEnvelope,
   FederationTransportReceipt,
-  FederationRequestDelivery,
+  FederationTransportPayload,
+  WorkRecord,
   FederationShipDocument,
   FederationSubject,
   FsCopyEndpoint,
@@ -124,6 +125,7 @@ import {
   requireCommittedPairingContact,
   revokeFederationContact,
 } from "./federation/pairing";
+import { commitInboundWork } from "./federation/work";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { fetchFederation, fetchFederationJson as fetchJson, readFederationBody, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
@@ -809,7 +811,8 @@ export async function handleContactRequestCreate(
   const now = Date.now();
   pruneFederationState(ctx, now);
   const idempotencyKey = normalizeIdempotencyKey(args.idempotencyKey);
-  const contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
+  let contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
+  if (args.expectedGeneration !== undefined && args.expectedGeneration !== contact.generation) throw new Error("Contact connection changed; review the work offer again");
   const kind = boundedIdentifier(args.kind, "Request kind");
   const title = boundedText(
     args.title,
@@ -827,7 +830,7 @@ export async function handleContactRequestCreate(
   }));
   const existing = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
   if (existing) {
-    if (!isReadyFederationOutbox(existing) || existing.payload.kind !== "request") {
+    if (!isReadyFederationOutbox(existing) || existing.payload.kind !== "request" && existing.payload.kind !== "work") {
       throw new Error("Contact request idempotency key was used for another delivery");
     }
     const replayContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
@@ -838,15 +841,26 @@ export async function handleContactRequestCreate(
       fingerprint,
     );
     await rearmPendingDelivery(existing, ctx);
-    const request = ctx.federation.request(existing.payload.request.id);
+    const request = ctx.federation.request(existing.payload.kind === "request" ? existing.payload.request.id : existing.payload.offer.reference.id);
     if (!request) throw new Error("Contact request delivery is missing its local request");
     return { request, deliveryId: existing.deliveryId };
   }
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
   assertRequestCapacity(contact.id, ctx);
+  requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
+  contact = await negotiateContactProtocol(contact, ctx);
+  const useWork = contact.protocol?.version === 2 && contact.protocol.features.includes("work");
+  const requestId = `request:${crypto.randomUUID()}`;
+  const identity = useWork ? await localShipDocument(ctx) : null;
+  const subject = useWork ? ensureLocalSubject(ownerUid, ctx) : null;
+  const work: WorkRecord | undefined = identity && subject ? {
+    offer: { reference: { actor: { shipId: identity.shipId, subjectId: subject.id }, id: requestId },
+      kind, title, ...(details ? { details } : undefined), createdAtMs: now }, requester: [], performer: [],
+  } : undefined;
   const deliveryId = `delivery:${crypto.randomUUID()}`;
   const request: ContactRequestRecord = {
-    id: `request:${crypto.randomUUID()}`,
+    id: requestId,
+    ...(work ? { work } : undefined),
     contactId: contact.id,
     contactGeneration: contact.generation,
     direction: "outgoing",
@@ -859,11 +873,18 @@ export async function handleContactRequestCreate(
     createdAtMs: now,
     updatedAtMs: now,
   };
-  const payload: FederationRequestDelivery = {
-    kind: "request",
-    request: requestWireRecord(request),
-  };
-  ctx.federation.transaction(() => {
+  const payload: FederationTransportPayload = work ? { kind: "work", offer: work.offer, participant: "requester", operations: [] }
+    : { kind: "request", request: requestWireRecord(request) };
+  const committed = ctx.federation.transaction(() => {
+    const raced = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
+    if (raced) {
+      requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
+      assertDeliveryReplay(raced, contact.id, contact.generation, fingerprint);
+      if (!isReadyFederationOutbox(raced) || raced.payload.kind !== "request" && raced.payload.kind !== "work") throw new Error("Work intent was used for another delivery");
+      const saved = ctx.federation.request(raced.payload.kind === "request" ? raced.payload.request.id : raced.payload.offer.reference.id);
+      if (!saved) throw new Error("Contact request delivery is missing its local request");
+      return { request: saved, deliveryId: raced.deliveryId, replay: raced };
+    }
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     assertOutboundCapacity(ownerUid, admittedContact.id, ctx, now);
     consumeOutboundDeliveryRate(ownerUid, admittedContact.id, ctx, now);
@@ -886,9 +907,15 @@ export async function handleContactRequestCreate(
       idempotencyKey,
       fingerprint,
       payload,
+      wireVersion: work ? 2 : 1,
       now,
     });
+    return { request: created, deliveryId, replay: null };
   });
+  if (committed.replay) {
+    await rearmPendingDelivery(committed.replay, ctx);
+    return { request: committed.request, deliveryId: committed.deliveryId };
+  }
   ctx.broadcastToUserUid(ownerUid, "contact.request.changed", { contactId: contact.id });
   await ctx.scheduleFederationDelivery(deliveryId, now, true);
   await ctx.reconcileResponsibilityWake(ownerUid);
@@ -929,6 +956,7 @@ export async function handleContactRequestUpdate(
   }
   const current = ctx.federation.request(args.requestId);
   if (!current) throw new Error(`Contact request not found: ${args.requestId}`);
+  if (current.work) throw new Error("Use contact.request.act for this participant-owned work request");
   const contact = requireOwnedActiveContact(current.contactId, ownerUid, ctx);
   if (contact.generation !== current.contactGeneration) {
     throw new Error("Contact request belongs to a superseded pairing");
@@ -1202,7 +1230,8 @@ async function recordFederationOutboxFailure(
   }
   if (terminal) {
     const local = isReadyFederationOutbox(record) ? record.localMessage : record.preparation.localMessage;
-    if (contactActive && (local?.author.kind === "process" || isReadyFederationOutbox(record) && record.payload.kind !== "message")) {
+    if (contactActive && (local?.author.kind === "process" || isReadyFederationOutbox(record)
+      && record.payload.kind !== "message" && record.payload.kind !== "work")) {
       createDeliveryDebtResponsibility(record, message, ctx);
       await ctx.reconcileResponsibilityWake(record.ownerUid);
     }
@@ -1215,7 +1244,7 @@ function syncRequestDeliveryOutcome(
   record: FederationReadyOutboxRecord,
   ctx: KernelContext,
 ): boolean {
-  if (record.payload.kind !== "request" && record.payload.kind !== "request.update") return false;
+  if (record.payload.kind !== "request" && record.payload.kind !== "request.update" && record.payload.kind !== "work") return false;
   const latest = ctx.federation.outbox(record.deliveryId);
   const contact = currentFederationDeliveryContact(record, ctx);
   if (!latest || !isReadyFederationOutbox(latest) || !contact) return false;
@@ -1666,12 +1695,14 @@ async function receiveRemoteDelivery(
         if (envelope.payload.kind !== "contact.revoked") {
           if (ctx.auth.isAccountDisabled(currentContact.ownerUid)) {
             const payload = envelope.payload;
+            const existingWork = payload.kind === "work" ? ctx.federation.requestForWork(currentContact.id,
+              currentContact.generation, payload.offer.reference.id, payload.participant === "requester" ? "incoming" : "outgoing") : null;
             const request = payload.kind === "request.update"
               ? ctx.federation.requestForRemoteUpdate(currentContact.id, currentContact.generation, payload.requestId)
               : null;
-            if (payload.kind !== "request.update" || !request
+            if (!existingWork?.work && (payload.kind !== "request.update" || !request
               || request.revision !== payload.expectedRevision
-              || !isRequestTransitionAllowed(request, payload.state, "remote")) {
+              || !isRequestTransitionAllowed(request, payload.state, "remote"))) {
               throw new PublicFederationError(404, "Contact not found");
             }
           }
@@ -1841,6 +1872,9 @@ async function commitInboundDelivery(
   ctx: KernelContext,
 ): Promise<void> {
   switch (inbox.payload.kind) {
+    case "work":
+      await commitInboundWork(inbox.payload, inbox, contact, ctx);
+      return;
     case "message":
       await commitInboundMessage(inbox, contact, ctx);
       return;
@@ -2008,6 +2042,7 @@ async function commitInboundRequestUpdate(
     payload.requestId,
   );
   if (!current) throw new PublicFederationError(404, "Contact request not found");
+  if (current.work) throw new PublicFederationError(409, "Participant-owned work cannot use legacy updates");
   const details = payload.details ? boundedDetails(payload.details) : undefined;
   const receivedAtMs = inbox.receivedAtMs;
   const updated = ctx.federation.transaction(() => {

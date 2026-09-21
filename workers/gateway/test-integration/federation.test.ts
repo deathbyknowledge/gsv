@@ -274,18 +274,19 @@ describe("cross-GSV federation integration", () => {
       title: outgoing.request.title,
       state: "offered",
     });
-    await second.contact.request.update({
+    await second.contact.request.act({
       requestId: incoming.id,
       expectedRevision: incoming.revision,
-      state: "accepted",
-      details: { reviewer: "Second Ship" },
+      action: "accept",
+      note: "Reviewed by the second Ship",
       idempotencyKey: "integration-request-second-accepts",
     });
     const acceptedAtFirst = await waitForRequest(first, {
       id: outgoing.request.id,
       state: "accepted",
     });
-    expect(acceptedAtFirst.details).toEqual({ reviewer: "Second Ship" });
+    expect(acceptedAtFirst.details).toEqual({ document: "engineering/rfcs/0001-cross-gsv-federation.md" });
+    expect(acceptedAtFirst.work?.performer[0]).toMatchObject({ action: "accept", note: "Reviewed by the second Ship" });
 
     const reverse = await second.contact.request.create({
       contactId: secondContact.id,
@@ -298,17 +299,18 @@ describe("cross-GSV federation integration", () => {
       title: reverse.request.title,
       state: "offered",
     });
-    const reverseAccepted = await first.contact.request.update({
+    const reverseAccepted = await first.contact.request.act({
       requestId: reverseIncoming.id,
-      state: "accepted",
+      expectedRevision: reverseIncoming.revision,
+      action: "accept",
       idempotencyKey: "integration-request-first-accepts",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "accepted" });
     await waitForRequest(first, { id: reverseIncoming.id, state: "accepted", exchange: { state: "acknowledged" } });
-    await first.contact.request.update({
+    await first.contact.request.act({
       requestId: reverseIncoming.id,
       expectedRevision: reverseAccepted.request.revision,
-      state: "completed",
+      action: "complete",
       idempotencyKey: "integration-request-first-completes",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "completed" });
@@ -318,12 +320,15 @@ describe("cross-GSV federation integration", () => {
     await expect.poll(() => secondRequestSignals.length).toBeGreaterThanOrEqual(5);
     for (const signal of firstRequestSignals) expect(signal).toMatchObject({ contactId: firstContact.id });
     for (const signal of secondRequestSignals) expect(signal).toMatchObject({ contactId: secondContact.id });
+    const completed = await waitForRequest(second, { id: reverse.request.id, state: "completed" });
+    await second.contact.request.act({ requestId: completed.id, expectedRevision: completed.revision, action: "acknowledge", idempotencyKey: "integration-acknowledge-result" });
+    await expect.poll(async () => (await first.contact.request.list({ contactId: firstContact.id, includeTerminal: true })).requests.find((request) => request.id === reverseIncoming.id)?.work?.requester.at(-1)?.action).toBe("acknowledge");
     const firstRequestSignalCount = firstRequestSignals.length;
-    await expect(first.contact.request.update({
+    await expect(first.contact.request.act({
       requestId: reverseIncoming.id,
       expectedRevision: 1,
-      state: "active",
-    })).rejects.toThrow("revision changed");
+      action: "start",
+    })).rejects.toThrow("Work request changed");
     expect(firstRequestSignals).toHaveLength(firstRequestSignalCount);
 
     const resourceBytes = Uint8Array.from([

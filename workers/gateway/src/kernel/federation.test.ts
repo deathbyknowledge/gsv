@@ -82,7 +82,7 @@ describe("federation outbound boundary", () => {
   it("rejects a send approved for a retired connection before creating a delivery", async () => {
     const contact = activeContact();
     const enqueue = vi.fn();
-    const ctx = focusedContext({ federation: focusedFixture({ get: () => contact, enqueue }) });
+    const ctx = focusedContext({ federation: focusedFixture({ prune: vi.fn(), get: () => contact, enqueue }) });
     await expect(handleContactSend({ contactId: contact.id, text: "Reviewed report", expectedGeneration: "generation:retired", idempotencyKey: "report:one" }, ctx)).rejects.toThrow("review the recipient");
     expect(enqueue).not.toHaveBeenCalled();
   });

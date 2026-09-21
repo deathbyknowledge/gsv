@@ -264,3 +264,13 @@ messages and the existing durable outbox, keep retry content stable and bind the
 reviewed recipient generation. Contact screens now live under People; Fleet's
 duplicate list and composer are removed. The People navigation guard also covers
 unsent report drafts. CI and human trials remain required for this slice.
+
+The work-request slice adds v2 participant-owned statements, immutable offers,
+causal validation, bounded full-prefix recovery and an explicit sync action.
+Migration v065 keeps those records in the owning request table, with the r12y
+projection in the same transaction. Crossed stops and acceptance remain visible;
+a completion report, dispute and acknowledgement are distinct. People now offers
+work composition and reviewed actions with optional notes, exact retry identity
+and navigation protection. Protocol, store/handler, two-space and UI decision
+regressions are added for CI. No local validation or UI trial was run. Shared
+relationship context, durable attention and scoped assistance remain in scope.

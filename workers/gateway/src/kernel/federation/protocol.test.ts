@@ -23,7 +23,7 @@ describe("federation version negotiation", () => {
       context.federation = { setProtocol } as KernelContext["federation"];
       vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(document));
       expect((await negotiateContactProtocol(contact, context)).protocol?.version).toBe(2);
-      expect(setProtocol).toHaveBeenCalledWith(contact.id, contact.generation, expect.objectContaining({ version: 2, features: ["messages", "approaches"] }));
+      expect(setProtocol).toHaveBeenCalledWith(contact.id, contact.generation, expect.objectContaining({ version: 2, features: ["messages", "approaches", "work"] }));
 
       vi.mocked(fetch).mockResolvedValue(Response.json({ ...document, signature: "invalid" }));
       await expect(negotiateContactProtocol(contact, context)).rejects.toThrow("signature");
@@ -45,7 +45,7 @@ describe("federation version negotiation", () => {
       vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 401 }));
       await expect(negotiateContactProtocol(contact, context)).rejects.toThrow("401");
       vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }));
-      await expect(negotiateContactProtocol({ ...contact, protocol: { version: 2, features: ["messages", "approaches"], checkedAtMs: 0 } }, context))
+      await expect(negotiateContactProtocol({ ...contact, protocol: { version: 2, features: ["messages", "approaches", "work"], checkedAtMs: 0 } }, context))
         .rejects.toThrow("previously negotiated v2");
       expect(setProtocol).toHaveBeenCalledOnce();
     });
@@ -58,7 +58,7 @@ describe("federation version negotiation", () => {
       const empty = new Request(url, { method: "POST", body: new ReadableStream({ start(controller) { controller.close(); } }) });
       const discovered = await handleFederationHttpRequest(empty, context);
       expect(discovered.status).toBe(200);
-      expect(await discovered.json()).toMatchObject({ version: 2, features: ["messages", "approaches"] });
+      expect(await discovered.json()).toMatchObject({ version: 2, features: ["messages", "approaches", "work"] });
       const nonempty = await handleFederationHttpRequest(new Request(url, { method: "POST", body: "{}" }), context);
       expect(nonempty.status).toBe(400);
     });

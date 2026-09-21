@@ -1,5 +1,6 @@
 import type {
   ActorRef,
+  WorkRecord,
   ContactBlock,
   ContactBlockListResult,
   ContactListArgs,
@@ -22,6 +23,8 @@ import type {
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
+  projectWork,
+  workRecordSchema,
   federationDeliveryPayloadSchema,
   federationDeliveryPayloadV2Schema,
   federationFeatureSchema,
@@ -388,6 +391,7 @@ type InboxRow = {
 };
 
 type RequestRow = {
+  work_json: string | null;
   request_id: string;
   remote_request_id: string | null;
   contact_id: string;
@@ -816,7 +820,7 @@ export class FederationStore {
       if (existing.generation !== input.generation) {
         this.sql.exec(
           `UPDATE federation_requests SET
-             state = 'cancelled', revision = revision + 1, updated_at = ?,
+             state = CASE WHEN work_json IS NULL THEN 'cancelled' ELSE state END, revision = revision + 1, updated_at = ?,
              exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
            WHERE contact_id = ? AND contact_generation <> ?
              AND state NOT IN ('rejected', 'completed', 'cancelled')`,
@@ -1121,7 +1125,7 @@ export class FederationStore {
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
-         state = 'cancelled', revision = revision + 1, updated_at = ?,
+         state = CASE WHEN work_json IS NULL THEN 'cancelled' ELSE state END, revision = revision + 1, updated_at = ?,
          exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
        WHERE contact_id = ?
          AND contact_generation = ?
@@ -1767,8 +1771,8 @@ export class FederationStore {
       `INSERT INTO federation_requests (
          request_id, remote_request_id, contact_id, contact_generation, direction,
          kind, title, details_json, state, revision, created_at, updated_at,
-         exchange_state, exchange_delivery_id, exchange_error, exchange_source
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+         exchange_state, exchange_delivery_id, exchange_error, exchange_source, work_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.remoteId ?? null,
       input.contactId,
@@ -1784,6 +1788,7 @@ export class FederationStore {
       input.exchange?.deliveryId ?? null,
       input.exchange?.lastError ?? null,
       input.exchange?.source ?? null,
+      input.work ? JSON.stringify(input.work) : null,
     );
     return this.request(input.id)!;
   }
@@ -1838,6 +1843,28 @@ export class FederationStore {
     return row ? requestFromRow(row) : null;
   }
 
+  requestForWork(contactId: string, generation: string, wireId: string, direction: "incoming" | "outgoing"): ContactRequestRecord | null {
+    const row = this.sql.exec<RequestRow>(
+      `SELECT * FROM federation_requests WHERE contact_id = ? AND contact_generation = ? AND direction = ?
+       AND ${direction === "incoming" ? "remote_request_id" : "request_id"} = ? LIMIT 1`,
+      contactId, generation, direction, wireId,
+    ).toArray()[0];
+    return row ? requestFromRow(row) : null;
+  }
+
+  writeWork(requestId: string, work: WorkRecord, now: number, exchange?: ContactRequestExchange): ContactRequestRecord {
+    const current = this.request(requestId);
+    if (!current?.work) throw new Error("Request does not use participant work streams");
+    if (JSON.stringify(current.work.offer) !== JSON.stringify(work.offer)) throw new FederationRequestIdentityConflictError();
+    const revision = 1 + work.requester.length + work.performer.length;
+    this.sql.exec(`UPDATE federation_requests SET work_json = ?, state = ?, revision = ?, updated_at = ?,
+      exchange_state = ?, exchange_delivery_id = ?, exchange_error = ?, exchange_source = ? WHERE request_id = ?`,
+      JSON.stringify(work), projectWork(work).state, revision, now,
+      (exchange ?? current.exchange)?.state ?? "unconfirmed", (exchange ?? current.exchange)?.deliveryId ?? null,
+      (exchange ?? current.exchange)?.lastError ?? null, (exchange ?? current.exchange)?.source ?? null, requestId);
+    return this.request(requestId)!;
+  }
+
   settleRequestDelivery(record: FederationReadyOutboxRecord): ContactRequestRecord | null {
     const state = record.state === "delivered" ? "acknowledged"
       : record.state === "terminal" ? "failed" : "pending";
@@ -1866,7 +1893,7 @@ export class FederationStore {
       values.push(contactId);
     }
     if (!includeTerminal) {
-      conditions.push("(r.state NOT IN ('rejected', 'completed', 'cancelled') OR r.exchange_state IN ('pending', 'failed'))");
+      conditions.push("(r.state NOT IN ('rejected', 'completed', 'cancelled') OR r.exchange_state IN ('pending', 'failed') OR (r.work_json IS NOT NULL AND r.state = 'completed' AND json_extract(r.work_json, '$.requester[#-1].action') IS NOT 'acknowledge'))");
     }
     return this.sql.exec<RequestRow>(
       `SELECT r.* FROM federation_requests r
@@ -2076,6 +2103,7 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
 
 function requestFromRow(row: RequestRow): ContactRequestRecord {
   return {
+    ...(row.work_json ? { work: workRecordSchema.parse(JSON.parse(row.work_json)) } : undefined),
     id: row.request_id,
     ...(row.remote_request_id ? { remoteId: row.remote_request_id } : undefined),
     contactId: row.contact_id,

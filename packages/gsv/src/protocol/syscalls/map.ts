@@ -307,6 +307,7 @@ import type {
   ContactBlockSetResult,
   ContactBlockListArgs,
   ContactBlockListResult,
+  ContactRequestActArgs,
   ContactRequestCreateArgs,
   ContactRequestCreateResult,
   ContactRequestListArgs,
@@ -391,6 +392,7 @@ export type SyscallDomains = {
   "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };
   "contact.request.list": { args: ContactRequestListArgs; result: ContactRequestListResult };
   "contact.request.create": { args: ContactRequestCreateArgs; result: ContactRequestCreateResult };
+  "contact.request.act": { args: ContactRequestActArgs; result: ContactRequestUpdateResult };
   "contact.request.update": { args: ContactRequestUpdateArgs; result: ContactRequestUpdateResult };
 
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
