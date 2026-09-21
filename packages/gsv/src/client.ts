@@ -325,6 +325,8 @@ const SYSCALL_NAMES = [
   "contact.context.withdraw",
   "contact.context.consent",
   "proc.spawn",
+  "proc.scope.get",
+  "proc.scope.revoke",
   "proc.kill",
   "proc.list",
   "proc.observe",

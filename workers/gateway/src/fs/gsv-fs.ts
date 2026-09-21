@@ -65,6 +65,7 @@ export class GsvFs implements IFileSystem {
     selfPid?: string,
     sourceBackend?: MountBackend | null,
     accountHomeBackend?: MountBackend | null,
+    private readonly isolatedBackend?: MountBackend,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
@@ -171,6 +172,7 @@ export class GsvFs implements IFileSystem {
 
   async exists(path: string): Promise<boolean> {
     const p = normalizePath(path);
+    if (this.isolatedBackend) return this.isolatedBackend.exists(p);
     if (p === "/") return true;
     if (p === "/etc" && this.kernel) return true;
     return this.backendForPath(p).exists(p);
@@ -191,6 +193,7 @@ export class GsvFs implements IFileSystem {
 
   async statExtended(path: string): Promise<ExtendedStat> {
     const normalized = normalizePath(path);
+    if (this.isolatedBackend) return this.isolatedBackend.stat(normalized);
 
     if (normalized === "/") {
       return {
@@ -251,6 +254,7 @@ export class GsvFs implements IFileSystem {
 
   async readdir(path: string): Promise<string[]> {
     const normalized = normalizePath(path);
+    if (this.isolatedBackend) return this.isolatedBackend.readdir(normalized);
 
     if (normalized === "/") {
       return this.readdirRoot();
@@ -453,6 +457,7 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (this.isolatedBackend) return this.isolatedBackend;
     if (isProcessMediaPath(path)) {
       return this.processMediaBackend;
     }

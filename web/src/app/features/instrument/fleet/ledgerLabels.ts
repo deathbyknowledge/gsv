@@ -2,6 +2,8 @@ import type { SyscallName } from "@humansandmachines/gsv/protocol";
 
 /** Every protocol operation has a plain-language label; new operations must supply one. */
 const labels = {
+  "proc.scope.get": "checked helper access",
+  "proc.scope.revoke": "revoked helper access",
   "fs.read": "read a file",
   "fs.write": "wrote a file",
   "fs.edit": "edited a file",

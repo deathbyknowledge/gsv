@@ -96,6 +96,7 @@ export async function collectKernelSkillDocuments(
   ctx: KernelContext,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
+  if (ctx.processScopeId) return [];
   const files: ParsedSkillFile[] = [];
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
@@ -117,6 +118,7 @@ export async function collectFilesystemSkillDocuments(
   identity: ProcessIdentity,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
+  if (ctx.processScopeId) return [];
   const roots = filesystemSkillRoots(resolveSkillHomeLayers(ctx, identity));
   const files: ParsedSkillFile[] = [];
   for (const root of roots) {

@@ -16,7 +16,7 @@ import type {
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
-import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
+import { concatBytes, inferContentType, isTextContentType, normalizePath, matchPathGlob } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
 import { z } from "zod";
 
@@ -438,7 +438,7 @@ export class R2MountBackend implements MountBackend {
 
       for (const obj of listed.objects) {
         signal?.throwIfAborted();
-        if (include && !matchGlob(include, obj.key)) continue;
+        if (include && !matchPathGlob(include, obj.key)) continue;
 
         const full = await this.bucket.get(obj.key);
         signal?.throwIfAborted();
@@ -485,7 +485,7 @@ export class R2MountBackend implements MountBackend {
     signal?: AbortSignal;
     throwOnDenied: boolean;
   }): Promise<boolean> {
-    if (include && !matchGlob(include, key)) {
+    if (include && !matchPathGlob(include, key)) {
       return false;
     }
     if (isSymlink(object)) {
@@ -691,10 +691,4 @@ function parseOctalMode(mode: string): number {
   return parseInt(mode, 8);
 }
 
-function matchGlob(pattern: string, path: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-  return new RegExp(`(^|/)${escaped}$`).test(path);
-}
+

@@ -29,6 +29,7 @@ import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import { resolveSelectedMessageTarget } from "./targets";
+import { assertScopedConversation, currentProcessScope } from "./process-scope";
 import * as z from "zod/mini";
 
 const conversationClientStateSchema = z.object({
@@ -84,6 +85,7 @@ export async function handleConversationHistory(
     beforeSequence: args.beforeSequence,
     limit: args.limit,
   });
+  ownedConversation(conversation.id, ctx);
   const latest = history.messages.at(-1);
   if (conversation.kind === "contact" && latest?.sequence === history.latestSequence) {
     ctx.conversations.recordContactMessage(latest, true);
@@ -320,6 +322,7 @@ export function processMediaOwner(pid: string, process: {
 
 function ownedConversation(id: string | undefined, ctx: KernelContext): ConversationSummary {
   const conversationId = normalizeId(id, "conversationId");
+  assertScopedConversation(ctx, conversationId);
   const conversation = ctx.conversations.get(conversationId);
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (!conversation || (conversation.ownerUid !== ownerUid && principalOf(ctx)?.account.uid !== 0)) {
@@ -341,6 +344,7 @@ function requireConversationReader(ctx: KernelContext): number {
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (!ctx.processId) return ownerUid;
+  if (currentProcessScope(ctx)) return ownerUid;
   const process = ctx.procs.get(ctx.processId);
   if (process?.isPersonalController === true && process.ownerUid === ownerUid) {
     return ownerUid;

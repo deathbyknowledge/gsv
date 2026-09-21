@@ -165,6 +165,8 @@ export type AiTextExecutor =
     };
 
 export type AiConfigResult = {
+  /** Trusted Kernel restriction; excludes private standing context from this Process. */
+  scope?: { id: string; revision: number };
   /** Owning human's identity when the process runs as a distinct agent account. */
   owner?: ProcessIdentity | null;
   executor: AiTextExecutor;

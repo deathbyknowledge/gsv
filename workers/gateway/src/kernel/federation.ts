@@ -1,3 +1,4 @@
+import { assertScopedSend, scopedResource, isProcessScopeCurrent } from "./process-scope";
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
@@ -613,6 +614,7 @@ export async function handleContactSend(
   args: ContactSendArgs,
   ctx: KernelContext,
 ): Promise<ContactSendResult> {
+  const scope = assertScopedSend(ctx, args.contactId);
   const ownerUid = requireContactCaller(ctx, false);
   const now = Date.now();
   pruneFederationState(ctx, now);
@@ -624,6 +626,15 @@ export async function handleContactSend(
     true,
   );
   const requestedMedia = validateFederationResources(args.media);
+  if (scope) {
+    if (!args.replyTo) throw new Error("A helper reply must identify the message it answers");
+    for (const resource of requestedMedia ?? []) {
+      const allowed = scopedResource(ctx, resource.ref.target, resource.ref.path);
+      if (!allowed || allowed.revision !== resource.ref.revision || allowed.size !== resource.ref.size || allowed.contentType !== resource.ref.contentType) {
+        throw new Error("Helper attachment differs from its approved immutable resource");
+      }
+    }
+  }
   if (!text.trim() && !requestedMedia?.length) {
     throw new Error("Contact message requires text or a resource");
   }
@@ -668,6 +679,7 @@ export async function handleContactSend(
     requestedMedia?.length
     && processId
     && ctx.processId
+    && !scope
     && ctx.processId !== processId
     && !ctx.procs.isDescendant(ctx.processId, processId)
   ) {
@@ -703,6 +715,7 @@ export async function handleContactSend(
   ctx.requestSignal?.throwIfAborted();
   const admitted = ctx.federation.transaction(() => {
     ctx.requestSignal?.throwIfAborted();
+    assertScopedSend(ctx, args.contactId);
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     const concurrent = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
     if (concurrent) {
@@ -717,6 +730,7 @@ export async function handleContactSend(
     assertOutboundCapacity(ownerUid, admittedContact.id, ctx, now);
     consumeOutboundDeliveryRate(ownerUid, admittedContact.id, ctx, now);
     assertResourceGrantCapacity(admittedContact.id, requestedMedia?.length ?? 0, ctx);
+    if (scope) ctx.procs.scopes.consume(scope.id, "messages", idempotencyKey, scope.revision);
     return ctx.federation.prepareMessage({
       deliveryId,
       ownerUid,
@@ -1340,6 +1354,7 @@ export async function handleContactResourceSend(
 ): Promise<ResponseOkFrame<"fs.transfer.send">> {
   const ownerUid = requireContactCaller(ctx, false);
   const target = args.target?.trim() ?? "";
+  const allowedResource = scopedResource(ctx, target, args.path);
   if (!target.startsWith("contact:") || target.length <= "contact:".length) {
     throw new Error("Contact resource target is invalid");
   }
@@ -1386,6 +1401,10 @@ export async function handleContactResourceSend(
   }
   const revision = response.headers.get("x-gsv-resource-revision") ?? "";
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
+  if (allowedResource && (allowedResource.revision !== revision || allowedResource.size !== size || allowedResource.contentType !== contentType)) {
+    await response.body.cancel("Resource differs from the helper's immutable grant").catch(() => {});
+    throw new Error("Resource differs from the helper's immutable grant");
+  }
   const responseSignature = response.headers.get("x-gsv-resource-signature") ?? "";
   const responseFields = {
     version: 1,
@@ -1425,7 +1444,9 @@ export async function handleContactResourceSend(
     body: {
       stream: federationContactStream(
         response.body,
-        () => isCurrentFederationContact(contact.id, contact.generation, ctx),
+        () => {
+          return isProcessScopeCurrent(ctx) && isCurrentFederationContact(contact.id, contact.generation, ctx);
+        },
       ),
       length: size,
     },

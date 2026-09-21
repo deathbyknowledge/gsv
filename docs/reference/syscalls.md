@@ -1137,8 +1137,17 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string } };
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string }; scope?: ProcessScopePolicy };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
+  };
+
+  "proc.scope.get": {
+    args: { pid: string };
+    result: { scope: ProcessScope | null };
+  };
+  "proc.scope.revoke": {
+    args: { pid: string; expectedRevision: number };
+    result: { scope: ProcessScope };
   };
 
   "proc.observe": {

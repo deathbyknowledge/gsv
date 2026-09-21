@@ -279,7 +279,7 @@ async handleSysConnect(
       sendFrameToProcess(this.host.installationId, proc.processId, {
         type: "sig",
         signal: "identity.changed",
-        payload: { identity: fresh },
+        payload: { identity: this.host.procs.getIdentity(proc.processId)! },
       }).catch((err) => {
         console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
       });

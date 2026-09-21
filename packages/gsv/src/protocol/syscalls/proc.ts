@@ -8,6 +8,7 @@
 
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
+import type { ProcessScopePolicy } from "../process-scope";
 import { jsonValueSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
 import type { ProcHistoryArchivedRecord, ProcHistoryRecord } from "../history";
@@ -54,6 +55,8 @@ export type ProcSpawnArgs = {
   cwd?: string;
   /** Initial process overrides, installed before its first task. Omitted fields inherit account defaults. */
   ai?: ProcAiOptions;
+  /** Direct humans may restrict a fresh process. Descendants inherit this immutable grant. */
+  scope?: ProcessScopePolicy;
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 

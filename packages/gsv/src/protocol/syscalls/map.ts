@@ -1,4 +1,5 @@
 import type { ContactContextListArgs, ContactContextListResult, ContactContextSourcesArgs, ContactContextSourcesResult, ContactContextSubscribeArgs, ContactContextSubscribeResult, ContactContextSyncArgs, ContactContextSyncResult, ContactContextPublicationsArgs, ContactContextPublicationsResult, ContactContextPublishArgs, ContactContextPublishResult, ContactContextWithdrawArgs, ContactContextWithdrawResult, ContactContextConsentArgs, ContactContextConsentResult } from "../shared-context";
+import type { ProcScopeGetArgs, ProcScopeGetResult, ProcScopeRevokeArgs, ProcScopeRevokeResult } from "../process-scope";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -408,6 +409,8 @@ export type SyscallDomains = {
   "contact.request.update": { args: ContactRequestUpdateArgs; result: ContactRequestUpdateResult };
 
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
+  "proc.scope.get": { args: ProcScopeGetArgs; result: ProcScopeGetResult };
+  "proc.scope.revoke": { args: ProcScopeRevokeArgs; result: ProcScopeRevokeResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
   "proc.observe": { args: ProcObserveArgs; result: ProcObserveResult };

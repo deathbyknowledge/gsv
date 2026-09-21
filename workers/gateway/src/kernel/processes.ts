@@ -10,6 +10,7 @@
  */
 
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { ProcessScopeStore } from "./process-scope-store";
 
 export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
 
@@ -22,6 +23,7 @@ export type ProcessRuntimePatch = {
 
 export type ProcessRecord = {
   processId: string;
+  scopeId?: string;
   parentPid: string | null;
   uid: number;
   ownerUid: number;
@@ -71,7 +73,10 @@ export function findInteractiveProcess(
 }
 
 export class ProcessRegistry {
-  constructor(private readonly sql: SqlStorage) {}
+  readonly scopes: ProcessScopeStore;
+  constructor(private readonly sql: SqlStorage) {
+    this.scopes = new ProcessScopeStore(sql);
+  }
 
   spawn(
     processId: string,
@@ -83,6 +88,7 @@ export class ProcessRegistry {
       isPersonalController?: boolean;
       label?: string;
       cwd?: string;
+      scopeId?: string;
     },
   ): void {
     this.sql.exec(
@@ -103,6 +109,7 @@ export class ProcessRegistry {
       opts.label ?? null,
       Date.now(),
     );
+    if (opts.scopeId) this.sql.exec("UPDATE processes SET scope_id = ? WHERE process_id = ?", opts.scopeId, processId);
   }
 
   /** Owner uid for routing/visibility (the human who owns the process). */
@@ -177,6 +184,7 @@ export class ProcessRegistry {
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
     const existing = this.get(processId);
+    if (existing && this.scopes.forProcess(processId)) identity = { ...identity, home: existing.home, cwd: existing.cwd };
     const nextCwd = existing
       ? remapCwd(existing.home, identity.home, existing.cwd)
       : identity.cwd;
@@ -298,6 +306,7 @@ export class ProcessRegistry {
 
 type ProcessRow = {
   process_id: string;
+  scope_id: string | null;
   parent_pid: string | null;
   uid: number;
   owner_uid: number | null;
@@ -319,6 +328,7 @@ type ProcessRow = {
 function toRecord(row: ProcessRow): ProcessRecord {
   return {
     processId: row.process_id,
+    ...(row.scope_id ? { scopeId: row.scope_id } : undefined),
     parentPid: row.parent_pid,
     uid: row.uid,
     ownerUid: row.owner_uid ?? row.uid,

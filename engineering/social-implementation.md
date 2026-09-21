@@ -26,13 +26,13 @@ or deploy merely because an intermediate batch is ready.
 
 | Batch | Outcome | Primary ownership | Status |
 | --- | --- | --- | --- |
-| 1. Federation correctness | Enforce participant roles on local and inbound work-request actions; expose failed/unsettled exchanges accurately; preserve existing delivery and resource fences. | Kernel federation handlers/store, protocol and affected clients | Implemented; awaiting CI and human validation |
-| 2. Shared contracts and storage | Versioned federation, trusted human/Process provenance, stable message/reply references, relationship policy, numbered migrations, and contact Conversations with no Process handler. | SDK/protocol, Kernel, Conversation storage | In progress |
-| 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Profiles, private image uploads/cropping, bound first contact and People request UI in source; latest CI and human acceptance pending |
-| 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Private inbox/read/archive and policy controls in source; delivery/replies/report/assistance still in progress |
-| 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
-| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Implemented; CI passed at 8ac2eb6b; human trial pending |
-| 7. Scoped assistance | Generic Process scope/context propagation, exact approved drafts, optional bounded support helpers, resource/recipient enforcement through all syscall presentations and descendants. | Kernel authority, Process context/execution, protocol, web | Pending |
+| 1. Federation correctness | Participant authority, durable delivery and generation fencing. | Kernel federation, protocol and clients | Implemented; CI green through c28fe6fe; human trial pending |
+| 2. Shared contracts and storage | Versioned messages/provenance/replies, participant-owned work streams, contact Conversations without handlers. | SDK, Kernel and Conversation | Implemented; CI green; human trial pending |
+| 3. Profiles and first contact | Explicit profiles and bounded images, signed approaches, durable accept/decline/block and pairing. | Gateway, Kernel and web | Implemented; CI green; human trial pending |
+| 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented except scoped Ship help below; CI green for completed slices; human trial pending |
+| 5. Shared relationship context | Mutually consented connections, attributed statements, selected subscriptions, withdrawal and deliberate introductions. | Kernel, protocol and People | Implemented; CI green through c28fe6fe; human trial pending |
+| 6. Private message search | Selected Conversation SQLite/FTS, bounded historical indexing and visible coverage; no extra Search DO. | Conversation and Kernel | Implemented; CI green; human trial pending |
+| 7. Scoped assistance | Fresh Process context, inherited restrictions, exact draft approval and optional bounded helpers. | Kernel, Process, protocol and People | Runtime foundation in source; latest CI pending. Assistance UI, approved drafts and automatic admission in progress |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
 It does not end this branch's scope or authorize an intermediate merge.
@@ -321,3 +321,14 @@ normal delivery status. There is no new introduction authority or pairing path.
 Explicit contact-based public-profile resolution pins the subject/key and
 rechecks the contact generation after fetch. CI regressions cover that boundary
 and exclude private aliases, replies and attachments from introduction drafts.
+
+CI is green through `c28fe6fe`, including short-lived mutual connection consent
+and the reviewed, ordinary-message introduction flow. Batch 7 now adds the
+runtime foundation in `docs/architecture/process-scopes.md`: immutable Kernel
+scopes, shared descendant allowances, isolated material mounts and archive homes,
+filtered context/discovery, exact recipient/resource checks, inspection and
+revocation, and durable expiry. Boundary regression sources cover direct and
+shell access, stale contexts, descendants and private context assembly. This
+batch has not run locally; CI is next. The People assistance UI, durable exact
+approval, optional automatic participation and final lifecycle/UX consolidation
+remain in scope and implementation continues.

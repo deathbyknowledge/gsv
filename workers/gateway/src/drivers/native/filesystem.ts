@@ -11,9 +11,14 @@ import { requirePrincipal } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { handleRepoList } from "../../kernel/repo";
+import { currentProcessScope } from "../../kernel/process-scope";
+import { ProcessMaterialsBackend } from "../../fs/backends/process-materials";
 
 export function createNativeFileSystem(ctx: KernelContext): GsvFs {
   const identity = requirePrincipal(ctx).account;
+  const scope = currentProcessScope(ctx);
+  if (scope) return new GsvFs(ctx.env.STORAGE, identity, undefined, ctx.processId, null, null,
+    new ProcessMaterialsBackend(scope, () => { currentProcessScope(ctx); }));
   const ownerUid = resolveCallerOwnerUid(ctx);
   const sourceBackend = createProcessSourceBackend({
     identity,

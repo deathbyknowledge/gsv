@@ -15,6 +15,7 @@ import type {
   NetworkConfig,
 } from "just-bash";
 import { resolveUserPath } from "../../fs";
+import { currentProcessScope } from "../../kernel/process-scope";
 import type { KernelContext } from "../../kernel/context";
 import { requirePrincipal } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -170,7 +171,7 @@ function createBash(
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
   const serverVersion = ctx.config.get("config/server/version") ?? ctx.serverVersion;
-  const networkEnabled = ctx.config.get("config/shell/network_enabled") !== "false";
+  const networkEnabled = !currentProcessScope(ctx) && ctx.config.get("config/shell/network_enabled") !== "false";
 
   return new Bash({
     fs,

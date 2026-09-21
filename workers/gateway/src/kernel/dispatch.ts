@@ -20,6 +20,7 @@ import type {
 } from "../protocol/frames";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
+import { handleProcScopeGet, handleProcScopeRevoke } from "./process-scope-handlers";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
@@ -427,6 +428,12 @@ async function dispatchKernel(
         return handleProcObserve(frame, ctx);
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
+        break;
+      case "proc.scope.get":
+        data = handleProcScopeGet(frame.args, ctx);
+        break;
+      case "proc.scope.revoke":
+        data = await handleProcScopeRevoke(frame.args, ctx);
         break;
       case "proc.fork":
         data = await handleProcFork(frame.args, ctx);

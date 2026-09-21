@@ -113,6 +113,8 @@ import {
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
 import { SharedContextStore } from "./shared-context-store";
+import { assertScopedRequest, scopedCapabilities } from "./process-scope";
+import { stopScopedProcesses } from "./process-scope-handlers";
 import { processSharedContext } from "./shared-context";
 import { ApproachStore } from "./approach-store";
 import { processProfilePublication, profileOwnerActive } from "./profiles";
@@ -230,6 +232,7 @@ type KernelTask =
   | { callback: "onProfilePublication"; payload: number }
   | { callback: "onConversationAttention"; payload: "digest" }
   | { callback: "onSharedContext"; payload: "context" }
+  | { callback: "onProcessScopeExpiry"; payload: string }
   | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
@@ -287,6 +290,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
   z.object({ callback: z.literal("onConversationAttention"), payload: z.literal("digest") }),
   z.object({ callback: z.literal("onSharedContext"), payload: z.literal("context") }),
+  z.object({ callback: z.literal("onProcessScopeExpiry"), payload: z.string() }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -931,6 +935,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         }
         return;
       }
+      case "onProcessScopeExpiry":
+        await stopScopedProcesses(task.payload, this.buildKernelContext({}));
+        return;
       case "onApproachMaintenance": {
         const gate = await this.onboarding.managedWorkGate();
         if (!gate.allowed) {
@@ -1486,7 +1493,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         installationId: this.installationId,
         processId,
         identity,
-        calls: this.caps.resolve(identity.gids),
+        calls: this.procs.get(processId)?.scopeId
+          ? scopedCapabilities(this.caps.resolve(identity.gids))
+          : this.caps.resolve(identity.gids),
       }),
       processId,
       processRunId,
@@ -1578,6 +1587,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
       profiles: this.profiles,
       sharedContext: this.sharedContext,
       scheduleSharedContext: () => this.scheduleSharedContext(),
+      scheduleProcessScopeExpiry: async (scopeId, expiresAtMs) => {
+        const existing = await this.schedule(new Date(expiresAtMs), "onProcessScopeExpiry", scopeId, { idempotent: true });
+        if (existing.time * 1000 > expiresAtMs + 1000) {
+          await this.cancelSchedule(existing.id);
+          await this.schedule(new Date(expiresAtMs), "onProcessScopeExpiry", scopeId, { idempotent: true });
+        }
+      },
       approaches: this.approaches,
       scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
@@ -1585,6 +1601,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       connection: options.connection ?? null,
       peer: options.peer,
       processId: options.processId,
+      processScopeId: options.processId ? this.procs.get(options.processId)?.scopeId : undefined,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
@@ -1682,6 +1699,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     // The ledger line is written after the grant decision, with every client-controlled field capped by size;
     // a denied call is recorded with its arguments and closed as denied.
     this.recordLedgerDispatch(inputFrame, ctx, origin);
+    try {
+      assertScopedRequest(inputFrame, ctx);
+    } catch (error) {
+      const denied = rejectBeforeDispatch(inputFrame, 403, error instanceof Error ? error.message : "Process scope denied this request");
+      this.completeLedger(denied);
+      return denied;
+    }
     if (!allowed) {
       const denied = rejectBeforeDispatch(inputFrame, 403, `Permission denied: ${inputFrame.call}`);
       this.completeLedger(denied);

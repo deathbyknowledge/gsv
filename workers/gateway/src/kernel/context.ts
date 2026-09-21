@@ -81,6 +81,7 @@ export type KernelContext = {
   profiles: ProfileStore;
   sharedContext: SharedContextStore;
   scheduleSharedContext: () => Promise<void>;
+  scheduleProcessScopeExpiry: (scopeId: string, expiresAtMs: number) => Promise<void>;
   approaches: ApproachStore;
   scheduleProfilePublication: (ownerUid: number) => Promise<void>;
   scheduleApproachMaintenance: () => Promise<void>;
@@ -88,6 +89,8 @@ export type KernelContext = {
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   processId?: string;
+  /** Captured only from the trusted registry; keeps late calls restricted after deletion. */
+  processScopeId?: string;
   processRunId?: string;
   requestId?: string;
   requestSignal?: AbortSignal;
