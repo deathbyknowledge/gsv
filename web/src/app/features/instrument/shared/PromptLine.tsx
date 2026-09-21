@@ -73,12 +73,6 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
   const measureFrame = useRef(0);
   const revealPending = useRef(false);
-  const caretTimings = useRef<{ kind: "input" | "cursor"; start: number }[]>([]);
-  const recordCaretInput = (event: Event, kind: "input" | "cursor") => {
-    if (event.timeStamp >= 0 && event.timeStamp <= performance.now() && caretTimings.current.length < 64) {
-      caretTimings.current.push({ kind, start: event.timeStamp });
-    }
-  };
   const metrics = useRef<{ fontSize: number; lineHeight: number } | null>(null);
   const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean; focused: boolean } | null>(null);
   const measure = useCallback((reveal = false) => {
@@ -155,23 +149,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       measureFrame.current = 0;
       const reveal = revealPending.current;
       revealPending.current = false;
-      const start = performance.now();
       measure(reveal);
-      const end = performance.now();
-      performance.measure("gsv.prompt.measure", { start, end });
-      performance.clearMeasures("gsv.prompt.measure");
-      for (const sample of caretTimings.current.splice(0)) {
-        const name = sample.kind === "input" ? "gsv.prompt.input-to-caret" : "gsv.prompt.cursor-to-caret";
-        performance.measure(name, { start: sample.start, end });
-        performance.clearMeasures(name);
-      }
     });
   }, [measure]);
   useLayoutEffect(() => {
     if (!active) {
       cancelAnimationFrame(measureFrame.current);
       measureFrame.current = 0;
-      caretTimings.current.length = 0;
       return;
     }
     metrics.current = null;
@@ -205,8 +189,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     };
   }, [active, scheduleMeasure]);
   const read = (): string => inputRef.current?.value ?? "";
-  const changed = (event?: Event): void => {
-    if (event) recordCaretInput(event, "input");
+  const changed = (): void => {
     revision.current++;
     const value = read();
     setCommand(value.startsWith("$"));
@@ -276,7 +259,6 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       return;
     }
     if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") {
-      recordCaretInput(event, "cursor");
       // The frame observes the browser's default selection change, including held-key repeats.
       scheduleMeasure(true);
     }

@@ -629,7 +629,7 @@ Regression cases are included in source; local execution stays with the user.
 
 The prototype strip has been removed. Desktop supplies a quiet space-name control
 to the shared Instrument and sign-in headers. Its menu owns recovery, disconnect,
-quit, and on-demand input timings; F8 still opens timings directly. Browser entry
+and quit. Browser entry
 points supply neither this identity control nor the native-input provider, so
 voice, gestures, practice and input
 sounds are not shown or started there. Shared source does not mean that native
@@ -658,3 +658,11 @@ The focused Zen history experiment is preserved on the local branch
 the original transcript presentation. The unsolicited copy reductions from the
 space-menu batch have been undone so the user can review the previous wording and
 choose what to trim.
+
+## Retired input diagnostics
+
+The temporary input-timing panel, F8 shortcut, global timing API, input listeners,
+PerformanceObserver, and Preact scheduling wrapper have been removed. Shared Zen
+navigation and PromptLine no longer emit the prototype timing measures. The
+cursor measurement and rendering work remains in its original owners. Earlier
+investigation notes above describe the diagnostics while they were in use.

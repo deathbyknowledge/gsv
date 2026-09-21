@@ -769,10 +769,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       if (browse !== null && (event.key === "j" || event.key === "k")) {
         event.preventDefault();
-        const started = performance.now();
         scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
-        performance.measure("gsv.zen.navigate", { start: started, end: performance.now() });
-        performance.clearMeasures("gsv.zen.navigate");
         return;
       }
       // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.

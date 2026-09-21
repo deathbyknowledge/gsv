@@ -164,49 +164,10 @@ excludes the mock. The real helpers are still real in development mode.
     must not trigger an unsaved-draft warning. Pending output should show the
     shared spinner; stopped, failed and unavailable states should remain clear.
 
-For local timing diagnostics, press **F8** or open **timings** in the in-app
-prototype bar. This strip is part of the page, independent of window-manager
-title bars. Clear the
-samples, close the panel, then compare wheel scrolling with `j`/`k`, click the
-prompt and type without sending. Reopen **timings** and copy the report. It
-includes dispatch and next-frame delays plus window/layout dimensions; no keys,
-draft text, gateway address or conversation content. Opening the panel does not
-start a sampling or rendering loop.
-
-The **j/k navigation** row separates browse-key samples from the aggregate
-keyboard row, which also includes typing and other shortcuts. Compare at the
-same zoom and window size. Include moving across long messages, opening and
-closing receipts, loading earlier messages, and leaving the prompt with Escape;
-the reading position and browse cursor should remain stable.
-
-The report also separates **j/k taps** from **j/k held** and shows medians. For
-the next comparison, make several individual presses about a second apart,
-then briefly hold each key. The navigation-work table measures synchronous
-scroll handling and Preact update queue/work while a navigation sample is
-pending. A low work duration with a high dispatch or frame delay directs the
-next investigation outside that measured code; it does not prove a GPU cause.
-The report includes a loaded-row count, and still contains no conversation data.
-
-The **Prompt** table measures cursor-refresh work and the time from typing or
-Arrow/Home/End keydown through applying the custom caret position. This endpoint
-is later than the generic next-frame callback, but still precedes painting and
-display. Compare tapped and held arrows, Shift selection, wrapped/multiline
-drafts and typing after the cursor has been idle. Use your own unsent draft;
-reports retain durations only.
-
-The same input timings remain available in the webview inspector:
-
-```js
-window.gsvInputTiming.reset();
-// Type and navigate, then inspect the aggregate timings:
-window.gsvInputTiming.read();
-```
-
-This reports p95 dispatch delay, p95 time to the next animation frame, and the
-maximum next-frame delay for up to 200 events each for keys, typing and prompt
-clicks. Samples
-stay in memory and contain no keys, text, targets or conversation content. This
-is a frontend scheduling diagnostic, not a measurement of final display latency.
+For responsiveness, compare mouse-wheel scrolling with `j`/`k` at the same zoom
+and window size. Include long messages, receipts, loading earlier history, prompt
+typing, and tapped or held cursor keys. The temporary input-timing panel, F8
+shortcut, and timing collectors have been removed.
 
 ## Current limits
 
