@@ -82,6 +82,7 @@ export type KernelContext = {
   sharedContext: SharedContextStore;
   scheduleSharedContext: () => Promise<void>;
   scheduleProcessScopeExpiry: (scopeId: string, expiresAtMs: number) => Promise<void>;
+  scheduleProcessScopeMessages: () => Promise<void>;
   approaches: ApproachStore;
   scheduleProfilePublication: (ownerUid: number) => Promise<void>;
   scheduleApproachMaintenance: () => Promise<void>;

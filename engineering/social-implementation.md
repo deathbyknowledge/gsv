@@ -32,7 +32,7 @@ or deploy merely because an intermediate batch is ready.
 | 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented except scoped Ship help below; CI green for completed slices; human trial pending |
 | 5. Shared relationship context | Mutually consented connections, attributed statements, selected subscriptions, withdrawal and deliberate introductions. | Kernel, protocol and People | Implemented; CI green through c28fe6fe; human trial pending |
 | 6. Private message search | Selected Conversation SQLite/FTS, bounded historical indexing and visible coverage; no extra Search DO. | Conversation and Kernel | Implemented; CI green; human trial pending |
-| 7. Scoped assistance | Fresh Process context, inherited restrictions, exact draft approval and optional bounded helpers. | Kernel, Process, protocol and People | Runtime, private assistance UI and exact drafts implemented; latest CI pending. Optional automatic admission and final audit in progress |
+| 7. Scoped assistance | Fresh Process context, inherited restrictions, exact draft approval and optional bounded helpers. | Kernel, Process, protocol and People | Runtime, private assistance UI, exact drafts and optional automatic admission implemented; CI and final integration/UI audit in progress |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
 It does not end this branch's scope or authorize an intermediate merge.

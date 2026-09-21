@@ -62,8 +62,44 @@ reviewed revision. Changing a grant requires creating a fresh helper; it cannot
 retroactively clean a broader Process history.
 
 People uses this runtime for selected-message assistance, private helper replies
-and durable exact-draft review. See social-drafts.md. Optional bounded incoming-
-message admission remains in progress. A scoped contact send requires a causal
-reply reference; creating a contact never enables automatic participation.
+and durable exact-draft review. See social-drafts.md. A scoped contact send
+requires a causal reply reference; creating a contact never enables automatic
+participation.
+
+## Optional automatic help
+
+A human may create one active automatic helper for a selected, unmuted v2
+conversation. The reviewed policy includes the owner's request, permission to
+prepare private replies or send as Ship, at most sixteen incoming messages, an
+admission interval of at least one minute, and the ordinary shared generation,
+process and outgoing-message allowances. There is no automatic renewal. People
+defaults to private replies, four incoming messages, a day of access and sixty-
+four model requests. These are limits on this explicitly delegated helper, not
+global limits on the personal Ship.
+
+Kernel SQLite owns a bounded queue of references to committed incoming human
+or human-approved messages. Legacy messages, Ship messages, acknowledgements,
+old messages and control events cannot wake it. Queue admission is deduplicated
+with the local Conversation projection. A full queue of four pending messages
+pauses attention for owner review; already accepted messages at the configured
+message allowance remain eligible for delivery. Paused helpers must be stopped
+before a fresh allowance is granted.
+
+The existing Kernel scheduler delivers an ordinary typed `social.message`
+Process event with a stable deduplication identity, the exact incoming cause,
+the owner's request and explicitly untrusted incoming text. Incoming attachments
+are not automatically shared. Scope, account, connection generation, mute,
+capabilities and model allowance are checked again after the Conversation read.
+Retries survive eviction and pause after five unconfirmed attempts. This uses
+the existing Process queue and loop; there is no additional agent runtime or DO.
+
+In reply mode, the Kernel derives the outgoing idempotency key from the scope
+and admitted incoming origin reference. It admits at most one remote response
+for that cause, even if the model invents another key. The cause reservation,
+message allowance and ordinary outbox admission commit atomically. A reply to
+an undispatched message is refused. Private drafts use the same exact human
+approval flow as manual assistance. Muting stops new automatic attention;
+revocation, expiry or ending the relationship stops further scoped effects.
+
 CI and the user's two-space trial validate the integrated feature. No local
 checks or browser trial have been run by the agent.

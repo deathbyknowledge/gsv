@@ -1,3 +1,4 @@
+import { notifyProcessChanged } from "./process-notifications";
 import { assertScopedSend, scopedResource, isProcessScopeCurrent } from "./process-scope";
 import type {
   ContactAliasSetArgs,
@@ -620,7 +621,6 @@ export async function handleContactSend(
   const ownerUid = requireContactCaller(ctx, false);
   const now = Date.now();
   pruneFederationState(ctx, now);
-  const idempotencyKey = normalizeIdempotencyKey(args.idempotencyKey);
   const text = boundedText(
     args.text,
     "Contact message",
@@ -643,6 +643,9 @@ export async function handleContactSend(
   let contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
   if (args.expectedGeneration !== undefined && args.expectedGeneration !== contact.generation) throw new Error("Contact connection changed; review the recipient again before sending");
   const replyTo = args.replyTo ? originMessageRefSchema.parse(args.replyTo) : undefined;
+  const idempotencyKey = normalizeIdempotencyKey(scope?.policy.automatic && replyTo
+    ? await stableOpaqueId("scope-reply", [scope.id, replyTo.actor.shipId, replyTo.actor.subjectId, replyTo.messageId])
+    : args.idempotencyKey);
   const fingerprint = await federationInputFingerprint(jsonValue({
     operation: "contact.send",
     contactId: contact.id,
@@ -735,7 +738,10 @@ export async function handleContactSend(
     assertOutboundCapacity(ownerUid, admittedContact.id, ctx, now);
     consumeOutboundDeliveryRate(ownerUid, admittedContact.id, ctx, now);
     assertResourceGrantCapacity(admittedContact.id, requestedMedia?.length ?? 0, ctx);
-    if (scope) ctx.procs.scopes.consume(scope.id, "messages", idempotencyKey, scope.revision);
+    if (scope) {
+      if (scope.policy.automatic) ctx.procs.scopes.automation.claimReply(scope.id, replyTo!, idempotencyKey);
+      ctx.procs.scopes.consume(scope.id, "messages", idempotencyKey, scope.revision);
+    }
     return ctx.federation.prepareMessage({
       deliveryId,
       ownerUid,
@@ -1998,9 +2004,16 @@ async function commitInboundMessage(
     createdAt: inbox.receivedAtMs,
   });
   const currentContact = ctx.federation.get(contact.id);
-  const queueDigest = ctx.federation.transaction(() => ctx.conversations.recordContactMessage(appended.message,
-    currentContact?.preferences.muted ?? true, currentContact?.generation === contact.generation ? currentContact : undefined));
+  const { queueDigest, helpers } = ctx.federation.transaction(() => ({
+    queueDigest: ctx.conversations.recordContactMessage(appended.message,
+      currentContact?.preferences.muted ?? true, currentContact?.generation === contact.generation ? currentContact : undefined),
+    helpers: currentContact?.generation === contact.generation ? ctx.procs.scopes.automation.admit(currentContact, appended.message) : [],
+  }));
   if (queueDigest) await ctx.scheduleConversationAttention();
+  if (helpers.length) {
+    await ctx.scheduleProcessScopeMessages();
+    for (const pid of helpers) notifyProcessChanged(ctx, pid, ["scope"]);
+  }
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 
 }

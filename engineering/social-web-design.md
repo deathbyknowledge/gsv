@@ -55,6 +55,14 @@ Draft approval previews the exact recipient and content. Automatic assistance
 has its own explicit scope, budget and stop control. None of these grants are
 hidden inside accepting a message or saving a person.
 
+The Ship help tab contains optional automatic attention. It defaults to private
+drafts and requires a second review before activation. The review explains the
+one conversation it can read, the pasted material, whether replies may leave
+the space, its expiry and finite incoming-message/model-request allowances.
+The helper shows admitted and queued messages, the pause reason and a stop
+control. Creation retries recover the same helper. Renewal means stopping the
+old helper and making another explicit choice, never extending access silently.
+
 Verification is split by the standing work agreement: CI owns automated
 behavior and boundary checks; the maintainer trials the rendered UI, keyboard,
 mobile and two-space flows. These design decisions are not a claim that the

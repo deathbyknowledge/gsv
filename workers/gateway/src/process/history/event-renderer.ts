@@ -47,6 +47,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);
     case "adapter.work.returned": return formatProcessRuntimeEvent({ type: event.kind, ...event.payload });
+    case "social.message": return JSON.stringify({ event: event.kind, ...event.payload }, null, 2);
     case "target.connection": return formatTargetConnectionEvent(event.payload);
     case "history.compacted": return formatCompactionSummaryMessage(event.payload);
     case "runtime.wake": return RUNTIME_EVENT_WAKE_MESSAGE;

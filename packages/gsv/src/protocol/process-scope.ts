@@ -9,6 +9,8 @@ export type ProcessScopePolicy = {
   materials: Array<{ name: string; text: string }>;
   expiresAtMs: number;
   budgets: { processes: number; generations: number; messages: number };
+  /** Opt-in attention to new human messages in the one selected conversation. */
+  automatic?: { mode: "draft" | "reply"; request: string; maxMessages: number; intervalSeconds: number };
 };
 
 const idSchema = z.string().check(z.minLength(1), z.maxLength(256));
@@ -27,6 +29,11 @@ export const processScopePolicySchema: z.ZodMiniType<ProcessScopePolicy> = z.str
     generations: z.int().check(z.minimum(1), z.maximum(128)),
     messages: z.int().check(z.minimum(0), z.maximum(32)),
   }),
+  automatic: z.optional(z.strictObject({
+    mode: z.enum(["draft", "reply"]), request: z.string().check(z.minLength(1), z.maxLength(4096)),
+    maxMessages: z.int().check(z.minimum(1), z.maximum(16)),
+    intervalSeconds: z.int().check(z.minimum(60), z.maximum(86_400)),
+  })),
 });
 
 export type ProcessScope = {
@@ -38,6 +45,7 @@ export type ProcessScope = {
   policy: ProcessScopePolicy;
   used: { processes: number; generations: number; messages: number };
   createdAtMs: number;
+  automation?: { acceptedMessages: number; pendingMessages: number; pausedReason?: string };
 };
 
 export type ProcScopeGetArgs = { pid: string };

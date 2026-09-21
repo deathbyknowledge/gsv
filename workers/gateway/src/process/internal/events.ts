@@ -7,7 +7,7 @@ import type { ProcessRuntimeEvent } from "../../protocol/process-frames";
 import type { ResponsibilityBatchState, RunState } from "../run/state";
 import type { TerminalResponsibilitySnapshot } from "./contracts";
 import {
-  processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema, workReturnedRuntimeEventSchema,
+  processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema, workReturnedRuntimeEventSchema, socialMessageRuntimeEventSchema,
 } from "./schemas";
 import { z } from "zod";
 import { formatResponsibilityLine } from "../history/event-renderer";
@@ -23,6 +23,9 @@ export function normalizeProcessRuntimeEvent(
     const result = responsibilityReadyRuntimeEventSchema.safeParse(value);
     if (!result.success) throw new Error("r12y.ready fields are invalid");
     return result.data;
+  }
+  if (discriminator.data.type === "social.message") {
+    return socialMessageRuntimeEventSchema.parse(value);
   }
   if (discriminator.data.type !== "adapter.work.returned") {
     throw new Error("Unsupported process runtime event type");

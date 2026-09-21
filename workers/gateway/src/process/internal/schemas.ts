@@ -4,7 +4,7 @@ import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@humansandmachines/gsv/services/inference-context";
-import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, scopedMessageEventPayloadSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";
 
@@ -116,9 +116,11 @@ export const responsibilityReadyRuntimeEventSchema = responsibilityBatchSchema.e
   type: z.literal("r12y.ready"),
 });
 
+export const socialMessageRuntimeEventSchema = z.strictObject({ type: z.literal("social.message"), payload: scopedMessageEventPayloadSchema });
 export const processRuntimeEventSchema = z.discriminatedUnion("type", [
   workReturnedRuntimeEventSchema,
   responsibilityReadyRuntimeEventSchema,
+  socialMessageRuntimeEventSchema,
 ]);
 
 const federationResponsibilityBaseSchema = {

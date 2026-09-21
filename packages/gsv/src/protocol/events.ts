@@ -4,6 +4,18 @@ import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } fr
 import type { ProcHistoryContextPolicy } from "./syscalls/proc";
 import type { EventReplyTarget } from "./syscalls/interaction-origin";
 import type { ResponsibilityRecord, ResponsibilityTransition } from "./syscalls/responsibility";
+import { originMessageRefSchema, type OriginMessageRef } from "./social-identity";
+
+export type ScopedMessageEventPayload = {
+  eventId: string; scopeId: string; conversationId: string; contactId: string;
+  mode: "draft" | "reply"; ownerRequest: string; reference: OriginMessageRef;
+  message: { sender: string; text: string; contentTrust: "untrusted"; attachmentsIncluded: false };
+};
+export const scopedMessageEventPayloadSchema: z.ZodMiniType<ScopedMessageEventPayload> = z.strictObject({
+  eventId: z.string(), scopeId: z.string(), conversationId: z.string(), contactId: z.string(),
+  mode: z.enum(["draft", "reply"]), ownerRequest: z.string().check(z.maxLength(4096)), reference: originMessageRefSchema,
+  message: z.strictObject({ sender: z.string(), text: z.string().check(z.maxLength(32_768)), contentTrust: z.literal("untrusted"), attachmentsIncluded: z.literal(false) }),
+});
 
 const nonNegativeIntegerSchema = z.int().check(z.nonnegative());
 const responsibilityStateSchema = z.enum(["open", "active", "waiting", "resolved", "cancelled"]);
@@ -185,6 +197,7 @@ export const procHistoryEventPayloadSchemas = {
     sourceRunId: z.string(), sourceCreatedAt: z.number(), observedAt: z.number(),
   }),
   "adapter.work.returned": z.strictObject({ eventId: z.string(), workPid: z.string() }),
+  "social.message": scopedMessageEventPayloadSchema,
   "history.compacted": z.strictObject({
     summary: z.string(),
     segmentId: z.string(),
@@ -294,6 +307,7 @@ export type ProcHistoryEventPayloadMap = {
     syscall: string; target: string; sourceRunId: string; sourceCreatedAt: number; observedAt: number;
   };
   "adapter.work.returned": { eventId: string; workPid: string };
+  "social.message": ScopedMessageEventPayload;
   "history.compacted": { summary: string; segmentId: string; archivedMessages: number; archivePath: string };
   "runtime.wake": { source: "process"; reason?: string; pendingEvents?: number };
   "runtime.failed": { reason: "schedule.error"; error: string; prefix?: string };
@@ -359,6 +373,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("ipc.timeout"),
   eventSchema("process.approval"),
   eventSchema("adapter.work.returned"),
+  eventSchema("social.message"),
   eventSchema("history.compacted"),
   eventSchema("runtime.wake"),
   eventSchema("runtime.failed"),

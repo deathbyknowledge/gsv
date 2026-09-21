@@ -213,6 +213,7 @@ export async function handleProcSpawn(
         ? ctx.procs.scopes.requireActive(inheritedScope.id, inheritedScope.revision)
         : args.scope ? ctx.procs.scopes.create(ownerUid, pid, args.scope) : null;
       if (scope) {
+        if (!inheritedScope && scope.policy.automatic) ctx.procs.scopes.automation.register(scope, ctx.conversations.get(scope.policy.conversations[0].conversationId)?.latestSequence ?? 0);
         validateScopePolicy(scope.policy, ownerUid, ctx);
         ctx.procs.scopes.consume(scope.id, "processes", pid, scope.revision);
         spawnIdentity.home = `/var/scopes/${scope.id.slice("scope:".length)}`;

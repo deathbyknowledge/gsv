@@ -8,12 +8,14 @@ import type {
   BinaryBody,
   ConversationMessage,
   ResourceBlock,
+  OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
 import {
   bundleAdapterMedia,
   cancelBinaryBody,
   contactDisplayName,
   inferFsContentType,
+  originMessageRefSchema,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
@@ -590,6 +592,7 @@ async function sendMessage(
   const attachmentPaths: string[] = [];
   let attachmentMime: string | undefined;
   let requestedDeliveryId: string | undefined;
+  let replyTo: OriginMessageRef | undefined;
   let also = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -617,6 +620,11 @@ async function sendMessage(
     if (current === "--delivery-id") {
       index += 1;
       requestedDeliveryId = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--reply-to") {
+      index += 1;
+      replyTo = originMessageRefSchema.parse(JSON.parse(requireShellOptionValue(args[index], current)));
       continue;
     }
     if (current === "--also") {
@@ -669,6 +677,7 @@ async function sendMessage(
       text: text?.trim() ?? "",
       ...(media ? { media } : undefined),
       ...(requestedDeliveryId ? { idempotencyKey: requestedDeliveryId } : undefined),
+      ...(replyTo ? { replyTo } : undefined),
     }, ctx);
     const delivered = contactResult.state === "delivered";
     return completed([
@@ -683,6 +692,7 @@ async function sendMessage(
     ].join("\n"));
   }
 
+  if (replyTo) throw new Error("--reply-to applies only to contact destinations");
   requireCommandCapability(ctx, "adapter.send");
 
   const destination = (await resolveVisibleAdapterMessageDestination(
@@ -974,7 +984,7 @@ function messageUsage(): string {
     "  message search --with CONTACT_OR_CONVERSATION --query TEXT [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
-    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
+    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--reply-to ORIGIN_JSON] [--also]",
     "",
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
     "Run `yield` when work is complete, or append `&& yield` to the message block header.",

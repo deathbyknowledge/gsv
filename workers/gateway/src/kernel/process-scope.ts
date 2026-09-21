@@ -51,6 +51,10 @@ export function validateScopePolicy(policy: ProcessScopePolicy, ownerUid: number
     if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active" || contact.generation !== grant.generation
       || contact.conversationId !== grant.conversationId) throw new Error("Review the current conversation before granting helper access");
   }
+  if (policy.automatic && policy.conversations.some((grant) => {
+    const contact = ctx.federation.get(grant.contactId);
+    return contact?.protocol?.version !== 2 || !contact.protocol.features.includes("messages") || contact.preferences.muted;
+  })) throw new Error("Automatic help requires an unmuted conversation with v2 human-message attribution");
   for (const resource of policy.resources) {
     if (!policy.conversations.some((grant) => grant.contactId === resource.target)
       || !/^\/resources\/[^/]+$/.test(resource.path) || resource.expiresAt !== undefined) {
