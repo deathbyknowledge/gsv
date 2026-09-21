@@ -1,7 +1,9 @@
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { listLibraryCollections, saveLibraryPage } from "../../../services/memory/libraryService";
 import { libraryPathInDb } from "../../../services/memory/libraryModel";
@@ -30,6 +32,7 @@ export type MemoryProps = {
  * when opened, a search in the gateway.
  */
 export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
@@ -52,7 +55,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setFragment("");
     setEditor(null);
     setStatus(null);
-  }, [initialPage?.db, initialPage?.path]);
+  }, [initialPage]);
 
   const collectionsQuery = useQuery({
     queryKey: [...MEMORY_KEY, "collections"],
@@ -150,11 +153,12 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setStatus(null);
   }, [note, selectedDb, writable]);
   useEffect(() => {
-    if (editing && !creating) editorRef.current?.focus();
+    if (active && editing && !creating) editorRef.current?.focus();
   }, [editing]);
 
   /* keys: j k walk the pages, enter opens, / searches, e edits, esc leaves the editor or the search */
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
@@ -191,7 +195,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [beginEdit, editing, note?.path, open, orderedPages, dirty, save.isPending]);
+  }, [active, beginEdit, editing, note?.path, open, orderedPages, dirty, save.isPending]);
 
   const onEditorKey = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {

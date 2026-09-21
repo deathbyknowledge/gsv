@@ -8,8 +8,10 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
 import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   loadConsoleAccounts,
@@ -71,12 +73,14 @@ const PROCESS_PAGE = 8;
 type OpenFile = { target: string; path: string; name: string };
 const LEDGER_QUERY_KEY = INSTRUMENT_LEDGER_KEY;
 
-function useNow(): number {
+function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active]);
   return now;
 }
 
@@ -93,13 +97,14 @@ function outcomeWord(outcome: string): string {
 }
 
 export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: FleetProps) {
+  const active = useViewActive();
   const [contactDirty, setContactDirty] = useState(false);
   const [fileDirty, setFileDirty] = useState(false);
   const [workDirty, setWorkDirty] = useState(false);
   useDraftGuard(contactDirty || fileDirty || workDirty, onDirtyChange);
   const contactDrafts = useContactDrafts(setContactDirty);
   const { client, connected } = useGateway();
-  const now = useNow();
+  const now = useNow(active);
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
@@ -161,6 +166,8 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   useLayoutEffect(() => {
     setSelected(initialRow);
     setOpenFile(null);
+    setExpandedFile(null);
+    setWorkPanel(null);
     setCreatingProcess(false);
     setConnecting(initialConnect);
   }, [initialReference]);
@@ -228,16 +235,16 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
   }, []);
   useEffect(() => {
-    if (creatingProcess || connecting || workPanel || workDirty) return;
+    if (!active || creatingProcess || connecting || workPanel || workDirty) return;
     if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
     if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
     const rows = visibleRows();
     if (rows.length === 0) return;
     const next = reconcileFleetSelection(selected, initialRow, rows);
     if (next !== selected) setSelected(next);
-  }, [places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
+  }, [active, places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
   useEffect(() => {
-    if (!selected) return;
+    if (!active || !selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
     // ledger rows are display: contents and have no box of their own; their first cell does
     row?.scrollIntoView({ block: "nearest" });
@@ -247,7 +254,8 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     [selected, shownLedger],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
@@ -291,10 +299,10 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, openCmd, expandedFile, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
+  }, [active, selected, openCmd, expandedFile, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!active || !selected) return;
     const row = document.querySelector<HTMLElement>(`.fleet tr[data-row="${selected}"]`);
     row?.scrollIntoView({ block: "nearest" });
   }, [selected]);

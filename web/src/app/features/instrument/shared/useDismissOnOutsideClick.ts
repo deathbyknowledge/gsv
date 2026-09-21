@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 
 /**
  * Closes a transient popover when a pointer goes down anywhere outside it. `inside`
@@ -8,11 +9,12 @@ import { useEffect, useRef } from "preact/hooks";
  * unmount.
  */
 export function useDismissOnOutsideClick(open: boolean, inside: () => ReadonlyArray<Element | null | undefined>, dismiss: () => void): void {
+  const active = useViewActive();
   // Read at press time, so callers can pass inline functions without re-subscribing each render.
   const latest = useRef({ inside, dismiss });
   latest.current = { inside, dismiss };
   useEffect(() => {
-    if (!open) return;
+    if (!active || !open) return;
     const onPointerDown = (event: PointerEvent) => {
       const { inside, dismiss } = latest.current;
       // SAFETY: a pointer event targets the DOM node under the pointer.
@@ -23,5 +25,5 @@ export function useDismissOnOutsideClick(open: boolean, inside: () => ReadonlyAr
     // Capture, so a press still dismisses when something between here and the target stops the event.
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [open]);
+  }, [active, open]);
 }

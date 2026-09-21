@@ -1,7 +1,8 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
-import { useQuery } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -132,13 +133,14 @@ const ActivityLine = memo(function ActivityLine({
   const running = activity.calls.find((call) => !call.finished);
   const unavailable = activity.terminal?.status === "unavailable";
   const [now, setNow] = useState(Date.now);
+  const active = useViewActive();
   const timing = !!activity.terminal && activity.live && !unavailable;
   useEffect(() => {
-    if (!timing) return;
+    if (!active || !timing) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [timing]);
+  }, [active, timing]);
   const head = activity.live && running ? (
     <>
       {!unavailable && <span class="pulse blink" />}
@@ -304,6 +306,7 @@ function NoteMoment({
 }
 
 export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -314,9 +317,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
+    if (!active) return;
     const timer = window.setTimeout(() => setToday(Date.now()), nextDayBoundary(today, timeZone) - Date.now());
     return () => window.clearTimeout(timer);
-  }, [today, timeZone]);
+  }, [active, today, timeZone]);
 
   const [note, setNote] = useState<string | null>(null);
   const pid = useZenProcess(pidProp, setNote);
@@ -505,10 +509,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
   const animating = streaming || settling.size > 0 || marking;
   useEffect(() => {
-    if (!animating || reducedMotion()) return undefined;
+    if (!active || !animating || reducedMotion()) return undefined;
     const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
     return () => window.clearInterval(interval);
-  }, [animating]);
+  }, [active, animating]);
 
   const loadOlder = useCallback(async () => {
     await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
@@ -533,7 +537,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
   const streamedRunsRef = useRef<Set<string>>(new Set());
   useLayoutEffect(() => {
-    if (!ready) return;
+    if (!active || !ready) return;
     for (const moment of moments) {
       if (!moment.streaming) continue;
       streamedMomentsRef.current.add(moment.id);
@@ -570,9 +574,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       for (const id of arrived) next.set(id, startedAt);
       return next;
     });
-  }, [moments, ready]);
+  }, [active, moments, ready]);
   useEffect(() => {
-    if (settling.size === 0) return;
+    if (!active || settling.size === 0) return;
     const done = [...settling].filter(([id, startedAt]) => {
       const moment = moments.find((entry) => entry.id === id);
       return !moment || Date.now() - startedAt >= settleDuration(moment.text.length);
@@ -583,7 +587,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       for (const [id] of done) next.delete(id);
       return next;
     });
-  }, [moments, settling, tick]);
+  }, [active, moments, settling, tick]);
   /* the first ready render happens before the cascade is set; nothing shows in it, so no frame ever holds the transcript unsettled */
   const cascadeUnset = ready && seenMomentsRef.current === null && !reducedMotion();
 
@@ -689,17 +693,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* an approval takes the keys: the prompt lets go so y and n reach the decision */
   useEffect(() => {
-    if (pendingHil) promptRef.current?.blur();
-  }, [pendingHil]);
+    if (active && pendingHil) promptRef.current?.blur();
+  }, [active, pendingHil]);
 
   useEffect(() => {
-    if (!prefill || !connected || !pid) return;
+    if (!active || !prefill || !connected || !pid) return;
     const input = promptRef.current;
     if (!input || input.disabled) return;
+    setWhere(initialTarget ?? null);
+    setAttachments([]);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
-  }, [prefill, onPrefillUsed, connected, pid]);
+  }, [active, prefill, initialTarget, onPrefillUsed, connected, pid]);
 
   const onPromptFocus = useCallback(
     (focused: boolean) => {
@@ -709,6 +715,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   useLayoutEffect(() => {
+    if (!active) { firstGoKey.current = null; return; }
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       const editing = editableElement(event.target);
@@ -774,10 +781,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [active, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
+    if (!active) return;
     const onPaste = (event: ClipboardEvent) => {
       if (event.defaultPrevented || editableElement(event.target) || pendingHil) return;
       const input = promptRef.current;
@@ -791,7 +799,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addFiles, pendingHil]);
+  }, [active, addFiles, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -1060,7 +1068,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
-              enabled={connected && pid !== null && pendingHil === null}
+              enabled={active && connected && pid !== null && pendingHil === null}
               send={say} scroll={scrolling.move} />
           </div>
         </div>

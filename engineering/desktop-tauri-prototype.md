@@ -40,7 +40,7 @@ in the chosen gateway's browser UI; there is no prototype deep-link receiver.
 
 ## Input lifetime
 
-Every mounted Zen workspace attaches a fresh native lease. The host validates the
+Every active Zen workspace attaches a fresh native lease. The host validates the
 lease, helper session, voice request, segment, sequence and event age. It keeps
 replace-latest partial/status/scroll state and a bounded acknowledged lane for
 semantic completion. JavaScript applies correlated text through the real composer
@@ -295,3 +295,41 @@ the position. Compilation does not establish the improvement: the next human
 pass should compare typing, tapped and held arrows, selection with Shift,
 wrapped/multiline drafts, cursor movement after an idle blink, and prompt focus
 at the current zoom. The running testing window remains untouched.
+
+## Retain view state across navigation
+
+The browser and Tauri entries import the same Instrument, Zen, Fleet, Memory,
+Settings and prompt components. These fixes are shared source changes on the
+prototype branch; the deployed browser and existing GPUI application do not
+change merely because a prototype executable is rebuilt.
+
+Instrument previously unmounted a screen on every view change. Its discard
+dialogs protected real loss of drafts, forms and reading position. It now
+mounts each screen lazily and retains it for the signed-in session. Ordinary
+view switches require no confirmation. Replacing an edited page, starting a
+different conversation/composer action, sign-out and reload still protect work
+that those actions would discard. Retention neither submits forms nor writes
+drafts or credential fields into persistent storage. Existing gateway/account
+session teardown also tears down the retained views.
+
+The shared navigation service exposes view activity. Hidden query observers
+stay attached to retain the cache entries they own, but disable fetching and
+UI notifications. Reopening observes the latest cache and performs ordinary
+stale-data recovery. Conversation signals continue merging into the existing
+runtime without publishing hidden transcript renders; Process history retains
+its existing signal owner. Terminal sessions also remain owned above the views,
+with visual subscriptions limited to active consumers. In-flight sends and
+explicit mutations may complete while away.
+
+Hidden views release keyboard/paste handlers and geometry observers, pause
+visual clocks and model sign-in polling, and avoid reading zero-sized layout.
+Zen retains scroll anchors and refreshes prompt geometry when shown. Hiding Zen
+releases native input just as its old unmount did; returning does not restart
+microphone or camera capture. Visited DOM, local state and observed cache data
+cost additional memory. No benchmark or zero-cost claim follows from retention.
+
+Regression coverage is authored for lazy lifetime, draft retention, hidden
+signal accumulation, and disabled query notifications/invalidation reads. It
+has not been run locally under the human-testing workflow. The next acceptance
+pass should cover drafts, selected items and scroll in all four views, live
+replies arriving while away, and input responsiveness after visiting them all.

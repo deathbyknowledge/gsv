@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { LibraryNote } from "../../../services/memory/libraryTypes";
 import { assignLibraryHeadingIds } from "../../../services/memory/libraryLinks";
 import { renderMarkdownHtml } from "../shared/markdown";
@@ -16,10 +17,15 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
   fragment: string;
   onOpen(link: MemoryLink): void;
 }) {
+  const active = useViewActive();
   const ref = useRef<HTMLElement>(null);
+  const rendered = useRef<{ db: string; path: string; markdown: string } | null>(null);
+  const location = useRef<{ db: string; path: string; fragment: string } | null>(null);
   useLayoutEffect(() => {
     const article = ref.current;
-    if (!article) return;
+    if (!active || !article) return;
+    const previous = rendered.current;
+    if (previous?.db === db && previous.path === note.path && previous.markdown === note.markdown) return;
     article.innerHTML = renderMarkdownHtml(note.markdown);
     assignLibraryHeadingIds(article);
     for (const anchor of article.querySelectorAll<HTMLAnchorElement>("a[href]")) {
@@ -37,13 +43,17 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
         anchor.title = "This link does not point to a Memory page.";
       }
     }
-  }, [db, note.path, note.markdown]);
+    rendered.current = { db, path: note.path, markdown: note.markdown };
+  }, [active, db, note.path, note.markdown]);
 
   useLayoutEffect(() => {
     const article = ref.current;
-    if (!article) return;
+    if (!active || !article) return;
+    const previous = location.current;
+    if (previous?.db === db && previous.path === note.path && previous.fragment === fragment) return;
     scrollToHeading(article, fragment);
-  }, [db, note.path, note.markdown, fragment]);
+    location.current = { db, path: note.path, fragment };
+  }, [active, db, note.path, fragment]);
 
   return <article class="prose" ref={ref} onClick={(event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

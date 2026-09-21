@@ -121,6 +121,15 @@ excludes the mock. The real helpers are still real in development mode.
    reading area, with ordinary scrolling only when the guide is taller than it.
    Try `j`/`k`, typing and view navigation with both sensors off, then on. Check
    a long conversation and scroll anchoring while new replies arrive.
+8. Leave your own unsent draft and attachments in Zen, select some text, and
+   scroll to an older message. Visit Fleet, Memory and Settings using the header,
+   then return: switching views should show no discard dialog and retain the
+   draft, selection and reading position. Repeat with a Fleet form, a Memory
+   edit and a Settings draft, including their current selection and scroll.
+   Hidden views must not respond to the visible view's shortcuts. Check a reply
+   that arrives while away, and compare typing/browsing after visiting all four
+   views. This retention lasts for the signed-in session; it is not restart
+   recovery or automatic saving. Leaving Zen stops native input as before.
 
 For local timing diagnostics, press **F8** or open **timings** in the in-app
 prototype bar. This strip is part of the page, independent of window-manager

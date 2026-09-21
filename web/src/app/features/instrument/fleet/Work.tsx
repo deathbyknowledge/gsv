@@ -1,5 +1,6 @@
 import type { JsonValue, ResponsibilityRecord, ResponsibilitySourcePolicy, ScheduleRecord } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";

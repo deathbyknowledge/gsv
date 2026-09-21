@@ -16,6 +16,7 @@ import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
+import { RetainedView } from "../../services/navigation/ViewActivity";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -59,6 +60,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
+  const { service: session } = useSession();
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
@@ -92,24 +94,17 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
 
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
+      if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
       if (to === distance) {
         if (reference) setFleetReference(reference);
         return true;
       }
-      if (settingsDirty && !window.confirm("Discard your unsaved settings changes?")) return false;
-      if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return false;
-      if (fleetDirty && !window.confirm("Discard your unsaved Fleet changes?")) return false;
-      if (memoryDirty && !window.confirm("Discard your unsaved Memory changes?")) return false;
-      setSettingsDirty(false);
-      setZenDirty(false);
-      setFleetDirty(false);
-      setMemoryDirty(false);
-      setFleetReference(reference);
+      if (reference) setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       setDistance(to);
       return true;
     },
-    [distance, settingsDirty, zenDirty, fleetDirty, memoryDirty],
+    [distance, fleetDirty],
   );
 
   useLayoutEffect(() => {
@@ -244,34 +239,45 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         </aside>
       ) : null}
       <div class="distance">
-        {distance === "zen" ? (
+        <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+            if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
-            if (page) setSelectedMemoryPage(page);
+            if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
-        ) : distance === "memory" ? (
-          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
+        </RetainedView>
+        <RetainedView active={distance === "memory"}>
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
+            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this question?")) return;
             if (!move("zen")) return;
-            setSelectedMemoryPage(page);
             setZenPid(null);
             setZenTarget(null);
             setZenPrefill(prompt);
           }} />
-        ) : distance === "settings" ? (
-          <Settings onDirtyChange={setSettingsDirty} />
-        ) : (
+        </RetainedView>
+        <RetainedView active={distance === "settings"}>
+          <Settings onDirtyChange={setSettingsDirty} onSignOut={() => {
+            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+            session.lock("Signed out");
+          }} />
+        </RetainedView>
+        <RetainedView active={distance === "fleet"}>
           <Fleet
-            onCommand={(target) => { if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); } }}
+            onCommand={(target) => {
+              if (zenDirty && !window.confirm("Replace your unsent message and attachments with a command?")) return;
+              if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
+            }}
             onDirtyChange={setFleetDirty}
             initialReference={fleetReference}
             onZen={(prefill, pid) => {
+              if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;
-              setZenTarget(null);
-              setZenPrefill(prefill ?? null);
+              if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
+              if (prefill) setZenPrefill(prefill);
               setZenPid(pid ?? null);
             }}
           />
-        )}
+        </RetainedView>
       </div>
       </div>
     </div>

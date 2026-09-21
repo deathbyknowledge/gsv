@@ -95,6 +95,8 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
+.instrument-view { min-width: 0; min-height: 0; height: 100%; }
+.instrument-view[hidden] { display: none; }
 
 /* ---------- shared chrome ---------- */
 .instrument-top {

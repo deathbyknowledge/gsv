@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 
 type Moment = { id: string };
 type Anchor = { id: string; offset: number };
@@ -14,6 +15,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   loadingOlder: boolean;
   loadOlder(): Promise<void>;
 }) {
+  const active = useViewActive();
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -22,12 +24,12 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const loading = useRef(false);
   const nodes = useRef<{ ordered: HTMLElement[]; byId: Map<string, HTMLElement> }>({ ordered: [], byId: new Map() });
   const [selected, setSelected] = useState<string | null>(null);
-  const current = useRef({ moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder });
-  current.current = { moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder };
+  const current = useRef({ active, moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder });
+  current.current = { active, moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder };
   const inset = useCallback(() => viewport.current ? parseFloat(getComputedStyle(viewport.current).scrollPaddingTop) || 0 : 0, []);
   const capture = useCallback(() => {
     const element = viewport.current;
-    if (!element) return;
+    if (!element || !current.current.active) return;
     const all = nodes.current.ordered;
     const scrollTop = element.scrollTop;
     const top = scrollTop + inset();
@@ -47,13 +49,13 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   }, [inset]);
   const write = useCallback((top: number) => {
     const element = viewport.current;
-    if (!element) return;
+    if (!element || !current.current.active) return;
     element.scrollTop = top;
     writtenTop.current = element.scrollTop;
   }, []);
   const sync = useCallback(() => {
     const element = viewport.current;
-    if (!element || !current.current.ready) return;
+    if (!element || !current.current.active || !current.current.ready) return;
     if (following.current) write(element.scrollHeight);
     else {
       for (const anchor of anchors.current) {
@@ -76,13 +78,13 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   }, [sync]);
   const readOlder = useCallback(() => {
     const state = current.current;
-    if (loading.current || state.loadingOlder || !state.hasOlder || !state.ready) return;
+    if (!state.active || loading.current || state.loadingOlder || !state.hasOlder || !state.ready) return;
     loading.current = true;
     void state.loadOlder().finally(() => { loading.current = false; });
   }, []);
   const scrolled = useCallback(() => {
     const element = viewport.current;
-    if (!element || !current.current.ready) return;
+    if (!element || !current.current.active || !current.current.ready) return;
     if (writtenTop.current !== null && Math.abs(element.scrollTop - writtenTop.current) < 1) {
       writtenTop.current = null;
       return;
@@ -97,7 +99,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     const moment = current.current.moments[index];
     const element = viewport.current;
     const focused = moment && nodes.current.byId.get(key(moment.id));
-    if (!element || !focused) return;
+    if (!element || !focused || !current.current.active) return;
     setSelected(key(moment.id));
     // keep the focused moment inside the reading area with a margin, scrolling the container itself
     const margin = 24;
@@ -116,7 +118,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   }, [capture, inset, readOlder, write]);
   const page = useCallback((direction: "up" | "down" | "start" | "end") => {
     const element = viewport.current;
-    if (!element) return;
+    if (!element || !current.current.active) return;
     const distance = Math.max(1, (element.clientHeight - inset() - 24) / 2);
     write(direction === "start" ? 0 : direction === "end" ? element.scrollHeight : element.scrollTop + (direction === "up" ? -distance : distance));
     following.current = atBottom(element);
@@ -126,14 +128,15 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   }, [capture, inset, readOlder, write]);
 
   useLayoutEffect(() => {
+    if (!active) return;
     const ordered = Array.from(content.current?.querySelectorAll<HTMLElement>("[data-moment-id]") ?? []);
     nodes.current = { ordered, byId: new Map(ordered.map((node) => [key(node.dataset.momentId!), node])) };
     sync();
-  }, [sync, moments, ready]);
+  }, [active, sync, moments, ready]);
   useLayoutEffect(() => {
     const element = viewport.current;
     const body = content.current;
-    if (!element || !body) return;
+    if (!active || !element || !body) return;
     const observer = new ResizeObserver(sync);
     observer.observe(element);
     observer.observe(body);
@@ -149,11 +152,11 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
       element.removeEventListener("touchmove", stopFollowing);
       element.removeEventListener("pointerdown", stopFollowing);
     };
-  }, [ready, moments.length === 0, scrolled, stopFollowing, sync]);
+  }, [active, ready, moments.length === 0, scrolled, stopFollowing, sync]);
 
   const move = useCallback((delta: number) => {
     const element = viewport.current;
-    if (!element || !current.current.ready) return;
+    if (!element || !current.current.active || !current.current.ready) return;
     stopFollowing();
     write(element.scrollTop + delta);
     capture();

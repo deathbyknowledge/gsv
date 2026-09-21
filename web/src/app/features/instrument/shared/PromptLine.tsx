@@ -1,6 +1,7 @@
 import { forwardRef } from "preact/compat";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 
 export type PromptPlace = {
   id: string;
@@ -56,6 +57,9 @@ export type PromptLineHandle = {
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
 export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+  const active = useViewActive();
+  const visible = useRef(active);
+  visible.current = active;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
@@ -78,6 +82,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const metrics = useRef<{ fontSize: number; lineHeight: number } | null>(null);
   const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean; focused: boolean } | null>(null);
   const measure = useCallback((reveal = false) => {
+    if (!visible.current) return;
     const input = inputRef.current;
     const mirror = mirrorRef.current;
     const field = fieldRef.current;
@@ -142,6 +147,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     measured.current = { value: input.value, start: at, end: input.selectionEnd, width, top: input.scrollTop, left: input.scrollLeft, reveal, focused };
   }, []);
   const scheduleMeasure = useCallback((reveal = false, refresh = false) => {
+    if (!visible.current) return;
     if (refresh) metrics.current = null;
     revealPending.current ||= reveal;
     if (measureFrame.current) return;
@@ -162,25 +168,31 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     });
   }, [measure]);
   useLayoutEffect(() => {
+    if (!active) {
+      cancelAnimationFrame(measureFrame.current);
+      measureFrame.current = 0;
+      caretTimings.current.length = 0;
+      return;
+    }
     metrics.current = null;
     measure(true);
-  }, [measure, disabled, command, place.label, place.online, dir]);
+  }, [active, measure, disabled, command, place.label, place.online, dir]);
   useLayoutEffect(() => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!active || !input) return;
     const selectionChanged = () => scheduleMeasure(true);
     // `select` does not report an ordinary collapsed-caret move in WebKit.
     input.addEventListener("selectionchange", selectionChanged);
     return () => input.removeEventListener("selectionchange", selectionChanged);
-  }, [scheduleMeasure]);
+  }, [active, scheduleMeasure]);
   useLayoutEffect(() => {
-    if (!autoFocus || disabled || autoFocusHandled.current) return;
+    if (!active || !autoFocus || disabled || autoFocusHandled.current) return;
     autoFocusHandled.current = true;
     if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus();
-  }, [autoFocus, disabled]);
+  }, [active, autoFocus, disabled]);
   useEffect(() => {
     const field = fieldRef.current;
-    if (!field) return;
+    if (!active || !field) return;
     const refresh = () => scheduleMeasure(true, true);
     const observer = new ResizeObserver(refresh);
     observer.observe(field);
@@ -191,7 +203,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       document.fonts.removeEventListener("loadingdone", refresh);
       cancelAnimationFrame(measureFrame.current);
     };
-  }, [scheduleMeasure]);
+  }, [active, scheduleMeasure]);
   const read = (): string => inputRef.current?.value ?? "";
   const changed = (event?: Event): void => {
     if (event) recordCaretInput(event, "input");
