@@ -29,6 +29,14 @@ const sections = [
   [-1.2, 1.87, 0.48, 0.67, 0.02], [-1.68, 1.46, 0.30, 0.42, 0.02],
 ] as const;
 const knuckleRow = [[-1.38, -1.34], [-0.46, -1.53], [0.49, -1.39], [1.36, -1.07]] as const;
+const WRIST_BEND = 0.22;
+
+// Keep the palm upright; the forearm meets it through a gently extended wrist.
+function bendWrist([x, y, z]: Vector): Vector {
+  const angle = WRIST_BEND * blend(2.7, 3.65, y);
+  const cosine = Math.cos(angle), sine = Math.sin(angle);
+  return [x, 2.7 + (y - 2.7) * cosine - z * sine, (y - 2.7) * sine + z * cosine];
+}
 
 function palmPoint(t: number, angle: number, grip: number): Vector {
   const y = 4.4 - t * 6.08;
@@ -53,7 +61,7 @@ function palmPoint(t: number, angle: number, grip: number): Vector {
     + (thenar + hypothenar - hollow + grip * 0.12 * (x / width) ** 2) * Math.max(0, facing) ** 3
     - ((0.22 + grip * 0.20) * knuckles + tendons) * back ** 3;
   const crown = blend(0.7, 1, t) * (0.22 * (x / width) ** 2 + 0.10 * x / width);
-  return [x, y + crown - (0.08 + grip * 0.16) * knuckles * back ** 2, z];
+  return bendWrist([x, y + crown - (0.08 + grip * 0.16) * knuckles * back ** 2, z]);
 }
 
 function radiusAt(t: number, part: Tube): number {
@@ -124,7 +132,9 @@ export function createHandModel(): HandModel {
   connect(0, palmRings, palmSides, () => SKIN);
   for (const ring of [0, palmRings]) {
     const center = vertices.length / 6;
-    const cap = [0, ring === 0 ? 4.4 : -1.68, ring === 0 ? sections[0][4] : sections[sections.length - 1][4], 0, ring === 0 ? 1 : -1, 0];
+    const cap = ring === 0
+      ? [...bendWrist([0, 4.4, sections[0][4]]), 0, Math.cos(WRIST_BEND), Math.sin(WRIST_BEND)]
+      : [0, -1.68, sections[sections.length - 1][4], 0, -1, 0];
     vertices.push(...cap);
     closed.push(...cap);
     for (let side = 0; side < palmSides; side++) {

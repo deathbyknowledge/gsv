@@ -46,7 +46,7 @@ function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt:
   const hand = (x: number, y: number, mirror: boolean, fingers: number, open: number) => {
     handModel.pose(fingers, open, mirror);
     const direction = mirror ? -1 : 1;
-    const orientation = rotationMatrix((-0.30 + open * 0.12) * direction, -0.10, -0.035 * direction);
+    const orientation = rotationMatrix((-0.30 + open * 0.12) * direction, 0, 0);
     const rotation = orientation.slice();
     // Apply the same parent yaw to the hand's orientation and its position.
     // The pair keeps one pivot between the palms, including their depth order.
