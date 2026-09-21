@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ContactSummary, ConversationMessage, ProcessScopePolicy } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ProcessScopeStore } from "./process-scope-store";
+import { ProcessRegistry } from "./processes";
+
+const owner = { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/materials" };
 
 const contact: ContactSummary = { id: "contact:auto", ownerUid: 1000, state: "active", generation: "generation:auto", remoteShipId: "ship:remote",
   remoteSubject: { id: "subject:remote", displayName: "Sam" }, remoteOrigin: "https://sam.example", conversationId: "conversation:auto", createdAtMs: 1, updatedAtMs: 1 };
@@ -19,10 +22,12 @@ describe("bounded automatic message admission", () => {
   it("admits only new human messages and retains exact causes across reload and retries", async () => {
     await runWithRealKernelSql((sql, storage) => {
       const now = Date.now();
+      const procs = new ProcessRegistry(sql);
       const scopes = new ProcessScopeStore(sql);
       const scope = storage.transactionSync(() => {
         const created = scopes.create(1000, "proc:auto", policy(now), now);
         scopes.automation.register(created, 5, now);
+        procs.spawn("proc:auto", owner, { ownerUid: owner.uid, scopeId: created.id });
         return created;
       });
       const incoming = message("incoming:one", 6, now + 1);
@@ -53,10 +58,12 @@ describe("bounded automatic message admission", () => {
   it("processes already accepted messages at the allowance boundary and requires fresh consent for replacement", async () => {
     await runWithRealKernelSql((sql, storage) => {
       const now = Date.now();
+      const procs = new ProcessRegistry(sql);
       const scopes = new ProcessScopeStore(sql);
       const scope = storage.transactionSync(() => {
         const created = scopes.create(1000, "proc:auto", policy(now), now);
         scopes.automation.register(created, 0, now);
+        procs.spawn("proc:auto", owner, { ownerUid: owner.uid, scopeId: created.id });
         return created;
       });
       for (let index = 1; index <= 3; index++) storage.transactionSync(() => scopes.automation.admit(contact, message(`incoming:${index}`, index, now + 1), now));
@@ -76,6 +83,30 @@ describe("bounded automatic message admission", () => {
         const replacement = scopes.create(1000, "proc:second", policy(now), now);
         scopes.automation.register(replacement, 3, now);
       })).not.toThrow();
+    });
+  });
+
+  it("permits a fresh grant after deletion while preserving the restriction for surviving descendants", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const now = Date.now();
+      const procs = new ProcessRegistry(sql);
+      const scopes = procs.scopes;
+      const create = (pid: string) => storage.transactionSync(() => {
+        const scope = scopes.create(owner.uid, pid, policy(now), now);
+        scopes.automation.register(scope, 0, now);
+        procs.spawn(pid, owner, { ownerUid: owner.uid, scopeId: scope.id });
+        return scope;
+      });
+      const original = create("proc:original");
+      procs.spawn("proc:child", owner, { ownerUid: owner.uid, parentPid: "proc:original", scopeId: original.id });
+      procs.kill("proc:original");
+      expect(scopes.automation.admit(contact, message("no-handler", 1, now + 1), now)).toEqual([]);
+      expect(() => create("proc:replacement")).toThrow("Stop the existing");
+      procs.kill("proc:child");
+      const replacement = create("proc:replacement");
+      expect(replacement.id).not.toBe(original.id);
+      expect(scopes.automation.admit(contact, message("new-handler", 2, now + 1), now)).toEqual(["proc:replacement"]);
+      expect(scopes.get(original.id, now)?.automation?.acceptedMessages).toBe(0);
     });
   });
 });

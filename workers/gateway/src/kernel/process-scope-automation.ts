@@ -14,7 +14,9 @@ export class ProcessScopeAutomation {
   register(scope: ProcessScope, sequence: number, now = Date.now()): void {
     if (!scope.policy.automatic) return;
     const contact = scope.policy.conversations[0];
-    const active = this.sql.exec("SELECT 1 FROM process_scope_automation a JOIN process_scopes s ON a.scope_id = s.id WHERE a.contact_id = ? AND a.generation = ? AND s.state = 'active' AND s.expires_at > ?", contact.contactId, contact.generation, now).toArray();
+    const active = this.sql.exec(`SELECT 1 FROM process_scope_automation a JOIN process_scopes s ON a.scope_id = s.id
+      WHERE a.contact_id = ? AND a.generation = ? AND s.state = 'active' AND s.expires_at > ?
+      AND EXISTS (SELECT 1 FROM processes p WHERE p.scope_id = s.id)`, contact.contactId, contact.generation, now).toArray();
     if (active.length) throw new Error("Stop the existing automatic helper for this person before enabling another");
     this.sql.exec("INSERT INTO process_scope_automation (scope_id, contact_id, conversation_id, generation, start_sequence) VALUES (?, ?, ?, ?, ?)",
       scope.id, contact.contactId, contact.conversationId, contact.generation, sequence);
@@ -34,7 +36,8 @@ export class ProcessScopeAutomation {
       || !message.text.trim() || contact.state !== "active" || contact.preferences?.muted) return [];
     const rows = this.sql.exec<AutomaticRow & { created_at: number; policy_json: string; root_pid: string; generations_used: number }>(
       `SELECT a.*, s.created_at, s.policy_json, s.root_pid, s.generations_used FROM process_scope_automation a
-       JOIN process_scopes s ON s.id = a.scope_id WHERE a.contact_id = ? AND a.generation = ?
+       JOIN process_scopes s ON s.id = a.scope_id JOIN processes p ON p.process_id = s.root_pid AND p.scope_id = s.id
+       WHERE a.contact_id = ? AND a.generation = ?
        AND s.state = 'active' AND s.expires_at > ? AND a.paused_reason IS NULL`, contact.id, contact.generation, now,
     ).toArray();
     const changed: string[] = [];

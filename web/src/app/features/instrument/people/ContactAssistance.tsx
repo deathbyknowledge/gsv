@@ -26,7 +26,12 @@ export function ContactAssistance({ contact, account, initialPid, onDirty, onOpe
   const key = [...INSTRUMENT_PROCESSES_KEY, "social", contact.conversationId];
   const helpers = useQuery({ queryKey: key, enabled: connected && canConfigure(account, "proc.list"),
     queryFn: () => client.proc.list({ conversationId: contact.conversationId }) });
-  const processes = helpers.data?.processes.filter((process) => !process.parentPid).sort((a, b) => b.createdAt - a.createdAt) ?? [];
+  const families = new Map<string, ProcListEntry>();
+  for (const process of [...(helpers.data?.processes ?? [])].sort((a, b) => a.createdAt - b.createdAt)) {
+    const family = process.scopeId ?? process.pid;
+    if (!families.has(family)) families.set(family, process);
+  }
+  const processes = [...families.values()].sort((a, b) => b.createdAt - a.createdAt);
   useEffect(() => client.onSignal((signal, payload) => {
     if (signal !== "proc.changed" && signal !== "process.exit") return;
     const change = procSignalSchema.safeParse(payload);
