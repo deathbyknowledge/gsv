@@ -115,6 +115,8 @@ install -m 0644 "$host_root/helpers/gestures/models/LICENSE.apache-2.0" \
   "$gesture_license_dir/LICENSE.apache-2.0"
 install -m 0644 "$host_root/helpers/gestures/models/PROVENANCE.md" \
   "$gesture_license_dir/PROVENANCE.md"
+install -m 0644 "$host_root/helpers/gestures/THIRD_PARTY.md" \
+  "$gesture_license_dir/THIRD_PARTY.md"
 
 icon_artwork="$stage/GSV-app-icon-1024.png"
 "$binary_dir/gsv-desktop" --render-macos-icon "$icon_artwork"
@@ -139,6 +141,8 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -f "$resources_dir/GSV.icns" ]] || die "bundle icon generation failed"
 [[ -f "$gesture_license_dir/LICENSE.apache-2.0" ]] \
   || die "bundle gesture-model license staging failed"
+[[ -f "$gesture_license_dir/THIRD_PARTY.md" ]] \
+  || die "bundle gesture-runtime notices staging failed"
 
 app_path="$output_dir/GSV.app"
 zip_path="$output_dir/GSV-$version-$architecture-$profile.zip"
