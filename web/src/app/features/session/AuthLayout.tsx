@@ -4,6 +4,7 @@ import { useColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
 import { InstrumentBackdrop } from "../instrument/shared/InstrumentBackdrop";
 import { Wordmark } from "../instrument/shared/Wordmark";
+import { PlatformIdentity } from "../../services/platform/PlatformIdentity";
 import { AuthShip } from "./backgrounds/AuthShip";
 import "../../../styles/gsv-fonts.css";
 import "../instrument/instrument.css";
@@ -22,7 +23,7 @@ export function AuthScene({ children, setup = false }: {
     <div class={`instrument gsv-auth-surface gsv-auth-scene${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
       <InstrumentBackdrop />
       <header class="instrument-top gsv-auth-header">
-        <Wordmark />
+        <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
         <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
           {theme === "light" ? "Dark" : "Light"}
         </button>

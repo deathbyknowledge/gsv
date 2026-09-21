@@ -28,41 +28,20 @@ function readReport() {
 }
 
 /** Prototype-only, on-demand inspection. Opening the panel never starts a sampling loop. */
-export function InputTimingPanel() {
-  const [report, setReport] = useState<ReturnType<typeof readReport> | null>(null);
+export function InputTimingPanel({ onClose }: { onClose(): void }) {
+  const [report, setReport] = useState(readReport);
   const [copied, setCopied] = useState<string | null>(null);
-  const button = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLElement>(null);
-  const close = () => {
-    setReport(null);
-    button.current?.focus({ preventScroll: true });
-  };
-  useDismissOnOutsideClick(report !== null, () => [button.current, panel.current], () => setReport(null));
-  useLayoutEffect(() => { if (report) panel.current?.focus({ preventScroll: true }); }, [report !== null]);
-  useLayoutEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "F8" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setCopied(null);
-      setReport((current) => current ? null : readReport());
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
+  useDismissOnOutsideClick(true, () => [panel.current], onClose);
+  useLayoutEffect(() => { panel.current?.focus({ preventScroll: true }); }, []);
 
-  return <>
-    <button ref={button} type="button" aria-expanded={report !== null} aria-controls="desktop-input-timings"
-      title="Input timings (F8)" aria-keyshortcuts="F8"
-      onKeyDown={(event) => event.stopPropagation()}
-      onClick={() => { setCopied(null); setReport((current) => current ? null : readReport()); }}>timings</button>
-    {report && <section ref={panel} id="desktop-input-timings" class="desktop-timings" role="dialog"
+  return <section ref={panel} id="desktop-input-timings" class="desktop-timings" role="dialog"
       aria-labelledby="desktop-input-timings-title" tabIndex={-1}
       onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === "Escape") { event.preventDefault(); close(); }
+        if (event.key === "Escape") { event.preventDefault(); onClose(); }
       }}>
-      <header><h2 id="desktop-input-timings-title">Input timings</h2><button type="button" onClick={close}>close</button></header>
+      <header><h2 id="desktop-input-timings-title">Input timings</h2><button type="button" onClick={onClose}>close</button></header>
       <p>Clear samples and close this panel. Tap j/k with a pause between presses, then briefly hold each key. Click the prompt, type without sending, and move through the draft with the arrow keys. Reopen it to read the result.</p>
       <table>
         <thead><tr><th>Input</th><th>Samples</th><th>Dispatch p95</th><th>Frame median</th><th>Frame p95</th><th>Frame max</th></tr></thead>
@@ -112,6 +91,5 @@ export function InputTimingPanel() {
       {copied && <p role="status">{copied}</p>}
       <details><summary>Report</summary><pre>{JSON.stringify(report, null, 2)}</pre></details>
       <p>Each input type keeps its own last 200 events, so these rows can cover different periods. Appearance describes the current setting; clear samples after switching themes. No keys, draft text or conversation content are recorded.</p>
-    </section>}
-  </>;
+    </section>;
 }

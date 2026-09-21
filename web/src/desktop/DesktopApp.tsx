@@ -2,10 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { App } from "../app/App";
 import { AuthScene } from "../app/features/session/AuthLayout";
 import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
+import { PlatformIdentityProvider } from "../app/services/platform/PlatformIdentity";
 import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
 import { invoke, nativeInput, nativeSessionStorage, type DesktopSession } from "./bridge";
-import { InputTimingPanel } from "./InputTimingPanel";
+import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import "./desktop.css";
 
 function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession; mock: boolean; onError(message: string): void }) {
@@ -26,7 +27,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     quitting.current = true;
     void invoke("desktop_quit").catch(() => {
       quitting.current = false;
-      onError("Could not quit the prototype.");
+      onError("Could not quit.");
     });
   }, [onError]);
   const requestQuit = useCallback(() => {
@@ -76,24 +77,21 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     } catch { onError("Could not clear the configured space. Try again."); }
   };
   return <>
-    <div class="desktop-strip">
-      <span>GSV Tauri Prototype · {mock ? "mock gateway" : new URL(session.origin!).host}</span>
-      {locked && !mock && <button type="button" onClick={() => void invoke("desktop_open", { url: `${session.origin}/recover-member` }).catch(() => onError("Could not open your browser."))}>recover in browser</button>}
-      <InputTimingPanel />
-      <button type="button" onClick={() => setConfirmation("disconnect")}>disconnect space</button>
-      <button type="button" onClick={requestQuit}>quit</button>
-    </div>
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); setConfirmation(null); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
+      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit?"} Unsent work will be discarded.</p>
       <button type="button" onClick={() => setConfirmation(null)}>keep working</button>
       <button type="button" onClick={() => {
         if (confirmation === "disconnect") void disconnect();
         else quit();
       }}>{confirmation === "disconnect" ? "disconnect" : "quit"}</button>
     </dialog>
-    <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>
+    <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
+      onRecover={() => void invoke("desktop_open", { url: `${session.origin}/recover-member` }).catch(() => onError("Could not open your browser."))}
+      onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />}>
+      <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>
+    </PlatformIdentityProvider>
   </>;
 }
 
@@ -142,8 +140,7 @@ export function DesktopApp() {
         }).catch(() => setError("Use an HTTPS space address, such as https://your-space.example. HTTP is allowed for localhost."))
           .finally(() => setBusy(false));
       }}>
-        <h1>GSV Tauri Prototype</h1>
-        <p>Connect one space. Sign in with your existing account on the next screen.</p>
+        <h1>Connect your space</h1>
         <label>Space address<input type="url" required value={origin} placeholder="https://your-space.example" onInput={(event) => setOrigin(event.currentTarget.value)} /></label>
         <button type="submit" disabled={busy || !session}>{busy ? "connecting…" : "continue"}</button>
         {import.meta.env.DEV && <a href="/?mock=1">open the development mock</a>}

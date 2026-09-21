@@ -624,3 +624,29 @@ allows another attempt. Five fingers is reported for correction only; it remains
 without a command outside practice. Normal recognition thresholds and reset rules
 are unchanged. In practice, both fists can exit even after a rejected count.
 Regression cases are included in source; local execution stays with the user.
+
+## Space control and exit investigation
+
+The prototype strip has been removed. Desktop supplies a quiet space-name control
+to the shared Instrument and sign-in headers. Its menu owns recovery, disconnect,
+quit, and on-demand input timings; F8 still opens timings directly. Native input
+panels have less repeated copy. Browser entry points supply neither this identity
+control nor the native-input provider, so voice, gestures, practice and input
+sounds are not shown or started there. Shared source does not mean that native
+features are available in the browser, nor that a deployed web build has changed.
+
+The September 21 exit investigation found an actual WebKitWebProcess SIGSEGV in
+libnvidia-eglcore 610.57.04. The available core's SkiaGPUWorker was releasing a
+Skia GL texture and context while the main thread was in NVIDIA cleanup from
+libc exit. Other worker stacks also showed GL resource destruction. No OOM was
+found. This supports a WebKit/NVIDIA graphics-teardown fault; it does not establish
+that every reported quit failure has the same cause. No graphics workaround or
+crash-notification suppression has been installed. Clean exit remains a production
+acceptance item on this machine.
+
+Thumb classification now projects into a palm-local plane, measures lateral
+extension from the thumb's own base, and separately accepts a thumb raised beside
+the index knuckle. Depth over a fist no longer counts as lateral spread. Open and
+closed score thresholds leave an uncertain interval; temporal hold and reset
+logic are unchanged. Source cases cover a tucked straight thumb, rotation and
+mirroring, thumbs-up, and partial extension. Human camera testing is still needed.

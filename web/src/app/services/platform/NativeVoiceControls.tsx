@@ -96,7 +96,6 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       {notice && <p class="native-input-error" role="alert">{notice}</p>}
       {!snapshot && <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>}
       {panel === "voice" ? <>
-        <p>Listen to dictate. Pause keeps your draft.</p>
         <div class="native-panel-actions">
           {!voice ? <button type="button" class="native-primary" disabled={busy || snapshot?.devices_loading} onClick={control.start}>listen</button>
             : <button type="button" class="native-primary" disabled={voice.phase === "finishing"}
@@ -111,7 +110,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
           </select>
           {snapshot?.devices_loading && <small role="status">Finding microphones…</small>}
         </label>
-        <p class="native-panel-footnote">Local transcription. Enter sends and keeps listening.</p>
+        <p class="native-panel-footnote">Local transcription · Enter sends and keeps listening.</p>
       </> : <>
         <div class="native-panel-actions">
           <button type="button" class={cameraOn ? "" : "native-primary"} disabled={busy}
@@ -119,10 +118,10 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
           <span class="native-panel-state" role="status">{cameraOn ? feedback?.message : "Off"}</span>
         </div>
         <button type="button" class="native-tutorial-launch" disabled={busy} onClick={() => { setPanel(null); setTutorial(true); }}>
-          Learn hands-free <span>guided practice →</span>
+          Learn hands-free <span>→</span>
         </button>
         <GestureGuide />
-        <p class="native-panel-footnote">Camera stays on while ready. Camera and voice stay on this computer.</p>
+        <p class="native-panel-footnote">Camera stays on in Ready. Audio and video stay on this computer.</p>
       </>}
       <InputSoundSettings />
     </section>, panelHost.current)}
