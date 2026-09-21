@@ -64,6 +64,33 @@ describe("cross-GSV federation integration", () => {
     ]);
   });
 
+  it("publishes one approved profile and resolves it from an independently routed space", async () => {
+    expect((await first.profile.get({})).profile.published).toBeUndefined();
+    const draft = { alias: "public-first", displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
+    await first.profile.update({ expectedRevision: 0, draft });
+    const url = new URL("/@public-first", firstOrigin).href;
+    const privatePage = await fetch(url);
+    expect(privatePage.status).toBe(404);
+    await privatePage.arrayBuffer();
+    await first.profile.publish({ expectedRevision: 1 });
+    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
+    const remote = await second.profile.resolve({ url });
+    expect(remote.profile).toMatchObject({ alias: draft.alias, about: draft.about, origin: firstOrigin.origin, revision: 1 });
+    expect(remote.profile).not.toHaveProperty("ownerUid");
+    expect(remote.profile).not.toHaveProperty("username");
+    expect((await second.profile.get({})).profile.published).toBeUndefined();
+    const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
+    const document = await fetch(subjectUrl);
+    expect(await document.json()).toEqual(remote.profile);
+    await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
+    expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
+    await first.profile.unpublish({ expectedRevision: 2 });
+    await expect(second.profile.resolve({ url })).rejects.toThrow("404");
+    const unavailableSubject = await fetch(subjectUrl);
+    expect(unavailableSubject.status).toBe(404);
+    await unavailableSubject.arrayBuffer();
+  });
+
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
     const firstRequestSignals: (JsonValue | undefined)[] = [];
     const secondRequestSignals: (JsonValue | undefined)[] = [];

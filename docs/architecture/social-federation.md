@@ -72,6 +72,41 @@ The current implementation advertises only completed wire features. Profiles,
 approaches, work operations and shared context will be advertised when their
 corresponding handlers and recovery paths are present.
 
+## Public profile publication
+
+Migration v058 stores a private draft per eligible human, alias reservations and
+the exact pending/publication revisions in Kernel SQLite. Profile decisions are
+direct-human-only. No draft is backfilled as public; a chosen alias is distinct
+from login identity. Reserved aliases cannot move to another owner, including
+after renaming or unpublishing. Limits are 1,000 profiles per installation,
+32 aliases per owner and 10,000 aliases per installation.
+
+The signed snapshot binds `gsv-federation/2/profile`, ActorRef, public key,
+canonical origin, public URL, revision, publication time and approved fields.
+The existing durable task scheduler writes that immutable revision into
+installation-scoped R2, then commits visibility only if that exact job is still
+pending. A later draft edit leaves an already approved snapshot unchanged;
+unpublishing cancels it. Recovery reuses the stored signature and bytes.
+Obsolete projections enter a durable cleanup queue. Publishing pauses at 64
+queued objects per owner; unpublishing remains available. Cleanup and publication
+reuse the Kernel scheduler and add no Durable Object class.
+
+`GET`/`HEAD /@alias` serves the minimal web-owned profile template; JSON Accept
+serves the signed document. `/_gsv/federation/v2/subjects/<encoded-subject>` serves
+only a currently published document. Both routes require trusted active
+installation routing, check publication/account state before and after R2 reads,
+and recheck even for conditional responses. Unknown or unpublished profiles
+share a generic 404. ETags vary by representation and require revalidation;
+unpublished content is not served from an independent cache. Content policy
+prohibits scripts, frames, remote media and forms. Public documents contain no
+local uid, login username, owner credential, contact list or draft.
+
+Settings owns the draft editor, preview and explicit publication actions. The
+selected section reads only the signed-in account, preserves edits on failures
+or section changes, and treats concurrent revisions as conflicts. The public
+page uses the Instrument fonts without loading the authenticated application.
+Media and the public approach/handoff flow remain subsequent parts of batch 3.
+
 ## Public egress release boundary
 
 All federation HTTP uses one Workers public Internet fetch path, explicit

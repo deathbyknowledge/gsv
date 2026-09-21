@@ -308,6 +308,11 @@ import type {
   ContactSendArgs,
   ContactSendResult,
 } from "./contact";
+import type {
+  ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
+  ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
+  ProfileResolveArgs, ProfileResolveResult,
+} from "./profile";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -338,6 +343,12 @@ export type SyscallDomains = {
   "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
+  "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
+  "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };
+  "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
+  "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
+  "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
 
   "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };

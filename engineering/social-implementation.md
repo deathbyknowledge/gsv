@@ -28,10 +28,10 @@ or deploy merely because an intermediate batch is ready.
 | --- | --- | --- | --- |
 | 1. Federation correctness | Enforce participant roles on local and inbound work-request actions; expose failed/unsettled exchanges accurately; preserve existing delivery and resource fences. | Kernel federation handlers/store, protocol and affected clients | Implemented; awaiting CI and human validation |
 | 2. Shared contracts and storage | Versioned federation, trusted human/Process provenance, stable message/reply references, relationship policy, numbered migrations, and contact Conversations with no Process handler. | SDK/protocol, Kernel, Conversation storage | In progress |
-| 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Pending |
+| 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Profile publication/editor in source; media and first contact pending |
 | 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Pending |
 | 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
-| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Implemented in source; CI and human trial pending |
+| 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Implemented; CI passed at 8ac2eb6b; human trial pending |
 | 7. Scoped assistance | Generic Process scope/context propagation, exact approved drafts, optional bounded support helpers, resource/recipient enforcement through all syscall presentations and descendants. | Kernel authority, Process context/execution, protocol, web | Pending |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
@@ -176,3 +176,17 @@ allow loopback peers only for a loopback installation. Regression sources cover
 address spellings, mapped IPv6, redirect cancellation and production configuration.
 The required runtime connection-time guarantee is documented in the architecture
 guide. This does not yet enable public approaches.
+
+CI completed successfully at `8ac2eb6b`, including Gateway unit/integration tests,
+workspace, adapters, lint and release checks. The preview build also passed.
+Search's prior failures were a Shell test using an unauthorized Process caller
+and a caught Durable Object rejection surfaced twice by the test pool; both
+fixtures now exercise their intended boundary. No local validation was run.
+
+The profile slice adds v058, direct-human draft/publication syscalls, signed
+immutable projections with durable cleanup, revocation-fenced public alias and
+subject routes, and the Settings editor/preview. Regression sources cover stale
+edits, late publication after unpublish, storage failure/retry, alias ownership,
+HTML escaping, conditional responses and two-space resolution. This new slice
+still requires CI. Public images and first-contact handoff/intake remain part of
+batch 3; inbox, v2 work operations, shared context and assistance remain in scope.

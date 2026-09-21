@@ -116,6 +116,7 @@ import {
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
+import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -694,6 +695,21 @@ async function dispatchKernel(
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
+      case "profile.get":
+        data = handleProfileGet(ctx);
+        break;
+      case "profile.update":
+        data = handleProfileUpdate(frame.args, ctx);
+        break;
+      case "profile.publish":
+        data = await handleProfilePublish(frame.args, ctx);
+        break;
+      case "profile.unpublish":
+        data = await handleProfileUnpublish(frame.args, ctx);
+        break;
+      case "profile.resolve":
+        data = await handleProfileResolve(frame.args, ctx);
+        break;
       // --- contact.* ---
       case "contact.identity":
         data = await handleContactIdentity(ctx);

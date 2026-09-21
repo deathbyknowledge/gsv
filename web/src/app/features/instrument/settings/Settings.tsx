@@ -12,20 +12,22 @@ import { MessengerConnections } from "./MessengerConnections";
 import { Mcp } from "./Mcp";
 import { OwnerAccess } from "./OwnerAccess";
 import { People } from "./People";
+import { Profile } from "./Profile";
 import "./settings.css";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
 };
 
-const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "mcp", "sign-in", "people"] as const;
+const SECTIONS = ["preferences", "profile", "permissions", "instructions", "messengers", "mcp", "sign-in", "people"] as const;
 type Section = typeof SECTIONS[number];
 
 export function Settings({ onDirtyChange }: SettingsProps) {
   const { client, connected } = useGateway();
   const { service: session } = useSession();
   const [section, setSection] = useState<Section>("preferences");
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, mcp: false, "sign-in": false, people: false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, profile: false, permissions: false, instructions: false, messengers: false, mcp: false, "sign-in": false, people: false });
+  const profileDirty = useCallback((value: boolean) => setDirty((old) => old.profile === value ? old : { ...old, profile: value }), []);
   const peopleDirty = useCallback((value: boolean) => setDirty((old) => old.people === value ? old : { ...old, people: value }), []);
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
@@ -44,7 +46,7 @@ export function Settings({ onDirtyChange }: SettingsProps) {
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => !["people", "sign-in"].includes(entry) || account?.uid === 0).map((entry) => <button class={`ibtn${section === entry ? " active" : ""}`} aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry === "profile" ? !!account && account.uid >= 1000 : !["people", "sign-in"].includes(entry) || account?.uid === 0).map((entry) => <button class={`ibtn${section === entry ? " active" : ""}`} aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content">
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
@@ -56,6 +58,7 @@ export function Settings({ onDirtyChange }: SettingsProps) {
         {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={section === "preferences"} onDirty={preferencesDirty} /></div>
+          {account.uid >= 1000 && <div hidden={section !== "profile"}><Profile account={account} active={section === "profile"} onDirty={profileDirty} /></div>}
           <div hidden={section !== "permissions"}><Permissions account={account} active={section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={section === "messengers"} /></div>

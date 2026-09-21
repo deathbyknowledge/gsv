@@ -648,6 +648,41 @@ the model. It does not change the message origin, reply endpoint, process defaul
 or syscall permissions. Omission does not inherit an earlier message's selection.
 Changing the selection changes the conversation message's idempotency payload.
 
+## Public Profiles: `profile.*`
+
+Public profiles are independent of login names and start unpublished. Get, edit,
+publish and unpublish require a direct signed-in human account; a Ship cannot
+publish on its owner's behalf. The Kernel derives the owner and existing
+federated subject. `expectedRevision` prevents stale edits or publication.
+
+```ts
+{
+  "profile.get": { args: {}; result: { profile: ProfileState } };
+  "profile.update": { args: { expectedRevision: number; draft: ProfileFields }; result: { profile: ProfileState } };
+  "profile.publish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
+  "profile.unpublish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
+  "profile.resolve": { args: { url: string }; result: { profile: PublicProfile } };
+}
+```
+
+`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+(`requests`, `invitation`, `closed`) and `representation` (`human`, `human-and-ship`).
+An alias is 2–32 lowercase ASCII characters, begins with a letter, and then allows
+letters, digits, `_` and `-`. Display names allow 80 characters and about text
+2,048. Fields render as plain text. These choices do not grant agent authority.
+
+`ProfileState` includes the private draft/revision, optional published URL and
+revision, `publishing` and `publicationFailed`. Publication durably captures a
+signed snapshot before its R2 write; later draft edits do not alter that approval.
+The previous publication remains visible until its replacement commits. Retry
+the same revision after failure. Unpublishing immediately fences public serving
+and pending publication, while preserving existing conversations.
+
+`profile.resolve` fetches one explicitly chosen profile URL through public-only
+federation egress. It verifies the profile domain, address, key-derived actor and
+signature, and rejects disagreement with a pinned contact. It does not pair,
+send a request, save a contact or wake a Process.
+
 ## Contacts And Cross-GSV Requests: `contact.*`
 
 `contact.*` connects an owner on one GSV installation to an owner on another.

@@ -21,6 +21,10 @@
 .settings textarea[readonly] { color: var(--text-dim); }
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
 .settings-form { padding-bottom: 2rem; }
+.settings-profile-preview { margin: 1.5rem 0; padding: 1.5rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.settings-profile-preview h2 { font-size: 1.75rem; line-height: 1.2; margin: .5rem 0 1rem; }
+.settings-profile-alias { font-family: var(--gsv-font-mono); color: var(--path); font-size: .75rem; }
+.settings-profile-about { white-space: pre-wrap; }
 .settings-check { flex-direction: row !important; align-items: center !important; }
 .settings-list { padding: 0; list-style: none; }
 .settings-list > li { display: flex; flex-direction: column; gap: .7rem; border-top: 1px solid var(--border); padding: 1.25rem 0; font-size: .8rem; overflow-wrap: anywhere; }

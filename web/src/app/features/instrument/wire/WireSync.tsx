@@ -4,7 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
 import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
-import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROFILE_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
 import { syncWorkSignal } from "./workSync";
@@ -50,6 +50,10 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "profile.changed") {
+        void queryClient.cancelQueries({ queryKey: INSTRUMENT_PROFILE_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROFILE_KEY }));
+        return;
+      }
       if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed") {
         void syncWorkSignal(queryClient, signal);
         return;

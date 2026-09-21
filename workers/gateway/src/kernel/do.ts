@@ -111,6 +111,9 @@ import {
   recordAdapterStatusTransition,
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
+import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { processProfilePublication, profileOwnerActive } from "./profiles";
+import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
 import {
   handleFederationHttpRequest,
@@ -220,6 +223,7 @@ type KernelTask =
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
+  | { callback: "onProfilePublication"; payload: number }
   | {
       callback: "onFederationInbox";
       payload: { contactId: string; contactGeneration: string; deliveryId: string };
@@ -272,6 +276,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
   z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
+  z.object({ callback: z.literal("onProfilePublication"), payload: z.number().int().min(1000) }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -414,6 +419,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
+  readonly profiles: ProfileStore;
   readonly federationIdentity: FederationIdentity;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
@@ -506,6 +512,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
+    this.profiles = new ProfileStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
     this.oauth = new OAuthStore(sql);
@@ -560,6 +567,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
           Date.now(),
           true,
         );
+      }
+      for (const ownerUid of this.profiles.pendingOwners()) {
+        await this.scheduleProfilePublication(ownerUid);
       }
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
@@ -665,6 +675,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity ?? null;
+  }
+
+  async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
+    this.retirement.assertActive();
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return null;
+    this.retirement.assertActive();
+    const projection = this.profiles.published(locator);
+    return projection && profileOwnerActive(projection.ownerUid, this.buildKernelContext({})) ? projection : null;
+  }
+
+  async scheduleProfilePublication(ownerUid: number): Promise<void> {
+    await this.schedule(new Date(Date.now() + 10), "onProfilePublication", ownerUid, { idempotent: true });
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
@@ -821,6 +844,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onFederationInbox":
         await this.federationRuntime.onFederationInbox(task.payload);
         return;
+      case "onProfilePublication": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onProfilePublication", task.payload, { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        await this.federationRuntime.coordinateFederationContact(`profile:${task.payload}`, () => processProfilePublication(task.payload, this.buildKernelContext({})));
+        if (this.profiles.hasPendingWork(task.payload)) {
+          await this.schedule(new Date(Date.now() + 1000), "onProfilePublication", task.payload, { idempotent: true, excludeTaskId: task.id });
+        }
+        return;
+      }
       case "onProcessDeliveryNotice":
         await this.adapterDelivery.onProcessDeliveryNotice(task.payload);
         return;
@@ -1439,6 +1474,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       federationIdentity: this.federationIdentity,
+      profiles: this.profiles,
+      scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
       connection: options.connection ?? null,
       peer: options.peer,
       processId: options.processId,

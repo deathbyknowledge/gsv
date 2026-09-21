@@ -1,0 +1,19 @@
+@font-face { font-family: "Host Grotesk"; src: url("/fonts/HostGrotesk-Variable.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+@font-face { font-family: "Martian Mono"; src: url("/fonts/MartianMono-Variable.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+:root { color-scheme: light dark; --bg: #f5f4fa; --text: #292730; --muted: #686370; --line: #d9d5e3; --accent: #6953ca; }
+@media (prefers-color-scheme: dark) { :root { --bg: #101014; --text: #e3dfeb; --muted: #9892a3; --line: #302c38; --accent: #b09be9; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 18px/1.6 "Host Grotesk", system-ui, sans-serif; }
+.public-profile { max-width: 680px; margin: 10vh auto; padding: 28px; overflow-wrap: anywhere; }
+header, footer { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; font: 11px/1.8 "Martian Mono", monospace; color: var(--muted); }
+header { padding-bottom: 32px; border-bottom: 1px solid var(--line); }
+.brand { color: var(--text); letter-spacing: .2em; }
+.status { max-width: 32ch; }
+.alias { margin: 40px 0 8px; color: var(--accent); font: 13px/1.8 "Martian Mono", monospace; }
+h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; letter-spacing: -.035em; margin: 0 0 24px; }
+.about { white-space: pre-wrap; }
+.representation { margin-top: 32px; font-size: 15px; color: var(--muted); }
+footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px; }
+a { color: var(--accent); text-underline-offset: 4px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+@media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
