@@ -3,6 +3,7 @@ import { createInstallationStorage } from "../installation/storage";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
+import type { SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
 import { getConversationById } from "../shared/utils";
 
 function conversation(name: string) {
@@ -47,9 +48,13 @@ describe("Conversation Durable Object", () => {
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const social: SocialMessageMetadata = {
+      threadId: "thread:one", reference: { actor: { shipId: "ship:one", subjectId: "subject:one" }, messageId: "origin:one" },
+      provenance: { kind: "human" },
+    };
     await runInDurableObject(stub, async (instance: Conversation) => {
       for (let index = 1; index <= 1_001; index += 1) {
-        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined, social: index === 1 ? social : undefined });
       }
     });
     await stub.compact();
@@ -61,10 +66,16 @@ describe("Conversation Durable Object", () => {
     expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
     expect(archived.messages[0]?.selectedTarget).toBe("macbook");
     expect(archived.messages[1]?.selectedTarget).toBeUndefined();
-    expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
+    expect(archived.messages[0]?.social).toEqual(social);
+    expect(await stub.resolveOrigin(social.reference, social.threadId)).toEqual({ messageId: "msg:1", sequence: 1 });
+    expect(await stub.resolveOrigin(social.reference, "thread:other")).toBeNull();
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook", social })).toEqual({
       message: archived.messages[0],
       created: false,
     });
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({
+      ...message(1), selectedTarget: "macbook", social: { ...social, provenance: { kind: "process", processId: "proc:forged" } },
+    }))).rejects.toThrow("idempotency key payload changed");
   }, 30_000);
 
   it("keeps legacy conversation-owned media readable", async () => {

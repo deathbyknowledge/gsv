@@ -117,10 +117,17 @@ Batch 1 is commit `940f0dd6`. Its first CI passed workspace, adapter and lint
 checks; four existing inbound fixtures expected a requester to report performer
 states. Commit `26600137` corrects those fixtures to use outgoing offers and a
 remote performer, preserving the lifecycle and removal assertions.
+CI at `26600137` passed all 2,286 gateway unit tests, workspace, adapter and lint
+checks. Integration typechecking then caught two untyped signal assertions;
+the v2 message batch corrects them. That is not yet a passing integration run.
 
 Batch 2's handler separation is commit `41cd4de4` (v054): contact text threads
 no longer create or dispatch input to a personal Process. Attachments continue
 to use the existing durable archive owner without admitting an inference run.
-The v2 message/receipt paths, protocol negotiation, provenance, reply references
-and archive-preserved origin mappings are under implementation. See
-`docs/architecture/social-federation.md` for version and egress decisions.
+The next source batch adds v2 message/receipt paths, protocol negotiation,
+runtime-derived provenance, reply references and archive-preserved origin
+mappings. Regression sources cover legacy migration, version replay fences,
+signed inbound identity checks, and two-space replies. CI and human acceptance
+are still required. Relationship policy and v2 work operations remain unfinished
+parts of batch 2. See `docs/architecture/social-federation.md` for version and
+egress decisions.

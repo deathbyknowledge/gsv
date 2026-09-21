@@ -8,7 +8,7 @@
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
-  FederationDeliveryReceipt,
+  FederationTransportReceipt,
   JsonObject,
   JsonValue,
   PeerPrincipalKind,
@@ -118,8 +118,8 @@ export type KernelContext = {
   ) => Promise<void>;
   coordinateFederationInbound: (
     key: string,
-    operation: () => Promise<FederationDeliveryReceipt>,
-  ) => Promise<FederationDeliveryReceipt>;
+    operation: () => Promise<FederationTransportReceipt>,
+  ) => Promise<FederationTransportReceipt>;
   coordinateFederationContact: <Value>(
     contactId: string,
     operation: () => Value | Promise<Value>,

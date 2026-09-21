@@ -5,7 +5,10 @@ import type {
   ConversationMessageOrigin,
   MessageAttachment,
   ResourceBlock,
+  SocialMessageMetadata,
+  OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
+import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
 
 type MetaRow = {
   conversation_id: string;
@@ -21,6 +24,7 @@ type MessageRow = {
   author_json: string;
   text: string;
   selected_target: string | null;
+  social_json: string | null;
   media_json: string | null;
   origin_json: string;
   process_id: string | null;
@@ -34,6 +38,7 @@ export type ConversationAppendInput = {
   author: ConversationMessageAuthor;
   text: string;
   selectedTarget?: string;
+  social?: SocialMessageMetadata;
   media?: ResourceBlock[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -110,14 +115,15 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
-       (message_id, idempotency_key, author_json, text, selected_target, media_json, origin_json,
+       (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, origin_json,
         process_id, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.messageId,
       input.idempotencyKey,
       JSON.stringify(input.author),
       input.text,
       input.selectedTarget ?? null,
+      input.social ? JSON.stringify(input.social) : null,
       input.media?.length ? JSON.stringify(input.media) : null,
       JSON.stringify(input.origin),
       input.processId ?? null,
@@ -132,6 +138,13 @@ export class ConversationStore {
       throw new Error("Conversation message idempotency key was reused");
     }
     const message = toMessage(meta.conversation_id, row);
+    if (input.social) {
+      this.sql.exec(`INSERT INTO message_origins
+        (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      input.social.reference.actor.shipId, input.social.reference.actor.subjectId,
+      input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
+    }
     this.sql.exec(
       `INSERT INTO message_receipts
        (idempotency_key, message_id, sequence, payload_hash, created_at)
@@ -170,6 +183,15 @@ export class ConversationStore {
     const meta = this.requireMeta();
     const row = this.rowBySequence(sequence);
     return row ? toMessage(meta.conversation_id, row) : null;
+  }
+
+  resolveOrigin(reference: OriginMessageRef, threadId: string): { messageId: string; sequence: number } | null {
+    const row = this.sql.exec<{ message_id: string; sequence: number }>(
+      `SELECT message_id, sequence FROM message_origins
+       WHERE ship_id = ? AND subject_id = ? AND origin_message_id = ? AND thread_id = ?`,
+      reference.actor.shipId, reference.actor.subjectId, reference.messageId, threadId,
+    ).toArray()[0];
+    return row ? { messageId: row.message_id, sequence: row.sequence } : null;
   }
 
   listHot(beforeSequence: number, limit: number): ConversationMessage[] {
@@ -312,5 +334,6 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
   if (row.process_id) message.processId = row.process_id;
   if (row.selected_target !== null) message.selectedTarget = row.selected_target;
   if (row.run_id) message.runId = row.run_id;
+  if (row.social_json) message.social = socialMessageMetadataSchema.parse(JSON.parse(row.social_json));
   return message;
 }

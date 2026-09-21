@@ -5,8 +5,9 @@ import type {
   ConversationKind,
   ConversationMessage,
   ResourceBlock,
+  OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
 import type { GatewayEnv } from "../runtime-env";
@@ -172,6 +173,11 @@ export class Conversation extends DurableObject<GatewayEnv> {
       }
       return { message, created: false };
     });
+  }
+
+  resolveOrigin(reference: OriginMessageRef, threadId: string) {
+    this.retirement.assertActive();
+    return this.store.resolveOrigin(originMessageRefSchema.parse(reference), threadId);
   }
 
   async readMedia(input: { key: string }): Promise<ConversationMediaRead> {
@@ -370,6 +376,7 @@ function validateFederationResource(input: ResourceBlock, target: string): Resou
 function requireAppendInput(input: ConversationAppendRequest): void {
   requireNonempty(input.messageId, "messageId");
   requireNonempty(input.idempotencyKey, "idempotencyKey");
+  if (input.social) socialMessageMetadataSchema.parse(input.social);
   if (!input.text.trim() && !input.media?.length) {
     throw new Error("Conversation message requires text or media");
   }
@@ -386,6 +393,7 @@ async function hashAppendInput(
     author: input.author,
     text: input.text,
     selectedTarget: input.selectedTarget,
+    ...(input.social ? { social: input.social } : undefined),
     media: input.media ?? [],
     origin: input.origin,
     processId: input.processId ?? null,

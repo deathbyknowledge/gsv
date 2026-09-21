@@ -1,5 +1,6 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
+import type { SocialMessageMetadata } from "../social";
 
 export type ConversationKind = "ship" | "work" | "group" | "contact";
 
@@ -68,6 +69,8 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
+  /** Absent on historical and v1 messages whose remote submission path is unspecified. */
+  social?: SocialMessageMetadata;
   /** Target selected for this message, independently of its source and reply endpoint. */
   selectedTarget?: string;
   media?: MessageAttachment[];

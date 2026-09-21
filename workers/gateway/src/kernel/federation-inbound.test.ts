@@ -6,6 +6,8 @@ import {
   type ConversationMessage,
   type FederationDeliveryEnvelope,
   type FederationDeliveryPayload,
+  type FederationMessageDeliveryV2,
+  type FederationDeliveryEnvelopeV2,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type {
@@ -120,6 +122,40 @@ describe("federation inbound boundary", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("commits v2 provenance and replays a version-bound receipt without waking Ship", async () => {
+    getConversationById.mockRestore();
+    const payload: FederationMessageDeliveryV2 = {
+      kind: "message", messageId: "origin:v2", threadId: contact.threadId, text: "Written by my helper",
+      social: {
+        threadId: contact.threadId,
+        reference: { actor: { shipId: REMOTE_SHIP_ID, subjectId: REMOTE_SUBJECT_ID }, messageId: "origin:v2" },
+        provenance: { kind: "process", processId: "proc:remote-helper" },
+      },
+    };
+    const envelope = await signedV2Envelope(payload, "delivery:v2");
+    const response = await deliverV2(envelope);
+    expect(response.status).toBe(200);
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({ version: 2, domain: "gsv-federation/2/receipt", deliveryId: envelope.deliveryId });
+    expect(await (await deliverV2(envelope)).json()).toEqual(receipt);
+    const installationId = await runInDurableObject(kernel, (instance: Kernel) => instance.installationId);
+    const conversation = utils.getConversationById(installationId, contact.conversationId);
+    const history = await conversation.history();
+    expect(history.messages).toHaveLength(1);
+    expect(history.messages[0]?.social).toEqual(payload.social);
+    expect(await conversation.resolveOrigin(payload.social.reference, contact.threadId))
+      .toMatchObject({ messageId: history.messages[0]?.id, sequence: 1 });
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+
+    const forged = await signedV2Envelope({ ...payload, social: {
+      ...payload.social, reference: { ...payload.social.reference, actor: { shipId: "ship:someone-else", subjectId: REMOTE_SUBJECT_ID } },
+    } }, "delivery:v2-forged");
+    const rejected = await deliverV2(forged);
+    expect(rejected.status).toBe(409);
+    await rejected.arrayBuffer();
+    expect((await conversation.history()).messages).toHaveLength(1);
   });
 
   it.each([
@@ -1089,6 +1125,21 @@ describe("federation inbound boundary", () => {
         request, contact, conversationId: contact.conversationId, remoteInput: false, createAllowed: true, now,
       }, instance.buildKernelContext({}));
     });
+  }
+
+  async function signedV2Envelope(payload: FederationMessageDeliveryV2, deliveryId: string): Promise<FederationDeliveryEnvelopeV2> {
+    const unsigned = {
+      version: 2 as const, domain: "gsv-federation/2/delivery" as const, deliveryId,
+      senderShipId: REMOTE_SHIP_ID, senderSubjectId: REMOTE_SUBJECT_ID, recipientSubjectId,
+      generation: contact.generation, timestampMs: Date.now(), nonce: randomBase64Url(18), payload,
+    };
+    return { ...unsigned, signature: await signContactEnvelope(sharedSecret, jsonValueSchema.parse(unsigned)) };
+  }
+
+  async function deliverV2(envelope: FederationDeliveryEnvelopeV2): Promise<Response> {
+    return kernel.fetch(new Request("https://local.example/_gsv/federation/v2/deliver", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope),
+    }));
   }
 
   async function deliver(envelope: FederationDeliveryEnvelope): Promise<Response> {

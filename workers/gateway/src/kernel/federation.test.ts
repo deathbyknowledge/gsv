@@ -333,6 +333,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
+        wireVersion: 1,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -476,6 +477,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
+        wireVersion: 1,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -673,6 +675,7 @@ function activeContact(): FederationContactRecord {
     remoteShipId: "ship:remote",
     remoteSubject: { id: "subject:remote", displayName: "Remote" },
     remoteOrigin: "https://remote.example",
+    protocol: { version: 1, features: [], checkedAtMs: Date.now() },
     remotePublicKey: { kty: "EC", crv: "P-256", x: "remote-x", y: "remote-y" },
     sharedSecret: randomBase64Url(32),
     conversationId: "conversation:remote",
@@ -685,6 +688,7 @@ function activeContact(): FederationContactRecord {
 function pendingDelivery(contact: FederationContactRecord): FederationOutboxRecord {
   return {
     deliveryId: "delivery:remote",
+    wireVersion: 1,
     ownerUid: OWNER.uid,
     contactId: contact.id,
     contactGeneration: contact.generation,

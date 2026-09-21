@@ -590,6 +590,7 @@ type ConversationMessage = {
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
   selectedTarget?: string;
+  social?: SocialMessageMetadata;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -723,6 +724,7 @@ type ContactSummary = {
   remoteShipId: string;
   remoteSubject: FederationSubject;
   remoteOrigin: string;
+  protocol?: { version: 1 | 2; features: Array<"messages" | "approaches" | "work" | "context">; checkedAtMs: number };
   localAlias?: string;
   conversationId: string;
   createdAtMs: number;
@@ -788,6 +790,7 @@ type ContactSyscalls = {
     args: {
       contactId: string;
       text: string;
+      replyTo?: OriginMessageRef;
       media?: ResourceBlock[];
       idempotencyKey?: string;
     };

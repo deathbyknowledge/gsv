@@ -44,6 +44,44 @@ function activateContact(store: FederationStore) {
 }
 
 describe("FederationStore", () => {
+  it("keeps delivery versions immutable across protocol refresh and contact replacement", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 2_000 });
+      const social = {
+        threadId: contact.threadId,
+        reference: { actor: { shipId: "ship:local", subjectId: "subject:local" }, messageId: "message:v2" },
+        provenance: { kind: "human" as const },
+      };
+      const payload = { kind: "message" as const, messageId: "message:v2", threadId: contact.threadId, text: "Hello", social };
+      const record = store.enqueue({
+        deliveryId: "delivery:v2", ownerUid: contact.ownerUid, contactId: contact.id, contactGeneration: contact.generation,
+        idempotencyKey: "key:v2", fingerprint: "fingerprint:v2", wireVersion: 2, payload,
+      }).record;
+      expect(record).toMatchObject({ wireVersion: 2, payload });
+      store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages", "context"], checkedAtMs: 3_000 });
+      expect(store.outbox(record.deliveryId)).toEqual(record);
+
+      const inbound = {
+        contactId: contact.id, contactGeneration: contact.generation, deliveryId: "delivery:received", payloadHash: "hash:received",
+        payload: { kind: "contact.revoked" as const, generation: contact.generation }, wireVersion: 2 as const,
+      };
+      store.receive(inbound);
+      expect(() => store.receive({ ...inbound, wireVersion: 1 })).toThrow("delivery id was reused");
+
+      const replacement = store.activateContact({
+        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
+        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
+        sharedSecret: "new-secret", generation: "generation:replacement", threadId: "thread:replacement",
+      });
+      expect(replacement.protocol).toBeUndefined();
+      expect(() => store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 4_000 }))
+        .toThrow("Contact generation changed");
+      expect(store.get(contact.id)?.protocol).toBeUndefined();
+      expect(store.outbox(record.deliveryId)).toMatchObject({ wireVersion: 2, payload, contactGeneration: contact.generation });
+    });
+  });
+
   it("retains unsettled request outcomes beyond delivery retention and fences late receipts", async () => {
     await withStore((store) => {
       const contact = activateContact(store);

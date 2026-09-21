@@ -1,6 +1,7 @@
 import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
+import type { FederationFeature, OriginMessageRef } from "../social";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
@@ -72,6 +73,7 @@ export type ContactSummary = {
   revokedAtMs?: number;
   lastReceivedAtMs?: number;
   lastDeliveredAtMs?: number;
+  protocol?: { version: 1 | 2; features: FederationFeature[]; checkedAtMs: number };
 };
 
 export type ContactIdentityArgs = Record<string, never>;
@@ -162,6 +164,7 @@ export type ContactRevokeResult = {
 export type ContactSendArgs = {
   contactId: string;
   text: string;
+  replyTo?: OriginMessageRef;
   media?: ResourceBlock[];
   idempotencyKey?: string;
 };

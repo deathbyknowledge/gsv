@@ -229,6 +229,11 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(messagesWithText(firstHistory, messageArgs.text)).toHaveLength(1);
     expect(messagesWithText(secondHistory, messageArgs.text)).toHaveLength(1);
+    const firstOrigin = messagesWithText(firstHistory, messageArgs.text)[0]?.social;
+    expect(firstOrigin?.provenance).toEqual({ kind: "human" });
+    expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstOrigin);
+    expect(firstHistory.conversation.handlerPid).toBeUndefined();
+    expect(secondHistory.conversation.handlerPid).toBeUndefined();
     expect(messagesWithText(secondHistory, messageArgs.text)[0]).toMatchObject({
       author: {
         kind: "contact",
@@ -241,6 +246,25 @@ describe("cross-GSV federation integration", () => {
         deliveryId: delivered.deliveryId,
       },
     });
+
+    if (!firstOrigin) throw new Error("V2 message is missing its origin reference");
+    const replyArgs: ContactSendArgs = {
+      contactId: secondContact.id,
+      text: "Reply from the second Ship",
+      replyTo: firstOrigin.reference,
+      idempotencyKey: "integration-reply-second-to-first",
+    };
+    await waitForDelivery(second, replyArgs);
+    const replyHistory = await waitForMessage(first, firstContact.conversationId, replyArgs.text);
+    expect(messagesWithText(replyHistory, replyArgs.text)[0]?.social).toMatchObject({
+      provenance: { kind: "human" },
+      replyTo: firstOrigin.reference,
+    });
+    await expect(second.contact.send({
+      ...replyArgs,
+      replyTo: { ...firstOrigin.reference, messageId: "message:outside-this-conversation" },
+      idempotencyKey: "integration-invalid-reply",
+    })).rejects.toThrow("Reply must reference a message in this contact conversation");
 
     const outgoing = await first.contact.request.create({
       contactId: firstContact.id,
@@ -296,8 +320,8 @@ describe("cross-GSV federation integration", () => {
 
     await expect.poll(() => firstRequestSignals.length).toBeGreaterThanOrEqual(5);
     await expect.poll(() => secondRequestSignals.length).toBeGreaterThanOrEqual(5);
-    expect(firstRequestSignals.every((signal) => signal.contactId === firstContact.id)).toBe(true);
-    expect(secondRequestSignals.every((signal) => signal.contactId === secondContact.id)).toBe(true);
+    for (const signal of firstRequestSignals) expect(signal).toMatchObject({ contactId: firstContact.id });
+    for (const signal of secondRequestSignals) expect(signal).toMatchObject({ contactId: secondContact.id });
     const firstRequestSignalCount = firstRequestSignals.length;
     await expect(first.contact.request.update({
       requestId: reverseIncoming.id,

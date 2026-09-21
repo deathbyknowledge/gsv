@@ -6,7 +6,9 @@ import type {
   ContactSummary,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
-  FederationDeliveryPayload,
+  FederationTransportPayload,
+  FederationFeature,
+  SocialMessageMetadata,
   FederationPublicKey,
   FederationResourceDescriptor,
   FederationSubject,
@@ -15,6 +17,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   federationDeliveryPayloadSchema,
+  federationDeliveryPayloadV2Schema,
+  federationFeatureSchema,
+  socialMessageMetadataSchema,
   federationPublicKeySchema,
   jsonObjectSchema,
   resourceBlockSchema,
@@ -78,6 +83,7 @@ export type FederationPairingAttemptRecord = FederationPairingAttemptBase & (
 export type FederationOutboxLocalMessage = {
   messageId: string;
   text: string;
+  social?: SocialMessageMetadata;
   media?: ResourceBlock[];
   author: ConversationMessageAuthor;
   origin: ConversationMessageOrigin;
@@ -102,6 +108,7 @@ type FederationOutboxBase = {
   contactGeneration: string;
   idempotencyKey: string;
   fingerprint: string;
+  wireVersion: 1 | 2;
   attemptCount: number;
   nextAttemptAtMs?: number;
   lastError?: string;
@@ -116,7 +123,7 @@ export type FederationPreparingOutboxRecord = FederationOutboxBase & {
 
 export type FederationReadyOutboxRecord = FederationOutboxBase & {
   state: "pending" | "delivered" | "terminal";
-  payload: FederationDeliveryPayload;
+  payload: FederationTransportPayload;
   localMessage?: FederationOutboxLocalMessage;
   localSequence?: number;
   deliveredAtMs?: number;
@@ -139,7 +146,8 @@ export type FederationInboxRecord = {
   contactGeneration: string;
   deliveryId: string;
   payloadHash: string;
-  payload: FederationDeliveryPayload;
+  payload: FederationTransportPayload;
+  wireVersion: 1 | 2;
   state: "received" | "committed" | "rejected";
   response?: JsonObject;
   lastError?: string;
@@ -230,6 +238,7 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
 const federationOutboxLocalMessageSchema = z.strictObject({
   messageId: z.string(),
   text: z.string(),
+  social: z.optional(socialMessageMetadataSchema),
   media: z.array(resourceBlockSchema).optional(),
   author: conversationMessageAuthorSchema,
   origin: conversationMessageOriginSchema,
@@ -266,6 +275,9 @@ type ContactRow = {
   revoked_at: number | null;
   last_received_at: number | null;
   last_delivered_at: number | null;
+  protocol_version: 1 | 2;
+  protocol_features_json: string;
+  protocol_checked_at: number | null;
 };
 
 type InviteRow = {
@@ -306,6 +318,7 @@ type PairingAttemptRow = {
 
 type OutboxRow = {
   delivery_id: string;
+  wire_version: 1 | 2;
   owner_uid: number;
   contact_id: string;
   contact_generation: string;
@@ -329,6 +342,7 @@ type InboxRow = {
   contact_id: string;
   contact_generation: string;
   delivery_id: string;
+  wire_version: 1 | 2;
   payload_hash: string;
   payload_json: string;
   state: FederationInboxRecord["state"];
@@ -810,7 +824,7 @@ export class FederationStore {
         `UPDATE federation_contacts SET
            state = 'active', generation = ?, remote_display_name = ?, remote_origin = ?,
            remote_public_key_json = ?, shared_secret = ?, thread_id = ?, updated_at = ?,
-           revoked_at = NULL
+           revoked_at = NULL, protocol_checked_at = NULL, protocol_version = 1, protocol_features_json = '[]'
          WHERE contact_id = ?`,
         input.generation,
         input.remoteSubject.displayName,
@@ -1025,6 +1039,17 @@ export class FederationStore {
     return cursor.rowsWritten > 0;
   }
 
+  setProtocol(contactId: string, generation: string, protocol: {
+    version: 1 | 2; features: FederationFeature[]; checkedAtMs: number;
+  }): FederationContactRecord {
+    const updated = this.sql.exec(`UPDATE federation_contacts
+      SET protocol_version = ?, protocol_features_json = ?, protocol_checked_at = ?
+      WHERE contact_id = ? AND generation = ? AND state = 'active'`,
+    protocol.version, JSON.stringify(protocol.features), protocol.checkedAtMs, contactId, generation);
+    if (updated.rowsWritten === 0) throw new Error("Contact generation changed during protocol negotiation");
+    return this.get(contactId)!;
+  }
+
   enqueue(input: {
     deliveryId: string;
     ownerUid: number;
@@ -1032,7 +1057,8 @@ export class FederationStore {
     contactGeneration: string;
     idempotencyKey: string;
     fingerprint: string;
-    payload: FederationDeliveryPayload;
+    payload: FederationTransportPayload;
+    wireVersion?: 1 | 2;
     localMessage?: FederationOutboxLocalMessage;
     now?: number;
   }): FederationEnqueueResult {
@@ -1055,8 +1081,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, payload_json, local_message_json, state, next_attempt_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+         created_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1068,6 +1094,7 @@ export class FederationStore {
       now,
       now,
       now,
+      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || !isReadyFederationOutbox(record)) {
@@ -1084,6 +1111,7 @@ export class FederationStore {
     idempotencyKey: string;
     fingerprint: string;
     preparation: FederationMessagePreparation;
+    wireVersion?: 1 | 2;
     now?: number;
   }): FederationPrepareResult {
     const now = input.now ?? Date.now();
@@ -1105,8 +1133,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, preparation_json, resource_count, state, next_attempt_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?)`,
+         created_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1118,6 +1146,7 @@ export class FederationStore {
       now,
       now,
       now,
+      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || record.state !== "preparing") {
@@ -1129,7 +1158,7 @@ export class FederationStore {
   completeMessagePreparation(input: {
     deliveryId: string;
     contactGeneration: string;
-    payload: Extract<FederationDeliveryPayload, { kind: "message" }>;
+    payload: Extract<FederationTransportPayload, { kind: "message" }>;
     localMessage: FederationOutboxLocalMessage;
     now?: number;
   }): FederationReadyOutboxRecord {
@@ -1322,12 +1351,13 @@ export class FederationStore {
     contactGeneration: string;
     deliveryId: string;
     payloadHash: string;
-    payload: FederationDeliveryPayload;
+    payload: FederationTransportPayload;
+    wireVersion?: 1 | 2;
     now?: number;
   }): FederationReceiveResult {
     const existing = this.inbox(input.contactId, input.contactGeneration, input.deliveryId);
     if (existing) {
-      if (existing.payloadHash !== input.payloadHash) {
+      if (existing.payloadHash !== input.payloadHash || existing.wireVersion !== (input.wireVersion ?? 1)) {
         throw new Error("Federation delivery id was reused with a different payload");
       }
       return { record: existing, created: false };
@@ -1336,8 +1366,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_inbox (
          contact_id, contact_generation, delivery_id, payload_hash, payload_json,
-         state, received_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?)`,
+         state, received_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?, ?)`,
       input.contactId,
       input.contactGeneration,
       input.deliveryId,
@@ -1345,6 +1375,7 @@ export class FederationStore {
       JSON.stringify(input.payload),
       now,
       now,
+      input.wireVersion ?? 1,
     );
     return {
       record: this.inbox(input.contactId, input.contactGeneration, input.deliveryId)!,
@@ -1738,6 +1769,13 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
     sharedSecret: row.shared_secret,
     conversationId: row.conversation_id,
     threadId: row.thread_id,
+    ...(row.protocol_checked_at !== null ? {
+      protocol: {
+        version: row.protocol_version,
+        features: z.array(federationFeatureSchema).parse(JSON.parse(row.protocol_features_json)),
+        checkedAtMs: row.protocol_checked_at,
+      },
+    } : undefined),
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
     ...(row.revoked_at !== null ? { revokedAtMs: row.revoked_at } : undefined),
@@ -1817,6 +1855,7 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
 function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   const base = {
     deliveryId: row.delivery_id,
+    wireVersion: row.wire_version,
     ownerUid: row.owner_uid,
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
@@ -1844,7 +1883,7 @@ function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   return {
     ...base,
     state: row.state,
-    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
+    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
     ...(row.local_message_json
       ? { localMessage: federationOutboxLocalMessageSchema.parse(JSON.parse(row.local_message_json)) }
       : undefined),
@@ -1858,8 +1897,9 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
     deliveryId: row.delivery_id,
+    wireVersion: row.wire_version,
     payloadHash: row.payload_hash,
-    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
+    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
     state: row.state,
     ...(row.response_json
       ? { response: jsonObjectSchema.parse(JSON.parse(row.response_json)) }

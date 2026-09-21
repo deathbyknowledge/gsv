@@ -4,7 +4,7 @@ import type {
   ConversationMessage,
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema, socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import { useGateway } from "../../gateway/GatewayProvider";
@@ -46,6 +46,7 @@ const originSchema: z.ZodType<ConversationMessageOrigin> = z.discriminatedUnion(
   z.object({ kind: z.literal("device"), deviceId: z.string() }),
   z.object({ kind: z.literal("scheduler"), scheduleId: z.string() }),
   z.object({ kind: z.literal("mail"), messageId: z.string() }),
+  z.object({ kind: z.literal("federation"), contactId: z.string(), deliveryId: z.string() }),
 ]);
 const messageSchema = z.object({
   id: z.string(),
@@ -54,8 +55,10 @@ const messageSchema = z.object({
   author: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("user"), uid: z.number() }),
     z.object({ kind: z.literal("process"), pid: z.string(), uid: z.number() }),
+    z.object({ kind: z.literal("contact"), contactId: z.string(), shipId: z.string(), subjectId: z.string(), displayName: z.string() }),
   ]),
   text: z.string(),
+  social: z.optional(socialMessageMetadataSchema),
   media: z.array(z.union([resourceBlockSchema, mediaInputSchema])).optional(),
   origin: originSchema,
   processId: z.string().optional(),
