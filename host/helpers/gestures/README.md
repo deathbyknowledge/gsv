@@ -79,13 +79,18 @@ array order and the left-hand posture are irrelevant. Set
 `GSV_GESTURE_DOMINANT_HAND=left` to use the physical left action hand or `auto`
 to learn the first unambiguous action hand.
 
-- Open only the action index finger (`1`) and hold for 350 ms. In standby this
-  starts transcription; while active the same count finishes it.
-- Open the action index and middle fingers (`2`) for 350 ms to send now and keep
+Every extended digit counts, including the thumb. The same count works with any
+combination on the action hand; thumb + index + middle is three, not two. Each
+digit must be confidently open or closed. Ambiguous geometry stays unassigned
+instead of ignoring a digit or guessing a lower count.
+
+- Open any one action-hand finger or the thumb (`1`) and hold for 350 ms. In
+  standby this starts transcription; while active the same count finishes it.
+- Open any two action-hand digits (`2`) for 350 ms to send now and keep
   listening.
-- Open the action index, middle, and ring fingers (`3`) for 350 ms to delete one
+- Open any three action-hand digits (`3`) for 350 ms to delete one
   visible Unicode character (grapheme) from the unsent voice-owned transcription.
-- Open all four action fingers while keeping its thumb closed (`4`) for 1 second
+- Open any four action-hand digits (`4`) for 1 second
   to clear the unsent voice-owned transcription. Text typed before or after the
   voice insertion point and draft attachments remain intact.
 - Open all four action fingers and the thumb (`5`) for 350 ms to mute or unmute,
@@ -97,9 +102,10 @@ to learn the first unambiguous action hand.
   making that line steeper in either direction controls continuous scroll
   speed. Return to the neutral angle to pause, or release either posture to end
   the chord. Each measured angle is mapped directly, without a dead zone or
-  smoothing. Four or five visible control-hand fingers count as an open modifier,
-  so thumb ambiguity does not interrupt scrolling. Make a fresh action fist
-  before showing a numbered command so the release posture cannot act accidentally.
+  smoothing. Four or five confidently extended control-hand digits count as an
+  open modifier. Ambiguous geometry uses the ordinary tracking grace period.
+  Make a fresh action fist before showing a numbered command so the release
+  posture cannot act accidentally.
 - Hold both fists for 700 ms whenever gesture commands should be armed or
   disarmed. Open either fist after the toggle before toggling again.
 

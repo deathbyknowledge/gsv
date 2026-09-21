@@ -93,9 +93,11 @@ propose starting transcription without a voice-request identity. Desktop owns
 an explicit, inspectable armed state that starts disarmed. The helper may
 propose changing it only after a 700 ms two-fist hold, and Desktop echoes the
 resulting absolute authority. Once armed, the right action hand alone maps
-sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
-and mute/unmute; those commands remain available while the Desktop window is
-unfocused. Scrolling deliberately requires a two-hand chord: the control palm
+counts of extended digits 1 through 5 to start/finish, send, delete, clear,
+and mute/unmute. The thumb counts independently, any combination is accepted,
+and ambiguous digits leave the pose unassigned. Those commands remain available
+while the Desktop window is unfocused. Scrolling deliberately requires a
+two-hand chord: the control palm
 stays open while the helper captures the image-aspect-corrected angle between
 both palm centers and a settled action fist changes that relative angle.
 Translating both hands together does not change the signal. The helper maps each

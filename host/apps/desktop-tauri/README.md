@@ -107,6 +107,11 @@ excludes the mock. The real helpers are still real in development mode.
    hand guide. Clear/delete affect only unsent dictated text. The panel closes
    with Escape or an outside click, without resizing the conversation. All
    feedback stays outside the editable draft.
+   Compare index + middle + ring with thumb + index + middle: both must be three
+   and delete a dictated character, never send. Try other combinations for the
+   same count, a thumb alone, partially bent digits, and a fist between commands.
+   The guide's selectors play examples without enabling the camera. Check both
+   hands for arm/disarm and scrolling, pause/play, and reduced-motion stills.
 4. Try unfocused use and minimization. If the webview stops responding for three
    seconds, native input stops and disarms. Reconnect native input and explicitly
    restart it. No old action should arrive in a later draft. Repeat after sleep,
@@ -153,6 +158,11 @@ excludes the mock. The real helpers are still real in development mode.
     retain the edit. Opening another item still protects unsaved routine edits.
     Check an expanded file, its return to the preview, explicit pagination and
     links into Fleet from Zen. Closed inspectors should pause their queries.
+11. Run two direct commands in succession. Sending should leave `$ ` ready for
+    the next command, with command history available from that empty prefix.
+    Delete `$ ` to return to messages. Empty `$` must neither run nor send, and
+    must not trigger an unsaved-draft warning. Pending output should show the
+    shared spinner; stopped, failed and unavailable states should remain clear.
 
 For local timing diagnostics, press **F8** or open **timings** in the in-app
 prototype bar. This strip is part of the page, independent of window-manager

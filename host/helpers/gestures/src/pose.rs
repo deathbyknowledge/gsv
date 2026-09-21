@@ -45,26 +45,43 @@ pub fn recognize(landmarks: &[Landmark; HAND_LANDMARK_COUNT]) -> PoseRecognition
         };
     };
 
-    let candidates = [
-        (HandPose::Fist, features.count_score(0)),
-        (HandPose::OneFinger, features.count_score(1)),
-        (HandPose::TwoFingers, features.count_score(2)),
-        (HandPose::ThreeFingers, features.count_score(3)),
-        (HandPose::FourFingers, features.count_score(4)),
-        (HandPose::FiveFingers, features.count_score(5)),
-    ];
-    let (pose, score) = candidates
+    let fingers = features
+        .fingers
         .into_iter()
-        .max_by(|left, right| left.1.total_cmp(&right.1))
-        .unwrap_or((HandPose::Unknown, 0.0));
-    if score < MIN_POSE_SCORE {
-        PoseRecognition {
-            pose: HandPose::Unknown,
-            score,
+        .map(|straightness| {
+            (
+                high(straightness, 0.68, 0.28),
+                low(straightness, 0.50, 0.30),
+            )
+        })
+        .chain(std::iter::once((features.thumb_open, features.thumb_closed)));
+    let mut count = 0;
+    let mut score = 1.0_f32;
+    for (open, closed) in fingers {
+        match (open >= MIN_POSE_SCORE, closed >= MIN_POSE_SCORE) {
+            (true, false) => {
+                count += 1;
+                score = score.min(open);
+            }
+            (false, true) => score = score.min(closed),
+            // Conflicting or weak evidence for a digit must not become a lower command.
+            _ => {
+                return PoseRecognition {
+                    pose: HandPose::Unknown,
+                    score: 0.0,
+                };
+            }
         }
-    } else {
-        PoseRecognition { pose, score }
     }
+    let pose = [
+        HandPose::Fist,
+        HandPose::OneFinger,
+        HandPose::TwoFingers,
+        HandPose::ThreeFingers,
+        HandPose::FourFingers,
+        HandPose::FiveFingers,
+    ][count];
+    PoseRecognition { pose, score }
 }
 
 struct Features {
@@ -125,23 +142,6 @@ impl Features {
                 low(thumb_outward, 0.12, 0.28),
             ]),
         })
-    }
-
-    fn count_score(&self, count: usize) -> f32 {
-        let mut scores = [1.0; 5];
-        for (index, straightness) in self.fingers.into_iter().enumerate() {
-            scores[index] = if index < count.min(4) {
-                high(straightness, 0.68, 0.28)
-            } else {
-                low(straightness, 0.50, 0.30)
-            };
-        }
-        scores[4] = match count {
-            0 | 4 => self.thumb_closed,
-            5 => self.thumb_open,
-            _ => 1.0,
-        };
-        minimum(&scores)
     }
 }
 
@@ -356,19 +356,75 @@ mod tests {
     }
 
     #[test]
-    fn a_thumb_alone_is_not_a_fist_reset() {
+    fn a_thumb_alone_is_one_and_not_a_fist_reset() {
         let mut landmarks = finger_count(0);
         let open_thumb = finger_count(5);
         landmarks[THUMB_CMC..=THUMB_TIP].copy_from_slice(&open_thumb[THUMB_CMC..=THUMB_TIP]);
-        assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
+        assert_eq!(recognize(&landmarks).pose, HandPose::OneFinger);
     }
 
     #[test]
-    fn fingers_opened_out_of_sequence_are_unassigned() {
-        let mut landmarks = finger_count(0);
-        for (joint, y) in [(RING_PIP, 0.4), (RING_DIP, 0.8), (RING_TIP, 1.2)] {
-            landmarks[joint] = Landmark { x: 0.2, y, z: 0.0 };
+    fn every_combination_counts_all_five_digits() {
+        let closed = finger_count(0);
+        let open = finger_count(5);
+        let poses = [
+            HandPose::Fist,
+            HandPose::OneFinger,
+            HandPose::TwoFingers,
+            HandPose::ThreeFingers,
+            HandPose::FourFingers,
+            HandPose::FiveFingers,
+        ];
+        for mask in 0_u32..32 {
+            let mut landmarks = closed;
+            for digit in 0..5 {
+                if mask & (1 << digit) != 0 {
+                    let start = 1 + digit * 4;
+                    landmarks[start..start + 4].copy_from_slice(&open[start..start + 4]);
+                }
+            }
+            let expected = poses[mask.count_ones() as usize];
+            for mirrored in [false, true] {
+                let transformed = landmarks.map(|point| {
+                    let x = if mirrored { -point.x } else { point.x };
+                    Landmark {
+                        x: 4.0 + 0.2 * (x * 0.8 - point.y * 0.6),
+                        y: -2.0 + 0.2 * (x * 0.6 + point.y * 0.8),
+                        z: 1.0 + 0.2 * point.z,
+                    }
+                });
+                let recognized = recognize(&transformed);
+                assert_eq!(
+                    recognized.pose, expected,
+                    "mask {mask:05b}, mirrored {mirrored}"
+                );
+                assert!(recognized.score >= MIN_POSE_SCORE);
+            }
         }
+    }
+
+    #[test]
+    fn thumb_index_and_middle_are_three_not_send() {
+        let mut landmarks = finger_count(2);
+        let open = finger_count(5);
+        landmarks[THUMB_CMC..=THUMB_TIP].copy_from_slice(&open[THUMB_CMC..=THUMB_TIP]);
+        assert_eq!(recognize(&landmarks).pose, HandPose::ThreeFingers);
+    }
+
+    #[test]
+    fn a_partly_bent_digit_is_unknown() {
+        let mut landmarks = finger_count(0);
+        let bend = 0.66_f32.acos();
+        landmarks[INDEX_DIP] = Landmark {
+            x: -0.6 + 0.4 * bend.sin(),
+            y: 0.4 + 0.4 * bend.cos(),
+            z: 0.0,
+        };
+        landmarks[INDEX_TIP] = Landmark {
+            x: -0.6 + 0.8 * bend.sin(),
+            y: 0.4 + 0.8 * bend.cos(),
+            z: 0.0,
+        };
         assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
     }
 

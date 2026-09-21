@@ -2,7 +2,8 @@ import type { RefObject } from "preact";
 import { createPortal, forwardRef } from "preact/compat";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
-import { gestureFeedback, GestureGuide } from "./NativeGestureFeedback";
+import { gestureFeedback } from "./NativeGestureFeedback";
+import { GestureGuide } from "./GestureGuide";
 import { useNativeVoice } from "./useNativeVoice";
 import "./native-input.css";
 

@@ -7,6 +7,10 @@
 //!
 //! For scrolling, an open control hand acts as the modifier while the angle
 //! between its palm center and the action fist supplies continuous velocity.
+//!
+//! Number recognition now accepts any combination of extended digits, including
+//! the thumb. The sequential opening described above is only one way to count;
+//! temporal policy consumes the count and retains the same hold and reset gates.
 
 use std::time::{Duration, Instant};
 

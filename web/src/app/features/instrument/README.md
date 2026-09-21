@@ -123,6 +123,14 @@ still available with the arrow keys. A rejected start preserves the command.
 Pending command output uses the shared glyph spinner; failures, unavailable
 status and stopping remain explicit.
 
+The native gesture guide shows one hand animation at a time through the shared
+ASCII scene host. Select a command to see its hold and fist reset; alternative
+finger combinations include the thumb. Both-fist and scrolling examples show
+both hands. The guide does not start sensors or invoke commands. It runs only
+while visible, supports pause and reduced motion, and caches its small finite
+glyph loops as frames are first displayed, without blurred shadows or a bulk
+render on opening.
+
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
 Normal Zen messages carry the prompt's selected place as structured message context. The model receives `[Selected target: ID]` alongside that message; visible text stays unchanged. A retry retains its target, while changing the target creates a new send intent. Origins and reply endpoints remain independent, and clients without a selection omit this context.

@@ -9,7 +9,7 @@
 .native-hold::-webkit-progress-bar { background: var(--border); }
 .native-hold::-webkit-progress-value { background: var(--accent); }
 .native-hold::-moz-progress-bar { background: var(--accent); }
-.native-input-announcement, .native-gesture-guide caption { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.native-input-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .zen-input-panels { position: absolute; inset: 0; z-index: 20; display: flex; justify-content: flex-end; align-items: flex-end; padding: calc(var(--instrument-header-height) + 12px) 56px 62px; pointer-events: none; }
 .native-input-panel { box-sizing: border-box; width: min(380px, 100%); min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; padding: 20px; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); font: 12px/1.5 var(--gsv-font-mono); box-shadow: 0 8px 28px #0003; }
 .native-input-panel header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
@@ -31,12 +31,22 @@
 .native-gesture-guide { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
 .native-gesture-guide h3 span { color: var(--faint); font-size: 10px; margin-left: 8px; }
 .native-gesture-guide p { color: var(--text-dim); font-size: 11px; }
-.native-gesture-guide table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
-.native-gesture-guide th, .native-gesture-guide td { padding: 6px 0; text-align: left; vertical-align: top; font-weight: normal; }
-.native-gesture-guide th { padding-right: 14px; color: var(--text-dim); white-space: nowrap; }
-.native-gesture-guide b { font-weight: normal; color: var(--accent); margin-right: 6px; }
-.native-gesture-guide small { display: block; font-size: 10px; color: var(--faint); }
-.native-gesture-guide summary { color: var(--text-dim); cursor: pointer; width: fit-content; }
+.native-gesture-lessons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
+.native-gesture-lessons button { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; text-align: left; color: var(--text-dim); }
+.native-gesture-lessons button:last-child { grid-column: 1 / -1; }
+.native-gesture-lessons button[aria-pressed="true"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
+.native-gesture-lessons b { font-weight: normal; color: var(--accent); }
+.native-gesture-example { margin: 8px 0 0; }
+.native-gesture-animation.gsv-ascii-galaxy {
+  --ascii-foreground: var(--accent);
+  --ascii-foreground-glow: none;
+  --ascii-star-glow: none;
+  height: 216px; min-height: 216px; aspect-ratio: auto; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none;
+}
+.native-gesture-example figcaption { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10px; }
+.native-gesture-example figcaption button { color: var(--text-dim); }
+.native-gesture-guide .native-gesture-description { min-height: 5em; }
 @container instrument (max-width: 900px) {
   .zen-input-panels { padding-inline: 18px; padding-bottom: 60px; }
   .native-input-panel { padding: 16px; }

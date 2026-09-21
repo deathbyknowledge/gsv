@@ -42,31 +42,8 @@ export function gestureFeedback(snapshot: NativeSnapshot): { message: string; pr
   const { gesture_context: context } = snapshot;
   const message = context.mode === "disarmed" ? "Hold both fists for 0.7 s to arm, or use arm gestures."
     : context.mode === "disabled" ? "Voice is busy. Gestures will resume when it is ready; both fists still disarm."
-    : context.mode === "standby" ? "Ready · hold up your index finger to start voice."
+    : context.mode === "standby" ? "Ready · hold up any one finger or your thumb to start voice."
     : context.mode === "active" && context.muted ? "Microphone muted · five fingers to unmute."
     : "Listening · show a command, then make a fist before the next one.";
   return { message, progress: null, action };
-}
-
-export function GestureGuide() {
-  return <div class="native-gesture-guide">
-      <h3>Your action hand <span>right by default</span></h3>
-      <p>Hold until the indicator fills. Make a fist between commands.</p>
-      <table>
-        <caption>Gesture guide</caption>
-        <tbody>
-          <tr><th scope="row">Both fists</th><td>Arm / disarm <small>hold 0.7 s</small></td></tr>
-          <tr><th scope="row"><b>1</b> Index</th><td>Start / finish voice</td></tr>
-          <tr><th scope="row"><b>2</b> + middle</th><td>Send, keep listening</td></tr>
-          <tr><th scope="row"><b>3</b> + ring</th><td>Delete a dictated character</td></tr>
-          <tr><th scope="row"><b>4</b> Thumb closed</th><td>Clear dictation <small>hold 1 s</small></td></tr>
-          <tr><th scope="row"><b>5</b> Open hand</th><td>Pause / resume microphone</td></tr>
-        </tbody>
-      </table>
-      <details>
-        <summary>Scrolling and corrections</summary>
-        <p>Open your control palm and close your action fist. Let the pose settle, then tilt the line between your hands. Return to neutral to pause; release either hand to stop.</p>
-        <p>Clear and delete affect only unsent dictation. Typed text and attachments stay.</p>
-      </details>
-  </div>;
 }
