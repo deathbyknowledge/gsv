@@ -1,3 +1,4 @@
+import type { ContactContextListArgs, ContactContextListResult, ContactContextSourcesArgs, ContactContextSourcesResult, ContactContextSubscribeArgs, ContactContextSubscribeResult, ContactContextSyncArgs, ContactContextSyncResult, ContactContextPublicationsArgs, ContactContextPublicationsResult, ContactContextPublishArgs, ContactContextPublishResult, ContactContextWithdrawArgs, ContactContextWithdrawResult, ContactContextConsentArgs, ContactContextConsentResult } from "../shared-context";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -329,6 +330,14 @@ import type {
 import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
+  "contact.context.list": { args: ContactContextListArgs; result: ContactContextListResult };
+  "contact.context.sources": { args: ContactContextSourcesArgs; result: ContactContextSourcesResult };
+  "contact.context.subscribe": { args: ContactContextSubscribeArgs; result: ContactContextSubscribeResult };
+  "contact.context.sync": { args: ContactContextSyncArgs; result: ContactContextSyncResult };
+  "contact.context.publications": { args: ContactContextPublicationsArgs; result: ContactContextPublicationsResult };
+  "contact.context.publish": { args: ContactContextPublishArgs; result: ContactContextPublishResult };
+  "contact.context.withdraw": { args: ContactContextWithdrawArgs; result: ContactContextWithdrawResult };
+  "contact.context.consent": { args: ContactContextConsentArgs; result: ContactContextConsentResult };
   "fs.read": { args: FsReadArgs; result: FsReadResult };
   "fs.write": { args: FsWriteArgs; result: FsWriteResult };
   "fs.edit": { args: FsEditArgs; result: FsEditResult };

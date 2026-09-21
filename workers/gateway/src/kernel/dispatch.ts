@@ -1,3 +1,4 @@
+import { handleContactContextList, handleContactContextSources, handleContactContextSubscribe, handleContactContextSync, handleContactContextPublications, handleContactContextPublish, handleContactContextWithdraw, handleContactContextConsent } from "./shared-context";
 /**
  * Kernel syscall dispatcher.
  *
@@ -718,6 +719,30 @@ async function dispatchKernel(
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
+      case "contact.context.list":
+        data = handleContactContextList(frame.args, ctx);
+        break;
+      case "contact.context.sources":
+        data = handleContactContextSources(ctx);
+        break;
+      case "contact.context.subscribe":
+        data = await handleContactContextSubscribe(frame.args, ctx);
+        break;
+      case "contact.context.sync":
+        data = await handleContactContextSync(frame.args, ctx);
+        break;
+      case "contact.context.publications":
+        data = handleContactContextPublications(ctx);
+        break;
+      case "contact.context.publish":
+        data = await handleContactContextPublish(frame.args, ctx);
+        break;
+      case "contact.context.withdraw":
+        data = await handleContactContextWithdraw(frame.args, ctx);
+        break;
+      case "contact.context.consent":
+        data = await handleContactContextConsent(frame.args, ctx);
+        break;
       case "profile.get":
         data = handleProfileGet(ctx);
         break;

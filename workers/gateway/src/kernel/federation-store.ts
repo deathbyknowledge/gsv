@@ -34,6 +34,8 @@ import {
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { ContextPublications } from "./shared-context-publications";
+import { ContextSources } from "./shared-context-sources";
 
 export type FederationContactRecord = ContactSummary & {
   preferences: ContactPreferences;
@@ -818,6 +820,8 @@ export class FederationStore {
     );
     if (existing) {
       if (existing.generation !== input.generation) {
+        new ContextPublications(this.sql).retireConnections(existing.id, existing.generation, now);
+        new ContextSources(this.storage).retireContact(existing.id);
         this.sql.exec(
           `UPDATE federation_requests SET
              state = CASE WHEN work_json IS NULL THEN 'cancelled' ELSE state END, revision = revision + 1, updated_at = ?,
@@ -1112,6 +1116,8 @@ export class FederationStore {
     );
     const contact = this.get(contactId);
     if (!contact || contact.ownerUid !== ownerUid) throw new Error(`Contact not found: ${contactId}`);
+    new ContextPublications(this.sql).retireConnections(contactId, contact.generation, now);
+    new ContextSources(this.storage).retireContact(contactId);
     this.sql.exec(
       `UPDATE federation_pairing_attempts SET
          state = 'terminal', terminal_reason = 'contact-revoked', updated_at = ?

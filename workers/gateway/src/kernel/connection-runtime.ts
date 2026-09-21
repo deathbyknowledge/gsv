@@ -317,6 +317,7 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     const contactRead = signal === "contact.changed" ? "contact.list"
       : signal === "contact.delivery.changed" ? "contact.delivery.list"
       : signal === "profile.changed" ? "profile.get"
+      : signal === "contact.context.changed" ? "contact.context.list"
       : signal === "approach.changed" ? "approach.list"
       : signal === "contact.invite.changed" ? "contact.invite.list"
       : signal === "conversation.attention.changed" ? "conversation.attention.list"

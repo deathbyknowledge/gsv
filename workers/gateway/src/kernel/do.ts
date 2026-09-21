@@ -112,6 +112,8 @@ import {
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { SharedContextStore } from "./shared-context-store";
+import { processSharedContext } from "./shared-context";
 import { ApproachStore } from "./approach-store";
 import { processProfilePublication, profileOwnerActive } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
@@ -227,6 +229,7 @@ type KernelTask =
   | { callback: "onFederationDelivery"; payload: string }
   | { callback: "onProfilePublication"; payload: number }
   | { callback: "onConversationAttention"; payload: "digest" }
+  | { callback: "onSharedContext"; payload: "context" }
   | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
@@ -283,6 +286,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onProfilePublication"), payload: z.number().int().min(1000) }),
   z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
   z.object({ callback: z.literal("onConversationAttention"), payload: z.literal("digest") }),
+  z.object({ callback: z.literal("onSharedContext"), payload: z.literal("context") }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -426,6 +430,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
+  readonly sharedContext: SharedContextStore;
   readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
   readonly oauth: OAuthStore;
@@ -520,6 +525,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
+    this.sharedContext = new SharedContextStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
@@ -581,6 +587,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       await this.scheduleApproachMaintenance();
       await this.scheduleConversationAttention();
+      await this.scheduleSharedContext();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -730,6 +737,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (existing.time * 1000 <= due + 1000) return;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+    });
+  }
+
+  async scheduleSharedContext(runningTaskId?: string, retryAt = 0): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("shared-context-schedule", async () => {
+      const next = this.sharedContext.nextDue();
+      if (next === null) return;
+      const due = Math.max(next, retryAt, Date.now() + (runningTaskId ? 1000 : 10));
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onSharedContext", "context", options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onSharedContext", "context", options);
     });
   }
 
@@ -893,6 +913,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
         const owners = this.federation.transaction(() => this.conversations.attention.announceDue());
         for (const ownerUid of owners) this.connectionRuntime.broadcastToUserUid(ownerUid, "conversation.attention.changed", { digestId: task.id });
         await this.scheduleConversationAttention(task.id);
+        return;
+      }
+      case "onSharedContext": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onSharedContext", "context", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        let retryAt = 0;
+        try {
+          await this.federationRuntime.coordinateFederationContact("shared-context-run", () => processSharedContext(this.buildKernelContext({})));
+        } catch {
+          retryAt = Date.now() + 60_000;
+        } finally {
+          await this.scheduleSharedContext(task.id, retryAt);
+        }
         return;
       }
       case "onApproachMaintenance": {
@@ -1540,6 +1576,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federation: this.federation,
       federationIdentity: this.federationIdentity,
       profiles: this.profiles,
+      sharedContext: this.sharedContext,
+      scheduleSharedContext: () => this.scheduleSharedContext(),
       approaches: this.approaches,
       scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),

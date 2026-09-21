@@ -19,7 +19,7 @@ export async function localShipDocumentV2(ctx: KernelContext): Promise<Federatio
   const unsigned: Omit<FederationShipDocumentV2, "signature"> = {
     version: 2, domain: "gsv-federation/2/ship", shipId: identity.shipId,
     origin: identity.origin, publicKey: identity.publicKey, protocols: ["gsv-federation/2"],
-    features: ["messages", "approaches", "work"], issuedAtMs: now, expiresAtMs: now + DOCUMENT_LIFETIME_MS,
+    features: ["messages", "approaches", "work", "context"], issuedAtMs: now, expiresAtMs: now + DOCUMENT_LIFETIME_MS,
   };
   return { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
 }

@@ -710,6 +710,15 @@ federated subject. `expectedRevision` prevents stale edits or publication.
 
 ```ts
 {
+  "contact.context.list": { args: ContactContextListArgs; result: ContactContextListResult };
+  "contact.context.sources": { args: ContactContextSourcesArgs; result: ContactContextSourcesResult };
+  "contact.context.subscribe": { args: ContactContextSubscribeArgs; result: ContactContextSubscribeResult };
+  "contact.context.sync": { args: ContactContextSyncArgs; result: ContactContextSyncResult };
+  "contact.context.publications": { args: ContactContextPublicationsArgs; result: ContactContextPublicationsResult };
+  "contact.context.publish": { args: ContactContextPublishArgs; result: ContactContextPublishResult };
+  "contact.context.withdraw": { args: ContactContextWithdrawArgs; result: ContactContextWithdrawResult };
+  "contact.context.consent": { args: ContactContextConsentArgs; result: ContactContextConsentResult };
+
   "profile.get": { args: {}; result: { profile: ProfileState } };
   "profile.avatar.upload": { args: {}; result: { avatar: ProfileAvatar } };
   "profile.avatar.read": { args: { sha256: string }; result: { avatar: ProfileAvatar } };

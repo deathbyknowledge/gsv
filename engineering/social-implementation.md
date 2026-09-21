@@ -284,3 +284,13 @@ receipts. People exposes Catch up and the shared header shows ready alerts.
 Storage reconstruction, stale dismissal, mute/archive, upgrade and capability
 regression sources are included for CI. This remains source implementation, not
 a rendered UI acceptance claim. Shared context and scoped assistance continue.
+
+The selected-context backend adds v067 in Kernel SQLite: explicit signed
+statements, mutual consent for connection disclosures, bounded source
+subscriptions, staged snapshot/delta sync, opaque viewer-bound cursors and
+finite display leases. The existing federation outbox carries consent decisions
+and withdrawals; no context event starts a Process or changes capabilities.
+Generation changes and unsubscribe remove cached visibility, and old responses
+cannot restore it. Store and cryptographic boundary regressions are added for
+CI. People publication/subscription/review UX, introductions and scoped Ship
+assistance remain unfinished. No local checks or browser trial were run.

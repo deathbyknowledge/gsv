@@ -40,6 +40,7 @@ import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-po
 import type { FederationStore } from "./federation-store";
 import type { FederationIdentity } from "./federation-crypto";
 import type { ProfileStore } from "./profile-store";
+import type { SharedContextStore } from "./shared-context-store";
 import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
@@ -78,6 +79,8 @@ export type KernelContext = {
   federation: FederationStore;
   federationIdentity: FederationIdentity;
   profiles: ProfileStore;
+  sharedContext: SharedContextStore;
+  scheduleSharedContext: () => Promise<void>;
   approaches: ApproachStore;
   scheduleProfilePublication: (ownerUid: number) => Promise<void>;
   scheduleApproachMaintenance: () => Promise<void>;

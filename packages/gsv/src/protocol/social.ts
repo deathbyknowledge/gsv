@@ -1,5 +1,8 @@
 import { z } from "zod/mini";
+import { actorIdSchema, actorRefSchema, originMessageRefSchema, socialIdSchema, type OriginMessageRef } from "./social-identity";
+export * from "./social-identity";
 import type { FederationWorkDelivery, WorkRecord } from "./work";
+import { federationContextConsentRequestSchema, federationContextConsentDecisionSchema, federationContextWithdrawalSchema, type FederationContextDelivery } from "./shared-context";
 import {
   federationPublicKeySchema,
   federationRequestDetailsSchema,
@@ -16,8 +19,6 @@ import {
   type FederationContactRevokedDelivery,
 } from "./syscalls/contact";
 
-export type ActorRef = { shipId: string; subjectId: string };
-export type OriginMessageRef = { actor: ActorRef; messageId: string };
 export type SocialMessageProvenance =
   | { kind: "human" }
   | { kind: "process"; processId: string }
@@ -47,7 +48,7 @@ export type FederationShipDocumentV2 = {
 export type FederationMessageDeliveryV2 = FederationMessageDelivery & {
   social: SocialMessageMetadata;
 };
-export type FederationDeliveryPayloadV2 = FederationMessageDeliveryV2 | FederationContactRevokedDelivery | FederationWorkDelivery;
+export type FederationDeliveryPayloadV2 = FederationMessageDeliveryV2 | FederationContactRevokedDelivery | FederationWorkDelivery | FederationContextDelivery;
 export type FederationDeliveryEnvelopeV2 = Omit<FederationDeliveryEnvelope, "version" | "payload"> & {
   version: 2;
   domain: "gsv-federation/2/delivery";
@@ -63,16 +64,6 @@ export type FederationTransportPayload = FederationDeliveryPayload | FederationD
 export type FederationTransportEnvelope = FederationDeliveryEnvelope | FederationDeliveryEnvelopeV2;
 export type FederationTransportReceipt = FederationDeliveryReceipt | FederationDeliveryReceiptV2;
 
-export const socialIdSchema = z.string().check(z.minLength(1), z.maxLength(256));
-const actorIdSchema = z.string().check(z.minLength(1), z.maxLength(128));
-export const actorRefSchema = z.strictObject({
-  shipId: actorIdSchema,
-  subjectId: actorIdSchema,
-}) satisfies z.ZodMiniType<ActorRef>;
-export const originMessageRefSchema = z.strictObject({
-  actor: actorRefSchema,
-  messageId: socialIdSchema,
-}) satisfies z.ZodMiniType<OriginMessageRef>;
 export const socialMessageProvenanceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("human") }),
   z.strictObject({ kind: z.literal("process"), processId: socialIdSchema }),
@@ -118,6 +109,7 @@ export const federationWorkDeliverySchema = z.strictObject({
   kind: z.literal("work"), offer: workOfferSchema, participant: z.enum(["requester", "performer"]), operations: workStreamSchema,
 }) satisfies z.ZodMiniType<FederationWorkDelivery>;
 export const federationDeliveryPayloadV2Schema = z.discriminatedUnion("kind", [
+  federationContextConsentRequestSchema, federationContextConsentDecisionSchema, federationContextWithdrawalSchema,
   federationWorkDeliverySchema,
   z.strictObject({
     kind: z.literal("message"),

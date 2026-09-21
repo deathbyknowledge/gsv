@@ -130,6 +130,8 @@ import { contactSummary, requireContactCaller, requireContactHuman, requireOwned
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { fetchFederation, fetchFederationJson as fetchJson, readFederationBody, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
 import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
+import { CONTEXT_SYNC_PATH, receiveContextSync } from "./shared-context-wire";
+import { commitInboundContext } from "./shared-context";
 import {
   assertDeliveryReplay,
   contactDeliveryStatus,
@@ -238,6 +240,7 @@ export function isFederationPublicPath(pathname: string): boolean {
   return pathname === SHIP_DOCUMENT_PATH
     || pathname === SHIP_DOCUMENT_V2_PATH
     || pathname === DELIVERY_V2_PATH
+    || pathname === CONTEXT_SYNC_PATH
     || [APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(pathname)
     || pathname === INVITE_ACCEPT_PATH
     || pathname === DELIVERY_PATH
@@ -1231,7 +1234,7 @@ async function recordFederationOutboxFailure(
   if (terminal) {
     const local = isReadyFederationOutbox(record) ? record.localMessage : record.preparation.localMessage;
     if (contactActive && (local?.author.kind === "process" || isReadyFederationOutbox(record)
-      && record.payload.kind !== "message" && record.payload.kind !== "work")) {
+      && (record.payload.kind === "request" || record.payload.kind === "request.update"))) {
       createDeliveryDebtResponsibility(record, message, ctx);
       await ctx.reconcileResponsibilityWake(record.ownerUid);
     }
@@ -1268,6 +1271,9 @@ export async function handleFederationHttpRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   try {
+    if (url.pathname === CONTEXT_SYNC_PATH && request.method === "POST") {
+      return jsonResponse(jsonValue(await receiveContextSync(await readBoundedJson(request), ctx)));
+    }
     if ([APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(url.pathname) && request.method === "POST") {
       consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
       const input = await readBoundedJson(request);
@@ -1872,6 +1878,11 @@ async function commitInboundDelivery(
   ctx: KernelContext,
 ): Promise<void> {
   switch (inbox.payload.kind) {
+    case "context.consent.request":
+    case "context.consent.decision":
+    case "context.withdraw":
+      await commitInboundContext(inbox.payload, contact, ctx);
+      return;
     case "work":
       await commitInboundWork(inbox.payload, inbox, contact, ctx);
       return;
