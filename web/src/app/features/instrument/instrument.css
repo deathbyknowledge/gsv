@@ -77,13 +77,12 @@
 
 /* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
  * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
-/* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size. */
+/* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size.
+ * Auto sizing between all four edges fills the parent; manually dividing viewport dimensions
+ * again leaves WebKit's zoomed layer smaller than the window. */
 .instrument-scaled {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: calc(100vw / var(--type-scale));
-  height: calc(var(--instrument-height) / var(--type-scale));
+  inset: 0;
   zoom: var(--type-scale);
   container-type: inline-size;
   container-name: instrument;

@@ -633,6 +633,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   const nativeVoice = useRef<NativeVoiceHandle>(null);
+  const nativePanels = useRef<HTMLDivElement>(null);
 
   const runDirectly = useCallback(
     (command: string) => {
@@ -1046,13 +1047,14 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
-            <NativeVoiceControls ref={nativeVoice} prompt={promptRef}
+            <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
               enabled={connected && pid !== null && pendingHil === null}
               send={say} scroll={scrolling.move} />
           </div>
         </div>
       </div>
+      <div class="zen-input-panels" ref={nativePanels} />
     </main>
   );
 }

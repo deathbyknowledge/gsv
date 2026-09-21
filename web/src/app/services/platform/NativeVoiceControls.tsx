@@ -1,4 +1,5 @@
-import { forwardRef } from "preact/compat";
+import type { RefObject } from "preact";
+import { createPortal, forwardRef } from "preact/compat";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
 import { gestureFeedback, GestureGuide } from "./NativeGestureFeedback";
@@ -7,8 +8,12 @@ import "./native-input.css";
 
 export type NativeVoiceHandle = Pick<ReturnType<typeof useNativeVoice>, "onInput" | "interceptSubmit">;
 type Panel = "voice" | "gestures";
+type NativeVoiceControlsProps = Parameters<typeof useNativeVoice>[0] & {
+  /** Zen owns the full reading area; the composer footer must not constrain panels. */
+  panelHost: RefObject<HTMLDivElement>;
+};
 
-export const NativeVoiceControls = forwardRef<NativeVoiceHandle, Parameters<typeof useNativeVoice>[0]>(function NativeVoiceControls(options, ref) {
+export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceControlsProps>(function NativeVoiceControls({ panelHost, ...options }, ref) {
   const control = useNativeVoice(options);
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -69,7 +74,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, Parameters<type
       <button type="button" class="native-input-notice" onClick={() => setPanel("voice")}>input needs attention</button>
       <span class="native-input-announcement" role="alert">{notice}</span>
     </>}
-    {panel && <section ref={panelRef} id="native-input-panel" class="native-input-panel" role="dialog"
+    {panel && panelHost.current && createPortal(<section ref={panelRef} id="native-input-panel" class="native-input-panel" role="dialog"
       aria-labelledby="native-input-title" tabIndex={-1} data-instrument-dialog
       onKeyDown={(event) => {
         event.stopPropagation();
@@ -130,6 +135,6 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, Parameters<type
         {cameraOn && feedback && <p class={gestureFailed ? "native-input-error" : "native-panel-state"} role="status">{feedback.message}</p>}
         <GestureGuide />
       </>}
-    </section>}
+    </section>, panelHost.current)}
   </div>;
 });
