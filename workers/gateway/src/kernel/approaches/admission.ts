@@ -5,7 +5,6 @@ import type {
 import { actorRefSchema, approachContentSchema, jsonValueSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
-import type { ApproachRecord } from "../approach-store";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
 import { requireContactHuman } from "../federation/authority";
 import { handleProfileResolve, profileOwnerActive } from "../profiles";
