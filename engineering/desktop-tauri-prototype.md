@@ -652,8 +652,9 @@ it avoids the worker-local GL teardown implicated by the stacks without switchin
 to software rendering. This is an app-local mitigation, not an upstream driver
 fix, and does not suppress crash reports or change the existing helper shutdown
 and unsaved-work paths. A loaded module is a conservative detection rule: it can
-also apply on hybrid machines using a different GPU. User confirmation of clean
-exit and responsive navigation, typing and hand animation is still required.
+also apply on hybrid machines using a different GPU. On September 21 the user
+confirmed that the rebuilt app resolves the exit crash. This is human acceptance
+on the prototype machine, not cross-platform or automated validation.
 
 Thumb classification now projects into a palm-local plane, measures lateral
 extension from the thumb's own base, and separately accepts a thumb raised beside
@@ -692,9 +693,10 @@ the isolated tutorial draft retain their existing owners and behavior.
 ## Dark background bands
 
 The supplied PNG contains a horizontal darkening pattern repeating every 45 image
-rows. The shared backdrop's repeating scanline gradient is the source candidate;
-it is independent of the star glyphs and the radial vignette. Remove the scanline
-element and its styles from the shared Instrument/sign-in backdrop. This removes
+rows. Removing the shared backdrop's repeating scanline gradient resolved the
+bands, as confirmed by the user on September 21. The scanline element and its
+styles are removed from the shared Instrument/sign-in backdrop. This removes
 an ornamental paint layer without adding filtering, animation or texture work.
 The original CSS comments mentioning scanlines are preserved, followed by a note
-recording their removal. Confirmation on the user's affected display is pending.
+recording their removal. Light theme already hid this overlay; the visible change
+is confined to dark theme.

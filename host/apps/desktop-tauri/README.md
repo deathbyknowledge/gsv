@@ -6,8 +6,8 @@ Desktop, its credentials, daemon, CLI endpoint and installer remain separate.
 The ownership record is [here](../../../../engineering/desktop-tauri-prototype.md).
 
 The requested prototype features are implemented and the local executable builds.
-Final human acceptance and CI verification remain open. The WebKit/NVIDIA exit
-workaround awaits a human quit and responsiveness check. Production replacement,
+Final human acceptance and CI verification remain open. The user confirmed that
+the WebKit/NVIDIA exit workaround resolves the local quit crash. Production replacement,
 native feature parity and supported-platform distribution are separate from this
 prototype.
 
@@ -61,7 +61,7 @@ On Linux with the NVIDIA kernel module loaded, the host also defaults
 `WEBKIT_SKIA_GPU_PAINTING_THREADS` to `0` before starting GTK or any runtime
 threads. This avoids the GPU-worker cleanup path implicated in the local exit
 crash. WebKit still paints with the GPU, but schedules that painting on its main
-thread; responsiveness needs comparison in the human acceptance pass. An
+thread; compare responsiveness when qualifying other GPU/driver combinations. An
 explicit value for this environment variable takes precedence. This is an
 app-local mitigation for the observed WebKitGTK 2.52.6/NVIDIA 610.57.04 failure,
 not a driver fix. See
@@ -192,7 +192,7 @@ shortcut, and timing collectors have been removed.
 
 - On the prototype NVIDIA machine, repeated WebKitWebProcess cores show GPU-worker
   crashes during graphics teardown on exit. The host now avoids those workers;
-  clean exit and responsiveness with this mitigation still need human acceptance.
+  the user confirmed clean exit with this mitigation on September 21.
   See the ownership record for the diagnosis.
 - Minimized webview suspension interrupts dictation. This is explicit fail-closed
   behavior for the prototype, not production native parity.
