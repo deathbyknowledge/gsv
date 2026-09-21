@@ -1,7 +1,15 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../app/features/instrument/shared/useDismissOnOutsideClick";
 
-const ORIGINAL_SCANLINES = "data-desktop-original-scanlines";
+const RENDERING_COMPARISON = "data-desktop-rendering";
+const RENDERING_CHOICES = [
+  ["normal", "Normal effects"],
+  ["plain", "No stars, overlays or UI shadows"],
+  ["no-star-glow", "No star glow"],
+  ["no-stars", "No stars"],
+  ["no-ui-shadows", "No UI shadows"],
+  ["no-overlays", "No scanlines or vignette"],
+] as const;
 
 function readReport() {
   const bounds = (selector: string) => {
@@ -19,7 +27,7 @@ function readReport() {
     work: window.gsvInputTiming.readWork(),
     appearance: {
       theme: instrument ? instrument.classList.contains("is-light") ? "light" : "dark" : null,
-      originalScanlineBlend: document.documentElement.hasAttribute(ORIGINAL_SCANLINES),
+      renderingComparison: document.documentElement.getAttribute(RENDERING_COMPARISON) ?? "normal",
     },
     loadedMoments: document.querySelectorAll(".zen-content > [data-moment-id]").length,
     viewport: { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio },
@@ -39,7 +47,7 @@ export function InputTimingPanel() {
     button.current?.focus({ preventScroll: true });
   };
   useDismissOnOutsideClick(report !== null, () => [button.current, panel.current], () => setReport(null));
-  useLayoutEffect(() => () => document.documentElement.removeAttribute(ORIGINAL_SCANLINES), []);
+  useLayoutEffect(() => () => document.documentElement.removeAttribute(RENDERING_COMPARISON), []);
   useLayoutEffect(() => { if (report) panel.current?.focus({ preventScroll: true }); }, [report !== null]);
   useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -114,15 +122,17 @@ export function InputTimingPanel() {
       {copied && <p role="status">{copied}</p>}
       <details class="desktop-rendering-comparison">
         <summary>Dark-mode rendering comparison</summary>
-        <p>Keep dark mode selected and compare the same navigation and typing with this option off, then on. Close this panel for each pass.</p>
-        <label><input type="checkbox" checked={report.appearance.originalScanlineBlend}
+        <p>Keep dark mode selected. First compare normal effects with no stars, overlays or UI shadows. Close this panel and try the same j/k, typing and cursor movement for each pass.</p>
+        <label>Rendering<select value={report.appearance.renderingComparison}
           onChange={(event) => {
-            document.documentElement.toggleAttribute(ORIGINAL_SCANLINES, event.currentTarget.checked);
+            const choice = event.currentTarget.value;
+            if (choice === "normal") document.documentElement.removeAttribute(RENDERING_COMPARISON);
+            else document.documentElement.setAttribute(RENDERING_COMPARISON, choice);
             window.gsvInputTiming.reset();
             setReport(readReport());
             setCopied(null);
-          }} /> Original scanline blend</label>
-        <p>Off uses ordinary transparency; on restores the previous multiply blend. Changing it clears samples. This comparison resets when the app restarts.</p>
+          }}>{RENDERING_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <p>If removing all effects helps, compare the individual choices with normal effects to locate the cost. Choices keep the theme colors, clear samples, and reset when the app restarts.</p>
       </details>
       <details><summary>Report</summary><pre>{JSON.stringify(report, null, 2)}</pre></details>
       <p>Each input type keeps its own last 200 events, so these rows can cover different periods. Appearance describes the current setting; clear samples after switching themes. No keys, draft text or conversation content are recorded.</p>

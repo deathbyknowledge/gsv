@@ -434,15 +434,35 @@ redundant blend is removed while retaining the gradient, vignette and glows.
 This removes a request for backdrop blending; a renderer performance improvement
 is a hypothesis awaiting the human pass, not an established result.
 
-The prototype Timings panel includes an on-demand comparison that restores only
-the old blend, without restarting, changing theme, or rerendering the conversation.
-It clears samples on each change and resets on app restart. Reports include the
-current theme and comparison setting, not historical per-sample appearance;
-clear samples when changing theme. The comparison CSS is desktop-only. Compare
-dark-mode j/k, prompt focus, typing and cursor movement with the option off/on/off,
-keeping the same monitor, zoom and loaded conversation. If neither condition
-helps, this does not identify the blend as the cause; glows and background paint
-remain candidates for a separately controlled comparison. The desktop frontend
-and native executable compile successfully. The existing window was left running;
-no runtime profiling or automated tests were performed under the human-testing
-workflow.
+The first diagnostic build offered an on-demand comparison that restored only
+the old blend, without restarting or changing theme. Reports identify the current
+theme and comparison setting, not historical per-sample appearance; clear samples
+when changing theme. Both desktop builds compiled, and the user reopened that
+build. No runtime profiling or automated tests were performed under the
+human-testing workflow.
+
+## Isolating the remaining dark-theme rendering cost
+
+The blend removal has not been confirmed to fix dark-theme latency. The next
+human pass isolates the remaining drawing effects before changing their shared
+implementation.
+
+The prototype-only rendering comparison now offers independent choices for no
+star glow, no stars, no UI text/box shadows, and no scanlines/vignette, plus a
+combined option. The old multiply-restoration control is removed. Ordinary
+launches keep normal rendering. Each choice changes only a document attribute
+and desktop CSS; it does not change the theme, component state in Instrument,
+the message tree, the ship's glyph selection or any gateway/native input state.
+Hiding the star field also makes its existing IntersectionObserver stop the
+animation loop. The comparison is session-only and cleared on unmount/restart;
+copied reports identify it and timing buffers are cleared when it changes.
+
+For the human pass, use dark mode at a fixed zoom on the same monitor. Compare
+normal rendering with the combined removal first, closing Timings while using
+j/k, typing and moving the caret. If the combined removal helps, compare each
+individual removal with normal rendering to identify the responsible effect.
+If it does not, do not attribute the latency to these decorations; capture a
+fresh report and investigate the remaining drawing/presentation path. This is
+an isolation aid, not a verified performance fix or a product appearance change.
+The desktop frontend and native executable compile successfully. The current
+window was left untouched; this comparison still needs a human pass after reopen.
