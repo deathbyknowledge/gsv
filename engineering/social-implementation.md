@@ -356,3 +356,10 @@ ordinary Processes with a link to their existing Zen work surface. Draft changes
 broadcast the existing owner-only contact invalidation; private content is not
 included in signals. Selection/attachment regressions are source for CI, not a
 local test result. Optional automatic admission and the final audit remain.
+
+The scope audit found the Shell proc list presentation still reading the raw
+registry; it now uses the same restricted list handler as the protocol. Added
+proc scope inspection beneath the existing Shell tool. Captured Shell/CodeMode
+requests now intersect current account capabilities again, and scoped sends and
+inference recheck that intersection at effect admission. Regression sources cover
+private process-label isolation and capability removal during a captured context.

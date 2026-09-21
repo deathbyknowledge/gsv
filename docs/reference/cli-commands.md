@@ -54,6 +54,7 @@ commands inspect and control the Kernel schedule records:
 ```bash
 proc self
 proc list
+proc scope [PID] [--json]
 proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--] [prompt]
 proc delegate [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--check-after 10m] [--responsibility ID] <task>
 proc reset [--pid PID]

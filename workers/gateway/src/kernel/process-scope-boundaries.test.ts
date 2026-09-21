@@ -21,8 +21,14 @@ describe("scoped Process syscall boundaries", () => {
         kernel.procs.spawn(pid, { uid: 0, gid: 0, gids: [0], username: "root", home: "/var/scopes/test", cwd: "/materials" }, { scopeId: scope.id });
       });
       const ctx = kernel.buildProcessContext(pid)!;
+      kernel.procs.spawn("proc:private", { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, { label: "Private process label" });
       const selected = await handleShellExec({ input: "cat /materials/selected.txt" }, ctx);
       expect(selected.output).toContain("only selected material");
+      const processes = await handleShellExec({ input: "proc list" }, ctx);
+      expect(processes.output).toContain(pid);
+      expect(processes.output).not.toContain("Private process label");
+      const access = await handleShellExec({ input: "proc scope --json" }, ctx);
+      expect(access.output).toContain(scope.id);
       const privateRead = await handleShellExec({ input: "cat /etc/shadow" }, ctx);
       expect(privateRead).not.toMatchObject({ status: "completed", exitCode: 0 });
       const ipc = await handleShellExec({ input: "proc ipc send proc:private --message 'outside'" }, ctx);

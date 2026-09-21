@@ -1132,8 +1132,8 @@ type ProcIpcCallResult =
 
 type ProcessSyscalls = {
   "proc.list": {
-    args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
+    args: { uid?: number; conversationId?: string };
+    result: { processes: Array<{ pid: string; scopeId?: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.spawn": {

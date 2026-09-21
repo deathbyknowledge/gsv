@@ -17,6 +17,16 @@ export function scopedCapabilities(accountCalls: readonly string[]): string[] {
   return SCOPED_CALLS.filter((call) => hasCapability(accountCalls, call));
 }
 
+/** Captured Shell and CodeMode contexts may outlive a capability change. */
+export function effectiveProcessCapabilities(ctx: KernelContext): readonly string[] {
+  const original = principalOf(ctx)?.calls ?? [];
+  if (!currentProcessScope(ctx)) return original;
+  const identity = ctx.procs.getIdentity(ctx.processId!);
+  if (!identity) throw new Error("Scoped process no longer exists");
+  const current = ctx.caps.resolve(identity.gids);
+  return scopedCapabilities(original).filter((call) => hasCapability(current, call));
+}
+
 /** A fresh read on every boundary; never trust a model argument or an old context. */
 export function currentProcessScope(ctx: KernelContext): ProcessScope | null {
   if (!ctx.processScopeId) return null;
@@ -71,6 +81,7 @@ export function scopedResource(ctx: KernelContext, target: string, path: string)
 
 export function assertScopedSend(ctx: KernelContext, contactId: string): ProcessScope | null {
   const scope = currentProcessScope(ctx);
+  if (scope && !hasCapability(effectiveProcessCapabilities(ctx), "contact.send")) throw new Error("Process scope denies contact.send");
   if (scope && !scope.policy.conversations.some((grant) => grant.contactId === contactId && grant.send)) {
     throw new Error("This helper cannot send to that recipient; prepare a draft for the owner instead");
   }
@@ -82,7 +93,7 @@ export function assertScopedRequest(frame: RequestFrame, ctx: KernelContext): vo
   const scope = currentProcessScope(ctx);
   if (!scope) return;
   if (!INTERNAL_SCOPED_CALLS.has(frame.call)
-    && !scopedCapabilities(principalOf(ctx)?.calls ?? []).includes(frame.call)) throw new Error(`Process scope denies ${frame.call}`);
+    && !effectiveProcessCapabilities(ctx).includes(frame.call)) throw new Error(`Process scope denies ${frame.call}`);
   if (INTERNAL_SCOPED_CALLS.has(frame.call) && ctx.processRunId) throw new Error("Internal Process configuration is not a model capability");
   if (frame.call === "fs.read" || frame.call === "fs.transfer.send" || frame.call === "shell.exec" || frame.call === "ai.text.generate") {
     const target = frame.args.target;

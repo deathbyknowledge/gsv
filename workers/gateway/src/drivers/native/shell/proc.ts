@@ -1,13 +1,14 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
-import { resolveCallerOwnerUid } from "../../../kernel/context";
+import { handleProcScopeGet } from "../../../kernel/process-scope-handlers";
 import {
   forwardToProcess,
   handleProcFork,
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcSpawn,
+  handleProcList,
   resolveIpcCallTimeoutMs,
 } from "../../../kernel/proc-handlers";
 import {
@@ -153,12 +154,21 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       requireCommandCapability(ctx, "proc.list");
       // Visibility is keyed on the owning human, not the run-as account: an
       // agent-backed shell must list its owner's processes, not the agent uid's.
-      const list = ctx.procs.list(resolveCallerOwnerUid(ctx));
+      const list = handleProcList({}, ctx).processes;
       const lines = ["PID\tSTATE\tRUN-AS\tLABEL"];
       for (const proc of list) {
-        lines.push(`${proc.processId}\t${proc.state}\t${proc.username}\t${proc.label ?? ""}`);
+        lines.push(`${proc.pid}\t${proc.state}\t${proc.username}\t${proc.label ?? ""}`);
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "scope": {
+      requireCommandCapability(ctx, "proc.scope.get");
+      const positional = rest.filter((arg) => arg !== "--json");
+      if (positional.length > 1 || positional.some((arg) => arg.startsWith("--"))) throw new Error("proc scope accepts [PID] [--json]");
+      const pid = positional[0] ?? ctx.processId;
+      if (!pid) throw new Error("proc scope requires a process id");
+      const result = handleProcScopeGet({ pid }, ctx);
+      return { stdout: `${JSON.stringify(result, null, 2)}\n`, stderr: "", exitCode: 0 };
     }
     case "agents": {
       requireCommandCapability(ctx, "account.list");
@@ -1293,6 +1303,7 @@ function procUsage(): string {
     "Usage:",
     "  proc self",
     "  proc list",
+    "  proc scope [PID] [--json]",
     "  proc agents [--json]",
     "  proc spawn [--as ACCOUNT] [--model MODEL_ID] [--effort LEVEL] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
     "  proc spawn --json JSON",

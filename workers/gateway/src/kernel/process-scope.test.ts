@@ -6,7 +6,7 @@ import { FederationStore } from "./federation-store";
 import { CapabilityStore } from "./capabilities";
 import { processPeerContext } from "./peer";
 import type { KernelContext } from "./context";
-import { assertScopedConversation, assertScopedProcess, assertScopedRequest, currentProcessScope, scopedCapabilities } from "./process-scope";
+import { assertScopedConversation, assertScopedProcess, assertScopedRequest, currentProcessScope, effectiveProcessCapabilities, scopedCapabilities } from "./process-scope";
 
 const IDENTITY: ProcessIdentity = { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" };
 const policy = (): ProcessScopePolicy => ({ conversations: [], resources: [], materials: [{ name: "help.txt", text: "Chosen public help" }],
@@ -42,6 +42,7 @@ describe("durable Process scopes", () => {
       // SAFETY: these synchronous policy checks use exactly the real stores and trusted peer supplied here.
       const ctx = { procs, federation: new FederationStore(storage), caps: new CapabilityStore(sql), processId: "proc:helper", processScopeId: scope.id,
         peer: processPeerContext({ installationId: "inst:test", processId: "proc:helper", identity: IDENTITY, calls: ["*"] }) } as KernelContext;
+      ctx.caps.grant(1000, "*");
       expect(currentProcessScope(ctx)?.id).toBe(scope.id);
       expect(() => assertScopedConversation(ctx, "conversation:private")).toThrow("outside");
       expect(() => assertScopedProcess(ctx, "proc:personal")).toThrow("outside");
@@ -50,6 +51,8 @@ describe("durable Process scopes", () => {
       expect(scopedCapabilities(["*"])).not.toContain("net.fetch");
       expect(scopedCapabilities(["conversation.history"])).toEqual(["conversation.history"]);
       expect(() => assertScopedRequest({ type: "req", id: "three", call: "ai.config", args: {} }, { ...ctx, processRunId: "run:tool" })).toThrow("not a model capability");
+      ctx.caps.revoke(1000, "*");
+      expect(effectiveProcessCapabilities(ctx)).not.toContain("shell.exec");
       procs.kill("proc:helper");
       expect(() => currentProcessScope(ctx)).toThrow("no longer exists");
     });

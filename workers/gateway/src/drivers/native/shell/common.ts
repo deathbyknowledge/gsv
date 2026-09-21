@@ -1,11 +1,9 @@
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
-import { principalOf } from "../../../kernel/context";
-import { currentProcessScope, scopedCapabilities } from "../../../kernel/process-scope";
+import { effectiveProcessCapabilities } from "../../../kernel/process-scope";
 
 export function requireCommandCapability(ctx: KernelContext, capability: string): void {
-  const calls = principalOf(ctx)?.calls ?? [];
-  const capabilities = currentProcessScope(ctx) ? scopedCapabilities(calls) : calls;
+  const capabilities = effectiveProcessCapabilities(ctx);
   if (!hasCapability(capabilities, capability)) {
     throw new Error(`Permission denied: ${capability}`);
   }

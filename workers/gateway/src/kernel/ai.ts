@@ -13,7 +13,7 @@
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
 import { ownerTimezone } from "./timezone";
-import { currentProcessScope, scopedCapabilities } from "./process-scope";
+import { currentProcessScope, effectiveProcessCapabilities, scopedCapabilities } from "./process-scope";
 import { GSV_RUNTIME_FACTS, GSV_RUNTIME_CONTEXT, GSV_TARGET_CONTEXT, GSV_RESPONSIBILITY_CONTEXT, GSV_CONTEXT_DISCOVERY, GSV_PROCESS_ORCHESTRATION } from "../prompts/system";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
@@ -351,7 +351,6 @@ export async function handleAiTextGenerate(
   const scope = currentProcessScope(ctx);
   if (scope) {
     if (normalizeTarget(config.transportTarget) !== "gsv") throw new Error("Helper scope does not permit a connected machine model transport");
-    ctx.federation.transaction(() => ctx.procs.scopes.consume(scope.id, "generations", crypto.randomUUID(), scope.revision));
   }
   const context = normalizeAiTextGenerationContext(input);
   const options = normalizeAiTextGenerateOptions(input.options);
@@ -369,6 +368,10 @@ export async function handleAiTextGenerate(
     attribution,
   };
   if (options) generationRequest.options = options;
+  if (scope) {
+    if (!effectiveProcessCapabilities(ctx).includes("ai.text.generate")) throw new Error("Process scope denies ai.text.generate");
+    ctx.federation.transaction(() => ctx.procs.scopes.consume(scope.id, "generations", crypto.randomUUID(), scope.revision));
+  }
   const response = await createGenerationService(ctx.env).generate(generationRequest);
   currentProcessScope(ctx);
   const text = extractGeneratedText(response);
