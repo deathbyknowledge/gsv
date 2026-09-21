@@ -1,4 +1,24 @@
-import type { NativeSnapshot } from "./PlatformProvider";
+import type { NativeSnapshot, NativeVoice } from "./PlatformProvider";
+
+type VoicePreparation = { message: string; progress: number | undefined };
+
+export function voicePreparation(voice: NativeVoice | null | undefined): VoicePreparation | null {
+  switch (voice?.phase) {
+    case "preparing":
+      return { message: "Preparing voice…", progress: undefined };
+    case "downloading":
+      return {
+        message: voice.progress == null ? "Downloading voice model…" : `Downloading voice model · ${Math.round(voice.progress * 100)}%`,
+        progress: voice.progress ?? undefined,
+      };
+    case "verifying":
+      return { message: "Verifying voice model…", progress: undefined };
+    case "loading":
+      return { message: "Loading voice model…", progress: undefined };
+    default:
+      return null;
+  }
+}
 
 /** Transport acknowledgements and dictated text do not invalidate the input controls. */
 export function sameNativePresentation(a: NativeSnapshot | null, b: NativeSnapshot): boolean {

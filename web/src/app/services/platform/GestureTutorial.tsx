@@ -3,6 +3,7 @@ import { GestureIllustration } from "./GestureIllustration";
 import { gestureFeedback } from "./NativeGestureFeedback";
 import { InputSoundSettings } from "./InputSoundSettings";
 import { playInputCue } from "./inputSounds";
+import { voicePreparation } from "./nativePresentation";
 import { practiceCorrection, practiceHold } from "./practiceFeedback";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
 import type { GestureCandidate, PracticeTarget, SegmentAction } from "./PlatformProvider";
@@ -58,6 +59,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   });
   const { snapshot, error } = control;
   const voice = snapshot?.voice;
+  const preparation = voicePreparation(voice);
   const camera = snapshot?.gestures_enabled ?? false;
   const listening = voice?.phase === "listening";
   const feedback = snapshot ? gestureFeedback(snapshot) : null;
@@ -153,13 +155,14 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const resetting = recognized > 0 && lesson.action !== "disarm";
   const awaitingFist = snapshot?.gesture_needs_reset ?? false;
   const liveMessage = notice ? "Input needs attention" : !snapshot ? "Connecting input…"
+    : preparation ? preparation.message
     : feedback?.progress != null ? holding ?? feedback.message
     : correction ? correction
     : awaitingFist ? "Close your right hand to reset"
     : complete ? resetting ? "✓ Fist detected · next step…" : "✓ Done · next step…"
     : resetting ? "✓ Fist detected · waiting for the action to finish"
     : !camera && !voice ? "Camera and microphone off"
-    : preparing && voice ? "Preparing microphone…"
+    : voice?.phase === "finishing" ? "Pausing…"
     : !camera && listening ? "Listening · camera off" : feedback?.message;
   const completedLessons = steps.slice(1).filter((_, index) => completed.has(index + 1)).length;
   return <dialog ref={dialog} class="native-tutorial" aria-labelledby="native-tutorial-title" data-instrument-dialog data-complete={finished ? "true" : undefined}
@@ -232,7 +235,8 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
       </div>
       <div class="native-tutorial-feedback" role="status">
         <span class={complete && !notice && !correction ? "native-tutorial-success" : undefined}>{liveMessage}</span>
-        <progress max={1000} value={feedback?.progress ?? (complete ? 1000 : 0)} aria-label="Gesture hold" />
+        {preparation ? <progress max={1} value={preparation.progress} aria-label={preparation.message} />
+          : <progress max={1000} value={feedback?.progress ?? (complete ? 1000 : 0)} aria-label="Gesture hold" />}
       </div>
     </section>
     <footer class="native-tutorial-footer">

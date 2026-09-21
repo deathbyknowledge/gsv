@@ -7,6 +7,7 @@ import { GestureGuide } from "./GestureGuide";
 import { GestureTutorial } from "./GestureTutorial";
 import { InputSoundSettings } from "./InputSoundSettings";
 import { installInputSounds } from "./inputSounds";
+import { voicePreparation } from "./nativePresentation";
 import { useNativeVoice } from "./useNativeVoice";
 import "./native-input.css";
 
@@ -28,6 +29,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const gestureButton = useRef<HTMLButtonElement>(null);
   const { snapshot, error, command } = control;
   const voice = snapshot?.voice;
+  const preparation = voicePreparation(voice);
   const notice = error || snapshot?.notice;
   const busy = !options.enabled || !snapshot;
   const feedback = snapshot ? gestureFeedback(snapshot) : null;
@@ -35,8 +37,9 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const ready = snapshot?.gesture_status === "ready";
   const failed = cameraOn && !ready && snapshot?.gesture_status !== "starting";
   const voiceLabel = !voice ? "voice" : voice.phase === "listening" ? "listening"
-    : voice.phase === "finishing" ? "pausing…" : "preparing…";
+    : voice.phase === "finishing" ? "pausing…" : preparation?.message ?? "preparing…";
   const handsFreeLabel = !cameraOn ? "hands-free" : failed ? "camera unavailable"
+    : preparation ? preparation.message
     : feedback?.progress != null ? feedback.message : feedback?.action
     ?? (ready ? voice?.phase === "listening" ? "hands-free · listening" : "hands-free · ready" : "starting camera…");
   const close = (restoreFocus: boolean) => {
@@ -74,7 +77,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       onClick={() => setPanel((current) => current === "gestures" ? null : "gestures")}>
       {cameraOn && <span class="native-sensor-dot" aria-hidden="true" />}
       <span aria-live="polite">{handsFreeLabel}</span>
-      {cameraOn && feedback?.progress != null &&
+      {cameraOn && !preparation && feedback?.progress != null &&
         <progress class="native-hold" max={1000} value={feedback.progress} aria-label={feedback.message} />}
     </button>
     {notice && !panel && !tutorial && <>
@@ -104,7 +107,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
               onClick={voice.phase === "listening" ? control.stop : control.cancel}>{voice.phase === "listening" ? "pause" : voice.phase === "finishing" ? "pausing…" : "cancel"}</button>}
           <span class="native-panel-state" role="status">{voice ? voiceLabel : "Microphone off"}</span>
         </div>
-        {voice?.progress != null && voice.phase !== "listening" && <progress max={1} value={voice.progress} aria-label="Preparing voice" />}
+        {preparation && <progress max={1} value={preparation.progress} aria-label={preparation.message} />}
         <label class="native-device">Microphone
           <select value={control.device} disabled={busy || !!voice || snapshot?.devices_loading} onChange={(event) => control.setDevice(event.currentTarget.value)}>
             <option value="">System default</option>
@@ -117,7 +120,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
         <div class="native-panel-actions">
           <button type="button" class="native-primary native-hands-free-toggle" disabled={busy} aria-label={cameraOn ? "Disable hands-free" : "Enable hands-free"}
             onClick={() => void command({ kind: "gestures", enabled: !cameraOn })}>{cameraOn ? "disable" : "enable"}</button>
-          <span class="native-panel-state" role="status">{cameraOn ? feedback?.message : "Off"}</span>
+          <span class="native-panel-state" role="status">{preparation?.message ?? (cameraOn ? feedback?.message : "Off")}</span>
         </div>
         <GestureGuide tutorialDisabled={busy} onStartTutorial={startTutorial} />
         <p class="native-panel-footnote">Camera stays on while ready. Camera and voice stay on this computer.</p>
