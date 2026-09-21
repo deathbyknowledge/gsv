@@ -22,10 +22,10 @@ const mix = (a: Vector, b: Vector, t: number): Vector => a.map((value, axis) => 
 // Wrist, heel, thenar/hypothenar pads and the curved row of knuckles share a
 // continuous palm surface. Coordinates face the camera, with +z on the palm.
 const sections = [
-  [4.4, 1.04, 0.42, 0.40], [3.4, 1.08, 0.49, 0.38],
-  [2.6, 1.42, 0.64, 0.39], [1.4, 1.76, 0.61, 0.36],
-  [0.1, 1.93, 0.49, 0.35], [-1.0, 1.87, 0.44, 0.32],
-  [-1.45, 1.40, 0.34, 0.29],
+  [4.4, 1.09, 0.68, 0.60, -0.06], [3.4, 1.13, 0.71, 0.62, -0.06],
+  [2.6, 1.48, 0.83, 0.67, -0.10], [1.4, 1.80, 0.76, 0.56, -0.05],
+  [0.1, 1.94, 0.62, 0.50, 0.02], [-1.0, 1.89, 0.56, 0.53, 0.06],
+  [-1.45, 1.42, 0.39, 0.41, 0.03],
 ] as const;
 
 function palmPoint(t: number, angle: number): Vector {
@@ -37,10 +37,16 @@ function palmPoint(t: number, angle: number): Vector {
   const width = a[1] + (b[1] - a[1]) * fraction;
   const facing = Math.sin(angle);
   const depth = facing >= 0 ? a[2] + (b[2] - a[2]) * fraction : a[3] + (b[3] - a[3]) * fraction;
+  const centerZ = a[4] + (b[4] - a[4]) * fraction;
   const x = Math.cos(angle) * width;
-  const thenar = 0.30 * Math.exp(-((x + 1.05) ** 2 / 0.65 + (y - 1.45) ** 2 / 1.5));
-  const hypothenar = 0.13 * Math.exp(-((x - 1.15) ** 2 / 0.45 + (y - 1.4) ** 2 / 2));
-  const z = Math.sign(facing) * Math.abs(facing) ** 0.7 * depth + (thenar + hypothenar) * Math.max(0, facing) ** 3;
+  const thenar = 0.42 * Math.exp(-((x + 1.05) ** 2 / 0.72 + (y - 1.45) ** 2 / 1.7));
+  const hypothenar = 0.24 * Math.exp(-((x - 1.15) ** 2 / 0.50 + (y - 1.4) ** 2 / 2));
+  const hollow = 0.16 * Math.exp(-(x * x / 0.70 + (y - 0.45) ** 2 / 1.2));
+  const knuckles = [-1.38, -0.46, 0.49, 1.36].reduce((height, knuckle) =>
+    height + 0.12 * Math.exp(-((x - knuckle) ** 2 / 0.12 + (y + 0.85) ** 2 / 0.38)), 0);
+  const z = centerZ + Math.sign(facing) * Math.abs(facing) ** 0.92 * depth
+    + (thenar + hypothenar - hollow) * Math.max(0, facing) ** 3
+    - knuckles * Math.max(0, -facing) ** 3;
   return [x, y + blend(0.7, 1, t) * (0.22 * (x / width) ** 2 + 0.10 * x / width), z];
 }
 
@@ -84,7 +90,7 @@ export function createHandModel(): HandModel {
   connect(0, palmRings, palmSides, () => SKIN);
   for (const ring of [0, palmRings]) {
     const center = vertices.length / 6;
-    vertices.push(0, ring === 0 ? 4.4 : -1.45, 0, 0, ring === 0 ? 1 : -1, 0);
+    vertices.push(0, ring === 0 ? 4.4 : -1.45, ring === 0 ? sections[0][4] : sections[sections.length - 1][4], 0, ring === 0 ? 1 : -1, 0);
     for (let side = 0; side < palmSides; side++) {
       indices.push(center, ring * palmSides + side, ring * palmSides + (side + 1) % palmSides);
       materials.push(SKIN);
@@ -104,9 +110,9 @@ export function createHandModel(): HandModel {
     return { offset, rings, radius, length };
   };
   const fingers: Finger[] = [
-    { ...tube(3.55, 0.43, 22), base: [-1.38, -1.16, 0.03], splay: -0.14 },
-    { ...tube(3.95, 0.45, 22), base: [-0.46, -1.43, 0.00], splay: -0.035 },
-    { ...tube(3.68, 0.43, 22), base: [0.49, -1.30, -0.04], splay: 0.065 },
+    { ...tube(3.55, 0.43, 22), base: [-1.38, -1.16, 0.18], splay: -0.14 },
+    { ...tube(3.95, 0.45, 22), base: [-0.46, -1.43, 0.10], splay: -0.035 },
+    { ...tube(3.68, 0.43, 22), base: [0.49, -1.30, 0.03], splay: 0.065 },
     { ...tube(2.83, 0.34, 20), base: [1.36, -0.94, -0.10], splay: 0.20 },
   ];
   const thumb = tube(3.50, 0.51, 24);
@@ -115,13 +121,14 @@ export function createHandModel(): HandModel {
   const ring = (part: Tube, index: number, center: Vector, tangent: Vector, side: Vector) => {
     const front: Vector = [tangent[1] * side[2] - tangent[2] * side[1], tangent[2] * side[0] - tangent[0] * side[2], tangent[0] * side[1] - tangent[1] * side[0]];
     const t = index / part.rings, radius = radiusAt(t, part.radius);
+    const roundness = 0.96;
     const slope = (radiusAt(Math.min(1, t + 0.001), part.radius) - radiusAt(Math.max(0, t - 0.001), part.radius)) / (0.002 * part.length);
     for (let step = 0; step < SIDES; step++) {
       const angle = step / SIDES * Math.PI * 2, cosine = Math.cos(angle), sine = Math.sin(angle);
-      const normal = unit(side.map((value, axis) => value * cosine + front[axis] * sine / 0.86 - tangent[axis] * slope) as Vector);
+      const normal = unit(side.map((value, axis) => value * cosine + front[axis] * sine / roundness - tangent[axis] * slope) as Vector);
       const offset = (part.offset + index * SIDES + step) * 6;
       for (let axis = 0; axis < 3; axis++) {
-        mesh.vertices[offset + axis] = center[axis] + radius * (side[axis] * cosine + front[axis] * sine * 0.86);
+        mesh.vertices[offset + axis] = center[axis] + radius * (side[axis] * cosine + front[axis] * sine * roundness);
         mesh.vertices[offset + 3 + axis] = normal[axis];
       }
     }
@@ -154,7 +161,7 @@ export function createHandModel(): HandModel {
     // Thumb opposition rotates across the palm, independently of the four
     // finger hinges. Keep bone lengths fixed while its direction changes.
     const open = mask & 1 ? extension : 0;
-    const joints: Vector[] = [[-1.22, 1.80, 0.20]];
+    const joints: Vector[] = [[-1.22, 1.80, 0.34]];
     const folded: Vector[] = [[-0.45, -0.84, 0.35 + grip * 0.35], [0.82, -0.34, 0.25 + grip * 0.50], [0.95, 0.10, 0.08 + grip * 0.13]];
     const lengths = [1.45, 1.15, 0.90];
     for (let joint = 0; joint < 3; joint++) {

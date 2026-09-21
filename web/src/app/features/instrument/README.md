@@ -138,9 +138,12 @@ The guide uses an original 3D hand mesh with a shaped palm, independently curlin
 fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
 depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
 runs at 18 fps and turns once every 40 seconds around the vertical axis. Dragging
-horizontally holds the pose and turns each hand in place; releasing resumes from
-that angle. Left/Right and Home provide keyboard rotation and reset. Manual turns
-also work while paused or with reduced motion. Each mounted lesson keeps at most
+horizontally holds the pose and orbits the whole scene around one vertical axis;
+the paired hands share a pivot between their palms and their connecting line
+follows that same rotation. Releasing resumes from that angle. The palm, wrist,
+thumb pad and knuckles retain volume from the side. Left/Right and Home provide
+keyboard rotation and reset. Manual turns also work while paused or with reduced
+motion. Each mounted lesson keeps at most
 128 recent frames, and a theme change replaces the cached palette. The hand scene
 owns articulation and rotation; the shared raster owns projection and shading.
 Interaction invalidates the glyph host directly, coalesced to one animation frame,

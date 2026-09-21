@@ -18,13 +18,14 @@ const TAU = Math.PI * 2;
 const TURN_SECONDS = 40;
 const ANGLES = 720;
 const CACHED_FRAMES = 128;
+const PERSPECTIVE = 0.012;
 
 // Bits are thumb, index, middle, ring, pinky. Alternate examples teach counts,
 // without suggesting that a particular combination owns the command.
 const examples: Record<Exclude<GestureLesson, "scroll">, readonly number[]> = {
   0: [0], 1: [2, 1], 2: [6, 3], 3: [14, 7], 4: [30, 15], 5: [31],
 };
-const raster = new AsciiMeshRaster(COLS, ROWS, { perspective: 0.012 });
+const raster = new AsciiMeshRaster(COLS, ROWS, { perspective: PERSPECTIVE });
 let model: HandModel | undefined;
 const ease = (value: number) => {
   const t = Math.max(0, Math.min(1, value));
@@ -37,17 +38,31 @@ function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt:
   raster.clear();
   const paired = lesson === 0 || lesson === "scroll";
   const unit = paired ? 6.8 : 8.2;
+  const cosine = Math.cos(yaw), sine = Math.sin(yaw);
+  const pivotX = paired ? 0 : 0.45;
+  const orbit = (x: number, y: number): [number, number, number] => [
+    pivotX + (x - pivotX) * cosine, y, -(x - pivotX) * sine,
+  ];
   const hand = (x: number, y: number, mirror: boolean, fingers: number, open: number) => {
     handModel.pose(fingers, open, mirror);
     const direction = mirror ? -1 : 1;
-    const rotation = rotationMatrix(yaw + (-0.30 + open * 0.12) * direction, -0.10, -0.035 * direction);
-    raster.mesh(handModel.mesh, rotation, unit, 0, 1, [x, y, 0]);
+    const orientation = rotationMatrix((-0.30 + open * 0.12) * direction, -0.10, -0.035 * direction);
+    const rotation = orientation.slice();
+    // Apply the same parent yaw to the hand's orientation and its position.
+    // The pair keeps one pivot between the palms, including their depth order.
+    for (let column = 0; column < 3; column++) {
+      rotation[column] = cosine * orientation[column] + sine * orientation[column + 6];
+      rotation[column + 6] = cosine * orientation[column + 6] - sine * orientation[column];
+    }
+    raster.mesh(handModel.mesh, rotation, unit, 0, 1, orbit(x, y));
   };
   if (lesson === "scroll") {
     // Mirrored view: control palm on the left, action fist on the right.
     for (let step = 1; step < 16; step++) {
-      const t = step / 16, x = -4.3 + t * 8.6, y = 0.5 - tilt + t * tilt * 2;
-      raster.splat(raster.width / 2 + x * unit * 11 / 7, raster.height / 2 + y * unit, -10, 0.25, 0.65);
+      const t = step / 16;
+      const [x, y, z] = orbit(-4.3 + t * 8.6, 0.5 - tilt + t * tilt * 2);
+      const perspective = 1 + z * PERSPECTIVE;
+      raster.splat(raster.width / 2 + x * unit * 11 / 7 * perspective, raster.height / 2 + y * unit * perspective, z, 0.25, 0.65);
     }
     hand(-4.3, 0.5 - tilt, true, 31, 1);
     hand(4.3, 0.5 + tilt, false, 0, 0);
