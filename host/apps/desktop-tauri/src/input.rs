@@ -44,16 +44,9 @@ pub enum InputCommand {
         segment_id: u64,
         action: SegmentAction,
     },
-    Mute {
-        request_id: u64,
-        muted: bool,
-    },
     Devices,
     Gestures {
         enabled: bool,
-    },
-    Arm {
-        armed: bool,
     },
     Detach,
 }
@@ -67,12 +60,9 @@ pub struct VoiceState {
     pub phase: String,
     pub progress: Option<f32>,
     pub muted: Option<bool>,
-    pub mute_pending: bool,
     pub pending: Option<SegmentAction>,
     #[serde(skip)]
     mute_revision: Option<u64>,
-    #[serde(skip)]
-    expected_mute: Option<bool>,
 }
 
 #[derive(Clone, Serialize, PartialEq)]
@@ -97,11 +87,11 @@ pub struct Snapshot {
     pub lease: String,
     pub voice: Option<VoiceState>,
     pub gestures_enabled: bool,
-    pub armed: bool,
     pub gesture_status: String,
     pub gesture_context: GestureContext,
     pub gesture_progress: Option<GestureProgress>,
     pub gesture_action: Option<GestureCandidate>,
+    pub gesture_action_sequence: u64,
     pub scroll_velocity: i16,
     pub scroll_sequence: u64,
     pub devices: Vec<Device>,
@@ -235,11 +225,11 @@ impl State {
                 lease: String::new(),
                 voice: None,
                 gestures_enabled: false,
-                armed: false,
                 gesture_status: "off".into(),
                 gesture_context: GestureContext::Disarmed,
                 gesture_progress: None,
                 gesture_action: None,
+                gesture_action_sequence: 0,
                 scroll_velocity: 0,
                 scroll_sequence: 0,
                 devices: Vec::new(),
@@ -293,19 +283,23 @@ impl State {
 
     fn reset(&mut self) {
         self.delivery = None;
-        self.snapshot.armed = false;
         self.snapshot.lease.clear();
-        self.cancel_voice();
-        self.vision = None;
-        self.snapshot.gestures_enabled = false;
-        self.snapshot.gesture_status = "off".into();
-        self.gesture_progress = None;
+        self.disable_hands_free();
         self.gesture_action = None;
         self.device_request = None;
     }
 
+    fn disable_hands_free(&mut self) {
+        // Revoke capture and queued actions together. Already displayed draft text stays in the view.
+        self.snapshot.gestures_enabled = false;
+        self.snapshot.gesture_status = "off".into();
+        self.cancel_voice();
+        self.vision = None;
+        self.gesture_progress = None;
+    }
+
     fn context(&self) -> GestureContext {
-        if !self.snapshot.armed {
+        if !self.snapshot.gestures_enabled || self.snapshot.gesture_status != "ready" {
             return GestureContext::Disarmed;
         }
         if !self.events.is_empty() {
@@ -313,9 +307,7 @@ impl State {
         }
         match &self.snapshot.voice {
             None => GestureContext::Standby,
-            Some(voice)
-                if voice.phase == "listening" && !voice.mute_pending && voice.pending.is_none() =>
-            {
+            Some(voice) if voice.phase == "listening" && voice.pending.is_none() => {
                 match voice.muted {
                     Some(muted) => GestureContext::Active {
                         voice_request_id: voice.request_id,
@@ -343,8 +335,7 @@ impl State {
 
     fn event(&mut self, mut event: InputEvent) {
         if self.events.len() >= MAX_EVENTS || event.text.len() > 128 * 1024 {
-            self.cancel_voice();
-            self.snapshot.armed = false;
+            self.disable_hands_free();
             self.snapshot.notice =
                 Some("Native input stopped because the view could not keep up.".into());
             return;
@@ -494,9 +485,7 @@ impl State {
             phase: "preparing".into(),
             progress: None,
             muted: None,
-            mute_pending: false,
             mute_revision: None,
-            expected_mute: None,
             pending: None,
         });
         self.snapshot.notice = None;
@@ -536,27 +525,6 @@ impl State {
         Ok(())
     }
 
-    fn mute(&mut self, request_id: u64, muted: bool) -> Result<(), String> {
-        let voice = self
-            .snapshot
-            .voice
-            .as_mut()
-            .filter(|v| v.request_id == request_id)
-            .ok_or("This dictation has ended.")?;
-        if voice.phase != "listening" || voice.muted.is_none() || voice.mute_pending {
-            return Err("Wait for the microphone state.".into());
-        }
-        if voice.muted == Some(muted) {
-            return Ok(());
-        }
-        self.voice_commands
-            .send(VoiceCommand::SetMuted { request_id, muted })
-            .map_err(|_| "Voice helper is unavailable.")?;
-        voice.mute_pending = true;
-        voice.expected_mute = Some(muted);
-        Ok(())
-    }
-
     fn stop(&mut self, request_id: u64) -> Result<(), String> {
         let voice = self
             .snapshot
@@ -584,7 +552,6 @@ impl State {
                 segment_id,
                 action,
             } => self.segment(request_id, segment_id, action)?,
-            InputCommand::Mute { request_id, muted } => self.mute(request_id, muted)?,
             InputCommand::Devices => {
                 if self.snapshot.voice.is_some() || self.device_request.is_some() {
                     return Err("Stop dictation before choosing a microphone.".into());
@@ -596,38 +563,34 @@ impl State {
                 self.device_request = Some(request_id);
             }
             InputCommand::Gestures { enabled } => {
-                self.snapshot.armed = false;
+                if !enabled {
+                    self.disable_hands_free();
+                    self.gesture_action = None;
+                    return Ok(());
+                }
+                if self.snapshot.gestures_enabled && self.snapshot.gesture_status == "ready" {
+                    return Ok(());
+                }
                 self.snapshot.scroll_velocity = 0;
                 self.vision = None;
                 self.snapshot.gestures_enabled = false;
                 self.snapshot.gesture_status = "off".into();
                 self.gesture_progress = None;
                 self.gesture_action = None;
-                if enabled {
-                    self.vision = tokio::task::spawn_blocking(vision_debug::start_for_desktop)
-                        .await
-                        .map_err(|_| "Gesture helper could not start.")?
-                        .map_err(|error| error.to_string())?;
-                    self.snapshot.gestures_enabled = self.vision.is_some();
-                    self.snapshot.gesture_status = if self.vision.is_some() {
-                        "starting"
-                    } else {
-                        "disabled"
-                    }
-                    .into();
-                    self.intent_sequence = 0;
-                    self.scroll_sequence = 0;
-                    self.status_sequence = 0;
+                self.vision = tokio::task::spawn_blocking(vision_debug::start_for_desktop)
+                    .await
+                    .map_err(|_| "Gesture helper could not start.")?
+                    .map_err(|error| error.to_string())?;
+                self.snapshot.gestures_enabled = self.vision.is_some();
+                self.snapshot.gesture_status = if self.vision.is_some() {
+                    "starting"
+                } else {
+                    "disabled"
                 }
-            }
-            InputCommand::Arm { armed } => {
-                if armed && (self.vision.is_none() || self.snapshot.gesture_status != "ready") {
-                    return Err("Enable gestures and wait for the camera to be ready.".into());
-                }
-                self.snapshot.armed = armed;
-                self.snapshot.scroll_velocity = 0;
-                self.gesture_progress = None;
-                self.gesture_action = None;
+                .into();
+                self.intent_sequence = 0;
+                self.scroll_sequence = 0;
+                self.status_sequence = 0;
             }
             InputCommand::Detach => self.reset(),
         }
@@ -733,19 +696,16 @@ impl State {
                     .as_mut()
                     .filter(|v| v.request_id == request_id)
                 {
-                    if v.mute_revision.is_some_and(|r| revision <= r)
-                        || v.expected_mute.is_some_and(|m| m != muted)
-                    {
-                        if v.mute_pending {
+                    if v.mute_revision.is_none_or(|r| revision > r) {
+                        if muted {
                             self.cancel_voice();
-                            self.snapshot.notice =
-                                Some("Microphone mute was not acknowledged. Voice stopped.".into());
+                            self.snapshot.notice = Some(
+                                "Microphone paused. Start listening again to continue.".into(),
+                            );
+                        } else {
+                            v.mute_revision = Some(revision);
+                            v.muted = Some(false);
                         }
-                    } else {
-                        v.mute_revision = Some(revision);
-                        v.muted = Some(muted);
-                        v.mute_pending = false;
-                        v.expected_mute = None;
                     }
                 }
             }
@@ -827,7 +787,7 @@ impl State {
                 .into();
                 self.gesture_progress = None;
                 if state != LifecycleState::Ready {
-                    self.snapshot.armed = false;
+                    self.cancel_voice();
                     self.snapshot.scroll_velocity = 0;
                     self.gesture_action = None;
                 }
@@ -867,9 +827,8 @@ impl State {
                     None
                 } else {
                     match intent {
-                        GestureIntent::SetArmed { armed } => {
-                            self.snapshot.armed = armed;
-                            self.snapshot.scroll_velocity = 0;
+                        GestureIntent::SetArmed { armed: false } => {
+                            self.disable_hands_free();
                             Some(Ok(()))
                         }
                         GestureIntent::StartTranscription
@@ -885,12 +844,8 @@ impl State {
                                 VoiceRequestGestureIntent::StopTranscription => {
                                     self.stop(voice_request_id)
                                 }
-                                VoiceRequestGestureIntent::Mute => {
-                                    self.mute(voice_request_id, true)
-                                }
-                                VoiceRequestGestureIntent::Unmute => {
-                                    self.mute(voice_request_id, false)
-                                }
+                                VoiceRequestGestureIntent::Mute
+                                | VoiceRequestGestureIntent::Unmute => return,
                                 action => {
                                     let segment_id =
                                         self.snapshot.voice.as_ref().map_or(0, |v| v.segment_id);
@@ -914,6 +869,7 @@ impl State {
                         self.snapshot.notice = Some(error);
                     } else {
                         self.gesture_action = Some((Instant::now(), action));
+                        self.snapshot.gesture_action_sequence += 1;
                     }
                 }
                 if let Some(vision) = &self.vision {
@@ -983,6 +939,7 @@ impl State {
                 }
             }
         }
+        self.sync_context();
     }
 
     fn watchdog(&mut self) {
@@ -1054,7 +1011,7 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
             } => if let Some(event) = event { state.vision_event(event); } else {
                 state.vision = None;
                 state.snapshot.gestures_enabled = false;
-                state.snapshot.armed = false;
+                state.cancel_voice();
                 state.snapshot.scroll_velocity = 0;
                 state.gesture_progress = None;
                 state.gesture_action = None;
@@ -1200,7 +1157,8 @@ mod tests {
         let (mut state, _commands) = attached();
         let (channel, messages) = updates();
         let initial = state.attach(channel);
-        state.snapshot.armed = true;
+        state.snapshot.gestures_enabled = true;
+        state.snapshot.gesture_status = "ready".into();
         state.snapshot.scroll_velocity = 600;
         state.scroll_sequence = 1;
         state.publish();
@@ -1222,11 +1180,11 @@ mod tests {
         let (mut state, commands) = attached();
         state.start_voice(None).unwrap();
         let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
-        state.snapshot.armed = true;
+        state.snapshot.gestures_enabled = true;
         state.last_seen_wall = SystemTime::now() - Duration::from_secs(10);
         state.watchdog();
         assert!(state.snapshot.voice.is_none());
-        assert!(!state.snapshot.armed);
+        assert!(!state.snapshot.gestures_enabled);
         assert!(state.events.is_empty());
         assert!(!state.fresh("view-one"));
         assert!(commands
@@ -1288,23 +1246,24 @@ mod tests {
     #[test]
     fn gesture_progress_is_presentation_only_and_expires() {
         let (mut state, commands) = attached();
+        state.snapshot.gestures_enabled = true;
         state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
-        let progress = GestureProgress::new(GestureCandidate::Arm, 600).unwrap();
+        let progress = GestureProgress::new(GestureCandidate::StartTranscription, 600).unwrap();
         state.vision_event(VisionEvent::Status {
             sequence: 1,
             received_at: Instant::now(),
-            status: ControlStatus::Disarmed {
+            status: ControlStatus::Standby {
                 progress: Some(progress),
             },
         });
         assert_eq!(state.snapshot().gesture_progress, Some(progress));
-        assert!(!state.snapshot.armed);
+        assert!(state.snapshot.gestures_enabled);
         assert!(commands.try_recv().is_err());
         assert!(state.events.is_empty());
         state.vision_event(VisionEvent::Status {
             sequence: 1,
             received_at: Instant::now(),
-            status: ControlStatus::Disarmed { progress: None },
+            status: ControlStatus::Standby { progress: None },
         });
         assert_eq!(state.snapshot().gesture_progress, Some(progress));
         state.gesture_progress.as_mut().unwrap().0 =
@@ -1313,7 +1272,7 @@ mod tests {
         state.vision_event(VisionEvent::Status {
             sequence: 2,
             received_at: Instant::now(),
-            status: ControlStatus::Disarmed {
+            status: ControlStatus::Standby {
                 progress: Some(progress),
             },
         });
@@ -1327,12 +1286,12 @@ mod tests {
         state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
         state.start_voice(None).unwrap();
         state.events.clear();
-        state.snapshot.armed = true;
+        state.snapshot.gestures_enabled = true;
         let voice = state.snapshot.voice.as_mut().unwrap();
         voice.phase = "listening".into();
         voice.muted = Some(false);
         let request_id = voice.request_id;
-        let progress = GestureProgress::new(GestureCandidate::Mute, 400).unwrap();
+        let progress = GestureProgress::new(GestureCandidate::Send, 400).unwrap();
         for (sequence, voice_request_id) in [(1, request_id + 1), (2, request_id)] {
             state.vision_event(VisionEvent::Status {
                 sequence,
@@ -1348,31 +1307,80 @@ mod tests {
                 voice_request_id == request_id
             );
         }
-        state.snapshot.voice.as_mut().unwrap().mute_pending = true;
+        state.snapshot.voice.as_mut().unwrap().pending = Some(SegmentAction::Send);
         state.sync_context();
-        state.snapshot.voice.as_mut().unwrap().mute_pending = false;
+        state.snapshot.voice.as_mut().unwrap().pending = None;
         assert!(state.snapshot().gesture_progress.is_none());
     }
 
     #[test]
     fn only_accepted_gesture_intents_produce_action_feedback() {
         let (mut state, _) = attached();
+        state.snapshot.gestures_enabled = true;
         state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
         state.vision_event(VisionEvent::Intent {
             sequence: 1,
             received_at: Instant::now() - INTENT_MAX_AGE - Duration::from_millis(1),
-            intent: GestureIntent::SetArmed { armed: true },
+            intent: GestureIntent::SetArmed { armed: false },
         });
-        assert!(!state.snapshot.armed);
+        assert!(state.snapshot.gestures_enabled);
         assert!(state.snapshot().gesture_action.is_none());
         state.vision_event(VisionEvent::Intent {
             sequence: 2,
             received_at: Instant::now(),
-            intent: GestureIntent::SetArmed { armed: true },
+            intent: GestureIntent::SetArmed { armed: false },
         });
-        assert!(state.snapshot.armed);
-        assert_eq!(state.snapshot().gesture_action, Some(GestureCandidate::Arm));
+        assert!(!state.snapshot.gestures_enabled);
+        assert_eq!(
+            state.snapshot().gesture_action,
+            Some(GestureCandidate::Disarm)
+        );
+        assert_eq!(state.snapshot().gesture_action_sequence, 1);
         state.reset();
         assert!(state.snapshot().gesture_action.is_none());
+    }
+
+    #[test]
+    fn camera_ready_grants_standby_without_an_arming_step() {
+        let (mut state, _commands) = attached();
+        state.snapshot.gestures_enabled = true;
+        state.snapshot.gesture_status = "starting".into();
+        assert_eq!(state.context(), GestureContext::Disarmed);
+        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
+        assert_eq!(state.context(), GestureContext::Standby);
+        state.disable_hands_free();
+        state.vision_event(VisionEvent::Intent {
+            sequence: 1,
+            received_at: Instant::now(),
+            intent: GestureIntent::SetArmed { armed: true },
+        });
+        assert_eq!(state.context(), GestureContext::Disarmed);
+        assert!(!state.snapshot.gestures_enabled);
+    }
+
+    #[test]
+    fn leaving_hands_free_cancels_capture_and_rejects_a_late_send() {
+        let (mut state, commands) = attached();
+        state.snapshot.gestures_enabled = true;
+        state.snapshot.gesture_status = "ready".into();
+        state.start_voice(None).unwrap();
+        state.events.clear();
+        let voice = state.snapshot.voice.as_mut().unwrap();
+        voice.phase = "listening".into();
+        voice.muted = Some(false);
+        let request_id = voice.request_id;
+        state.segment(request_id, 0, SegmentAction::Send).unwrap();
+        state.disable_hands_free();
+        state.voice_event(VoiceEvent::SegmentFinal {
+            request_id,
+            segment_id: 0,
+            text: "late".into(),
+        });
+        assert!(state.events.is_empty());
+        assert!(state.snapshot.voice.is_none());
+        assert_eq!(state.context(), GestureContext::Disarmed);
+        assert!(commands
+            .try_iter()
+            .any(|command| command == VoiceCommand::Cancel { request_id }));
     }
 }

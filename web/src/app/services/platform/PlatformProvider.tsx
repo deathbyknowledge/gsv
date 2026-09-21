@@ -10,7 +10,6 @@ export type NativeVoice = {
   phase: string;
   progress: number | null;
   muted: boolean | null;
-  mute_pending: boolean;
   pending: SegmentAction | null;
 };
 export type NativeEvent = {
@@ -30,11 +29,11 @@ export type NativeSnapshot = {
   lease: string;
   voice: NativeVoice | null;
   gestures_enabled: boolean;
-  armed: boolean;
   gesture_status: string;
   gesture_context: GestureContext;
   gesture_progress: { candidate: GestureCandidate; progress_permille: number } | null;
   gesture_action: GestureCandidate | null;
+  gesture_action_sequence: number;
   scroll_velocity: number;
   scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];
@@ -47,9 +46,7 @@ export type NativeCommand =
   | { kind: "stop"; request_id: number }
   | { kind: "cancel" | "devices" | "detach" }
   | { kind: "segment"; request_id: number; segment_id: number; action: SegmentAction }
-  | { kind: "mute"; request_id: number; muted: boolean }
-  | { kind: "gestures"; enabled: boolean }
-  | { kind: "arm"; armed: boolean };
+  | { kind: "gestures"; enabled: boolean };
 
 export type NativeUpdate = { revision: number; sent_at_ms: number; scroll_age_ms: number; snapshot: NativeSnapshot };
 export type NativeSubscription = { initial: Promise<NativeSnapshot>; dispose(): void };

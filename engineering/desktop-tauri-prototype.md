@@ -97,9 +97,9 @@ The interaction design keeps the prompt exclusively for the person's draft.
 Voice and Gestures sit beside Attach as quiet, named disclosures. Their labels
 show active microphone/camera state; a recognized gesture gets a short action
 label and a hold indicator in that same affordance. One panel opens at a time,
-above the composer without resizing the conversation. Voice contains start,
-pause/resume, finish and microphone choice. Gestures contains camera control,
-explicit arming, and a compact hand guide. Only errors demand additional space.
+above the composer without resizing the conversation. Voice contains listen,
+pause and microphone choice. Hands-free contains one enable/disable control,
+a compact gesture reference and guided practice. Only errors demand additional space.
 Opening either panel never starts a sensor. Closing it never stops a sensor;
 the active indicator and explicit stop controls remain available.
 
@@ -529,3 +529,42 @@ a temporary comparison. The user can keep testing the current window with
 The desktop frontend and native executable compile successfully. No local test
 suite or runtime verification was run; the running comparison window was left
 untouched.
+
+
+## Hands-free and guided practice
+
+Hands-free has three user states: Off (no camera or microphone), Ready (camera
+on, microphone off), and Listening. The native owner grants gesture authority
+when its explicitly enabled camera becomes ready. One finger starts or finishes
+local dictation; finishing preserves the draft and returns to Ready. Both fists
+or Turn off revokes capture, cancels pending voice operations and drops the camera
+helper. Text already displayed stays in the composer. Off cannot be woken by a
+gesture. Voice-only listening remains available without enabling a camera.
+
+Counts 2/3/4 retain send/delete/clear, with existing dwell, fist-reset, request,
+sequence and lease fences. The shared recognizer no longer maps five fingers to
+mute/unmute. Public protocol variants remain for the separate GPUI client and
+older protocol consumers; Tauri no longer exposes arm/mute commands. The original
+helper module comment describing one-through-five is preserved, with an adjacent
+note documenting the updated grammar.
+
+The centered, explicitly sized tutorial introduces the two hands, listening,
+dictation, send, delete, clear, pause, scroll and exit. It attaches a new native
+lease, with a private composer and local send/scroll callbacks. It never receives
+the conversation sender. Entering it detaches live input; closing it detaches
+practice input and returns live input to Off, preserving the real draft. Its
+private text is discarded on close. Holds, accepted actions and actual completion
+advance practice feedback; lessons can also be browsed or skipped explicitly.
+
+The quick reference and tutorial share the same 3D illustrations. Dragging pauses
+only automatic yaw: finger animation continues. The tutorial adds no work to the
+transcript. Native text remains imperative; only its practice pad observes text
+changes. Synthesized key sounds reuse the original native sound envelopes;
+short state cues follow native state and accepted-action sequences. Audio buffers
+are cached, voices and repeat rates bounded, and sound preferences have separate
+keypress and voice/gesture switches. Audio activates only through user interaction.
+No camera frames, microphone samples, dictated text or keystrokes are recorded for
+sound effects or tutorial analytics.
+
+Compilation and reopening are authorized; interaction and audio/performance
+acceptance remain with the user. Local tests and typechecks are not run.

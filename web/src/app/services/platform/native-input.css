@@ -25,15 +25,11 @@
 .native-device select { width: 100%; border: 1px solid var(--border); padding: 7px; background: var(--void); color: var(--text); font: inherit; }
 .native-device select:disabled { opacity: .5; }
 .native-panel-footnote { color: var(--text-dim); font-size: 11px; }
-.native-armed { display: flex; align-items: baseline; gap: 9px; margin: 18px 0; cursor: pointer; }
-.native-armed input { accent-color: var(--accent); }
-.native-armed small { display: block; margin-top: 4px; color: var(--text-dim); font-size: 11px; }
 .native-gesture-guide { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
 .native-gesture-guide h3 span { color: var(--faint); font-size: 10px; margin-left: 8px; }
 .native-gesture-guide p { color: var(--text-dim); font-size: 11px; }
 .native-gesture-lessons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
 .native-gesture-lessons button { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; text-align: left; color: var(--text-dim); }
-.native-gesture-lessons button:last-child { grid-column: 1 / -1; }
 .native-gesture-lessons button[aria-pressed="true"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
 .native-gesture-lessons b { font-weight: normal; color: var(--accent); }
 .native-gesture-example { margin: 8px 0 0; container-type: inline-size; }
@@ -57,8 +53,77 @@
 }
 .native-gesture-example figcaption { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10px; }
 .native-gesture-example figcaption button { color: var(--text-dim); }
-.native-gesture-guide .native-gesture-description { min-height: 5em; }
+.native-gesture-guide .native-gesture-description { min-height: 3em; }
 @container instrument (max-width: 900px) {
   .zen-input-panels { padding-inline: 18px; padding-bottom: 60px; }
   .native-input-panel { padding: 16px; }
+}
+
+.native-tutorial-launch { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; padding: 12px 0; border-block: 1px solid var(--border); color: var(--text-hi); text-align: left; }
+.native-tutorial-launch span { font-size: 10px; color: var(--accent); }
+.native-sound-settings { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 0 0; margin: 18px 0 0; border: 0; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
+.native-sound-settings legend { padding-right: 8px; color: var(--faint); }
+.native-sound-settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.native-sound-settings input { accent-color: var(--accent); margin: 0; }
+.native-tutorial {
+  position: fixed; inset: 0; box-sizing: border-box;
+  width: min(1080px, calc(100vw / var(--type-scale) - 32px)); max-width: none;
+  height: min(760px, calc(var(--instrument-height) / var(--type-scale) - 32px));
+  max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
+  margin: auto; padding: 0; border: 1px solid var(--border-raised);
+  background: var(--panel); color: var(--text); font: 13px/1.6 var(--gsv-font-mono);
+  overflow: hidden; pointer-events: auto;
+}
+.native-tutorial[open] { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.native-tutorial::backdrop { background: #0006; }
+.native-tutorial button { color: var(--text-dim); font: inherit; }
+.native-tutorial button:disabled { opacity: .4; cursor: default; }
+.native-tutorial .native-primary { padding: 7px 14px; border: 1px solid var(--accent); color: var(--accent); }
+.native-tutorial-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px 12px; font-size: 11px; }
+.native-tutorial-head kbd { font: inherit; color: var(--faint); margin-left: 6px; }
+.native-tutorial-tag { color: var(--faint); margin-left: 16px; }
+.native-tutorial-steps { display: flex; justify-content: space-between; gap: 6px; padding: 10px 28px 18px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.native-tutorial-steps button { display: grid; justify-items: center; gap: 4px; min-width: 42px; }
+.native-tutorial-steps button > span { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--border); font-size: 11px; }
+.native-tutorial-steps small { color: var(--faint); font-size: 10px; }
+.native-tutorial-steps [aria-current="step"] > span { color: var(--accent); border-color: var(--accent); }
+.native-tutorial-steps [aria-current="step"] small { color: var(--text-hi); }
+.native-tutorial-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.native-tutorial-visual { min-width: 0; padding: 16px 24px; display: flex; flex-direction: column; justify-content: center; }
+.native-tutorial .native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] { height: min(384px, 76.8cqi); min-height: 0; }
+.native-tutorial .native-gesture-animation .gsv-ascii-galaxy-pre { font-size: min(8px, 1.6cqi); }
+.native-tutorial-states { display: flex; justify-content: center; gap: 24px; margin-top: 30px; color: var(--faint); font-size: 11px; }
+.native-tutorial-states span[data-current] { color: var(--accent); }
+.native-tutorial-feedback { display: grid; gap: 8px; min-height: 46px; margin: 16px auto 0; width: min(300px, 100%); font-size: 11px; color: var(--text-dim); text-align: center; }
+.native-tutorial-feedback progress { width: 100%; height: 3px; accent-color: var(--accent); }
+.native-tutorial-lesson { min-width: 0; padding: 26px 28px 28px 20px; }
+.native-tutorial-lesson h2 { color: var(--text-hi); font: inherit; font-size: 22px; line-height: 1.4; margin: 4px 0 18px; outline: none; }
+.native-tutorial-count { font-size: 10px; color: var(--faint); margin: 0; letter-spacing: .12em; }
+.native-tutorial-lesson > p:not(.native-tutorial-count) { margin: 12px 0; }
+.native-role-key { display: flex; gap: 40px; margin: 28px 0; font-size: 11px; color: var(--faint); }
+.native-role-key b { display: block; color: var(--accent); font: inherit; font-size: 15px; }
+.native-practice-label { display: flex; justify-content: space-between; gap: 12px; margin-top: 24px; font-size: 10px; color: var(--faint); }
+.native-practice-label span { color: var(--accent); }
+.native-practice-draft { box-sizing: border-box; width: 100%; height: 96px; min-height: 72px; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0; color: var(--text-hi); background: var(--void); font: inherit; resize: vertical; }
+.native-practice-draft:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.native-practice-sent { border-left: 1px solid var(--border); padding-left: 12px; margin-top: 16px; overflow-wrap: anywhere; }
+.native-practice-sent > span { color: var(--faint); font-size: 10px; }
+.native-practice-sent p { margin: 4px 0; font-size: 12px; }
+.native-practice-controls { display: flex; gap: 18px; margin-top: 14px; font-size: 11px; }
+.native-practice-scroll { height: 150px; margin-top: 18px; overflow-y: auto; border-block: 1px solid var(--border); overscroll-behavior: contain; }
+.native-practice-scroll p { display: flex; align-items: center; gap: 16px; min-height: 76px; margin: 0; padding: 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.native-practice-scroll p span { color: var(--faint); }
+.native-tutorial-success { color: var(--accent); font-size: 11px; }
+.native-tutorial-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 28px; border-top: 1px solid var(--border); font-size: 11px; }
+.native-tutorial-footer > div { display: flex; gap: 20px; align-items: center; }
+@container instrument (max-width: 800px) {
+  .native-tutorial-body { grid-template-columns: minmax(0, 1fr); }
+  .native-tutorial-visual { padding: 12px 24px; }
+  .native-tutorial .native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] { height: 220px; }
+  .native-tutorial .native-gesture-animation .gsv-ascii-galaxy-pre { font-size: 4.5px; }
+  .native-tutorial-states { margin-top: 16px; }
+  .native-tutorial-lesson { padding: 18px 24px; }
+  .native-tutorial-head, .native-tutorial-footer { padding-inline: 18px; }
+  .native-tutorial-steps { padding-inline: 18px; }
+  .native-tutorial-steps small { display: none; }
 }

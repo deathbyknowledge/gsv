@@ -7,7 +7,7 @@ pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
-`delete backward`, `clear dictation`, `mute`, and `unmute` intents, plus
+`delete backward`, and `clear dictation` intents, plus
 replace-latest absolute scroll-control velocity and semantic control status with
 bounded candidate progress. Every active action identifies the exact voice
 request, and every event is scoped to
@@ -66,7 +66,13 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-Gesture control starts disarmed. Hold both hands in closed fists for 700 ms to
+The helper starts disarmed until its owning client grants a context. The Tauri
+prototype grants standby as soon as its explicitly enabled camera becomes ready.
+Both fists exits hands-free there, cancelling microphone capture and stopping the
+camera. Its frontend exposes Off, Ready and Listening; one finger starts or pauses
+listening, preserving the draft. There is no extra arm or mute control.
+
+The GPUI client retains its existing authority model: hold both hands in closed fists for 700 ms to
 request arming or disarming. Desktop owns that explicit state and echoes one
 strict absolute context: disarmed, armed standby, temporarily disabled, or
 armed and active with the exact listening request and acknowledged mute state.
@@ -93,8 +99,7 @@ instead of ignoring a digit or guessing a lower count.
 - Open any four action-hand digits (`4`) for 1 second
   to clear the unsent voice-owned transcription. Text typed before or after the
   voice insertion point and draft attachments remain intact.
-- Open all four action fingers and the thumb (`5`) for 350 ms to mute or unmute,
-  depending on current state.
+- An open action palm (`5`) has no standalone command.
 - Close the action hand into a fist (`0`) after every command. This is the only
   reset that rearms the next count.
 - Hold the control hand open while settling the action fist for 180 ms. The

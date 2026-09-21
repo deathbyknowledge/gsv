@@ -3,7 +3,7 @@ import { AsciiMeshRaster, rotationMatrix } from "../../components/ui/asciiMesh";
 import type { ColorTheme } from "../../components/ui/useColorTheme";
 import { createHandModel, type HandModel } from "./handModel";
 
-export type GestureLesson = 0 | 1 | 2 | 3 | 4 | 5 | "scroll";
+export type GestureLesson = 0 | 1 | 2 | 3 | 4 | 5 | "scroll" | "roles" | "rest";
 export type GestureScene = AsciiAnimationScene & {
   beginTurn: () => void;
   turnBy: (radians: number) => void;
@@ -22,7 +22,7 @@ const PERSPECTIVE = 0.012;
 
 // Bits are thumb, index, middle, ring, pinky. Alternate examples teach counts,
 // without suggesting that a particular combination owns the command.
-const examples: Record<Exclude<GestureLesson, "scroll">, readonly number[]> = {
+const examples: Record<Exclude<GestureLesson, "scroll" | "roles" | "rest">, readonly number[]> = {
   0: [0], 1: [2, 1], 2: [6, 3], 3: [14, 7], 4: [30, 15], 5: [31],
 };
 const raster = new AsciiMeshRaster(COLS, ROWS, { perspective: PERSPECTIVE });
@@ -36,7 +36,7 @@ const ease = (value: number) => {
 function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt: number, yaw: number, palette: ColorTheme): AsciiAnimationFrame {
   const handModel = model ??= createHandModel();
   raster.clear();
-  const paired = lesson === 0 || lesson === "scroll";
+  const paired = lesson === 0 || lesson === "scroll" || lesson === "roles";
   const unit = paired ? 6.8 : 8.2;
   const cosine = Math.cos(yaw), sine = Math.sin(yaw);
   const pivotX = paired ? 0 : 0.45;
@@ -66,6 +66,11 @@ function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt:
     }
     hand(-4.3, 0.5 - tilt, true, 31, 1);
     hand(4.3, 0.5 + tilt, false, 0, 0);
+  } else if (lesson === "roles") {
+    hand(-4.3, 0.5, true, 31, 1);
+    hand(4.3, 0.5, false, 2, extension);
+  } else if (lesson === "rest") {
+    hand(0.45, 0.5, false, 0, 0);
   } else if (lesson === 0) {
     hand(-4.3, 0.5, true, 31, extension);
     hand(4.3, 0.5, false, 31, extension);
@@ -79,7 +84,7 @@ export function createGestureScene(lesson: GestureLesson): GestureScene {
   // Cache only frames that have actually been displayed, with a finite loop.
   // Opening the guide never pre-renders all lessons on the UI thread.
   const frames = new Map<string, AsciiAnimationFrame>();
-  const count = CYCLE_FRAMES * (lesson === "scroll" ? 1 : examples[lesson].length);
+  const count = CYCLE_FRAMES * (typeof lesson === "string" ? 1 : examples[lesson].length);
   let cachedPalette: ColorTheme | undefined;
   let angle = 0;
   let held = false;
@@ -98,14 +103,12 @@ export function createGestureScene(lesson: GestureLesson): GestureScene {
       poseSeconds ??= seconds;
       const elapsed = motion && lastSeconds !== undefined ? Math.max(0, seconds - lastSeconds) : 0;
       lastSeconds = seconds;
-      if (!held) {
-        poseSeconds += elapsed;
-        angle = (angle + elapsed * TAU / TURN_SECONDS) % TAU;
-      }
+      poseSeconds += elapsed;
+      if (!held) angle = (angle + elapsed * TAU / TURN_SECONDS) % TAU;
       if (palette !== cachedPalette) { frames.clear(); cachedPalette = palette; }
       const frame = Math.floor(Math.max(0, poseSeconds) * GESTURE_FRAME_RATE) % count;
       const time = (frame % CYCLE_FRAMES) / GESTURE_FRAME_RATE;
-      const mask = lesson === "scroll" ? 0 : examples[lesson][Math.floor(frame / CYCLE_FRAMES)];
+      const mask = typeof lesson === "string" ? 0 : examples[lesson][Math.floor(frame / CYCLE_FRAMES)];
       const extension = lesson === 0
         ? 1 - ease((time - 0.2) / 0.55) + ease((time - 2.7) / 0.55)
         : ease((time - 0.4) / 0.55) * (1 - ease((time - 2.8) / 0.55));

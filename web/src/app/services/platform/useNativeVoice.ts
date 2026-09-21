@@ -1,27 +1,32 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import type { PromptLineHandle } from "../../features/instrument/shared/PromptLine";
-import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate } from "./PlatformProvider";
+import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate, type SegmentAction } from "./PlatformProvider";
 import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
+import { useNativeSoundFeedback } from "./useInputSounds";
 
-export function useNativeVoice({ prompt, scope, enabled, send, scroll }: {
-  prompt: RefObject<PromptLineHandle>;
+export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue">;
+
+export function useNativeVoice({ prompt, scope, enabled, send, scroll, onAction }: {
+  prompt: RefObject<VoiceComposer>;
   scope: string;
   enabled: boolean;
   send(text: string): boolean;
   scroll(delta: number): void;
+  onAction?(action: SegmentAction): void;
 }) {
   const input = useNativeInput();
   const [snapshot, setSnapshot] = useState<NativeSnapshot | null>(null);
+  useNativeSoundFeedback(snapshot);
   const [error, setError] = useState<string | null>(null);
   const [attachment, setAttachment] = useState(0);
   const [device, setDevice] = useState("");
   const lease = useRef<string | null>(null);
   const draft = useRef<VoiceDraft | null>(null);
   const writing = useRef(false);
-  const latest = useRef({ send, scroll, enabled });
-  latest.current = { send, scroll, enabled };
+  const latest = useRef({ send, scroll, enabled, onAction });
+  latest.current = { send, scroll, enabled, onAction };
   const state = useRef<NativeSnapshot | null>(null);
   const command = async (value: NativeCommand): Promise<void> => {
     if (!input || !lease.current) return;
@@ -100,12 +105,14 @@ export function useNativeVoice({ prompt, scope, enabled, send, scroll }: {
                 write("");
                 const selection = prompt.current?.selection();
                 if (selection) draft.current.sent(selection);
+                latest.current.onAction?.("send");
               } else {
                 draft.current = null;
                 void command({ kind: "cancel" });
                 setError("Dictation stopped. Your unsent text is still in the prompt.");
               }
             }
+            if (event.action === "delete" || event.action === "clear") latest.current.onAction?.(event.action);
             if (event.kind === "final") draft.current = null;
           }
         }

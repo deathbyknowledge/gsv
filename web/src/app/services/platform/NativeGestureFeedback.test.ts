@@ -3,8 +3,8 @@ import { gestureFeedback } from "./NativeGestureFeedback";
 import type { NativeSnapshot } from "./PlatformProvider";
 
 const snapshot = (overrides: Partial<NativeSnapshot> = {}): NativeSnapshot => ({
-  lease: "view", voice: null, gestures_enabled: true, armed: false, gesture_status: "ready",
-  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null,
+  lease: "view", voice: null, gestures_enabled: true, gesture_status: "ready",
+  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0,
   scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [], ...overrides,
 });
 
@@ -32,12 +32,12 @@ describe("gesture feedback", () => {
     expect(feedback.action).toBeNull();
   });
 
-  it("shows acknowledged mute state and temporary voice unavailability", () => {
+  it("shows ready and temporarily busy states without extra user modes", () => {
     expect(gestureFeedback(snapshot({
-      gesture_context: { mode: "active", voice_request_id: 2, muted: true },
-    })).message).toContain("Microphone muted");
+      gesture_context: { mode: "standby" },
+    })).message).toContain("Ready");
     expect(gestureFeedback(snapshot({
       gesture_context: { mode: "disabled" },
-    })).message).toContain("Voice is busy");
+    })).message).toContain("Preparing");
   });
 });

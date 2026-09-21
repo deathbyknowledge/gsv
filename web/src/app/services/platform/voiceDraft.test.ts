@@ -4,7 +4,7 @@ import type { NativeEvent, NativeVoice } from "./PlatformProvider";
 
 const partial = (text: string, segment = 0, revision = 1): NativeVoice => ({
   request_id: 7, segment_id: segment, revision, text, phase: "listening", progress: null,
-  muted: false, mute_pending: false, pending: null,
+  muted: false, pending: null,
 });
 const completion = (action: NativeEvent["action"], text: string, segment = 0): NativeEvent => ({
   id: 1, request_id: 7, segment_id: segment, kind: "segment", action, text,

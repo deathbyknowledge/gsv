@@ -6,13 +6,13 @@ import { NativeInputProvider, type NativeInput, type NativeSnapshot, type Native
 import { useNativeVoice } from "./useNativeVoice";
 
 const idle = (lease = "view-1"): NativeSnapshot => ({
-  lease, voice: null, gestures_enabled: false, armed: false, gesture_status: "off",
-  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null,
+  lease, voice: null, gestures_enabled: false, gesture_status: "off",
+  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0,
   scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [],
 });
 const voice = (text: string, segment = 0, revision = 1): NativeVoice => ({
   request_id: 10, segment_id: segment, revision, text, phase: "listening", progress: null,
-  muted: false, mute_pending: false, pending: null,
+  muted: false, pending: null,
 });
 const roots: ReturnType<typeof createTestRoot>[] = [];
 let timers: (() => void)[];

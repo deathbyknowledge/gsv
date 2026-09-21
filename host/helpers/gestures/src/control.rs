@@ -11,6 +11,8 @@
 //! Number recognition now accepts any combination of extended digits, including
 //! the thumb. The sequential opening described above is only one way to count;
 //! temporal policy consumes the count and retains the same hold and reset gates.
+//! Number commands now stop at four. An open palm has no standalone action;
+//! it remains the control-hand modifier for scrolling.
 
 use std::time::{Duration, Instant};
 
@@ -786,8 +788,6 @@ impl GestureControl {
                         | Chord::DeleteBackward
                         | Chord::ClearDictation,
                 )
-                | (ControlState::Active { muted: false, .. }, Chord::Mute)
-                | (ControlState::Active { muted: true, .. }, Chord::Unmute)
         )
     }
 
@@ -801,8 +801,6 @@ impl GestureControl {
                 )
                 | (ControlState::Active { .. }, Chord::StartTranscription)
                 | (ControlState::Standby, Chord::StopTranscription)
-                | (ControlState::Active { muted: true, .. }, Chord::Mute)
-                | (ControlState::Active { muted: false, .. }, Chord::Unmute)
         )
     }
 }
@@ -816,8 +814,6 @@ enum Chord {
     Send,
     DeleteBackward,
     ClearDictation,
-    Mute,
-    Unmute,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -826,7 +822,6 @@ enum ActionPose {
     Two,
     Three,
     Four,
-    Five,
 }
 
 impl ActionPose {
@@ -840,8 +835,6 @@ impl ActionPose {
             (Self::Two, _) => Chord::Send,
             (Self::Three, _) => Chord::DeleteBackward,
             (Self::Four, _) => Chord::ClearDictation,
-            (Self::Five, ControlState::Active { muted: true, .. }) => Chord::Unmute,
-            (Self::Five, _) => Chord::Mute,
         }
     }
 }
@@ -861,8 +854,6 @@ impl From<Chord> for ControlChord {
             Chord::Send => Self::Send,
             Chord::DeleteBackward => Self::DeleteBackward,
             Chord::ClearDictation => Self::ClearDictation,
-            Chord::Mute => Self::Mute,
-            Chord::Unmute => Self::Unmute,
         }
     }
 }
@@ -907,8 +898,6 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
                 Chord::Send => VoiceRequestGestureIntent::Send,
                 Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
                 Chord::ClearDictation => VoiceRequestGestureIntent::ClearDictation,
-                Chord::Mute => VoiceRequestGestureIntent::Mute,
-                Chord::Unmute => VoiceRequestGestureIntent::Unmute,
                 Chord::StartTranscription => return None,
             };
             Some(ControlIntent::VoiceRequest {
@@ -928,9 +917,7 @@ impl Chord {
             Self::StartTranscription
             | Self::StopTranscription
             | Self::Send
-            | Self::DeleteBackward
-            | Self::Mute
-            | Self::Unmute => STANDARD_DWELL,
+            | Self::DeleteBackward => STANDARD_DWELL,
         }
     }
 
@@ -941,9 +928,7 @@ impl Chord {
             Self::StartTranscription
             | Self::StopTranscription
             | Self::Send
-            | Self::DeleteBackward
-            | Self::Mute
-            | Self::Unmute => 4,
+            | Self::DeleteBackward => 4,
         }
     }
 }
@@ -1101,7 +1086,7 @@ fn classify_hands(
         HandPose::TwoFingers => ActionPose::Two,
         HandPose::ThreeFingers => ActionPose::Three,
         HandPose::FourFingers => ActionPose::Four,
-        HandPose::FiveFingers => ActionPose::Five,
+        HandPose::FiveFingers => return Ok(PairReading::KnownOther),
         HandPose::Unknown => return Err(ClassificationFailure::UnsupportedPose),
     };
     Ok(PairReading::Action { action, quality })
@@ -1295,8 +1280,7 @@ const fn action_pose(pose: HandPose) -> Option<ActionPose> {
         HandPose::TwoFingers => Some(ActionPose::Two),
         HandPose::ThreeFingers => Some(ActionPose::Three),
         HandPose::FourFingers => Some(ActionPose::Four),
-        HandPose::FiveFingers => Some(ActionPose::Five),
-        HandPose::Fist | HandPose::Unknown => None,
+        HandPose::FiveFingers | HandPose::Fist | HandPose::Unknown => None,
     }
 }
 
@@ -1399,10 +1383,6 @@ mod tests {
     const ACTIVE: ControlState = ControlState::Active {
         voice_request_id: 41,
         muted: false,
-    };
-    const MUTED: ControlState = ControlState::Active {
-        voice_request_id: 41,
-        muted: true,
     };
 
     fn request(action: VoiceRequestGestureIntent) -> ControlIntent {
@@ -1587,16 +1567,6 @@ mod tests {
                 HandPose::FourFingers,
                 request(VoiceRequestGestureIntent::ClearDictation),
             ),
-            (
-                ACTIVE,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Mute),
-            ),
-            (
-                MUTED,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Unmute),
-            ),
         ];
         for (state, pose, expected) in cases {
             let mut harness = Harness::new(state);
@@ -1642,9 +1612,10 @@ mod tests {
             }
         );
         assert_eq!(harness.sample(&fist), None);
+        assert!(harness.drive(10, &five).is_empty());
         assert_eq!(
-            harness.drive(10, &five),
-            vec![request(VoiceRequestGestureIntent::Mute)]
+            harness.drive(10, &counted(HandPose::TwoFingers, 0.95)),
+            vec![request(VoiceRequestGestureIntent::Send)]
         );
     }
 

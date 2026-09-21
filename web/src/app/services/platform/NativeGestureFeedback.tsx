@@ -1,16 +1,17 @@
 import type { GestureCandidate, NativeSnapshot } from "./PlatformProvider";
 
 const candidates: Record<GestureCandidate, string> = {
-  arm: "arm gestures", disarm: "disarm gestures", start_transcription: "start voice",
-  stop_transcription: "finish voice", send: "send", delete_backward: "delete a character",
+  arm: "enable hands-free", disarm: "turn hands-free off", start_transcription: "listen",
+  stop_transcription: "pause listening", send: "send", delete_backward: "delete a character",
   clear_dictation: "clear dictation", mute: "pause the mic", unmute: "resume the mic",
 };
 const accepted: Record<GestureCandidate, string> = {
-  arm: "Gestures armed", disarm: "Gestures disarmed", start_transcription: "Starting voice",
-  stop_transcription: "Finishing voice", send: "Send requested", delete_backward: "Delete requested",
+  arm: "Ready", disarm: "Hands-free off", start_transcription: "Starting listening",
+  stop_transcription: "Pausing", send: "Send requested", delete_backward: "Delete requested",
   clear_dictation: "Clear requested", mute: "Mute requested", unmute: "Unmute requested",
 };
 const lifecycle: Record<string, string> = {
+  off: "Off · camera and microphone stopped",
   starting: "Starting camera…",
   ready: "Camera on",
   stopped: "Camera stopped. Enable gestures to restart.",
@@ -28,7 +29,7 @@ const lifecycle: Record<string, string> = {
 export function gestureFeedback(snapshot: NativeSnapshot): { message: string; progress: number | null; action: string | null } {
   const action = snapshot.gesture_action ? accepted[snapshot.gesture_action] : null;
   if (snapshot.gesture_status !== "ready") return {
-    message: lifecycle[snapshot.gesture_status] ?? "Gesture control is unavailable.", progress: null, action: null,
+    message: lifecycle[snapshot.gesture_status] ?? "Gesture control is unavailable.", progress: null, action: snapshot.gesture_status === "off" ? action : null,
   };
   if (snapshot.gesture_progress) return {
     message: `Hold to ${candidates[snapshot.gesture_progress.candidate]}`,
@@ -40,10 +41,9 @@ export function gestureFeedback(snapshot: NativeSnapshot): { message: string; pr
     progress: null, action,
   };
   const { gesture_context: context } = snapshot;
-  const message = context.mode === "disarmed" ? "Hold both fists for 0.7 s to arm, or use arm gestures."
-    : context.mode === "disabled" ? "Voice is busy. Gestures will resume when it is ready; both fists still disarm."
-    : context.mode === "standby" ? "Ready · hold up any one finger or your thumb to start voice."
-    : context.mode === "active" && context.muted ? "Microphone muted · five fingers to unmute."
-    : "Listening · show a command, then make a fist before the next one.";
+  const message = context.mode === "disarmed" ? "Hands-free off"
+    : context.mode === "disabled" ? "Preparing · both fists to stop"
+    : context.mode === "standby" ? "Ready · one finger to listen"
+    : "Listening · fist between commands";
   return { message, progress: null, action };
 }

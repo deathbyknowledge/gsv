@@ -4,6 +4,9 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } fro
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
 import { gestureFeedback } from "./NativeGestureFeedback";
 import { GestureGuide } from "./GestureGuide";
+import { GestureTutorial } from "./GestureTutorial";
+import { InputSoundSettings } from "./InputSoundSettings";
+import { installInputSounds } from "./inputSounds";
 import { useNativeVoice } from "./useNativeVoice";
 import "./native-input.css";
 
@@ -15,7 +18,8 @@ type NativeVoiceControlsProps = Parameters<typeof useNativeVoice>[0] & {
 };
 
 export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceControlsProps>(function NativeVoiceControls({ panelHost, ...options }, ref) {
-  const control = useNativeVoice(options);
+  const [tutorial, setTutorial] = useState(false);
+  const control = useNativeVoice({ ...options, enabled: options.enabled && !tutorial });
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const [panel, setPanel] = useState<Panel | null>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -27,92 +31,79 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const busy = !options.enabled || !snapshot;
   const feedback = snapshot ? gestureFeedback(snapshot) : null;
   const cameraOn = snapshot?.gestures_enabled ?? false;
-  const gestureReady = snapshot?.gesture_status === "ready";
-  const gestureFailed = cameraOn && !gestureReady && snapshot?.gesture_status !== "starting";
-  const voiceLabel = !voice ? "voice" : voice.phase === "listening"
-    ? voice.muted ? "mic paused" : "listening"
-    : voice.phase === "finishing" ? "finishing voice" : "preparing voice";
-  const gestureLabel = !cameraOn ? "gestures" : gestureFailed ? "camera unavailable"
-    : feedback?.progress !== null && feedback?.progress !== undefined ? feedback.message
-    : feedback?.action ?? (snapshot?.armed ? "gestures armed" : gestureReady ? "camera on" : "starting camera");
+  const ready = snapshot?.gesture_status === "ready";
+  const failed = cameraOn && !ready && snapshot?.gesture_status !== "starting";
+  const voiceLabel = !voice ? "voice" : voice.phase === "listening" ? "listening"
+    : voice.phase === "finishing" ? "pausing…" : "preparing…";
+  const handsFreeLabel = !cameraOn ? "hands-free" : failed ? "camera unavailable"
+    : feedback?.progress != null ? feedback.message : feedback?.action
+    ?? (ready ? voice?.phase === "listening" ? "hands-free · listening" : "hands-free · ready" : "starting camera…");
   const close = (restoreFocus: boolean) => {
     if (restoreFocus) (panel === "voice" ? voiceButton : gestureButton).current?.focus({ preventScroll: true });
     setPanel(null);
   };
   useDismissOnOutsideClick(panel !== null, () => [panelRef.current, voiceButton.current, gestureButton.current], () => close(false));
-  useLayoutEffect(() => {
-    if (panel) panelRef.current?.focus({ preventScroll: true });
-  }, [panel]);
+  useLayoutEffect(() => { if (panel) panelRef.current?.focus({ preventScroll: true }); }, [panel]);
   useEffect(() => {
     if (panel === "voice" && snapshot && !snapshot.voice && !snapshot.devices_loading) void command({ kind: "devices" });
   }, [panel, snapshot?.lease]);
-  useEffect(() => { setPanel(null); }, [options.scope]);
+  useEffect(() => { setPanel(null); setTutorial(false); }, [options.scope]);
+  useEffect(() => { if (!options.enabled) { setPanel(null); setTutorial(false); } }, [options.enabled]);
+  useEffect(() => {
+    if (control.available && options.enabled) return installInputSounds();
+  }, [control.available, options.enabled]);
 
   if (!control.available) return null;
-  return <div class="native-input-controls" aria-label="Voice and gestures" onKeyDown={(event) => {
+  return <div class="native-input-controls" aria-label="Voice and hands-free" onKeyDown={(event) => {
     if (event.key === "Enter" || event.key === " ") event.stopPropagation();
   }}>
-    <button ref={voiceButton} type="button" class={`native-input-trigger${voice ? " is-active" : ""}`}
+    {!cameraOn && <button ref={voiceButton} type="button" class={`native-input-trigger${voice ? " is-active" : ""}`}
       aria-expanded={panel === "voice"} aria-controls="native-input-panel" aria-haspopup="dialog"
-      title={voice ? "Microphone controls" : "Dictate with your microphone"}
+      title="Dictate with your microphone"
       onClick={() => setPanel((current) => current === "voice" ? null : "voice")}>
-      {voice && <span class={`native-sensor-dot${voice.muted ? " is-paused" : ""}`} aria-hidden="true" />}
-      <span aria-live="polite">{voiceLabel}</span>
-    </button>
-    {voice && <button type="button" onClick={voice.phase === "listening" ? control.stop : control.cancel}>
-      {voice.phase === "listening" ? "finish" : "cancel"}
+      {voice && <span class="native-sensor-dot" aria-hidden="true" />}<span aria-live="polite">{voiceLabel}</span>
     </button>}
-    <button ref={gestureButton} type="button" class={`native-input-trigger${cameraOn ? " is-active" : ""}${gestureFailed ? " is-error" : ""}`}
+    {voice && <button type="button" disabled={voice.phase === "finishing"}
+      onClick={voice.phase === "listening" ? control.stop : control.cancel}>
+      {voice.phase === "listening" || voice.phase === "finishing" ? "pause" : "cancel"}
+    </button>}
+    <button ref={gestureButton} type="button" class={`native-input-trigger${cameraOn ? " is-active" : ""}${failed ? " is-error" : ""}`}
       aria-expanded={panel === "gestures"} aria-controls="native-input-panel" aria-haspopup="dialog"
-      title={cameraOn ? `Camera enabled · gestures ${snapshot?.armed ? "armed" : "disarmed"}. Open controls and guide.` : "Camera controls and gesture guide"}
+      title="Hands-free controls and guide"
       onClick={() => setPanel((current) => current === "gestures" ? null : "gestures")}>
-      {cameraOn && <span class={`native-sensor-dot${!snapshot?.armed ? " is-paused" : ""}`} aria-hidden="true" />}
-      <span aria-live="polite">{gestureLabel}</span>
-      {cameraOn && feedback?.progress !== null && feedback?.progress !== undefined &&
+      {cameraOn && <span class="native-sensor-dot" aria-hidden="true" />}
+      <span aria-live="polite">{handsFreeLabel}</span>
+      {cameraOn && feedback?.progress != null &&
         <progress class="native-hold" max={1000} value={feedback.progress} aria-label={feedback.message} />}
     </button>
-    {notice && !panel && <>
-      <button type="button" class="native-input-notice" onClick={() => setPanel("voice")}>input needs attention</button>
+    {notice && !panel && !tutorial && <>
+      <button type="button" class="native-input-notice" onClick={() => setPanel(failed ? "gestures" : "voice")}>input needs attention</button>
       <span class="native-input-announcement" role="alert">{notice}</span>
     </>}
+    {tutorial && options.enabled && panelHost.current && createPortal(
+      <GestureTutorial scope={options.scope} onClose={() => { setTutorial(false); gestureButton.current?.focus({ preventScroll: true }); }} />,
+      panelHost.current)}
     {panel && panelHost.current && createPortal(<section ref={panelRef} id="native-input-panel" class="native-input-panel" role="dialog"
       aria-labelledby="native-input-title" tabIndex={-1} data-instrument-dialog
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape") { event.preventDefault(); close(true); }
-      }}
-      onBlur={(event) => {
-        const next = event.relatedTarget;
-        if (next instanceof Node && ![panelRef.current, voiceButton.current, gestureButton.current].some((element) => element?.contains(next))) close(false);
       }}>
       <header>
-        <h2 id="native-input-title">{panel === "voice" ? "Voice" : "Gestures"}</h2>
+        <h2 id="native-input-title">{panel === "voice" ? "Voice" : "Hands-free"}</h2>
         <button type="button" onClick={() => close(true)} aria-label="Close input controls">close <kbd>esc</kbd></button>
       </header>
       {notice && <p class="native-input-error" role="alert">{notice}</p>}
-      {!snapshot && <div class="native-panel-actions">
-        <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>
-      </div>}
+      {!snapshot && <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>}
       {panel === "voice" ? <>
-        <p>Speak into your draft. Finish keeps your words here; Enter sends them.</p>
-        <div class="native-panel-state" role="status">
-          {voice ? voiceLabel : "Microphone off"}
-          {voice?.progress !== null && voice?.progress !== undefined && voice.phase !== "listening" &&
-            <progress max={1} value={voice.progress} aria-label="Preparing voice" />}
-        </div>
+        <p>Listen to dictate. Pause keeps your draft.</p>
         <div class="native-panel-actions">
-          {!voice ? <button type="button" class="native-primary" disabled={busy || snapshot?.devices_loading} onClick={() => {
-            control.start(); close(false); options.prompt.current?.focus();
-          }}>start listening</button> : <>
-            {voice.phase === "listening" ? <>
-              <button type="button" class="native-primary" onClick={control.stop}>finish dictation</button>
-              <button type="button" disabled={busy || voice.muted === null || voice.mute_pending}
-                onClick={() => void command({ kind: "mute", request_id: voice.request_id, muted: !voice.muted })}>
-                {voice.mute_pending ? "updating microphone…" : voice.muted ? "resume microphone" : "pause microphone"}
-              </button>
-            </> : <button type="button" onClick={control.cancel}>cancel</button>}
-          </>}
+          {!voice ? <button type="button" class="native-primary" disabled={busy || snapshot?.devices_loading} onClick={control.start}>listen</button>
+            : <button type="button" class="native-primary" disabled={voice.phase === "finishing"}
+              onClick={voice.phase === "listening" ? control.stop : control.cancel}>{voice.phase === "listening" ? "pause" : voice.phase === "finishing" ? "pausing…" : "cancel"}</button>}
+          <span class="native-panel-state" role="status">{voice ? voiceLabel : "Microphone off"}</span>
         </div>
+        {voice?.progress != null && voice.phase !== "listening" && <progress max={1} value={voice.progress} aria-label="Preparing voice" />}
         <label class="native-device">Microphone
           <select value={control.device} disabled={busy || !!voice || snapshot?.devices_loading} onChange={(event) => control.setDevice(event.currentTarget.value)}>
             <option value="">System default</option>
@@ -120,22 +111,20 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
           </select>
           {snapshot?.devices_loading && <small role="status">Finding microphones…</small>}
         </label>
-        <p class="native-panel-footnote">Transcription runs on this computer. While listening, Enter sends and keeps the microphone on.</p>
+        <p class="native-panel-footnote">Local transcription. Enter sends and keeps listening.</p>
       </> : <>
-        <p>Use your hands to dictate and navigate. Camera video stays on this computer.</p>
         <div class="native-panel-actions">
           <button type="button" class={cameraOn ? "" : "native-primary"} disabled={busy}
-            onClick={() => void command({ kind: "gestures", enabled: !cameraOn })}>{cameraOn ? "turn camera off" : "enable camera"}</button>
-          {cameraOn && <span class="native-panel-state">{gestureReady ? "Camera on" : snapshot?.gesture_status === "starting" ? "Starting camera…" : "Camera unavailable"}</span>}
+            onClick={() => void command({ kind: "gestures", enabled: !cameraOn })}>{cameraOn ? "turn off" : "enable hands-free"}</button>
+          <span class="native-panel-state" role="status">{cameraOn ? feedback?.message : "Off"}</span>
         </div>
-        {cameraOn && <label class="native-armed">
-          <input type="checkbox" checked={snapshot?.armed ?? false} disabled={busy || (!snapshot?.armed && !gestureReady)}
-            onChange={(event) => void command({ kind: "arm", armed: event.currentTarget.checked })} />
-          <span>Arm gesture control<small>Gestures can send messages and edit dictation while armed.</small></span>
-        </label>}
-        {cameraOn && feedback && <p class={gestureFailed ? "native-input-error" : "native-panel-state"} role="status">{feedback.message}</p>}
+        <button type="button" class="native-tutorial-launch" disabled={busy} onClick={() => { setPanel(null); setTutorial(true); }}>
+          Learn hands-free <span>guided practice →</span>
+        </button>
         <GestureGuide />
+        <p class="native-panel-footnote">Camera stays on while ready. Camera and voice stay on this computer.</p>
       </>}
+      <InputSoundSettings />
     </section>, panelHost.current)}
   </div>;
 });
