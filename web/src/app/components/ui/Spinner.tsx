@@ -12,7 +12,7 @@ export interface SpinnerProps {
 export function Spinner({ size = 22 }: SpinnerProps) {
   const resolution = size > 32 ? "panel" : "inline";
   const rows = resolution === "panel" ? 32 : 20;
-  const stageSize = rows * SPINNER_FONT_SIZE * 0.7;
+  const stageSize = rows * SPINNER_FONT_SIZE * 0.64;
   return <span class="gsv-spinner" style={{ width: `${size}px`, height: `${size}px`,
     "--spinner-stage-size": `${stageSize}px`, "--spinner-scale": size / stageSize,
   }} aria-hidden="true">
