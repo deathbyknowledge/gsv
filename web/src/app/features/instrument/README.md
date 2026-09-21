@@ -116,6 +116,13 @@ Process history synchronization keeps its historical page boundary separate from
 
 Direct commands retain their shell sessions in the signed-in Instrument owner across view changes, with a bounded per-tab journal for reload recovery. Their target rail stays live until the command ends. Expanded commands offer text actions for inline input and Stop; the main prompt retains its usual meaning. Polls and input are serialized, input preserves its final newline, and only incremental output is appended. Failed input is never replayed automatically. Gateway and machine reconnects resume status checks; an unavailable target is not a completed command. Explicit `shell.cancel` stops a device session and its process tree without consuming output. Older machines report that this operation needs a newer daemon. Cancelling a native foreground command uses request cancellation. Completed output remains in the rail, with controls removed.
 
+Submitting a direct command keeps the person's `$ ` prefix in the composer for
+the next command. Delete the prefix to return to ordinary messages. An empty
+command does nothing and does not count as an unsent draft; command history is
+still available with the arrow keys. A rejected start preserves the command.
+Pending command output uses the shared glyph spinner; failures, unavailable
+status and stopping remain explicit.
+
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
 Normal Zen messages carry the prompt's selected place as structured message context. The model receives `[Selected target: ID]` alongside that message; visible text stays unchanged. A retry retains its target, while changing the target creates a new send intent. Origins and reply endpoints remain independent, and clients without a selection omit this context.

@@ -362,7 +362,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
   const onPromptInput = useCallback((value: string) => {
-    setHasDraft(value !== "");
+    setHasDraft(value !== "" && value.trim() !== "$");
     const match = value.match(/^@(\S*)$/);
     setPickerQuery(match ? match[1] : null);
     setPickerIndex(0);
@@ -637,8 +637,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         const id = sessions.start(command, where ?? defaultPlace(places), pidProp ?? "ship");
         scrolling.follow();
         setOpenActivities((current) => new Set([...current, id]));
+        return true;
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The command did not run.");
+        return false;
       }
     },
     [sessions, places, where, pidProp, scrolling.follow],
@@ -660,8 +662,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       if (intent.kind === "run") {
         if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
-        void runDirectly(intent.command);
-        return true;
+        return runDirectly(intent.command);
       }
       return say(intent.text);
     },
@@ -673,7 +674,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (inputHistory.length === 0) return;
       const nextIndex = historyIndex === null ? (direction === -1 ? inputHistory.length - 1 : null) : Math.min(inputHistory.length - 1, Math.max(0, historyIndex + direction));
       setHistoryIndex(nextIndex);
-      promptRef.current?.setValue(nextIndex === null ? "" : inputHistory[nextIndex]);
+      const empty = promptRef.current?.selection().value.startsWith("$") ? "$ " : "";
+      promptRef.current?.setValue(nextIndex === null ? empty : inputHistory[nextIndex]);
     },
     [historyIndex, inputHistory],
   );

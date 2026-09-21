@@ -239,13 +239,14 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     if (!input || disabled || submitting.current) return;
     if (interceptSubmit?.()) return;
     const text = input.value.trim();
-    if (!text && !allowEmpty) return;
+    if ((!text && !allowEmpty) || text === "$") return;
     const sentRevision = revision.current;
     submitting.current = true;
     try {
       const accepted = await onSubmit(text);
       if (accepted !== false && inputRef.current === input && revision.current === sentRevision) {
-        input.value = "";
+        input.value = text.startsWith("$") ? "$ " : "";
+        input.setSelectionRange(input.value.length, input.value.length);
         changed();
       }
     } finally { submitting.current = false; }
@@ -269,7 +270,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       input.blur();
       return;
     }
-    if (onHistory && input.value === "" && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+    if (onHistory && (input.value === "" || input.value.trim() === "$") && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
       onHistory(event.key === "ArrowUp" ? -1 : 1);
       return;
