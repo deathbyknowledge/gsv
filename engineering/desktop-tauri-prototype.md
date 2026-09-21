@@ -353,3 +353,15 @@ Before the configured frontend mounts, ordinary native close falls through to
 the host's existing exit cleanup. No window-manager binding or installed GPUI
 behavior changes. Compilation and source review are complete; the Super+W and
 draft-confirmation acceptance flow remains for the human tester.
+
+## Prompt indentation regression after retention
+
+The human pass found text and the custom cursor overlapping the target selector
+on the first line. The retention change named its activity ref `visible`, which
+was shadowed by the measurement function's existing local caret-visibility
+boolean. Accessing that local before initialization aborted measurement before
+it assigned `--prompt-indent`, leaving the textarea at its zero-indent fallback.
+The activity ref is now named `activeRef`; the original chip-width spacing and
+cursor measurement remain intact. This is a layout-calculation fix, with no CSS
+change. The next human pass should check the first characters after a fresh open
+and after returning to Zen, then arrow movement, target changes and wrapped text.

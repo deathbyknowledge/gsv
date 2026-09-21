@@ -58,8 +58,8 @@ export type PromptLineHandle = {
 // The prompt grows from that first line as text wraps, up to a scrollable height.
 export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
-  const visible = useRef(active);
-  visible.current = active;
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
@@ -82,7 +82,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const metrics = useRef<{ fontSize: number; lineHeight: number } | null>(null);
   const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean; focused: boolean } | null>(null);
   const measure = useCallback((reveal = false) => {
-    if (!visible.current) return;
+    if (!activeRef.current) return;
     const input = inputRef.current;
     const mirror = mirrorRef.current;
     const field = fieldRef.current;
@@ -147,7 +147,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     measured.current = { value: input.value, start: at, end: input.selectionEnd, width, top: input.scrollTop, left: input.scrollLeft, reveal, focused };
   }, []);
   const scheduleMeasure = useCallback((reveal = false, refresh = false) => {
-    if (!visible.current) return;
+    if (!activeRef.current) return;
     if (refresh) metrics.current = null;
     revealPending.current ||= reveal;
     if (measureFrame.current) return;
