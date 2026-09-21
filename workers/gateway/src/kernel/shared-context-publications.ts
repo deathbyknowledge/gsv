@@ -7,6 +7,8 @@ import {
 import type { FederationContactRecord } from "./federation-store";
 
 export const CONTEXT_LEASE_MS = 24 * 60 * 60_000;
+export const CONSENT_LEASE_MS = CONTEXT_LEASE_MS - 5 * 60_000;
+const RENEW_BEFORE_MS = 12 * 60 * 60_000;
 const RETENTION_MS = 8 * CONTEXT_LEASE_MS;
 export type ContextPublicationRow = {
   owner_uid: number; id: string; sequence: number; revision: number; kind: SharedContextKind;
@@ -14,7 +16,7 @@ export type ContextPublicationRow = {
   intent_id: string; intent_hash: string; delivery_id: string | null;
   subject_contact_id: string | null; subject_generation: string | null; retired_at: number | null;
 };
-type ConsentRow = { owner_uid: number; contact_id: string; generation: string; assertion_id: string; revision: number; record_json: string | null; consent_json: string | null; delivery_id: string | null; expires_at: number };
+type ConsentRow = { owner_uid: number; contact_id: string; generation: string; assertion_id: string; revision: number; record_json: string | null; consent_json: string | null; delivery_id: string | null; expires_at: number; renewal_after: number | null };
 export type ContextReceiptRow = { owner_uid: number; assertion_id: string; contact_id: string; generation: string; revision: number; lease_until: number; withdraw_through: number; consent_proposal: number };
 
 export class ContextPublications {
@@ -85,8 +87,9 @@ export class ContextPublications {
     const row = this.row(ownerUid, consent.assertionId);
     if (!row || row.revision !== consent.assertionRevision || row.subject_contact_id !== contact.id || row.subject_generation !== contact.generation) return;
     const record = sharedContextRecordSchema.parse(JSON.parse(row.record_json));
-    if (record.consent && record.consent.decisionRevision >= consent.decisionRevision) {
-      if (record.consent.decisionRevision === consent.decisionRevision && JSON.stringify(record.consent) !== JSON.stringify(consent)) throw new Error("Connection consent revision was reused");
+    if (record.consent && (record.consent.decisionRevision > consent.decisionRevision
+      || record.consent.decisionRevision === consent.decisionRevision && record.consent.leaseRevision >= consent.leaseRevision)) {
+      if (record.consent.decisionRevision === consent.decisionRevision && record.consent.leaseRevision === consent.leaseRevision && JSON.stringify(record.consent) !== JSON.stringify(consent)) throw new Error("Connection consent revision was reused");
       return;
     }
     if (row.state === "withdrawn") return;
@@ -121,7 +124,7 @@ export class ContextPublications {
     }
     this.sql.exec(`INSERT INTO social_context_consents (owner_uid, contact_id, generation, assertion_id, revision, record_json, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(contact_id, assertion_id) DO UPDATE SET generation = excluded.generation,
-      revision = excluded.revision, record_json = excluded.record_json, expires_at = excluded.expires_at, consent_json = NULL, delivery_id = NULL`,
+      revision = excluded.revision, record_json = excluded.record_json, expires_at = excluded.expires_at, consent_json = NULL, delivery_id = NULL, renewal_after = NULL`,
     contact.ownerUid, contact.id, contact.generation, record.assertion.id, record.assertion.revision, JSON.stringify(record), record.assertion.expiresAtMs);
   }
 
@@ -134,16 +137,34 @@ export class ContextPublications {
     }
     this.sql.exec(`INSERT INTO social_context_consents (owner_uid, contact_id, generation, assertion_id, revision, record_json, expires_at)
       VALUES (?, ?, ?, ?, ?, NULL, ?) ON CONFLICT(contact_id, assertion_id) DO UPDATE SET generation = excluded.generation,
-      revision = excluded.revision, record_json = NULL, consent_json = NULL, delivery_id = NULL, expires_at = excluded.expires_at`,
+      revision = excluded.revision, record_json = NULL, consent_json = NULL, delivery_id = NULL, expires_at = excluded.expires_at, renewal_after = NULL`,
     contact.ownerUid, contact.id, contact.generation, id, throughRevision, Date.now() + RETENTION_MS);
   }
 
-  decide(contact: FederationContactRecord, expectedDecision: number, consent: SharedContextConsent, deliveryId: string): SharedContextConsentRequest {
+  decide(contact: FederationContactRecord, expectedDecision: number, expectedLease: number, consent: SharedContextConsent, deliveryId: string): SharedContextConsentRequest {
     const current = this.consentRequest(contact.id, consent.assertionId);
     if (!current || current.generation !== contact.generation || current.record.assertion.revision !== consent.assertionRevision) throw new Error("Connection proposal changed");
-    if ((current.consent?.decisionRevision ?? 0) !== expectedDecision) throw new Error("Connection consent changed; review it again");
-    this.sql.exec("UPDATE social_context_consents SET consent_json = ?, delivery_id = ? WHERE contact_id = ? AND assertion_id = ?", JSON.stringify(consent), deliveryId, contact.id, consent.assertionId);
+    if (consent.decision === "approve" && consent.leaseUntilMs <= Date.now()) throw new Error("Connection proposal expired before consent was saved");
+    if ((current.consent?.decisionRevision ?? 0) !== expectedDecision || (current.consent?.leaseRevision ?? 0) !== expectedLease) throw new Error("Connection consent changed; review it again");
+    this.sql.exec("UPDATE social_context_consents SET consent_json = ?, delivery_id = ?, renewal_after = ? WHERE contact_id = ? AND assertion_id = ?", JSON.stringify(consent), deliveryId,
+      consent.decision === "approve" && consent.leaseUntilMs < consent.expiresAtMs ? consent.leaseUntilMs - RENEW_BEFORE_MS : null, contact.id, consent.assertionId);
     return this.consentRequest(contact.id, consent.assertionId)!;
+  }
+
+  nextRenewal(now = Date.now()): number | null {
+    return this.sql.exec<{ due: number | null }>(`SELECT min(r.renewal_after) AS due FROM social_context_consents r JOIN federation_contacts c
+      ON c.contact_id = r.contact_id AND c.generation = r.generation AND c.state = 'active'
+      WHERE r.renewal_after IS NOT NULL AND r.expires_at > ?`, now).one().due;
+  }
+
+  renewals(now = Date.now()): SharedContextConsentRequest[] {
+    return this.sql.exec<ConsentRow>(`SELECT r.* FROM social_context_consents r JOIN federation_contacts c
+      ON c.contact_id = r.contact_id AND c.generation = r.generation AND c.state = 'active'
+      WHERE r.renewal_after <= ? AND r.expires_at > ? ORDER BY r.renewal_after LIMIT 10`, now, now).toArray().map(consentRequest);
+  }
+
+  deferRenewal(contactId: string, assertionId: string, until: number): void {
+    this.sql.exec("UPDATE social_context_consents SET renewal_after = ? WHERE contact_id = ? AND assertion_id = ? AND renewal_after IS NOT NULL", until, contactId, assertionId);
   }
 
   sequence(ownerUid: number): number {
@@ -152,22 +173,24 @@ export class ContextPublications {
 
   page(contact: FederationContactRecord, kinds: SharedContextKind[], after: number, watermark: number, now: number): ContextPublicationRow[] {
     return this.sql.exec<ContextPublicationRow>(`SELECT p.* FROM social_context_publications p WHERE p.owner_uid = ? AND p.sequence > ? AND p.sequence <= ?
-      AND ((p.state = 'published' AND p.expires_at > ? AND p.kind IN (SELECT value FROM json_each(?)))
+      AND ((p.state = 'published' AND p.expires_at > ? AND (p.kind != 'connection' OR json_extract(p.record_json, '$.consent.leaseUntilMs') > ?)
+        AND p.kind IN (SELECT value FROM json_each(?)))
         OR EXISTS (SELECT 1 FROM social_context_receipts r WHERE r.owner_uid = p.owner_uid AND r.assertion_id = p.id AND r.contact_id = ? AND r.generation = ? AND r.lease_until > ?))
-      ORDER BY p.sequence LIMIT 11`, contact.ownerUid, after, watermark, now, JSON.stringify(kinds), contact.id, contact.generation, now).toArray();
+      ORDER BY p.sequence LIMIT 11`, contact.ownerUid, after, watermark, now, now, JSON.stringify(kinds), contact.id, contact.generation, now).toArray();
   }
 
   rememberViewer(contact: FederationContactRecord, row: ContextPublicationRow, leaseUntil: number): void {
+    const proofUntil = sharedContextRecordSchema.parse(JSON.parse(row.record_json)).consent?.leaseUntilMs ?? Infinity;
     if (!this.sql.exec("SELECT 1 FROM social_context_receipts WHERE owner_uid = ? AND assertion_id = ? AND contact_id = ? AND generation = ?", contact.ownerUid, row.id, contact.id, contact.generation).toArray().length
       && this.sql.exec<{ n: number }>("SELECT count(*) AS n FROM social_context_receipts").one().n >= 16_384) throw new Error("Shared context receipt capacity reached");
     this.sql.exec(`INSERT INTO social_context_receipts (owner_uid, assertion_id, contact_id, generation, revision, lease_until) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(owner_uid, assertion_id, contact_id, generation) DO UPDATE SET revision = excluded.revision,
         lease_until = CASE WHEN consent_proposal = 1 THEN max(lease_until, excluded.lease_until) ELSE excluded.lease_until END`,
-    contact.ownerUid, row.id, contact.id, contact.generation, row.revision, Math.min(leaseUntil, row.expires_at));
+    contact.ownerUid, row.id, contact.id, contact.generation, row.revision, Math.min(leaseUntil, row.expires_at, proofUntil));
   }
 
   renewViewers(contact: FederationContactRecord, kinds: SharedContextKind[], leaseUntil: number): void {
-    this.sql.exec(`UPDATE social_context_receipts AS r SET lease_until = min(?, (SELECT p.expires_at FROM social_context_publications p WHERE p.owner_uid = r.owner_uid AND p.id = r.assertion_id))
+    this.sql.exec(`UPDATE social_context_receipts AS r SET lease_until = min(?, (SELECT min(p.expires_at, COALESCE(json_extract(p.record_json, '$.consent.leaseUntilMs'), p.expires_at)) FROM social_context_publications p WHERE p.owner_uid = r.owner_uid AND p.id = r.assertion_id))
       WHERE r.contact_id = ? AND r.generation = ? AND r.consent_proposal = 0 AND EXISTS (SELECT 1 FROM social_context_publications p
         WHERE p.owner_uid = r.owner_uid AND p.id = r.assertion_id AND p.revision = r.revision AND p.state = 'published'
         AND p.kind IN (SELECT value FROM json_each(?)))`, leaseUntil, contact.id, contact.generation, JSON.stringify(kinds));
@@ -209,8 +232,10 @@ export class ContextPublications {
 }
 
 export function publication(row: ContextPublicationRow, now = Date.now()): SharedContextPublication {
-  return { record: sharedContextRecordSchema.parse(JSON.parse(row.record_json)),
-    state: row.state === "withdrawn" ? "withdrawn" : row.expires_at <= now ? "expired" : row.state === "pending" ? "awaiting-consent" : "published",
+  const record = sharedContextRecordSchema.parse(JSON.parse(row.record_json));
+  return { record,
+    state: row.state === "withdrawn" ? "withdrawn" : row.expires_at <= now ? "expired" : row.state === "pending" ? "awaiting-consent"
+      : record.assertion.kind === "connection" && (!record.consent || record.consent.leaseUntilMs <= now) ? "paused" : "published",
     ...(row.delivery_id ? { deliveryId: row.delivery_id } : undefined) };
 }
 

@@ -12,7 +12,7 @@ import { fetchFederationJson } from "./federation/http";
 import { consumePublicRateLimits } from "./federation/limits";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { profileOwnerActive } from "./profiles";
-import { CONTEXT_LEASE_MS } from "./shared-context-publications";
+import { CONSENT_LEASE_MS, CONTEXT_LEASE_MS, publication } from "./shared-context-publications";
 
 export const CONTEXT_SYNC_PATH = "/_gsv/federation/v2/context";
 export const CONTEXT_LIFETIME_MS = 30 * CONTEXT_LEASE_MS;
@@ -41,12 +41,14 @@ export async function verifyContextAssertion(record: SignedContextAssertion, key
   if (encoder.encode(JSON.stringify(record)).length > 8192 || !await verifySignedValue(key, jsonValueSchema.parse(a), record.signature)) throw new Error("Shared statement signature is invalid");
 }
 
-export async function verifyContextConsent(record: SignedContextAssertion, consent: SharedContextConsent): Promise<void> {
+export async function verifyContextConsent(record: SignedContextAssertion, consent: SharedContextConsent, now = Date.now()): Promise<void> {
   const { signature, ...unsigned } = consent;
   const a = record.assertion;
   if (a.kind !== "connection" || !sameActor(consent.actor, a.subject) || consent.assertionId !== a.id || consent.assertionRevision !== a.revision
     || consent.assertionHash !== await assertionHash(record) || consent.expiresAtMs !== a.expiresAtMs
     || (consent.decision === "withdraw" ? consent.decisionRevision !== 2 : consent.decisionRevision !== 1)
+    || consent.issuedAtMs > now + 5 * 60_000
+    || (consent.decision === "approve" ? consent.leaseUntilMs <= consent.issuedAtMs || consent.leaseUntilMs > consent.issuedAtMs + CONSENT_LEASE_MS || consent.leaseUntilMs > a.expiresAtMs : consent.leaseUntilMs !== consent.issuedAtMs)
     || consent.actor.shipId !== `ship:${await sha256Base64Url(canonicalJson(jsonValueSchema.parse(consent.publicKey)))}`
     || !await verifySignedValue(consent.publicKey, jsonValueSchema.parse(unsigned), signature)) throw new Error("Connection consent does not authorize this exact statement");
 }
@@ -54,8 +56,8 @@ export async function verifyContextConsent(record: SignedContextAssertion, conse
 export async function verifyContextRecord(record: SharedContextRecord, contact: FederationContactRecord, now = Date.now()): Promise<void> {
   await verifyContextAssertion(record, contact.remotePublicKey, remoteActor(contact), now);
   if (record.assertion.kind === "connection") {
-    if (!record.consent || record.consent.decision !== "approve") throw new Error("Connection disclosure has no mutual consent");
-    await verifyContextConsent(record, record.consent);
+    if (!record.consent || record.consent.decision !== "approve" || record.consent.leaseUntilMs <= now) throw new Error("Connection disclosure has no current mutual consent");
+    await verifyContextConsent(record, record.consent, now);
   } else if (record.consent) throw new Error("Unexpected connection consent on a statement");
   if (encoder.encode(JSON.stringify(record)).length > 8192) throw new Error("Shared statement is too large");
 }
@@ -90,7 +92,7 @@ export async function receiveContextSync(request: ContextSyncRequest, ctx: Kerne
   const selected = rows.slice(0, 10);
   const more = rows.length > 10;
   const changes: ContextSyncResponse["changes"] = selected.map((row) => ({ id: row.id,
-    ...(row.state === "published" && row.expires_at > now && kinds.includes(row.kind)
+    ...(publication(row, now).state === "published" && kinds.includes(row.kind)
       ? { record: sharedContextRecordSchema.parse(JSON.parse(row.record_json)) } : undefined) }));
   const leaseUntilMs = now + CONTEXT_LEASE_MS;
   const next: ContextCursor = more ? { ...cursor, watermark, after: selected.at(-1)!.sequence }
@@ -102,7 +104,7 @@ export async function receiveContextSync(request: ContextSyncRequest, ctx: Kerne
   ctx.federation.transaction(() => {
     requireOwnedActiveContactGeneration(contact, contact.ownerUid, ctx);
     if (!profileOwnerActive(contact.ownerUid, ctx) || publications.sequence(contact.ownerUid) !== sequence) throw new PublicFederationError(409, "Shared context changed during sync");
-    for (const row of selected) if (row.state === "published" && row.expires_at > now && kinds.includes(row.kind)) publications.rememberViewer(contact, row, leaseUntilMs);
+    for (const row of selected) if (publication(row, now).state === "published" && kinds.includes(row.kind)) publications.rememberViewer(contact, row, leaseUntilMs);
     if (!more) publications.renewViewers(contact, kinds, leaseUntilMs);
   });
   return response;

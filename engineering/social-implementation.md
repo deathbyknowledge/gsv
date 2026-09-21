@@ -302,3 +302,12 @@ Owner publication and consent lists are paged. Control deliveries use the
 existing receipt and retry primitives with a final supersession fence before
 outbound dispatch. CI runs the new behavior checks; rendered acceptance is
 still the maintainer's task. Introductions and scoped Ship assistance remain.
+
+Connection consent now carries an independently signed short display proof.
+The approving endpoint renews only its unchanged active human decision; it stops
+renewing on withdrawal, contact replacement or inactive ownership. Cached views
+take the minimum of the source lease, statement expiry and the other endpoint's
+proof. A publisher therefore cannot keep an old approval alive by issuing new
+page leases. The still-unreleased v067 schema includes the bounded renewal
+deadline alongside each consent. Expiry/renewal/withdrawal regressions are added
+for CI, with no local execution.

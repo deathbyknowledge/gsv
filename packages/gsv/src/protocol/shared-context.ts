@@ -15,6 +15,7 @@ export type SharedContextConsent = {
   domain: "gsv-federation/2/context-consent";
   actor: ActorRef; assertionId: string; assertionRevision: number; assertionHash: string;
   decision: "approve" | "decline" | "withdraw"; decisionRevision: number;
+  leaseRevision: number; issuedAtMs: number; leaseUntilMs: number;
   expiresAtMs: number; publicKey: FederationPublicKey; signature: string;
 };
 export type SharedContextRecord = SignedContextAssertion & { consent?: SharedContextConsent };
@@ -29,7 +30,7 @@ export type SharedContextSource = {
   state: "queued" | "syncing" | "current" | "unavailable"; updatedAtMs?: number; nextSyncAtMs: number;
 };
 export type SharedContextPublication = {
-  record: SharedContextRecord; state: "awaiting-consent" | "published" | "withdrawn" | "expired"; deliveryId?: string;
+  record: SharedContextRecord; state: "awaiting-consent" | "published" | "paused" | "withdrawn" | "expired"; deliveryId?: string;
 };
 export type SharedContextConsentRequest = { contactId: string; generation: string; record: SignedContextAssertion; consent?: SharedContextConsent; deliveryId?: string };
 export type ContactContextListArgs = { subject?: ActorRef; sourceContactId?: string; cursor?: string; limit?: number };
@@ -74,6 +75,7 @@ export const sharedContextConsentSchema = z.strictObject({
   domain: z.literal("gsv-federation/2/context-consent"), actor: actorRefSchema, assertionId: socialIdSchema,
   assertionRevision: positive, assertionHash: z.string().check(z.minLength(1), z.maxLength(128)),
   decision: z.enum(["approve", "decline", "withdraw"]), decisionRevision: z.int().check(z.minimum(1), z.maximum(2)),
+  leaseRevision: positive, issuedAtMs: positive, leaseUntilMs: positive,
   expiresAtMs: positive, publicKey: federationPublicKeySchema, signature: signatureSchema,
 }) satisfies z.ZodMiniType<SharedContextConsent>;
 export const sharedContextRecordSchema = z.strictObject({ assertion: sharedContextAssertionSchema, signature: signatureSchema, consent: z.optional(sharedContextConsentSchema) }) satisfies z.ZodMiniType<SharedContextRecord>;

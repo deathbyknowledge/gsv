@@ -20,6 +20,15 @@ signed approval of the exact record, audience and expiry. Accepting a conversati
 does not give that approval. Either endpoint can revoke its approval. Revisions
 that change the disclosed connection require fresh consent.
 
+Approval includes a signed display lease shorter than 24 hours, with a separate
+monotonic lease revision. The approving endpoint renews that proof only while
+the same local human approval, statement revision and contact generation remain
+active. Revocation stops renewal immediately. A publisher cannot extend another
+person's proof by renewing its own page lease; recipients verify both bounds.
+An unavailable approving endpoint therefore pauses disclosure when its last
+proof expires. These renewals are deterministic Kernel maintenance, without a
+Process or model call.
+
 Selected evidence is a quoted copy of explicitly chosen committed messages,
 including origin references where available. It carries the publisher's
 attribution. It does not grant access to the underlying conversation, private
@@ -76,5 +85,6 @@ The intermediary asks the proposed recipient first and reviews the selected
 context before forwarding it. Recipients still decide whether to engage. There
 is no automatic group, pairing, resource access or inherited trust.
 
-This document records the implementation contract for the remaining branch work;
-it is not a claim that these paths have already been implemented or validated.
+The context paths and People review screens are implemented on the feature
+branch. Introductions and the separate scoped-assistance batch remain in progress.
+CI and maintainer acceptance, rather than this document, establish validation.

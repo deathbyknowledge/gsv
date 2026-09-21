@@ -87,6 +87,25 @@ describe("selected shared context storage", () => {
     });
   });
 
+  it("never extends the other endpoint's consent proof when the source renews its page lease", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const { context, contact } = fixture(storage);
+      const statement = record("connection:one", "connection");
+      const now = Date.now();
+      const proofUntil = now + 60 * 60_000;
+      statement.consent = { domain: "gsv-federation/2/context-consent", actor: statement.assertion.subject,
+        assertionId: statement.assertion.id, assertionRevision: 1, assertionHash: "hash", decision: "approve", decisionRevision: 1,
+        leaseRevision: 1, issuedAtMs: now, leaseUntilMs: proofUntil, expiresAtMs: statement.assertion.expiresAtMs,
+        publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, signature: "signature" };
+      context.sources.subscribe(contact, 0, ["connection"]);
+      context.sources.apply(context.sources.begin(context.sources.row(contact.id)!)!, page([statement], false));
+      expect(context.sources.entries(1000, {}).entries[0].leaseUntilMs).toBe(proofUntil);
+      const delta = context.sources.begin(context.sources.row(contact.id)!)!;
+      context.sources.apply(delta, { ...page([], false), mode: "delta", leaseUntilMs: now + 2 * CONTEXT_LEASE_MS });
+      expect(context.sources.entries(1000, {}, proofUntil).entries).toEqual([]);
+    });
+  });
+
   it("retains withdrawal receipts across lease renewal and refuses a publication prepared before withdrawal", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const { context, contact, federation } = fixture(storage);

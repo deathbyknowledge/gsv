@@ -15,10 +15,11 @@ export const KERNEL_V067_SELECTED_SHARED_CONTEXT: SqlMigration = {
     "CREATE INDEX social_context_publications_subject ON social_context_publications (subject_contact_id, subject_generation)",
     `CREATE TABLE social_context_consents (
       owner_uid INTEGER NOT NULL, contact_id TEXT NOT NULL, generation TEXT NOT NULL, assertion_id TEXT NOT NULL,
-      revision INTEGER NOT NULL, record_json TEXT, consent_json TEXT, delivery_id TEXT, expires_at INTEGER NOT NULL,
+      revision INTEGER NOT NULL, record_json TEXT, consent_json TEXT, delivery_id TEXT, expires_at INTEGER NOT NULL, renewal_after INTEGER,
       PRIMARY KEY (contact_id, assertion_id)
     )`,
     "CREATE INDEX social_context_consents_owner ON social_context_consents (owner_uid, expires_at)",
+    "CREATE INDEX social_context_consents_renewal ON social_context_consents (renewal_after)",
     `CREATE TABLE social_context_receipts (
       owner_uid INTEGER NOT NULL, assertion_id TEXT NOT NULL, contact_id TEXT NOT NULL, generation TEXT NOT NULL,
       revision INTEGER NOT NULL, lease_until INTEGER NOT NULL, withdraw_through INTEGER NOT NULL DEFAULT 0, consent_proposal INTEGER NOT NULL DEFAULT 0,

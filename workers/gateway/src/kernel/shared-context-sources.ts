@@ -91,14 +91,14 @@ export class ContextSources {
         if (a.id !== change.id || !kinds.includes(a.kind)) throw new Error("Source returned unrequested context");
         this.sql.exec(`INSERT INTO social_context_cache (contact_id, projection_id, assertion_id, owner_uid, subject_ship, subject_id, kind, revision, lease_until, received_at, record_json)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.contact_id, row.run_id, a.id, row.owner_uid, a.subject.shipId, a.subject.subjectId,
-        a.kind, a.revision, Math.min(page.leaseUntilMs, a.expiresAtMs), now, JSON.stringify(change.record));
+        a.kind, a.revision, Math.min(page.leaseUntilMs, a.expiresAtMs, change.record.consent?.leaseUntilMs ?? Infinity), now, JSON.stringify(change.record));
       }
       this.assertCapacity(row.contact_id, row.run_id);
       if (page.more) {
         this.sql.exec("UPDATE social_context_sources SET next_cursor = ?, next_due = ? WHERE contact_id = ?", page.cursor, now + 1000, row.contact_id);
       } else {
         this.sql.exec("DELETE FROM social_context_cache WHERE contact_id = ? AND projection_id != ?", row.contact_id, row.run_id);
-        this.sql.exec("UPDATE social_context_cache SET lease_until = min(?, json_extract(record_json, '$.assertion.expiresAtMs')), received_at = ? WHERE contact_id = ? AND projection_id = ?", page.leaseUntilMs, now, row.contact_id, row.run_id);
+        this.sql.exec("UPDATE social_context_cache SET lease_until = min(?, json_extract(record_json, '$.assertion.expiresAtMs'), COALESCE(json_extract(record_json, '$.consent.leaseUntilMs'), json_extract(record_json, '$.assertion.expiresAtMs'))), received_at = ? WHERE contact_id = ? AND projection_id = ?", page.leaseUntilMs, now, row.contact_id, row.run_id);
         this.sql.exec(`UPDATE social_context_sources SET projection_id = run_id, run_id = NULL, cursor = ?, next_cursor = NULL,
           state = 'current', updated_at = ?, next_due = ?, run_started = NULL WHERE contact_id = ?`, page.cursor, now, now + HOUR_MS, row.contact_id);
       }

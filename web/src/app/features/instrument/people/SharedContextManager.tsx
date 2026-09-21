@@ -51,7 +51,7 @@ export function SharedContextManager({ account, onDirty, onOpen }: {
     <ul class="people-context-list">{publications.map((entry) => {
       const a = entry.record.assertion;
       const withdrawing = selection?.kind === "withdraw" && selection.publication.record.assertion.id === a.id;
-      return <li key={a.id}><p class="people-context-meta">{entry.state === "awaiting-consent" ? "Waiting for their consent" : entry.state === "published" ? "Available to subscribed direct contacts" : entry.state === "withdrawn" ? "Withdrawn" : "Expired"}</p>
+      return <li key={a.id}><p class="people-context-meta">{entry.state === "awaiting-consent" ? "Waiting for their consent" : entry.state === "published" ? "Available to subscribed direct contacts" : entry.state === "paused" ? "Paused · waiting for their GSV to renew consent" : entry.state === "withdrawn" ? "Withdrawn" : "Expired"}</p>
         <ContextStatement assertion={a} />
         {entry.deliveryId && <ContextDelivery deliveryId={entry.deliveryId} account={account} />}
         {withdrawing ? <div class="people-decision"><p>Withdraw this statement and any pending consent proposal? Recipients will receive a removal notice. Offline copies expire within their existing display lease.</p>
@@ -96,6 +96,7 @@ function ConsentReview({ request, current, account, onClose, onDirty }: {
     <ContextStatement assertion={a} />
     <p>This exact statement can be shared with <strong>the author's active direct contacts who subscribe to connections</strong>, until {new Date(a.expiresAtMs).toLocaleString()}.</p>
     <p class="people-note">Your conversation stays private. This disclosure gives nobody access to your space. Both your approval and the author's proposal identify the exact wording, audience and expiry.</p>
+    <p class="people-note">Your GSV renews a short consent proof while this approval remains active. Withdrawing stops renewal, so the author cannot keep using an old approval indefinitely.</p>
     {request.consent?.decision === "approve" && <p class="people-note">Withdrawing asks the author to remove this connection. Previously shared copies remain until their display lease ends, within 24 hours.</p>}
     {changed && !intent && <p class="people-note" role="status">The proposal or your decision changed. Close this review and open the latest version.</p>}
     <div class="people-actions">{intent ? <button class="ibtn" disabled={!allowed || decide.isPending} onClick={() => submit(intent.decision)}>{decide.isPending ? "saving…" : "retry the same decision"}</button>

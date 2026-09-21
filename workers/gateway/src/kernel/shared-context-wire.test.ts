@@ -7,8 +7,8 @@ import { FederationIdentity, signContactEnvelope } from "./federation-crypto";
 import { FederationStore } from "./federation-store";
 import { SharedContextStore } from "./shared-context-store";
 import { assertionHash, receiveContextSync, verifyContextConsent, verifyContextRecord } from "./shared-context-wire";
-import { handleContactContextPublish, handleContactContextSubscribe, handleContactContextWithdraw } from "./shared-context";
-import { CONTEXT_LEASE_MS } from "./shared-context-publications";
+import { commitInboundContext, handleContactContextConsent, handleContactContextPublish, handleContactContextSubscribe, handleContactContextWithdraw, processSharedContext } from "./shared-context";
+import { CONSENT_LEASE_MS, CONTEXT_LEASE_MS } from "./shared-context-publications";
 import { handleContactDeliveryRetry } from "./federation";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
@@ -68,14 +68,45 @@ describe("authenticated selected relationship context", () => {
       statement.signature = await ctx.federationIdentity.sign(jsonValueSchema.parse(statement.assertion));
       const unsigned: Omit<SharedContextConsent, "signature"> = { domain: "gsv-federation/2/context-consent", actor: statement.assertion.subject,
         assertionId: statement.assertion.id, assertionRevision: 1, assertionHash: await assertionHash(statement), decision: "approve", decisionRevision: 1,
+        leaseRevision: 1, issuedAtMs: Date.now(), leaseUntilMs: Date.now() + CONSENT_LEASE_MS,
         expiresAtMs: statement.assertion.expiresAtMs, publicKey: identity.publicKey };
       const consent = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
       const remote = { ...contact, remoteShipId: identity.shipId, remoteSubject: subject, remotePublicKey: identity.publicKey };
       await expect(verifyContextRecord(statement, remote)).rejects.toThrow("mutual consent");
       await expect(verifyContextRecord({ ...statement, consent }, remote)).resolves.toBeUndefined();
+      await expect(verifyContextRecord({ ...statement, consent }, remote, consent.leaseUntilMs)).rejects.toThrow("current mutual consent");
       await expect(verifyContextConsent({ ...statement, assertion: { ...statement.assertion, revision: 2 } }, consent)).rejects.toThrow("exact statement");
       await expect(verifyContextConsent({ ...statement, assertion: { ...statement.assertion, label: "Unapproved label" } }, consent)).rejects.toThrow("exact statement");
       await expect(verifyContextRecord({ ...statement, consent: { ...consent, decision: "withdraw", decisionRevision: 2 } }, remote)).rejects.toThrow("mutual consent");
+    });
+  });
+
+  it("renews an unchanged local approval and stops issuing proofs after withdrawal", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, identity, subject } = await fixture(storage);
+      const contact = ctx.federation.activateContact({ ownerUid: OWNER.uid, remoteShipId: identity.shipId, remoteSubject: { id: "subject:publisher", displayName: "Publisher" },
+        remoteOrigin: "https://publisher.example", remotePublicKey: identity.publicKey, sharedSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", generation: "generation:publisher", threadId: "thread:publisher" });
+      const assertion = { domain: "gsv-federation/2/context" as const, id: "connection:renew", issuer: { shipId: identity.shipId, subjectId: contact.remoteSubject.id },
+        subject: { shipId: identity.shipId, subjectId: subject.id }, revision: 1, kind: "connection" as const, label: "Reviewed label", text: "Approved wording", evidence: [],
+        audience: "subscribed-direct-contacts" as const, issuedAtMs: Date.now(), expiresAtMs: Date.now() + 7 * CONTEXT_LEASE_MS };
+      const record = { assertion, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(assertion)) };
+      await commitInboundContext({ kind: "context.consent.request", record }, contact, ctx);
+      const args = { contactId: contact.id, expectedGeneration: contact.generation, assertionId: assertion.id, assertionRevision: 1, expectedDecisionRevision: 0, decision: "approve" as const };
+      await expect(handleContactContextConsent(args, { ...ctx, processId: "proc:ship" })).rejects.toThrow("signed-in human");
+      const first = await handleContactContextConsent(args, ctx);
+      expect(first.consentRequest.consent?.leaseRevision).toBe(1);
+      ctx.sharedContext.publications.deferRenewal(contact.id, assertion.id, Date.now() - 1);
+      await processSharedContext(ctx);
+      const renewed = ctx.sharedContext.publications.consentRequest(contact.id, assertion.id)!;
+      expect(renewed.consent).toMatchObject({ decision: "approve", decisionRevision: 1, leaseRevision: 2, assertionHash: first.consentRequest.consent!.assertionHash });
+      expect(renewed.deliveryId).not.toBe(first.consentRequest.deliveryId);
+      await verifyContextConsent(record, renewed.consent!);
+      const withdrawn = await handleContactContextConsent({ ...args, expectedDecisionRevision: 1, decision: "withdraw" }, ctx);
+      expect(withdrawn.consentRequest.consent).toMatchObject({ decision: "withdraw", decisionRevision: 2, leaseRevision: 3 });
+      expect(ctx.sharedContext.publications.nextRenewal()).toBeNull();
+      ctx.sharedContext.publications.deferRenewal(contact.id, assertion.id, Date.now() - 1);
+      await processSharedContext(ctx);
+      expect(ctx.sharedContext.publications.consentRequest(contact.id, assertion.id)?.consent).toEqual(withdrawn.consentRequest.consent);
     });
   });
 

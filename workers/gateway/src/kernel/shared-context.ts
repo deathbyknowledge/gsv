@@ -14,7 +14,8 @@ import { requireContactCaller, requireContactHuman, requireOwnedActiveContact, r
 import { assertOutboundCapacity, consumeOutboundDeliveryRate, consumePublicRateLimits } from "./federation/limits";
 import { federationInputFingerprint, rearmPendingDelivery } from "./federation/delivery";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
-import { publication } from "./shared-context-publications";
+import { CONSENT_LEASE_MS, publication } from "./shared-context-publications";
+import { profileOwnerActive } from "./profiles";
 import { assertionHash, CONTEXT_LIFETIME_MS, remoteActor, sameActor, syncContextSource, verifyContextAssertion, verifyContextConsent } from "./shared-context-wire";
 import { getConversationById } from "../shared/utils";
 import { negotiateContactProtocol } from "./federation/protocol";
@@ -168,22 +169,26 @@ export async function handleContactContextConsent(raw: ContactContextConsentArgs
   if ((current.consent?.decisionRevision ?? 0) !== args.expectedDecisionRevision || (args.decision === "withdraw" ? current.consent?.decision !== "approve" : !!current.consent)) throw new Error("Connection consent changed; review it again");
   if (args.decision === "approve" && current.record.assertion.expiresAtMs <= Date.now()) throw new Error("This connection proposal expired");
   const identity = await localActor(ownerUid, ctx);
+  const issuedAtMs = Date.now();
   const unsigned: Omit<SharedContextConsent, "signature"> = {
     domain: "gsv-federation/2/context-consent", actor: identity.actor, assertionId: args.assertionId, assertionRevision: args.assertionRevision,
     assertionHash: await assertionHash(current.record), decision: args.decision, decisionRevision: args.expectedDecisionRevision + 1,
     expiresAtMs: current.record.assertion.expiresAtMs, publicKey: identity.publicKey,
+    leaseRevision: (current.consent?.leaseRevision ?? 0) + 1, issuedAtMs,
+    leaseUntilMs: args.decision === "approve" ? Math.min(issuedAtMs + CONSENT_LEASE_MS, current.record.assertion.expiresAtMs) : issuedAtMs,
   };
   const consent = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
   const deliveryId = `delivery:${crypto.randomUUID()}`;
   requireContactHuman(ctx);
   const result = ctx.federation.transaction(() => {
     requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
-    const updated = ctx.sharedContext.publications.decide(contact, args.expectedDecisionRevision, consent, deliveryId);
-    enqueueContext(contact, { kind: "context.consent.decision", consent }, deliveryId, `context-consent:${args.assertionId}:${args.assertionRevision}:${consent.decisionRevision}`, ctx);
+    const updated = ctx.sharedContext.publications.decide(contact, args.expectedDecisionRevision, current.consent?.leaseRevision ?? 0, consent, deliveryId);
+    enqueueContext(contact, { kind: "context.consent.decision", consent }, deliveryId, `context-consent:${args.assertionId}:${args.assertionRevision}:${consent.decisionRevision}:${consent.leaseRevision}`, ctx);
     return updated;
   });
   ctx.broadcastToUserUid(ownerUid, "contact.context.changed");
   await ctx.scheduleFederationDelivery(deliveryId, Date.now(), true);
+  await ctx.scheduleSharedContext();
   return { consentRequest: result };
 }
 
@@ -237,7 +242,35 @@ export async function processSharedContext(ctx: KernelContext): Promise<void> {
     if (existing) await rearmPendingDelivery(existing, ctx);
     else await ctx.scheduleFederationDelivery(deliveryId, Date.now(), true);
   }
+  await renewContextConsents(ctx);
   await syncContextSource(ctx);
+}
+
+async function renewContextConsents(ctx: KernelContext): Promise<void> {
+  const store = ctx.sharedContext.publications;
+  for (const proposal of store.renewals()) {
+    const consent = proposal.consent;
+    const contact = ctx.federation.get(proposal.contactId);
+    if (!consent || consent.decision !== "approve" || !contact || contact.generation !== proposal.generation || contact.state !== "active") continue;
+    if (!profileOwnerActive(contact.ownerUid, ctx)) { store.deferRenewal(contact.id, consent.assertionId, Date.now() + 60 * 60_000); continue; }
+    try {
+      const issuedAtMs = Date.now();
+      const { signature: _signature, ...previous } = consent;
+      const unsigned = { ...previous, issuedAtMs, leaseUntilMs: Math.min(issuedAtMs + CONSENT_LEASE_MS, consent.expiresAtMs), leaseRevision: consent.leaseRevision + 1 };
+      const next = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
+      const deliveryId = `delivery:${crypto.randomUUID()}`;
+      ctx.federation.transaction(() => {
+        requireOwnedActiveContactGeneration(contact, contact.ownerUid, ctx);
+        if (!profileOwnerActive(contact.ownerUid, ctx)) throw new Error("Connection consent owner is inactive");
+        store.decide(contact, consent.decisionRevision, consent.leaseRevision, next, deliveryId);
+        enqueueContext(contact, { kind: "context.consent.decision", consent: next }, deliveryId,
+          `context-consent:${consent.assertionId}:${consent.assertionRevision}:${consent.decisionRevision}:${next.leaseRevision}`, ctx);
+      });
+      await ctx.scheduleFederationDelivery(deliveryId, Date.now(), true);
+    } catch {
+      store.deferRenewal(contact.id, consent.assertionId, Date.now() + 60 * 60_000);
+    }
+  }
 }
 
 function enqueueContext(contact: FederationContactRecord, payload: FederationContextDelivery, deliveryId: string, idempotencyKey: string, ctx: KernelContext): void {
