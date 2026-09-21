@@ -16,6 +16,10 @@ prototype.
 From the repository root, with Rust, Node/npm and the
 [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux):
 
+The gesture helper also needs CMake 3.22+, a C++20 compiler and network access
+for its first LiteRT/XNNPACK source build. The resulting runtime and gesture
+models are embedded in the helper; users do not install an inference runtime.
+
 Install WebKit's media runtime as well as its development libraries. The shared
 frontend renders audio/video attachments, and WebKitGTK needs GStreamer plugins
 even though native voice capture runs in `gsv-transcribe`:
@@ -85,6 +89,29 @@ same path, confirming only when a retained view has unsaved work. The ordinary
 installed Desktop can be opened as usual. `gsv desktop` continues to address
 that installed application: this prototype does not claim its local CLI control
 endpoint.
+
+## macOS development releases
+
+The release workflow includes `gsv-tauri-prototype-darwin-arm64.zip` for Apple
+Silicon and `gsv-tauri-prototype-darwin-x64.zip` for Intel, targeting macOS 12+.
+The `macos tauri development app` workflow also uploads these ZIPs on relevant
+pull requests and can be dispatched independently.
+
+Unzip the matching download and move `GSV Tauri Prototype.app` to Applications.
+The app includes the voice and gesture helpers, permission descriptions and
+third-party notices. It retains the prototype's separate application identity
+and session storage.
+
+These builds use [ad-hoc signing](https://v2.tauri.app/distribute/sign/macos/),
+without an Apple Developer ID or notarization. After the first blocked launch,
+allow this app through **System Settings → Privacy & Security → Open Anyway**,
+as described in [Apple's instructions](https://support.apple.com/en-us/102445).
+Camera and microphone permission is requested when those features are enabled.
+
+CI builds each architecture natively, packages it with the pinned Tauri CLI,
+and checks the signature, helper executables and permission metadata before
+uploading. Camera/microphone permission and interactive behavior still need a
+human acceptance pass on macOS.
 
 ## Development mock
 
@@ -201,9 +228,9 @@ shortcut, and timing collectors have been removed.
   Fleet's ordinary enrollment UI remains available. Chat requires no daemon.
 - OAuth, password recovery, invitations and onboarding links open in the external
   browser. The prototype does not accept external deep links or remote webviews.
-- Linux is the initial build. macOS permission descriptions are included for a
-  later isolated app bundle; this is not a signed/notarized macOS artifact and
-  does not advertise Windows Desktop support.
+- Linux is the initial human-tested platform. The macOS development bundles are
+  ad-hoc signed and unnotarized; macOS human acceptance remains open. This does
+  not advertise Windows Desktop support.
 - No performance improvement is claimed. Compare the whole host, webview and
   helpers against GPUI for startup, idle load, input/IME and long conversations.
 

@@ -19,3 +19,4 @@ docs/.vitepress/cache/
 # Isolated desktop prototype artifacts
 web/dist-tauri/
 host/apps/desktop-tauri/gen/
+host/apps/desktop-tauri/binaries/

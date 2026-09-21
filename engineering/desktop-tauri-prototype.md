@@ -700,3 +700,33 @@ an ornamental paint layer without adding filtering, animation or texture work.
 The original CSS comments mentioning scanlines are preserved, followed by a note
 recording their removal. Light theme already hid this overlay; the visible change
 is confined to dark theme.
+
+## Native inference integration
+
+The native backend from `faster-inference` is carried in the focused companion
+PR #333 and merged into this prototype branch. The `gsv-vision` model owner now
+uses statically linked LiteRT/XNNPACK in place of tract and the handwritten
+depthwise kernel. The older branch's browser gestures and dictation are excluded.
+The current thumb classification, temporal holds, tutorial protocol and shared
+UI remain owned by this prototype; the backend port does not replace them.
+
+The helper compiled locally for the user to test. Historical timing and parity
+evidence is preserved in `scripts/vision-native/INFERENCE.md`; it is not a new
+benchmark of this integration. CI covers native output parity and helper tests
+on Linux x64/ARM64 and macOS Intel/Apple Silicon.
+
+## macOS developer release packaging
+
+At the user's request, the release workflow also includes architecture-specific
+ZIPs containing `GSV Tauri Prototype.app`. A reusable workflow builds the same
+shared frontend and native helpers, uses the pinned Tauri bundler, and signs the
+app ad-hoc without Apple credentials. Permission descriptions, camera/microphone
+entitlements and third-party notices travel in the app. Its version follows the
+repository release version and its application identity remains isolated.
+
+The workflow checks bundle contents and signatures before publishing an artifact;
+the release job includes both ZIPs in its existing checksum and asset list. It
+also runs on relevant pull requests. This is a developer distribution without
+Developer ID signing or notarization; macOS interactive permission and input
+acceptance still require a human tester. The existing GPUI distributions and
+installer ownership are unchanged.
