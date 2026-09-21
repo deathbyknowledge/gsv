@@ -415,3 +415,34 @@ view. This corrects classification, not input performance, and does not prove
 that this particular report contained events from other views. The timing
 panel now explains its independent buffers. The next human pass should clear
 samples and isolate held-key Zen navigation before drawing further conclusions.
+
+## Persistent dark-theme latency
+
+The human tester reported smooth input in light mode, persistent perceived
+latency of about 250 ms after switching to dark, and restored responsiveness
+when switching back to light. This establishes a repeatable theme-dependent
+symptom, not which rendering effect causes it. The theme hook changes a class
+and stores the preference; it starts no continuing work. Both themes run the
+same star loop. Dark mode additionally enables star/prompt glows, the vignette,
+and a full-window scanline overlay with `mix-blend-mode: multiply`.
+
+The shared backdrop owns these effects. Its scanlines contain only transparent
+black, so ordinary source-over produces the same colors as multiply: both blend
+functions return black for a black source before alpha compositing
+([compositing formulas](https://www.w3.org/TR/compositing-1/#blending)). The
+redundant blend is removed while retaining the gradient, vignette and glows.
+This removes a request for backdrop blending; a renderer performance improvement
+is a hypothesis awaiting the human pass, not an established result.
+
+The prototype Timings panel includes an on-demand comparison that restores only
+the old blend, without restarting, changing theme, or rerendering the conversation.
+It clears samples on each change and resets on app restart. Reports include the
+current theme and comparison setting, not historical per-sample appearance;
+clear samples when changing theme. The comparison CSS is desktop-only. Compare
+dark-mode j/k, prompt focus, typing and cursor movement with the option off/on/off,
+keeping the same monitor, zoom and loaded conversation. If neither condition
+helps, this does not identify the blend as the cause; glows and background paint
+remain candidates for a separately controlled comparison. The desktop frontend
+and native executable compile successfully. The existing window was left running;
+no runtime profiling or automated tests were performed under the human-testing
+workflow.

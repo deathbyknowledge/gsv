@@ -20,3 +20,6 @@
 .desktop-timing-actions { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
 .desktop-timings pre { overflow: auto; user-select: text; }
 .desktop-timings summary { cursor: pointer; }
+.desktop-rendering-comparison { margin: 16px 0; }
+/* Prototype-only A/B control; ordinary builds use the shared backdrop's alpha compositing. */
+html[data-desktop-original-scanlines] .instrument-scan { mix-blend-mode: multiply; }

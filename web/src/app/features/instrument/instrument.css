@@ -65,8 +65,8 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Black scanlines already darken through alpha; a backdrop blend adds no visual effect. */
   background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0, 0, 0, 0.22) 3px);
-  mix-blend-mode: multiply;
 }
 .instrument-vignette {
   position: absolute;
