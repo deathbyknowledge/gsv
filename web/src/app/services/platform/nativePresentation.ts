@@ -13,6 +13,9 @@ export function sameNativePresentation(a: NativeSnapshot | null, b: NativeSnapsh
       && (a.gesture_context.voice_request_id !== b.gesture_context.voice_request_id || a.gesture_context.muted !== b.gesture_context.muted))) return false;
   if (a.gesture_progress?.candidate !== b.gesture_progress?.candidate
     || a.gesture_progress?.progress_permille !== b.gesture_progress?.progress_permille) return false;
+  if (a.gesture_practice?.lesson_id !== b.gesture_practice?.lesson_id
+    || a.gesture_practice?.feedback_sequence !== b.gesture_practice?.feedback_sequence
+    || Boolean(a.gesture_practice?.feedback) !== Boolean(b.gesture_practice?.feedback)) return false;
   if (Boolean(a.voice) !== Boolean(b.voice)) return false;
   if (a.voice && b.voice && (a.voice.request_id !== b.voice.request_id || a.voice.phase !== b.voice.phase
     || a.voice.progress !== b.voice.progress || a.voice.muted !== b.voice.muted

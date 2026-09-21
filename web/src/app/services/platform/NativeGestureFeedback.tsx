@@ -4,11 +4,13 @@ const candidates: Record<GestureCandidate, string> = {
   arm: "enable hands-free", disarm: "turn hands-free off", start_transcription: "listen",
   stop_transcription: "pause listening", send: "send", delete_backward: "delete a character",
   clear_dictation: "clear dictation", mute: "pause the mic", unmute: "resume the mic",
+  open_palm: "confirm five fingers",
 };
 const accepted: Record<GestureCandidate, string> = {
   arm: "Ready", disarm: "Hands-free off", start_transcription: "Starting listening",
   stop_transcription: "Pausing", send: "Send requested", delete_backward: "Delete requested",
   clear_dictation: "Clear requested", mute: "Mute requested", unmute: "Unmute requested",
+  open_palm: "Five fingers detected",
 };
 const lifecycle: Record<string, string> = {
   off: "Off · camera and microphone stopped",

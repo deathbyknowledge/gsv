@@ -73,6 +73,13 @@ Both fists exits hands-free there, cancelling microphone capture and stopping th
 camera. Its frontend exposes Off, Ready and Listening; one finger starts or pauses
 listening, preserving the draft. There is no extra arm or mute control.
 
+The private tutorial instead grants a lesson-scoped `practice` context. Held
+counts (including five) become observations, without voice-request authority.
+The client accepts only the gesture for its current lesson and explains rejected
+counts without executing them. Dwell and fist-reset requirements remain the same;
+both fists can always exit practice, including after a rejected count. The private
+launch marker is v9, requiring the helper and client to be built together.
+
 The GPUI client retains its existing authority model: hold both hands in closed fists for 700 ms to
 request arming or disarming. Desktop owns that explicit state and echoes one
 strict absolute context: disarmed, armed standby, temporarily disabled, or

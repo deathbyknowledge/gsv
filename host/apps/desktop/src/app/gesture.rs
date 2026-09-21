@@ -293,6 +293,7 @@ impl GsvApp {
                 let ready = self.vision_lifecycle == Some(LifecycleState::Ready);
 
                 match intent {
+                    GestureIntent::Practice { .. } => return,
                     GestureIntent::SetArmed { armed } => {
                         if fresh && ready {
                             self.vision_armed = armed;
@@ -510,9 +511,9 @@ impl GsvApp {
                 GestureCandidate::ClearDictation => VOICE_GESTURE_CLEAR,
                 GestureCandidate::Mute => VOICE_GESTURE_MUTE,
                 GestureCandidate::Unmute => VOICE_GESTURE_UNMUTE,
-                GestureCandidate::Arm | GestureCandidate::StartTranscription => {
-                    VOICE_GESTURES_ACTIVE
-                }
+                GestureCandidate::Arm
+                | GestureCandidate::StartTranscription
+                | GestureCandidate::OpenPalm => VOICE_GESTURES_ACTIVE,
             };
         }
         if muted {
@@ -672,6 +673,10 @@ impl GsvApp {
 
 fn status_context(status: ControlStatus) -> (GestureContext, Option<GestureProgress>) {
     match status {
+        ControlStatus::Practice {
+            lesson_id,
+            progress,
+        } => (GestureContext::Practice { lesson_id }, progress),
         ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
         ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
         ControlStatus::Standby { progress } => (GestureContext::Standby, progress),

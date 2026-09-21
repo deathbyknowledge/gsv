@@ -605,3 +605,22 @@ lesson with capture off. Skipped lessons are reflected in the completion count.
 Back, step selection and Skip remain available, but the practice pipeline requires
 no keyboard or mouse after Start practice. Tests were updated in source; local
 execution remains deferred to the human testing workflow.
+
+## Corrective gesture practice
+
+Practice attaches with a native policy that initially permits no lesson action.
+Changing a lesson installs its expected gesture before displaying that lesson.
+The helper's private v9 contract reports held poses under a lesson identity,
+including counts that ordinarily have no action while the microphone is off.
+Tauri admits only the current lesson's action against the current voice state;
+changing lessons or replacing the voice request invalidates earlier observations.
+Rejected poses do not start or stop dictation, commit a segment, or move the view.
+Scrolling is admitted only in the scroll lesson. Both fists always stops capture.
+
+The existing feedback row names the detected count and the expected gesture.
+A rejected held pose produces one quiet, low descending two-note cue, using the
+same cached sound engine and gesture sound preference. Resetting with a fist
+allows another attempt. Five fingers is reported for correction only; it remains
+without a command outside practice. Normal recognition thresholds and reset rules
+are unchanged. In practice, both fists can exit even after a rejected count.
+Regression cases are included in source; local execution stays with the user.

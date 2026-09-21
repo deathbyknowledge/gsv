@@ -299,6 +299,10 @@ fn control_presentation(
         ControlStatus::Disarmed { .. } => ControlStatus::Disarmed { progress: None },
         ControlStatus::Disabled { .. } => ControlStatus::Disabled { progress: None },
         ControlStatus::Standby { .. } => ControlStatus::Standby { progress: None },
+        ControlStatus::Practice { lesson_id, .. } => ControlStatus::Practice {
+            lesson_id,
+            progress: None,
+        },
         ControlStatus::Active {
             voice_request_id,
             muted,
@@ -483,6 +487,10 @@ fn sync_control_context(
 fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
     let progress = control_progress(control, now);
     match control.state() {
+        GestureContext::Practice { lesson_id } => ControlStatus::Practice {
+            lesson_id,
+            progress,
+        },
         GestureContext::Disarmed => ControlStatus::Disarmed { progress },
         GestureContext::Disabled => ControlStatus::Disabled { progress },
         GestureContext::Standby => ControlStatus::Standby { progress },
@@ -508,6 +516,7 @@ fn gesture_candidate(
     chord: crate::control::ControlChord,
 ) -> Option<GestureCandidate> {
     let candidate = match chord {
+        crate::control::ControlChord::OpenPalm => GestureCandidate::OpenPalm,
         crate::control::ControlChord::Arm => GestureCandidate::Arm,
         crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
         crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,

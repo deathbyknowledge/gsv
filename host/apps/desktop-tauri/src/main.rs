@@ -62,6 +62,7 @@ async fn input_attach(
     host: State<'_, Host>,
     generation: String,
     updates: tauri::ipc::Channel<InputUpdate>,
+    practice: bool,
 ) -> Result<Snapshot, String> {
     main_window(&window)?;
     let session = host.session.lock().await;
@@ -70,7 +71,7 @@ async fn input_attach(
     {
         return Err("The configured space has changed.".into());
     }
-    host.input.attach(updates).await
+    host.input.attach(updates, practice).await
 }
 
 #[tauri::command]

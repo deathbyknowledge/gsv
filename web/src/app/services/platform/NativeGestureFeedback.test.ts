@@ -1,14 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { gestureFeedback } from "./NativeGestureFeedback";
+import { practiceCorrection, practiceHold } from "./practiceFeedback";
+import { sameNativePresentation } from "./nativePresentation";
 import type { NativeSnapshot } from "./PlatformProvider";
 
 const snapshot = (overrides: Partial<NativeSnapshot> = {}): NativeSnapshot => ({
   lease: "view", voice: null, gestures_enabled: true, gesture_status: "ready",
   gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0, gesture_needs_reset: false, gesture_reset_after_action: 0,
-  scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [], ...overrides,
+  gesture_practice: null, scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [], ...overrides,
 });
 
 describe("gesture feedback", () => {
+  it("explains a wrong practice count without advertising its ordinary action", () => {
+    const rejected = snapshot({
+      gesture_needs_reset: true,
+      gesture_practice: { lesson_id: 17, expected: "listen", feedback_sequence: 1, feedback: { gesture: "three", reason: "wrong_gesture" } },
+    });
+    expect(practiceCorrection(rejected, "listen")).toBe("Three fingers detected. Make a fist, then show one finger to listen.");
+    expect(practiceCorrection({ ...rejected, gesture_needs_reset: false }, "listen")).toBe("Three fingers detected. Show one finger to listen.");
+    expect(practiceCorrection(rejected, "send")).toBeNull();
+    expect(practiceCorrection({ ...rejected, gestures_enabled: false }, "listen")).toBeNull();
+    expect(practiceHold({ ...rejected, gesture_progress: { candidate: "delete_backward", progress_permille: 800 } }, "listen"))
+      .toBe("Three fingers detected · this step: show one finger to listen");
+    expect(sameNativePresentation(rejected, { ...rejected, gesture_practice: { ...rejected.gesture_practice!, feedback_sequence: 2 } })).toBe(false);
+    expect(sameNativePresentation(rejected, { ...rejected, gesture_practice: { ...rejected.gesture_practice!, feedback: null } })).toBe(false);
+  });
+
   it("distinguishes a recognized hold from an accepted send request", () => {
     const holding = gestureFeedback(snapshot({
       gesture_progress: { candidate: "send", progress_permille: 640 },

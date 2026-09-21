@@ -7,12 +7,15 @@ use desktop_native::transcription::{
 use desktop_native::vision_debug::{self, VisionEvent, VisionHandle};
 use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
-    LifecycleState, ScrollState, VoiceRequestGestureIntent,
+    LifecycleState, PracticeGesture, ScrollState, VoiceRequestGestureIntent,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
+
+mod practice;
+use practice::{GesturePractice, PracticeTarget, RejectionReason};
 
 const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 const INTENT_MAX_AGE: Duration = Duration::from_millis(500);
@@ -47,6 +50,9 @@ pub enum InputCommand {
     Devices,
     Gestures {
         enabled: bool,
+    },
+    Practice {
+        expected: PracticeTarget,
     },
     Detach,
 }
@@ -94,6 +100,7 @@ pub struct Snapshot {
     pub gesture_action_sequence: u64,
     pub gesture_needs_reset: bool,
     pub gesture_reset_after_action: u64,
+    pub gesture_practice: Option<GesturePractice>,
     pub scroll_velocity: i16,
     pub scroll_sequence: u64,
     pub devices: Vec<Device>,
@@ -122,6 +129,7 @@ struct Delivery {
 enum Request {
     Attach {
         updates: Channel<InputUpdate>,
+        practice: bool,
         reply: oneshot::Sender<Result<Snapshot, String>>,
     },
     Acknowledge {
@@ -150,10 +158,18 @@ impl InputRuntime {
         Self { sender }
     }
 
-    pub async fn attach(&self, updates: Channel<InputUpdate>) -> Result<Snapshot, String> {
+    pub async fn attach(
+        &self,
+        updates: Channel<InputUpdate>,
+        practice: bool,
+    ) -> Result<Snapshot, String> {
         let (reply, received) = oneshot::channel();
         self.sender
-            .send(Request::Attach { updates, reply })
+            .send(Request::Attach {
+                updates,
+                practice,
+                reply,
+            })
             .await
             .map_err(|_| "Native input is closed.")?;
         received.await.map_err(|_| "Native input is closed.")?
@@ -235,6 +251,7 @@ impl State {
                 gesture_action_sequence: 0,
                 gesture_needs_reset: false,
                 gesture_reset_after_action: 0,
+                gesture_practice: None,
                 scroll_velocity: 0,
                 scroll_sequence: 0,
                 devices: Vec::new(),
@@ -291,6 +308,7 @@ impl State {
         self.delivery = None;
         self.snapshot.lease.clear();
         self.disable_hands_free();
+        self.snapshot.gesture_practice = None;
         self.gesture_action = None;
         self.device_request = None;
     }
@@ -328,8 +346,32 @@ impl State {
         }
     }
 
+    fn helper_context(&self) -> GestureContext {
+        if self.snapshot.gestures_enabled && self.snapshot.gesture_status == "ready" {
+            if let Some(practice) = &self.snapshot.gesture_practice {
+                return GestureContext::Practice {
+                    lesson_id: practice.lesson_id,
+                };
+            }
+        }
+        self.context()
+    }
+
     fn sync_context(&mut self) {
-        let context = self.context();
+        let voice_request_id = self.snapshot.voice.as_ref().map(|voice| voice.request_id);
+        if self
+            .snapshot
+            .gesture_practice
+            .as_ref()
+            .is_some_and(|practice| practice.voice_request_id != voice_request_id)
+        {
+            let lesson_id = self.id();
+            if let Some(practice) = &mut self.snapshot.gesture_practice {
+                practice.lesson_id = lesson_id;
+                practice.voice_request_id = voice_request_id;
+            }
+        }
+        let context = self.helper_context();
         if self
             .gesture_progress
             .is_some_and(|(_, owner, _)| owner != context)
@@ -354,12 +396,13 @@ impl State {
 
     fn snapshot(&self) -> Snapshot {
         let context = self.context();
+        let helper_context = self.helper_context();
         let gesture_progress = self.gesture_progress.and_then(|(at, owner, progress)| {
             (self.snapshot.gesture_status == "ready"
                 && self.fresh(&self.snapshot.lease)
-                && owner == context
+                && owner == helper_context
                 && at.elapsed() <= STATUS_MAX_AGE
-                && progress.is_compatible_with(context))
+                && progress.is_compatible_with(helper_context))
             .then_some(progress)
         });
         Snapshot {
@@ -379,8 +422,12 @@ impl State {
         }
     }
 
-    fn attach(&mut self, channel: Channel<InputUpdate>) -> Snapshot {
+    fn attach(&mut self, channel: Channel<InputUpdate>, practice: bool) -> Snapshot {
         self.reset();
+        if practice {
+            let lesson_id = self.id();
+            self.snapshot.gesture_practice = Some(GesturePractice::new(lesson_id));
+        }
         self.snapshot.lease = Uuid::new_v4().to_string();
         self.last_seen = Instant::now();
         self.last_seen_wall = SystemTime::now();
@@ -601,6 +648,16 @@ impl State {
                 self.status_sequence = 0;
                 self.reset_sequence = 0;
             }
+            InputCommand::Practice { expected } => {
+                let lesson_id = self.id();
+                self.snapshot
+                    .gesture_practice
+                    .as_mut()
+                    .ok_or("Gesture practice is not open.")?
+                    .select(lesson_id, expected);
+                self.snapshot.scroll_velocity = 0;
+                self.gesture_progress = None;
+            }
             InputCommand::Detach => self.reset(),
         }
         self.sync_context();
@@ -811,6 +868,24 @@ impl State {
                     return;
                 }
                 self.intent_sequence = sequence;
+                if let GestureIntent::Practice { lesson_id, gesture } = intent {
+                    if received_at.elapsed() <= INTENT_MAX_AGE
+                        && self.fresh(&self.snapshot.lease)
+                        && self.helper_context() == (GestureContext::Practice { lesson_id })
+                    {
+                        self.practice_gesture(gesture);
+                    }
+                    self.sync_context();
+                    if let Some(vision) = &self.vision {
+                        let _ = vision.context.reassert_context(self.helper_context());
+                    }
+                    return;
+                }
+                if self.snapshot.gesture_practice.is_some()
+                    && intent != (GestureIntent::SetArmed { armed: false })
+                {
+                    return;
+                }
                 let action = match intent {
                     GestureIntent::SetArmed { armed: true } => GestureCandidate::Arm,
                     GestureIntent::SetArmed { armed: false } => GestureCandidate::Disarm,
@@ -829,6 +904,7 @@ impl State {
                         VoiceRequestGestureIntent::Mute => GestureCandidate::Mute,
                         VoiceRequestGestureIntent::Unmute => GestureCandidate::Unmute,
                     },
+                    GestureIntent::Practice { .. } => return,
                 };
                 let result = if received_at.elapsed() > INTENT_MAX_AGE
                     || !self.fresh(&self.snapshot.lease)
@@ -885,7 +961,7 @@ impl State {
                     }
                 }
                 if let Some(vision) = &self.vision {
-                    let _ = vision.context.reassert_context(self.context());
+                    let _ = vision.context.reassert_context(self.helper_context());
                 }
             }
             VisionEvent::Scroll {
@@ -898,10 +974,35 @@ impl State {
                 }
                 self.scroll_sequence = sequence;
                 self.scroll_at = received_at;
+                let fresh = received_at.elapsed() <= SCROLL_MAX_AGE
+                    && self.fresh(&self.snapshot.lease)
+                    && self.snapshot.gesture_status == "ready";
+                let practice_allows_scroll = if let Some(practice) =
+                    &mut self.snapshot.gesture_practice
+                {
+                    let allowed = practice.expected == PracticeTarget::Scroll;
+                    if fresh && !allowed {
+                        if let ScrollState::Active {
+                            instance_id,
+                            velocity_milliunits,
+                        } = state
+                        {
+                            if velocity_milliunits != 0 && instance_id != practice.scroll_instance {
+                                practice.scroll_instance = instance_id;
+                                practice
+                                    .reject(PracticeGesture::Scroll, RejectionReason::WrongGesture);
+                            }
+                        }
+                    }
+                    allowed && fresh
+                } else {
+                    true
+                };
                 self.snapshot.scroll_velocity = if matches!(
                     self.context(),
                     GestureContext::Standby | GestureContext::Active { .. }
                 ) && received_at.elapsed() <= SCROLL_MAX_AGE
+                    && practice_allows_scroll
                 {
                     match state {
                         ScrollState::Active {
@@ -928,6 +1029,10 @@ impl State {
                     ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
                     ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
                     ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
+                    ControlStatus::Practice {
+                        lesson_id,
+                        progress,
+                    } => (GestureContext::Practice { lesson_id }, progress),
                     ControlStatus::Active {
                         voice_request_id,
                         muted,
@@ -940,7 +1045,7 @@ impl State {
                         progress,
                     ),
                 };
-                if context == self.context() {
+                if context == self.helper_context() {
                     let fresh = self.snapshot.gesture_status == "ready"
                         && self.fresh(&self.snapshot.lease)
                         && received_at.elapsed() <= STATUS_MAX_AGE;
@@ -997,8 +1102,8 @@ async fn run(mut requests: mpsc::Receiver<Request>) {
     loop {
         tokio::select! {
             request = requests.recv() => match request {
-                Some(Request::Attach { updates, reply }) => {
-                    let initial = state.attach(updates);
+                Some(Request::Attach { updates, practice, reply }) => {
+                    let initial = state.attach(updates, practice);
                     if reply.send(Ok(initial)).is_err() { state.reset(); }
                 }
                 Some(Request::Acknowledge { lease, revision, ack, reply }) => {
@@ -1109,7 +1214,7 @@ mod tests {
     fn push_delivery_coalesces_partials_until_acknowledged() {
         let (mut state, _commands) = attached();
         let (channel, messages) = updates();
-        let initial = state.attach(channel);
+        let initial = state.attach(channel, false);
         state.publish();
         assert!(messages.lock().unwrap().is_empty());
         state.start_voice(None).unwrap();
@@ -1142,7 +1247,7 @@ mod tests {
     fn heartbeat_cannot_keep_an_unconsumed_update_alive() {
         let (mut state, commands) = attached();
         let (channel, _) = updates();
-        state.attach(channel);
+        state.attach(channel, false);
         state.start_voice(None).unwrap();
         let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
         state.publish();
@@ -1163,7 +1268,7 @@ mod tests {
     fn acknowledgements_cannot_discard_events_not_delivered_to_the_view() {
         let (mut state, _commands) = attached();
         let (channel, _) = updates();
-        let initial = state.attach(channel);
+        let initial = state.attach(channel, false);
         state.start_voice(None).unwrap();
         state.publish();
         assert!(state.acknowledge(&initial.lease, 2, 0).is_err());
@@ -1176,7 +1281,7 @@ mod tests {
     fn steady_scroll_refreshes_freshness_without_idle_heartbeat_updates() {
         let (mut state, _commands) = attached();
         let (channel, messages) = updates();
-        let initial = state.attach(channel);
+        let initial = state.attach(channel, false);
         state.snapshot.gestures_enabled = true;
         state.snapshot.gesture_status = "ready".into();
         state.snapshot.scroll_velocity = 600;

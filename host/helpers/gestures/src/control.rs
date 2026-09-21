@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 pub use gesture_protocol::{
     GestureContext as ControlState, GestureIntent as ControlIntent, ScrollState,
 };
-use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS};
+use gesture_protocol::{
+    PracticeGesture, VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS,
+};
 
 use crate::observation::{HandObservation, HandPose, Handedness};
 
@@ -49,6 +51,7 @@ const MIN_PALM_SCALE: f32 = 0.01;
 /// omitted, and the value never crosses GSV IPC or logs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlChord {
+    OpenPalm,
     Arm,
     Disarm,
     StartTranscription,
@@ -674,7 +677,9 @@ impl GestureControl {
             };
             return None;
         }
-        if let Some(chord) = self.release_latched {
+        if let Some(chord) = self.release_latched.filter(|_| {
+            !(matches!(self.state, ControlState::Practice { .. }) && reading.chord == Chord::Disarm)
+        }) {
             self.candidate = None;
             self.diagnostic = ControlDiagnostic::AwaitingRelease {
                 chord: chord.into(),
@@ -784,6 +789,9 @@ impl GestureControl {
     }
 
     fn accepted_target(&self, chord: Chord) -> bool {
+        if matches!(self.state, ControlState::Practice { .. }) {
+            return chord != Chord::Arm;
+        }
         matches!(
             (self.state, chord),
             (ControlState::Disarmed, Chord::Arm)
@@ -818,6 +826,7 @@ impl GestureControl {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Chord {
+    OpenPalm,
     Arm,
     Disarm,
     StartTranscription,
@@ -833,6 +842,7 @@ enum ActionPose {
     Two,
     Three,
     Four,
+    Five,
 }
 
 impl ActionPose {
@@ -840,12 +850,16 @@ impl ActionPose {
         match (self, state) {
             (
                 Self::One,
-                ControlState::Disarmed | ControlState::Standby | ControlState::Disabled,
+                ControlState::Disarmed
+                | ControlState::Standby
+                | ControlState::Disabled
+                | ControlState::Practice { .. },
             ) => Chord::StartTranscription,
             (Self::One, ControlState::Active { .. }) => Chord::StopTranscription,
             (Self::Two, _) => Chord::Send,
             (Self::Three, _) => Chord::DeleteBackward,
             (Self::Four, _) => Chord::ClearDictation,
+            (Self::Five, _) => Chord::OpenPalm,
         }
     }
 }
@@ -858,6 +872,7 @@ struct RoleAssignment {
 impl From<Chord> for ControlChord {
     fn from(chord: Chord) -> Self {
         match chord {
+            Chord::OpenPalm => Self::OpenPalm,
             Chord::Arm => Self::Arm,
             Chord::Disarm => Self::Disarm,
             Chord::StartTranscription => Self::StartTranscription,
@@ -872,6 +887,15 @@ impl From<Chord> for ControlChord {
 impl From<ControlIntent> for ControlChord {
     fn from(intent: ControlIntent) -> Self {
         match intent {
+            ControlIntent::Practice { gesture, .. } => match gesture {
+                PracticeGesture::One => Self::StartTranscription,
+                PracticeGesture::Two => Self::Send,
+                PracticeGesture::Three => Self::DeleteBackward,
+                PracticeGesture::Four => Self::ClearDictation,
+                PracticeGesture::Five => Self::OpenPalm,
+                PracticeGesture::BothFists => Self::Disarm,
+                PracticeGesture::Scroll => Self::Scroll,
+            },
             ControlIntent::SetArmed { armed: true } => Self::Arm,
             ControlIntent::SetArmed { armed: false } => Self::Disarm,
             ControlIntent::StartTranscription => Self::StartTranscription,
@@ -888,6 +912,18 @@ impl From<ControlIntent> for ControlChord {
 }
 
 fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
+    if let ControlState::Practice { lesson_id } = state {
+        let gesture = match chord {
+            Chord::Arm => return None,
+            Chord::Disarm => PracticeGesture::BothFists,
+            Chord::StartTranscription | Chord::StopTranscription => PracticeGesture::One,
+            Chord::Send => PracticeGesture::Two,
+            Chord::DeleteBackward => PracticeGesture::Three,
+            Chord::ClearDictation => PracticeGesture::Four,
+            Chord::OpenPalm => PracticeGesture::Five,
+        };
+        return Some(ControlIntent::Practice { lesson_id, gesture });
+    }
     match (state, chord) {
         (ControlState::Disarmed, Chord::Arm) => Some(ControlIntent::SetArmed { armed: true }),
         (
@@ -904,7 +940,7 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
             chord,
         ) => {
             let action = match chord {
-                Chord::Arm | Chord::Disarm => return None,
+                Chord::Arm | Chord::Disarm | Chord::OpenPalm => return None,
                 Chord::StopTranscription => VoiceRequestGestureIntent::StopTranscription,
                 Chord::Send => VoiceRequestGestureIntent::Send,
                 Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
@@ -928,7 +964,8 @@ impl Chord {
             Self::StartTranscription
             | Self::StopTranscription
             | Self::Send
-            | Self::DeleteBackward => STANDARD_DWELL,
+            | Self::DeleteBackward
+            | Self::OpenPalm => STANDARD_DWELL,
         }
     }
 
@@ -939,7 +976,8 @@ impl Chord {
             Self::StartTranscription
             | Self::StopTranscription
             | Self::Send
-            | Self::DeleteBackward => 4,
+            | Self::DeleteBackward
+            | Self::OpenPalm => 4,
         }
     }
 }
@@ -1097,6 +1135,7 @@ fn classify_hands(
         HandPose::TwoFingers => ActionPose::Two,
         HandPose::ThreeFingers => ActionPose::Three,
         HandPose::FourFingers => ActionPose::Four,
+        HandPose::FiveFingers if matches!(state, ControlState::Practice { .. }) => ActionPose::Five,
         HandPose::FiveFingers => return Ok(PairReading::KnownOther),
         HandPose::Unknown => return Err(ClassificationFailure::UnsupportedPose),
     };
@@ -1609,6 +1648,68 @@ mod tests {
         assert_eq!(
             harness.drive(10, &two),
             vec![request(VoiceRequestGestureIntent::Send)]
+        );
+    }
+
+    #[test]
+    fn practice_reports_counts_once_and_preserves_reset_across_lessons() {
+        for (pose, gesture) in [
+            (HandPose::OneFinger, PracticeGesture::One),
+            (HandPose::TwoFingers, PracticeGesture::Two),
+            (HandPose::ThreeFingers, PracticeGesture::Three),
+            (HandPose::FourFingers, PracticeGesture::Four),
+            (HandPose::FiveFingers, PracticeGesture::Five),
+        ] {
+            let mut harness = Harness::new(ControlState::Practice { lesson_id: 17 });
+            let hand = counted(pose, 0.95);
+            assert_eq!(
+                harness.drive(24, &hand),
+                vec![ControlIntent::Practice {
+                    lesson_id: 17,
+                    gesture
+                }]
+            );
+            harness.synchronize(ControlState::Practice { lesson_id: 18 });
+            assert!(harness.drive(24, &hand).is_empty());
+            assert!(harness
+                .drive(24, &counted(HandPose::OneFinger, 0.95))
+                .is_empty());
+            assert_eq!(harness.sample(&counted(HandPose::Fist, 0.95)), None);
+            assert_eq!(harness.control.reset_sequence(), 1);
+            assert_eq!(
+                harness.drive(24, &hand),
+                vec![ControlIntent::Practice {
+                    lesson_id: 18,
+                    gesture
+                }]
+            );
+        }
+        for context in [STANDBY, ACTIVE] {
+            let mut harness = Harness::new(context);
+            assert!(harness
+                .drive(24, &counted(HandPose::FiveFingers, 0.95))
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn practice_can_turn_off_after_a_rejected_count_without_another_action() {
+        let context = ControlState::Practice { lesson_id: 17 };
+        let mut harness = Harness::new(context);
+        assert_eq!(
+            harness.drive(10, &counted(HandPose::TwoFingers, 0.95)),
+            vec![ControlIntent::Practice {
+                lesson_id: 17,
+                gesture: PracticeGesture::Two,
+            }]
+        );
+        harness.synchronize(context);
+        assert_eq!(
+            harness.drive(20, &toggle(0.95)),
+            vec![ControlIntent::Practice {
+                lesson_id: 17,
+                gesture: PracticeGesture::BothFists,
+            }]
         );
     }
 

@@ -8,10 +8,11 @@ import { useNativeSoundFeedback } from "./useInputSounds";
 
 export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue">;
 
-export function useNativeVoice({ prompt, scope, enabled, send, scroll, onAction }: {
+export function useNativeVoice({ prompt, scope, enabled, practice = false, send, scroll, onAction }: {
   prompt: RefObject<VoiceComposer>;
   scope: string;
   enabled: boolean;
+  practice?: boolean;
   send(text: string): boolean;
   scroll(delta: number): void;
   onAction?(action: SegmentAction): void;
@@ -28,12 +29,12 @@ export function useNativeVoice({ prompt, scope, enabled, send, scroll, onAction 
   const latest = useRef({ send, scroll, enabled, onAction });
   latest.current = { send, scroll, enabled, onAction };
   const state = useRef<NativeSnapshot | null>(null);
-  const command = async (value: NativeCommand): Promise<void> => {
-    if (!input || !lease.current) return;
+  const command = async (value: NativeCommand): Promise<boolean> => {
+    if (!input || !lease.current) return false;
     const id = lease.current;
     if (value.kind !== "devices") setError(null);
-    try { await input.command(id, value); }
-    catch (error) { if (lease.current === id) setError(String(error)); }
+    try { await input.command(id, value); return lease.current === id; }
+    catch (error) { if (lease.current === id) setError(String(error)); return false; }
   };
   const write = (value: string, caret?: number) => {
     writing.current = true;
@@ -147,7 +148,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, scroll, onAction 
       } catch (error) { fail(error); }
     };
     try {
-      subscription = input.subscribe(receive);
+      subscription = input.subscribe(receive, practice);
       void subscription.initial.then((next) => {
         if (!active) return;
         ownedLease = next.lease;
@@ -166,7 +167,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, scroll, onAction 
       if (lease.current === ownedLease) lease.current = null;
       subscription?.dispose();
     };
-  }, [input, scope, enabled, attachment]);
+  }, [input, scope, enabled, practice, attachment]);
 
   const segment = (action: "send" | "delete" | "clear") => {
     const voice = state.current?.voice;

@@ -3,21 +3,22 @@ import { GestureIllustration } from "./GestureIllustration";
 import { gestureFeedback } from "./NativeGestureFeedback";
 import { InputSoundSettings } from "./InputSoundSettings";
 import { playInputCue } from "./inputSounds";
+import { practiceCorrection, practiceHold } from "./practiceFeedback";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
-import type { GestureCandidate, SegmentAction } from "./PlatformProvider";
+import type { GestureCandidate, PracticeTarget, SegmentAction } from "./PlatformProvider";
 import type { GestureLesson } from "./gestureScene";
 
-type Step = { title: string; label: string; lesson: GestureLesson; instruction: string; hint: string; action?: GestureCandidate };
+type Step = { title: string; label: string; target: PracticeTarget; lesson: GestureLesson; instruction: string; hint: string; action?: GestureCandidate };
 const steps: readonly Step[] = [
-  { title: "Two hands. Two roles.", label: "Hands", lesson: "roles", instruction: "Your right hand gives commands. Your left hand joins in to scroll and switch hands-free off.", hint: "Practise here with a private draft. Nothing is sent to your conversation." },
-  { title: "One finger to listen", label: "Listen", lesson: 1, action: "start_transcription", instruction: "Show any one finger on your right hand. Hold until the indicator fills and you hear the cue.", hint: "Then make a fist. This resets your hand for the next command." },
-  { title: "Say a few words", label: "Dictate", lesson: "rest", instruction: "Speak naturally. Your words appear in the practice draft below.", hint: "Listening uses your microphone. Transcription runs on this computer." },
-  { title: "Two fingers to send", label: "Send", lesson: 2, action: "send", instruction: "Hold any two fingers. Your draft moves to the practice message, and listening continues.", hint: "Make a fist between commands. The thumb counts too." },
-  { title: "Three to delete", label: "Delete", lesson: 3, action: "delete_backward", instruction: "Dictate a few more words, then hold three fingers to remove the last character.", hint: "Any combination of three fingers works." },
-  { title: "Four to clear", label: "Clear", lesson: 4, action: "clear_dictation", instruction: "Dictate something else, then hold four fingers for one second.", hint: "Only dictated words clear. Text you typed stays." },
-  { title: "One finger to pause", label: "Pause", lesson: 1, action: "stop_transcription", instruction: "Hold one finger again. The microphone stops; your draft stays.", hint: "The camera stays ready. One finger starts listening again." },
-  { title: "Tilt to scroll", label: "Scroll", lesson: "scroll", instruction: "Open your left palm and close your right fist. Hold them level, let them settle, then tilt the line between them.", hint: "Try moving the practice messages. Level your hands or release the pose to stop." },
-  { title: "Both fists to finish", label: "Off", lesson: 0, action: "disarm", instruction: "Hold both fists to turn hands-free off. The camera and microphone stop together.", hint: "When off, gestures do nothing. Enable hands-free again from the controls." },
+  { title: "Two hands. Two roles.", label: "Hands", target: "none", lesson: "roles", instruction: "Your right hand gives commands. Your left hand joins in to scroll and switch hands-free off.", hint: "Practise here with a private draft. Nothing is sent to your conversation." },
+  { title: "One finger to listen", label: "Listen", target: "listen", lesson: 1, action: "start_transcription", instruction: "Show any one finger on your right hand. Hold until the indicator fills and you hear the cue.", hint: "Then make a fist. This resets your hand for the next command." },
+  { title: "Say a few words", label: "Dictate", target: "dictate", lesson: "rest", instruction: "Speak naturally. Your words appear in the practice draft below.", hint: "Listening uses your microphone. Transcription runs on this computer." },
+  { title: "Two fingers to send", label: "Send", target: "send", lesson: 2, action: "send", instruction: "Hold any two fingers. Your draft moves to the practice message, and listening continues.", hint: "Make a fist between commands. The thumb counts too." },
+  { title: "Three to delete", label: "Delete", target: "delete", lesson: 3, action: "delete_backward", instruction: "Dictate a few more words, then hold three fingers to remove the last character.", hint: "Any combination of three fingers works." },
+  { title: "Four to clear", label: "Clear", target: "clear", lesson: 4, action: "clear_dictation", instruction: "Dictate something else, then hold four fingers for one second.", hint: "Only dictated words clear. Text you typed stays." },
+  { title: "One finger to pause", label: "Pause", target: "pause", lesson: 1, action: "stop_transcription", instruction: "Hold one finger again. The microphone stops; your draft stays.", hint: "The camera stays ready. One finger starts listening again." },
+  { title: "Tilt to scroll", label: "Scroll", target: "scroll", lesson: "scroll", instruction: "Open your left palm and close your right fist. Hold them level, let them settle, then tilt the line between them.", hint: "Try moving the practice messages. Level your hands or release the pose to stop." },
+  { title: "Both fists to finish", label: "Off", target: "off", lesson: 0, action: "disarm", instruction: "Hold both fists to turn hands-free off. The camera and microphone stop together.", hint: "When off, gestures do nothing. Enable hands-free again from the controls." },
 ];
 const practiceMessages = ["Your messages stay in place.", "Tilt your hands to move through them.", "Level your hands to pause.", "Release either hand to stop.", "Your real conversation is unchanged."];
 
@@ -35,6 +36,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const [recognized, setRecognized] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(() => new Set());
   const [actions, setActions] = useState<Record<SegmentAction, number>>({ send: 0, delete: 0, clear: 0 });
+  const transition = useRef(0);
   const entered = useRef({ sequence: 0, actions, gesture: 0, hadDraft: false, scrolled: false });
   const composer = useRef<VoiceComposer>({
     selection: () => ({ value: value.current, start: textarea.current?.selectionStart ?? value.current.length, end: textarea.current?.selectionEnd ?? value.current.length }),
@@ -49,7 +51,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   });
   // This hook owns a fresh native lease and only these local callbacks. It never receives the conversation sender.
   const control = useNativeVoice({
-    prompt: composer, scope: `practice:${scope}`, enabled: true,
+    prompt: composer, scope: `practice:${scope}`, enabled: true, practice: true,
     send(text) { if (!text.trim()) return false; setSent(text); return true; },
     scroll(delta) { if (scrollArea.current) scrollArea.current.scrollTop += delta; },
     onAction(action) { setActions((current) => ({ ...current, [action]: current[action] + 1 })); },
@@ -64,36 +66,46 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const lesson = steps[step];
   const notice = error || snapshot?.notice;
   const close = () => {
+    transition.current++;
     if (camera || voice) playInputCue("off");
     onClose();
   };
   useLayoutEffect(() => {
     const element = dialog.current!;
     element.showModal();
-    return () => { if (element.open) element.close(); };
+    return () => { transition.current++; if (element.open) element.close(); };
   }, []);
   useLayoutEffect(() => { heading.current?.focus({ preventScroll: true }); }, [step, finished]);
-  const go = (next: number) => {
-    entered.current = { sequence: progress.current.snapshot?.gesture_action_sequence ?? 0, actions: progress.current.actions, gesture: 0, hadDraft: Boolean(value.current.trim()), scrolled: false };
+  const go = async (next: number) => {
+    const change = ++transition.current;
+    const baseline = { sequence: progress.current.snapshot?.gesture_action_sequence ?? 0, actions: progress.current.actions, gesture: 0, hadDraft: Boolean(value.current.trim()), scrolled: false };
+    if (!await control.command({ kind: "practice", expected: steps[next].target }) || change !== transition.current) return false;
+    entered.current = baseline;
     setComplete(false);
     setRecognized(0);
     setStep(next);
+    return true;
   };
+  useEffect(() => {
+    if (snapshot && snapshot.gesture_practice?.expected !== lesson.target) {
+      void control.command({ kind: "practice", expected: lesson.target });
+    }
+  }, [snapshot?.lease]);
   const finishStep = () => {
     setComplete(true);
     setCompleted((current) => new Set([...current, step]));
   };
-  const restart = () => {
+  const restart = async () => {
+    if (!await go(0)) return;
     value.current = "";
     setDraft("");
     setSent(null);
     setActions({ send: 0, delete: 0, clear: 0 });
     setCompleted(new Set());
-    go(0);
     control.reconnect();
   };
   useEffect(() => {
-    if (!snapshot || step === 0 || complete) return;
+    if (!snapshot || snapshot.gesture_practice?.expected !== lesson.target || step === 0 || complete) return;
     if (draft.trim()) entered.current.hadDraft = true;
     if (snapshot.gesture_action_sequence > entered.current.sequence && snapshot.gesture_action === lesson.action) {
       entered.current.gesture = snapshot.gesture_action_sequence;
@@ -124,7 +136,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
     let timer = 0;
     const schedule = () => {
       window.clearTimeout(timer);
-      if (!document.hidden) timer = window.setTimeout(() => go(step + 1), 900);
+      if (!document.hidden) timer = window.setTimeout(() => void go(step + 1), 900);
     };
     schedule();
     document.addEventListener("visibilitychange", schedule);
@@ -136,16 +148,19 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
 
   const state = listening ? "Listening" : camera ? "Ready" : "Off";
   const preparing = (camera && snapshot?.gesture_status !== "ready") || (voice && !listening);
+  const correction = snapshot ? practiceCorrection(snapshot, lesson.target) : null;
+  const holding = snapshot ? practiceHold(snapshot, lesson.target) : null;
   const resetting = recognized > 0 && lesson.action !== "disarm";
-  const awaitingFist = resetting && (snapshot?.gesture_reset_after_action ?? 0) < recognized;
+  const awaitingFist = snapshot?.gesture_needs_reset ?? false;
   const liveMessage = notice ? "Input needs attention" : !snapshot ? "Connecting input…"
-    : awaitingFist ? "Command detected · close your right hand to reset"
+    : feedback?.progress != null ? holding ?? feedback.message
+    : correction ? correction
+    : awaitingFist ? "Close your right hand to reset"
     : complete ? resetting ? "✓ Fist detected · next step…" : "✓ Done · next step…"
-    : feedback?.progress != null ? feedback.message
     : resetting ? "✓ Fist detected · waiting for the action to finish"
     : !camera && !voice ? "Camera and microphone off"
     : preparing && voice ? "Preparing microphone…"
-    : !camera && listening ? "Listening · camera off" : feedback?.action ?? feedback?.message;
+    : !camera && listening ? "Listening · camera off" : feedback?.message;
   const practised = steps.slice(1).filter((_, index) => completed.has(index + 1)).length;
   return <dialog ref={dialog} class="native-tutorial" aria-labelledby="native-tutorial-title" data-instrument-dialog data-complete={finished ? "true" : undefined}
     onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => event.stopPropagation()}>
@@ -162,20 +177,20 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
         <p class="native-panel-footnote">Enable hands-free from the prompt whenever you want to use it.</p>
       </section>
       <footer class="native-tutorial-footer">
-        <button type="button" onClick={restart}>practise again</button>
+        <button type="button" onClick={() => void restart()}>practise again</button>
         <button type="button" class="native-primary" onClick={close}>done</button>
       </footer>
     </> : <>
     <nav class="native-tutorial-steps" aria-label="Tutorial steps">
       {steps.map((entry, index) => <button type="button" key={entry.label} aria-current={step === index ? "step" : undefined}
         aria-label={`${index + 1}. ${entry.label}${completed.has(index) ? ", completed" : ""}`}
-        onClick={() => go(index)}>
+        onClick={() => void go(index)}>
         <span>{completed.has(index) ? "✓" : index + 1}</span><small>{entry.label}</small>
       </button>)}
     </nav>
     <div class="native-tutorial-body">
       <section class="native-tutorial-visual" aria-label="Gesture demonstration">
-        <GestureIllustration lesson={resetting ? "rest" : lesson.lesson} label={resetting ? "Close your action hand into a fist to reset" : lesson.instruction} />
+        <GestureIllustration lesson={resetting || awaitingFist ? "rest" : lesson.lesson} label={resetting || awaitingFist ? "Close your action hand into a fist to reset" : lesson.instruction} />
       </section>
       <section class="native-tutorial-lesson">
         <p class="native-tutorial-count">{String(step + 1).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}</p>
@@ -184,7 +199,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
         <p class="native-panel-footnote">{lesson.hint}</p>
         {step === 0 ? <>
           <div class="native-role-key"><span>right <b>action</b></span><span>left <b>control</b></span></div>
-          <p class="native-panel-footnote">Start practice enables the camera. From there, the steps advance hands-free. Closing the guide stops camera and microphone.</p>
+          <p class="native-panel-footnote">Start practice enables the camera. Only the current step’s gesture runs; the steps advance hands-free. Both fists or closing the guide stops capture.</p>
           <InputSoundSettings />
         </> : <>
           {step >= 2 && step <= 6 && <>
@@ -220,20 +235,20 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
         {["Off", "Ready", "Listening"].map((label) => <span key={label} data-current={!preparing && state === label ? "true" : undefined}>{label}</span>)}
       </div>
       <div class="native-tutorial-feedback" role="status">
-        <span class={complete && !notice ? "native-tutorial-success" : undefined}>{liveMessage}</span>
+        <span class={complete && !notice && !correction ? "native-tutorial-success" : undefined}>{liveMessage}</span>
         <progress max={1000} value={feedback?.progress ?? (complete ? 1000 : 0)} aria-label="Gesture hold" />
       </div>
     </section>
     <footer class="native-tutorial-footer">
-      <button type="button" disabled={step === 0} onClick={() => go(step - 1)}>← back</button>
+      <button type="button" disabled={step === 0} onClick={() => void go(step - 1)}>← back</button>
       <div>
         {step === 0 ? <>
-          <button type="button" onClick={() => go(1)}>browse lessons</button>
-          <button type="button" class="native-primary" disabled={!snapshot} onClick={() => {
-            void control.command({ kind: "gestures", enabled: true }); go(1);
+          <button type="button" onClick={() => void go(1)}>browse lessons</button>
+          <button type="button" class="native-primary" disabled={!snapshot} onClick={async () => {
+            if (await go(1)) void control.command({ kind: "gestures", enabled: true });
           }}>start practice →</button>
         </> : step === steps.length - 1 ? <span>Hold both fists to finish</span> : <>
-          {!complete && <button type="button" onClick={() => go(step + 1)}>skip step</button>}
+          {!complete && <button type="button" onClick={() => void go(step + 1)}>skip step</button>}
           {complete && <span class="native-tutorial-success" role="status">next step…</span>}
         </>}
       </div>

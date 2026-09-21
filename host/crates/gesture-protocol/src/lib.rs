@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v8-fist-reset";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v9-practice";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -51,6 +51,7 @@ impl SessionId {
 /// transcription. `Disabled` temporarily revokes action authority while still
 /// permitting the two-hand disarm gesture. An active context is the complete
 /// gesture lease for one exact voice request.
+/// Practice reports held poses for one lesson; it grants no voice-request action.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum GestureContext {
@@ -58,6 +59,7 @@ pub enum GestureContext {
     Disabled,
     Standby,
     Active { voice_request_id: u64, muted: bool },
+    Practice { lesson_id: u64 },
 }
 
 #[derive(Deserialize)]
@@ -67,6 +69,7 @@ enum WireGestureContext {
     Disabled {},
     Standby {},
     Active { voice_request_id: u64, muted: bool },
+    Practice { lesson_id: u64 },
 }
 
 impl<'de> Deserialize<'de> for GestureContext {
@@ -78,6 +81,7 @@ impl<'de> Deserialize<'de> for GestureContext {
             WireGestureContext::Disarmed {} => Self::Disarmed,
             WireGestureContext::Disabled {} => Self::Disabled,
             WireGestureContext::Standby {} => Self::Standby,
+            WireGestureContext::Practice { lesson_id } => Self::Practice { lesson_id },
             WireGestureContext::Active {
                 voice_request_id,
                 muted,
@@ -100,6 +104,19 @@ pub enum VoiceRequestGestureIntent {
     Unmute,
 }
 
+/// A held pose observed during private practice, before the owning client decides its effect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PracticeGesture {
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    BothFists,
+    Scroll,
+}
+
 /// A reliable semantic edge from the helper.
 ///
 /// Starting is fenced by the random helper session on `HelperEvent`. Every
@@ -108,6 +125,10 @@ pub enum VoiceRequestGestureIntent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum GestureIntent {
+    Practice {
+        lesson_id: u64,
+        gesture: PracticeGesture,
+    },
     SetArmed {
         armed: bool,
     },
@@ -121,6 +142,10 @@ pub enum GestureIntent {
 #[derive(Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
 enum WireGestureIntent {
+    Practice {
+        lesson_id: u64,
+        gesture: PracticeGesture,
+    },
     SetArmed {
         armed: bool,
     },
@@ -137,6 +162,9 @@ impl<'de> Deserialize<'de> for GestureIntent {
         D: Deserializer<'de>,
     {
         Ok(match WireGestureIntent::deserialize(deserializer)? {
+            WireGestureIntent::Practice { lesson_id, gesture } => {
+                Self::Practice { lesson_id, gesture }
+            }
             WireGestureIntent::SetArmed { armed } => Self::SetArmed { armed },
             WireGestureIntent::StartTranscription {} => Self::StartTranscription,
             WireGestureIntent::VoiceRequest {
@@ -210,6 +238,7 @@ impl<'de> Deserialize<'de> for ScrollState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureCandidate {
+    OpenPalm,
     Arm,
     Disarm,
     StartTranscription,
@@ -259,7 +288,16 @@ impl GestureProgress {
     pub const fn is_compatible_with(self, context: GestureContext) -> bool {
         matches!(
             (context, self.candidate),
-            (GestureContext::Disarmed, GestureCandidate::Arm)
+            (
+                GestureContext::Practice { .. },
+                GestureCandidate::StartTranscription
+                    | GestureCandidate::StopTranscription
+                    | GestureCandidate::Send
+                    | GestureCandidate::DeleteBackward
+                    | GestureCandidate::ClearDictation
+                    | GestureCandidate::OpenPalm
+                    | GestureCandidate::Disarm
+            ) | (GestureContext::Disarmed, GestureCandidate::Arm)
                 | (
                     GestureContext::Disabled
                         | GestureContext::Standby
@@ -324,6 +362,10 @@ impl<'de> Deserialize<'de> for GestureProgress {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ControlStatus {
+    Practice {
+        lesson_id: u64,
+        progress: Option<GestureProgress>,
+    },
     Disarmed {
         progress: Option<GestureProgress>,
     },
@@ -343,6 +385,10 @@ pub enum ControlStatus {
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum WireControlStatus {
+    Practice {
+        lesson_id: u64,
+        progress: Option<GestureProgress>,
+    },
     Disarmed {
         progress: Option<GestureProgress>,
     },
@@ -365,6 +411,22 @@ impl<'de> Deserialize<'de> for ControlStatus {
         D: Deserializer<'de>,
     {
         Ok(match WireControlStatus::deserialize(deserializer)? {
+            WireControlStatus::Practice {
+                lesson_id,
+                progress,
+            } => {
+                if progress.is_some_and(|progress| {
+                    !progress.is_compatible_with(GestureContext::Practice { lesson_id })
+                }) {
+                    return Err(de::Error::custom(
+                        "gesture candidate is incompatible with controller context",
+                    ));
+                }
+                Self::Practice {
+                    lesson_id,
+                    progress,
+                }
+            }
             WireControlStatus::Disarmed { progress } => {
                 if progress
                     .is_some_and(|progress| !progress.is_compatible_with(GestureContext::Disarmed))
@@ -658,7 +720,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v8-fist-reset"
+            "gsv-vision-control-v9-practice"
         );
         for stale in [
             "1",
@@ -672,9 +734,49 @@ mod tests {
             "gsv-vision-control-v5-fist-drag-scroll",
             "gsv-vision-control-v6-modifier-fist-continuous-scroll",
             "gsv-vision-control-v7-relative-angle-scroll",
+            "gsv-vision-control-v8-fist-reset",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
+    }
+
+    #[test]
+    fn practice_observations_round_trip_without_voice_request_authority() {
+        let intent = GestureIntent::Practice {
+            lesson_id: 17,
+            gesture: PracticeGesture::Three,
+        };
+        let wire = serde_json::to_value(intent).unwrap();
+        assert_eq!(
+            serde_json::from_value::<GestureIntent>(wire.clone()).unwrap(),
+            intent
+        );
+        assert!(wire.get("voice_request_id").is_none());
+        assert!(serde_json::from_value::<GestureIntent>(json!({
+            "scope": "practice", "lesson_id": 17, "gesture": "three", "voice_request_id": 41,
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<GestureIntent>(json!({
+            "scope": "practice", "gesture": "three",
+        }))
+        .is_err());
+        let progress = GestureProgress::new(GestureCandidate::OpenPalm, 500).unwrap();
+        let status = ControlStatus::Practice {
+            lesson_id: 17,
+            progress: Some(progress),
+        };
+        assert_eq!(
+            serde_json::from_value::<ControlStatus>(serde_json::to_value(status).unwrap()).unwrap(),
+            status
+        );
+        assert!(progress.is_compatible_with(GestureContext::Practice { lesson_id: 17 }));
+        assert!(!progress.is_compatible_with(GestureContext::Standby));
+        assert!(!progress.is_compatible_with(ACTIVE));
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "practice", "lesson_id": 17,
+            "progress": { "candidate": "arm", "progress_permille": 500 },
+        }))
+        .is_err());
     }
 
     #[test]
@@ -683,6 +785,7 @@ mod tests {
             GestureContext::Disarmed,
             GestureContext::Disabled,
             GestureContext::Standby,
+            GestureContext::Practice { lesson_id: 17 },
             ACTIVE,
             MUTED,
         ] {

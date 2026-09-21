@@ -43,10 +43,10 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
 
 export function nativeInput(generation: string): NativeInput {
   return {
-    subscribe: (receive) => {
+    subscribe: (receive, practice = false) => {
       if (!window.__TAURI__) throw new Error("Open this frontend in GSV Tauri Prototype.");
       const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
-      const initial = invoke<NativeSnapshot>("input_attach", { generation, updates });
+      const initial = invoke<NativeSnapshot>("input_attach", { generation, updates, practice });
       let disposed = false;
       return { initial, dispose() {
         if (disposed) return;

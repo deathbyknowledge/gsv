@@ -18,6 +18,8 @@ export function useNativeSoundFeedback(snapshot: NativeSnapshot | null) {
     const listening = snapshot.voice?.phase === "listening";
     const wasListening = before.voice?.phase === "listening";
     if (before.gestures_enabled && !snapshot.gestures_enabled) playInputCue("off");
+    else if (snapshot.gesture_practice?.feedback
+      && snapshot.gesture_practice.feedback_sequence !== before.gesture_practice?.feedback_sequence) playInputCue("practice_error");
     else if (listening && !wasListening) playInputCue("listening");
     else if (before.voice && !snapshot.voice) playInputCue(snapshot.notice ? "attention" : "paused");
     else if (snapshot.gesture_status === "ready" && before.gesture_status !== "ready") playInputCue("ready");

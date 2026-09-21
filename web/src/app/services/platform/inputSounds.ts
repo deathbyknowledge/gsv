@@ -1,7 +1,7 @@
 /** Quiet, cached synthesis based on the original native desktop's audio.rs. */
 export type SoundPreferences = { keys: boolean; gestures: boolean };
 export type InputCue = "character" | "space" | "delete" | "commit" | "navigate"
-  | "ready" | "listening" | "paused" | "off" | "accepted" | "clear" | "attention";
+  | "ready" | "listening" | "paused" | "off" | "accepted" | "clear" | "attention" | "practice_error";
 const storageKey = "gsv.input-sounds";
 let preferences: SoundPreferences = { keys: true, gestures: true };
 try {
@@ -43,6 +43,7 @@ const profiles = {
 const notes: Partial<Record<InputCue, readonly number[]>> = {
   ready: [440, 660], listening: [520, 780], paused: [620, 440],
   off: [440, 330, 220], accepted: [740], clear: [520, 390], attention: [280, 280],
+  practice_error: [240, 180],
 };
 function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   const cached = buffers.get(cue);
@@ -50,7 +51,9 @@ function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   const rate = audio.sampleRate;
   const profile = cue in profiles ? profiles[cue as keyof typeof profiles] : null;
   const tones = notes[cue] ?? [];
-  const duration = profile ? profile[0] / 1000 : tones.length * .075 + .025;
+  const toneSeconds = cue === "practice_error" ? [.085, .16] : tones.map(() => .065);
+  const gap = cue === "practice_error" ? .035 : .01;
+  const duration = profile ? profile[0] / 1000 : toneSeconds.reduce((sum, span) => sum + span + gap, .025);
   const buffer = audio.createBuffer(1, Math.ceil(rate * duration), rate);
   const samples = buffer.getChannelData(0);
   if (profile) {
@@ -77,12 +80,17 @@ function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
         * envelope * Math.min(1, (samples.length - i) / 48) * profile[1] * 1.28;
     }
   } else {
-    for (let i = 0; i < samples.length; i++) {
-      const time = i / rate, note = Math.floor(time / .075), local = time - note * .075;
-      if (note >= tones.length || local > .065) continue;
-      const envelope = Math.sin(Math.PI * local / .065) ** 2;
-      const wave = Math.sin(2 * Math.PI * tones[note] * local);
-      samples[i] = wave * envelope * .022;
+    let offset = 0;
+    for (let note = 0; note < tones.length; note++) {
+      const span = toneSeconds[note];
+      const start = Math.round(offset * rate);
+      for (let i = 0; i < Math.floor(span * rate); i++) {
+        const local = i / rate;
+        const envelope = Math.sin(Math.PI * local / span) ** 2;
+        const wave = Math.sin(2 * Math.PI * tones[note] * local);
+        samples[start + i] = wave * envelope * .022;
+      }
+      offset += span + gap;
     }
   }
   buffers.set(cue, buffer);

@@ -229,10 +229,7 @@ impl VisionContextSender {
     /// This is intentionally distinct from ordinary replace-if-changed
     /// synchronization: a rejected or idempotent reliable intent still needs
     /// one new context frame so the helper can leave its pending state.
-    pub fn reassert_context(
-        &self,
-        context: VisionContext,
-    ) -> Result<(), VisionContextError> {
+    pub fn reassert_context(&self, context: VisionContext) -> Result<(), VisionContextError> {
         self.state.reassert(context)
     }
 
@@ -846,6 +843,16 @@ fn translate_event(
         HelperEvent::Lifecycle { state, .. } => Ok(Some(VisionEvent::Lifecycle(state))),
         HelperEvent::Status {
             reset_sequence,
+            status: status @ ControlStatus::Practice { lesson_id, .. },
+            ..
+        } if context == (VisionContext::Practice { lesson_id }) => Ok(Some(VisionEvent::Status {
+            sequence,
+            received_at,
+            status,
+            reset_sequence,
+        })),
+        HelperEvent::Status {
+            reset_sequence,
             status: status @ ControlStatus::Disarmed { .. },
             ..
         } if context == VisionContext::Disarmed => Ok(Some(VisionEvent::Status {
@@ -943,6 +950,14 @@ fn translate_event(
                 intent,
             }))
         }
+        HelperEvent::Intent {
+            intent: intent @ GestureIntent::Practice { lesson_id, .. },
+            ..
+        } if context == (VisionContext::Practice { lesson_id }) => Ok(Some(VisionEvent::Intent {
+            sequence,
+            received_at,
+            intent,
+        })),
         HelperEvent::Intent { .. } => Ok(None),
         HelperEvent::Scroll { state, .. } if context != VisionContext::Disarmed => {
             Ok(Some(VisionEvent::Scroll {
@@ -1325,6 +1340,80 @@ mod tests {
 
         assert!(signals.command_failed.load(Ordering::Acquire));
         assert!(signals.should_report_interrupted(false));
+    }
+
+    #[test]
+    fn practice_observations_require_the_exact_current_lesson() {
+        let at = Instant::now();
+        for context in [
+            VisionContext::Standby,
+            VisionContext::Active {
+                voice_request_id: 41,
+                muted: false,
+            },
+            VisionContext::Practice { lesson_id: 18 },
+        ] {
+            let mut sequence = 0;
+            let intent = GestureIntent::Practice {
+                lesson_id: 17,
+                gesture: gesture_protocol::PracticeGesture::Two,
+            };
+            assert_eq!(
+                translate_event(
+                    HelperEvent::Intent {
+                        session_id: SESSION,
+                        sequence: 1,
+                        intent
+                    },
+                    at,
+                    SESSION,
+                    &mut sequence,
+                    context
+                ),
+                Ok(None)
+            );
+            assert_eq!(
+                translate_event(
+                    HelperEvent::Status {
+                        session_id: SESSION,
+                        sequence: 2,
+                        reset_sequence: 0,
+                        status: ControlStatus::Practice {
+                            lesson_id: 17,
+                            progress: None
+                        },
+                    },
+                    at,
+                    SESSION,
+                    &mut sequence,
+                    context
+                ),
+                Ok(None)
+            );
+        }
+        let mut sequence = 0;
+        let intent = GestureIntent::Practice {
+            lesson_id: 17,
+            gesture: gesture_protocol::PracticeGesture::Two,
+        };
+        assert_eq!(
+            translate_event(
+                HelperEvent::Intent {
+                    session_id: SESSION,
+                    sequence: 1,
+                    intent,
+                },
+                at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Practice { lesson_id: 17 }
+            ),
+            Ok(Some(VisionEvent::Intent {
+                sequence: 1,
+                received_at: at,
+                intent,
+            }))
+        );
     }
 
     #[test]

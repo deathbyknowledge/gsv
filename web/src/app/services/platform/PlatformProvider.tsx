@@ -21,7 +21,15 @@ export type NativeEvent = {
   text: string;
 };
 export type GestureCandidate = "arm" | "disarm" | "start_transcription" | "stop_transcription"
-  | "send" | "delete_backward" | "clear_dictation" | "mute" | "unmute";
+  | "send" | "delete_backward" | "clear_dictation" | "open_palm" | "mute" | "unmute";
+export type PracticeTarget = "none" | "listen" | "dictate" | "send" | "delete" | "clear" | "pause" | "scroll" | "off";
+export type PracticeGesture = "one" | "two" | "three" | "four" | "five" | "both_fists" | "scroll";
+export type GesturePractice = {
+  lesson_id: number;
+  expected: PracticeTarget;
+  feedback_sequence: number;
+  feedback: { gesture: PracticeGesture; reason: "wrong_gesture" | "not_ready" } | null;
+};
 export type GestureContext =
   | { mode: "disarmed" | "disabled" | "standby" }
   | { mode: "active"; voice_request_id: number; muted: boolean };
@@ -36,6 +44,7 @@ export type NativeSnapshot = {
   gesture_action_sequence: number;
   gesture_needs_reset: boolean;
   gesture_reset_after_action: number;
+  gesture_practice: GesturePractice | null;
   scroll_velocity: number;
   scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];
@@ -48,12 +57,13 @@ export type NativeCommand =
   | { kind: "stop"; request_id: number }
   | { kind: "cancel" | "devices" | "detach" }
   | { kind: "segment"; request_id: number; segment_id: number; action: SegmentAction }
-  | { kind: "gestures"; enabled: boolean };
+  | { kind: "gestures"; enabled: boolean }
+  | { kind: "practice"; expected: PracticeTarget };
 
 export type NativeUpdate = { revision: number; sent_at_ms: number; scroll_age_ms: number; snapshot: NativeSnapshot };
 export type NativeSubscription = { initial: Promise<NativeSnapshot>; dispose(): void };
 export type NativeInput = {
-  subscribe(receive: (update: NativeUpdate) => void): NativeSubscription;
+  subscribe(receive: (update: NativeUpdate) => void, practice?: boolean): NativeSubscription;
   acknowledge(lease: string, revision: number, ack: number): Promise<void>;
   command(lease: string, command: NativeCommand): Promise<void>;
 };
