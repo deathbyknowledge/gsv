@@ -10,7 +10,7 @@ describe("proc.setidentity", () => {
     const stub = await initProcess("mech-recovered-create", ROOT_IDENTITY);
     await runInProcess(stub, (process) => {
       process.store.state.setValue("taskTitle", "Owner's later title");
-      process.store.state.setAiConfig({ reasoning: "high" });
+      process.store.state.setAiConfig({ version: 2, reasoning: "high", updatedAt: 123 });
     });
     const response = await stub.recvFrame(makeReq("proc.setidentity", {
       identity: { ...ROOT_IDENTITY, home: "/unexpected" }, ifUninitialized: true,
@@ -20,7 +20,7 @@ describe("proc.setidentity", () => {
     await runInProcess(stub, (process) => {
       expect(process.identity.home).toBe(ROOT_IDENTITY.home);
       expect(process.store.state.getValue("taskTitle")).toBe("Owner's later title");
-      expect(process.store.state.getAiConfig()).toEqual({ reasoning: "high" });
+      expect(process.store.state.getAiConfig()).toEqual({ version: 2, reasoning: "high", updatedAt: 123 });
     });
   });
   it("derives pid and stores identity", async () => {

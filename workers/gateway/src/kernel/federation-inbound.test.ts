@@ -59,6 +59,7 @@ type KernelInternals = {
 
 describe("federation inbound boundary", () => {
   let kernel: DurableObjectStub<Kernel>;
+  let installationId: string;
   let contact: FederationContactRecord;
   let recipientSubjectId: string;
   let sharedSecret: string;
@@ -66,7 +67,7 @@ describe("federation inbound boundary", () => {
   let getConversationById: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const installationId = `inst_federation_inbound_${crypto.randomUUID()}`;
+    installationId = `inst_federation_inbound_${crypto.randomUUID()}`;
     kernel = await getKernelByInstallationId(env.KERNEL, installationId);
     sharedSecret = randomBase64Url(32);
     messages = [];
@@ -144,7 +145,7 @@ describe("federation inbound boundary", () => {
     expect(history.messages[0]?.social).toEqual(payload.social);
     expect(await conversation.resolveOrigin(payload.social.reference, contact.threadId))
       .toMatchObject({ messageId: history.messages[0]?.id, sequence: 1 });
-    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
 
     const forged = await signedV2Envelope({ ...payload, social: {
       ...payload.social, reference: { ...payload.social.reference, actor: { shipId: "ship:someone-else", subjectId: REMOTE_SUBJECT_ID } },
@@ -177,7 +178,7 @@ describe("federation inbound boundary", () => {
     expect(response.status).toBe(409);
     await response.arrayBuffer();
     expect(getConversationById).not.toHaveBeenCalled();
-    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
     expect(messages).toEqual([]);
     await runInDurableObject(kernel, (instance: Kernel) => {
       expect(instance.federation.request("request:local")).toMatchObject({ state, revision: 1 });
@@ -205,7 +206,7 @@ describe("federation inbound boundary", () => {
     expect(await concurrent.json()).toEqual(await first.clone().json());
     expect(await replay.json()).toEqual(await first.json());
     expect(messages).toHaveLength(1);
-    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
     await runInDurableObject(kernel, (instance: Kernel) => {
       expect(instance.conversations.get(contact.conversationId)?.handlerPid).toBeUndefined();
     });
@@ -896,7 +897,7 @@ describe("federation inbound boundary", () => {
       }).records[0]
     ));
     expect(responsibility).toBeUndefined();
-    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
   });
 
   it.each([false, true])("cancels the request responsibility on revocation after removal=%s", async (removed) => {

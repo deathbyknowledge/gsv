@@ -2328,3 +2328,11 @@ review. All require a direct human; approval also requires `contact.send`.
 An uncertain approval retries the original revision and content. Drafts last
 seven days, require federation v2 for approved attribution, and cannot be edited.
 See [reviewed replies](../architecture/social-drafts.md).
+
+```ts
+"contact.draft.create": { args: ContactDraftCreateArgs; result: ContactDraftResult };
+"contact.draft.get": { args: { draftId: string }; result: ContactDraftResult };
+"contact.draft.list": { args: { contactId: string; after?: string; limit?: number }; result: ContactDraftListResult };
+"contact.draft.approve": { args: { draftId: string; expectedRevision: number }; result: ContactDraftResult };
+"contact.draft.discard": { args: { draftId: string; expectedRevision: number }; result: ContactDraftResult };
+```
