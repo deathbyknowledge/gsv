@@ -68,7 +68,7 @@ export function installInputTiming(): void {
       && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
       && (event.key === "j" || event.key === "k")
       && !(event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)))
-      && document.querySelector(".zen.is-browse") !== null
+      && document.querySelector(".instrument-view:not([hidden]) .zen.is-browse") !== null
       && document.querySelector(".desktop-timings") === null;
     pending.push({ kind, navigation, repeat: event instanceof KeyboardEvent && event.repeat, started, dispatch: now - started });
     if (frame) return;

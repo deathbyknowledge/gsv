@@ -105,7 +105,7 @@ export function InputTimingPanel() {
       </div>
       {copied && <p role="status">{copied}</p>}
       <details><summary>Report</summary><pre>{JSON.stringify(report, null, 2)}</pre></details>
-      <p>Last 200 events per input type, held locally in memory. No keys, draft text or conversation content are recorded.</p>
+      <p>Each input type keeps its own last 200 events, so these rows can cover different periods. No keys, draft text or conversation content are recorded.</p>
     </section>}
   </>;
 }

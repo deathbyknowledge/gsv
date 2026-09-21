@@ -388,3 +388,30 @@ owns rendering cadence and can use a display refresh monitor or a fallback timer
 No display setting or animation rate was changed here. A 144 Hz comparison would
 need a human pass on the faster monitor and measurement of the actual WebKit /
 XWayland presentation path before claiming it delivers 144 FPS.
+
+## Timing report on the 144 Hz display
+
+The next human report used a 2560×1440 viewport at 150% zoom with 117 loaded
+moments. Compositor metadata places the prototype on the 144 Hz monitor, but
+the report samples input-to-callback latency, not consecutive frame intervals,
+so it cannot establish the delivered frame rate.
+
+Typing's next-frame p95 was 15 ms, input-to-caret p95 17 ms, cursor-to-caret p95
+19 ms, and individual j/k taps reached the next callback at p95 19 ms (maximum
+628 ms). Repeated j/k events had a 765 ms dispatch p95 and 778 ms next-frame p95,
+with a 970 ms maximum. Measured navigation handler work stayed at p95 3 ms and
+maximum 4 ms; Preact update work was p95 2 ms with a 77 ms maximum. The long
+dispatch tail predates the capture listener, but does not identify whether
+other frontend work, renderer scheduling, native event delivery or timestamp
+behavior caused it. Separate phase percentiles are not one correlated event.
+One blockage can also delay many held-key events, so these counts do not count
+independent stalls. Every category has its own 200-entry buffer; the aggregate
+keyboard and navigation rows need not cover the same interval.
+
+Source inspection also found a diagnostic regression after view retention:
+the navigation classifier matched a hidden `.zen.is-browse`, allowing j/k from
+Memory or Fleet into the Zen category. It now requires the visible retained
+view. This corrects classification, not input performance, and does not prove
+that this particular report contained events from other views. The timing
+panel now explains its independent buffers. The next human pass should clear
+samples and isolate held-key Zen navigation before drawing further conclusions.
