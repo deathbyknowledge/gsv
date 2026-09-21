@@ -61,13 +61,9 @@
 .instrument-field .gsv-glyph-stars pre {
   font-family: "Departure Mono", monospace;
 }
-.instrument-scan {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  /* Black scanlines already darken through alpha; a backdrop blend adds no visual effect. */
-  background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0, 0, 0, 0.22) 3px);
-}
+/* Black scanlines already darken through alpha; a backdrop blend adds no visual effect. */
+/* The scanline layer is now omitted in both themes: its repeating gradient produced
+ * visible horizontal bands in WebKit. Keep the stars over the continuous void color. */
 .instrument-vignette {
   position: absolute;
   inset: 0;
@@ -366,7 +362,6 @@
   --glow-focus: none;
   --inspector-bg: rgba(255, 255, 255, 0.72);
 }
-.instrument.is-light .instrument-scan,
 .instrument.is-light .instrument-vignette { display: none; }
 .instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); }
 .instrument.is-light .wordmark.is-glitch { text-shadow: none; }

@@ -677,3 +677,13 @@ motion. Tutorial instructions and labels use the requested shorter wording and
 omit repeated practice qualifiers. Closing still releases its native input lease;
 the duplicate turn-off control is removed. Recognition, lesson progression and
 the isolated tutorial draft retain their existing owners and behavior.
+
+## Dark background bands
+
+The supplied PNG contains a horizontal darkening pattern repeating every 45 image
+rows. The shared backdrop's repeating scanline gradient is the source candidate;
+it is independent of the star glyphs and the radial vignette. Remove the scanline
+element and its styles from the shared Instrument/sign-in backdrop. This removes
+an ornamental paint layer without adding filtering, animation or texture work.
+The original CSS comments mentioning scanlines are preserved, followed by a note
+recording their removal. Confirmation on the user's affected display is pending.
