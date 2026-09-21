@@ -10,3 +10,12 @@
 .desktop-connect button { padding: 10px; }
 .desktop-error { position: fixed; bottom: 0; z-index: 200; padding: 14px; background: #542c38; color: white; width: 100%; }
 .desktop-error button { margin-left: 20px; }
+.desktop-timings { position: fixed; z-index: 202; top: 36px; right: 12px; width: min(600px, calc(100vw - 24px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 20px; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); font: 12px/1.5 monospace; }
+.desktop-timings header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.desktop-timings h2 { font: inherit; font-size: 14px; margin: 0; }
+.desktop-timings p { margin: 14px 0; }
+.desktop-timings table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.desktop-timings th, .desktop-timings td { text-align: left; padding: 6px; border-bottom: 1px solid var(--border); font-weight: normal; }
+.desktop-timing-actions { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.desktop-timings pre { overflow: auto; user-select: text; }
+.desktop-timings summary { cursor: pointer; }

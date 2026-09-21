@@ -140,3 +140,43 @@ Prototype diagnostics expose `window.gsvInputTiming.read()` in the inspector.
 Only bounded keyboard/input dispatch and next-frame timings are retained in
 memory. No keys, text, targets or private content are recorded or transmitted.
 These timings do not measure final GPU/compositor presentation latency.
+
+## Second human pass: layout regressions and remaining latency
+
+The user reported that 150%/200% zoom shrank the UI into a corner while the
+unscaled field still covered the window, and that the gesture panel was only
+about one line tall. The scaled layer now uses absolute insets with automatic
+width/height instead of retaining the transform-era divided viewport dimensions.
+Its parent owns the available rectangle, including the prototype bar offset.
+Layout zoom still owns text sizing and container-query reflow.
+
+The native panel's percentage height had resolved against the positioned
+`.zen-bottom` composer, not the full Zen area. Zen now owns a full-area overlay
+host outside the composer. Native controls portal their one open panel into it;
+the overlay reserves header and bottom-control space, and the panel scrolls
+only when its content exceeds that area. This keeps input state in the native
+controls and preserves the place picker's existing footer anchor.
+
+The user also confirmed sluggish input/navigation with both sensors off.
+The remaining delay is not attributed to a measured frontend bottleneck yet.
+The required local `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` workaround is a concrete
+candidate: WebKitGTK 2.52.6's
+[`RenderTargetSHMImage::didRenderFrame`](https://github.com/WebKit/WebKit/blob/webkitgtk-2.52.6/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp#L514)
+reads the whole framebuffer with `glReadPixels` on each rendered frame.
+Caching glyph layout does not remove that transport cost. Human timing and
+renderer comparisons are still needed before claiming a cause or another
+performance improvement.
+
+The next observation further narrows the comparison: wheel scrolling feels
+immediate, while keyboard scrolling and showing the custom prompt caret after
+a click take about 150–200 ms. That prioritizes the main-thread event, component
+and layout path; the framebuffer-copy cost alone does not explain the contrast.
+No intentional 150 ms delay remains in those source paths.
+
+The prototype bar exposes the existing bounded timing samples through a quiet
+Timings disclosure, including prompt clicks. Reading or clearing the report is
+on demand and starts no polling or render loop. The report includes only timing
+aggregates and window/layout dimensions. It can distinguish delayed dispatch
+from delayed animation-frame scheduling, but it ends before paint and cannot
+prove end-to-end latency. Copying is an explicit local clipboard action, with
+selectable report text if clipboard access is unavailable.

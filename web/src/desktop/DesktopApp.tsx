@@ -5,6 +5,7 @@ import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
 import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
 import { invoke, nativeInput, nativeSessionStorage, type DesktopSession } from "./bridge";
+import { InputTimingPanel } from "./InputTimingPanel";
 import "./desktop.css";
 
 function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession; mock: boolean; onError(message: string): void }) {
@@ -43,6 +44,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     <div class="desktop-strip">
       <span>GSV Tauri Prototype · {mock ? "mock gateway" : new URL(session.origin!).host}</span>
       {locked && !mock && <button type="button" onClick={() => void invoke("desktop_open", { url: `${session.origin}/recover-member` }).catch(() => onError("Could not open your browser."))}>recover in browser</button>}
+      <InputTimingPanel />
       <button type="button" onClick={() => setConfirmation("disconnect")}>disconnect space</button>
       <button type="button" onClick={() => setConfirmation("quit")}>quit</button>
     </div>

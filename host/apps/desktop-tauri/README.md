@@ -117,10 +117,19 @@ excludes the mock. The real helpers are still real in development mode.
    daemon and installed Desktop should remain available.
 7. Cycle `x` through 100%, 150% and 200%. Check text sharpness, full-window fit,
    prompt/caret alignment, and layout in Zen, Fleet, Memory and Settings.
+   At each size, open Voice and Gestures: their panels should use the available
+   reading area, with ordinary scrolling only when the guide is taller than it.
    Try `j`/`k`, typing and view navigation with both sensors off, then on. Check
    a long conversation and scroll anchoring while new replies arrive.
 
-Optional local timing diagnostics in the webview inspector:
+For local timing diagnostics, open **timings** in the prototype bar. Clear the
+samples, close the panel, then compare wheel scrolling with `j`/`k`, click the
+prompt and type without sending. Reopen **timings** and copy the report. It
+includes dispatch and next-frame delays plus window/layout dimensions; no keys,
+draft text, gateway address or conversation content. Opening the panel does not
+start a sampling or rendering loop.
+
+The same input timings remain available in the webview inspector:
 
 ```js
 window.gsvInputTiming.reset();
@@ -129,7 +138,8 @@ window.gsvInputTiming.read();
 ```
 
 This reports p95 dispatch delay, p95 time to the next animation frame, and the
-maximum next-frame delay for up to 200 keyboard and 200 input events. Samples
+maximum next-frame delay for up to 200 events each for keys, typing and prompt
+clicks. Samples
 stay in memory and contain no keys, text, targets or conversation content. This
 is a frontend scheduling diagnostic, not a measurement of final display latency.
 
