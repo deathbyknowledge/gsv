@@ -110,6 +110,16 @@ Responsibilities use the existing table/inspector layout. Current work and histo
 
 Memory has one quiet new-page action. It reuses the correction editor, refuses a name already in use, and fences page/index writes with the repository head. Existing-page corrections compare the editor baseline before saving. Moving to another Instrument view retains the editor; replacing its page or reloading protects unsaved drafts.
 
+Memory's j/k and arrow keys move keyboard focus through visible sidebar rows,
+including folders, without opening a page or changing the reader. Space or Enter
+activates the focused row: folders expand/collapse and pages open. Collapsed
+descendants are skipped. Search matches use the same focus-then-open behavior;
+mouse clicks still open pages directly. Focus has the quiet hover background and
+keyboard underline, while the open page keeps its current-page marker. Moving
+focus updates no page query or component state, and only the destination row is
+scrolled into view. Editing and unsaved-change checks run when a page is opened,
+not when a row is highlighted.
+
 Files keep their small preview and expand into a full-width reader/editor. Immutable references identify the exact bytes being read or downloaded. Text up to 1 MiB can be edited; larger files open as downloads (currently the shared 25 MiB resource limit). Saves check for observed target changes and retain the draft on conflict. Delete is a contextual, explicitly confirmed action. Returning restores Fleet's selection, folders and scroll. The ledger inspector shows the response's bounded failure reason, duration and request details; full tool output remains in Zen.
 
 ## Development mock

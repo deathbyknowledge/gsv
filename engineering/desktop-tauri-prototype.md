@@ -365,3 +365,26 @@ The activity ref is now named `activeRef`; the original chip-width spacing and
 cursor measurement remain intact. This is a layout-calculation fix, with no CSS
 change. The next human pass should check the first characters after a fresh open
 and after returning to Zen, then arrow movement, target changes and wrapped text.
+
+## Memory keyboard focus and display cadence
+
+Memory's previous j/k handler walked a flattened list of every page and called
+`open`, so browsing caused page reads and revealed ancestor folders. It now moves
+native focus through the visible sidebar buttons and folder summaries. Space and
+Enter retain native activation; opening a page is still owned by Memory's single
+`open` function, with its edit guard. The navigation path checks tree structure,
+not row geometry, to skip hidden search/tree content and collapsed descendants.
+It changes neither query keys nor component state. The browser owns focus and
+the highlight; the last focused row is remembered for later keyboard movement.
+The Keys guide reflects the new behavior in both frontend builds.
+
+The compositor reports the prototype on DP-1 at 3840×2160 and about 60 Hz; HDMI-A-1
+is at 2560×1440 and about 144 Hz. These are display modes, not measured app FPS.
+The frontend has no global 30/60 FPS loop. Its star field updates at most 8 times
+per second and its text-resolution effect ticks every 60 ms, independently of
+event-driven input/navigation and requestAnimationFrame cursor updates. WebKit
+owns rendering cadence and can use a display refresh monitor or a fallback timer
+([2.52.6 scheduling source](https://github.com/WebKit/WebKit/blob/webkitgtk-2.52.6/Source/WebCore/page/RenderingUpdateScheduler.cpp)).
+No display setting or animation rate was changed here. A 144 Hz comparison would
+need a human pass on the faster monitor and measurement of the actual WebKit /
+XWayland presentation path before claiming it delivers 144 FPS.

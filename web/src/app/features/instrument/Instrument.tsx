@@ -202,8 +202,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           {distance === "memory" && <>
             <h4>Memory</h4>
             <dl>
-              <dt>j / ↓</dt><dd>Open the next page</dd>
-              <dt>k / ↑</dt><dd>Open the previous page</dd>
+              <dt>j / ↓</dt><dd>Highlight the next visible item</dd>
+              <dt>k / ↑</dt><dd>Highlight the previous visible item</dd>
+              <dt>Space / Enter</dt><dd>Open the highlighted page or toggle its folder</dd>
               <dt>/</dt><dd>Focus page search</dd>
               <dt>e</dt><dd>Edit the open page</dd>
               <dt>⌘ / Ctrl + Enter</dt><dd>Save while editing page text</dd>

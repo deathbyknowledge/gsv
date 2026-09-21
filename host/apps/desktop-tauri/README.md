@@ -135,6 +135,13 @@ excludes the mock. The real helpers are still real in development mode.
    that arrives while away, and compare typing/browsing after visiting all four
    views. This retention lasts for the signed-in session; it is not restart
    recovery or automatic saving. Leaving Zen stops native input as before.
+9. In Memory, move with j/k or the arrow keys across pages and closed folders.
+   Only the row highlight should move; the current page must stay put. Space or
+   Enter should toggle a folder or open a page. A closed folder's descendants
+   should be skipped. Repeat in search results, then with an unsaved edit:
+   highlighting another row must not discard or ask to discard the edit;
+   intentionally opening another page still protects it. Check that typing
+   spaces and j/k in the search/editor fields retains ordinary text behavior.
 
 For local timing diagnostics, press **F8** or open **timings** in the in-app
 prototype bar. This strip is part of the page, independent of window-manager
