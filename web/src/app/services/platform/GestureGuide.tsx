@@ -29,7 +29,7 @@ export const GestureGuide = memo(function GestureGuide() {
     </div>
     <figure id="native-gesture-example" class="native-gesture-example">
       <AsciiAnimation scene={gestureScene(selected)} label={lesson.image} animate={!paused}
-        frameRate={GESTURE_FRAME_RATE} fontSize={6} className="native-gesture-animation" />
+        frameRate={GESTURE_FRAME_RATE} fontSize={5.5} className="native-gesture-animation" />
       <figcaption>
         <span>{selected === "scroll" ? "control hand · action hand" : selected === 0 ? "both hands" : "action hand"}</span>
         <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? "Play gesture demonstration" : "Pause gesture demonstration"}>{paused ? "play" : "pause"}</button>

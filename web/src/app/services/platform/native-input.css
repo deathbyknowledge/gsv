@@ -36,13 +36,21 @@
 .native-gesture-lessons button:last-child { grid-column: 1 / -1; }
 .native-gesture-lessons button[aria-pressed="true"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
 .native-gesture-lessons b { font-weight: normal; color: var(--accent); }
-.native-gesture-example { margin: 8px 0 0; }
-.native-gesture-animation.gsv-ascii-galaxy {
-  --ascii-foreground: var(--accent);
+.native-gesture-example { margin: 8px 0 0; container-type: inline-size; }
+.native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] {
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 64%, transparent);
+  --ascii-foreground: var(--glyph);
+  --ascii-stars: var(--accent-bright);
   --ascii-foreground-glow: none;
   --ascii-star-glow: none;
-  height: 216px; min-height: 216px; aspect-ratio: auto; border: 0; border-radius: 0;
+  height: 264px; min-height: 264px; aspect-ratio: auto; border: 0; border-radius: 0;
   background: transparent; box-shadow: none;
+}
+.native-gesture-animation .gsv-ascii-galaxy-pre {
+  font-family: "Departure Mono", monospace;
+  font-weight: 400;
+  font-size: min(5.5px, 1.6cqi);
+  line-height: 1;
 }
 .native-gesture-example figcaption { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10px; }
 .native-gesture-example figcaption button { color: var(--text-dim); }
