@@ -223,3 +223,16 @@ visible messages only. Contact controls separate saving, mute, notification
 policy, block and revoke. Digest delivery, optimistic contact sends, reply UI,
 reporting, address-book pagination and the remaining batches are not yet done.
 No local validation or browser trial was run.
+
+The next message slice moves a human send into the visible thread immediately,
+keeps a new composer draft independent of that acknowledgement, and retains the
+exact send/reply identity after an uncertain response. Contact delivery reads
+are batched for the displayed messages. V062 adds explicit recoverable-message
+retry with the original payload, original seven-day window and a retry epoch
+against stale outcomes. Permanent failures and retired generations stay closed.
+A failed ordinary human message is UI attention, not an automatic Ship promise.
+The owning-store and optimistic-send CI cases are added but not yet validated.
+CI also found missing inbox syscall documentation signatures, justification
+comments and a tab-attention fixture race; this slice addresses those findings.
+The first-contact test harness fix still needs a Gateway run beyond the protocol
+contract check. All unimplemented agreed batches remain in scope.

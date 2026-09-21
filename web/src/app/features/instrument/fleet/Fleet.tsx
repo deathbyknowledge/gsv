@@ -537,7 +537,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
             <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer}
                   draft={contactDrafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT}
                   onDraft={(change) => contactDrafts.update(selectedContact.id, change)}
-                  onSend={() => void contactDrafts.send(selectedContact.id)} />
+                  onSend={() => void contactDrafts.send(selectedContact)} onRetry={(id) => void contactDrafts.send(selectedContact, id)} onObserved={(ids) => contactDrafts.observed(selectedContact.id, ids)} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
           ) : selectedLine && !openFile ? (

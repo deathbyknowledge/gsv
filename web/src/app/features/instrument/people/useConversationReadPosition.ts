@@ -33,11 +33,11 @@ export function useConversationReadPosition(conversationId: string, container: R
     element.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("focus", schedule);
     document.addEventListener("visibilitychange", schedule);
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    resize?.observe(element);
+    const resize = new ResizeObserver(schedule);
+    resize.observe(element);
     schedule();
     return () => {
-      disposed = true; clearTimeout(timer); resize?.disconnect();
+      disposed = true; clearTimeout(timer); resize.disconnect();
       element.removeEventListener("scroll", schedule);
       window.removeEventListener("focus", schedule);
       document.removeEventListener("visibilitychange", schedule);

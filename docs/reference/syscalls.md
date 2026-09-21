@@ -607,6 +607,18 @@ type ConversationSyscalls = {
     args: { pid: string };
     result: { conversation: ConversationSummary };
   };
+  "conversation.inbox": {
+    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
+  };
+  "conversation.view.get": {
+    args: { conversationId: string };
+    result: { entry: ConversationInboxEntry };
+  };
+  "conversation.view.update": {
+    args: { conversationId: string; readThroughSequence?: number; archived?: boolean; expectedRevision?: number };
+    result: { entry: ConversationInboxEntry };
+  };
   "conversation.list": {
     args: Record<string, never>;
     result: { conversations: ConversationSummary[] };
@@ -902,6 +914,14 @@ type ContactSyscalls = {
       conversationId: string;
       state: "queued" | "delivered" | "failed";
     };
+  };
+  "contact.delivery.list": {
+    args: { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+    result: { deliveries: ContactDeliveryStatus[] };
+  };
+  "contact.delivery.retry": {
+    args: { deliveryId: string; expectedUpdatedAtMs: number };
+    result: { deliveryId: string; conversationId: string; state: "queued" | "delivered" | "failed" };
   };
   "contact.delivery.get": {
     args: { deliveryId: string };
@@ -2232,3 +2252,14 @@ new messages invalidate an older archive decision. Muted threads stay archived.
 The list retains bounded committed-message previews, so loading it does not fan
 out to Conversation objects. Existing conversations migrate at their previous
 latest sequence rather than declaring their entire history unread.
+
+`contact.delivery.list` reads up to 100 selected delivery identities or local
+message sequences for one owned contact. It never exposes another owner's
+outbox. `contact.delivery.retry` is a signed-in human decision to resume the
+same stored message, fingerprint and generation. Only recoverable failures
+within the original seven-day delivery window can resume. A retry epoch fences
+late outcomes from the previous attempt series; retries retain ordinary backlog
+and rate limits. Permanent peer refusal, a revoked generation or expiry cannot
+be bypassed. The retained delivery status includes optional `messageId`,
+`messageSequence` and `retryable`. Receipt retention remains eight days; a missing
+old receipt is not evidence of confirmed delivery or a read receipt.

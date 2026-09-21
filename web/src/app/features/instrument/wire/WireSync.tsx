@@ -68,7 +68,7 @@ export function WireSync(): null {
         void refreshContactQuery(queryClient, signal === "contact.changed" ? INSTRUMENT_CONTACTS_KEY : INSTRUMENT_CONTACT_INVITES_KEY);
         return;
       }
-      if (signal === "contact.request.changed" || signal === "conversation.changed") {
+      if (signal === "contact.request.changed" || signal === "contact.delivery.changed" || signal === "conversation.changed") {
         void syncContactDetailSignal(queryClient, signal, payload);
         return;
       }

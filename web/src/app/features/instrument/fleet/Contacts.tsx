@@ -117,8 +117,8 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length ? "messages" : "details"));
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";
@@ -141,7 +141,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, ini
     <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
     <ConversationViewControls conversationId={contact.conversationId} account={account} />
     <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>

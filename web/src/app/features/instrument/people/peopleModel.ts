@@ -1,4 +1,4 @@
-import type { ApproachCreateArgs, ApproachSummary, PublicProfile } from "@humansandmachines/gsv/protocol";
+import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary, ConversationInboxEntry } from "@humansandmachines/gsv/protocol";
 import { randomId } from "../../../services/ids";
 
 export type ApproachDraft = {
@@ -40,4 +40,14 @@ export function approachStatus(request: ApproachSummary): string {
 export function requestMayRetry(request: ApproachSummary): boolean {
   return request.direction === "incoming" ? request.connection === "failed"
     : ["pending", "preparing"].includes(request.state) && request.delivery === "failed";
+}
+
+export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxEntry): string {
+  if (contact.blocked) return "Blocked";
+  if (contact.state === "revoked") return "Connection ended · history available";
+  if (!entry?.preview) return contact.preferences?.muted ? "Muted" : new URL(contact.remoteOrigin).host;
+  const preview = entry.preview;
+  const author = preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your Ship: "
+    : preview.provenance?.kind === "process" ? "Their Ship: " : "";
+  return `${author}${preview.text || `${preview.attachmentCount} attachment${preview.attachmentCount === 1 ? "" : "s"}`}`;
 }

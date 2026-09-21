@@ -215,6 +215,9 @@ export type ContactDeliveryStatus = {
   updatedAtMs: number;
   deliveredAtMs?: number;
   lastError?: string;
+  retryable?: boolean;
+  messageId?: string;
+  messageSequence?: number;
 };
 
 export type ContactDeliveryGetArgs = {
@@ -224,6 +227,11 @@ export type ContactDeliveryGetArgs = {
 export type ContactDeliveryGetResult = {
   delivery: ContactDeliveryStatus | null;
 };
+
+export type ContactDeliveryListArgs = { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+export type ContactDeliveryListResult = { deliveries: ContactDeliveryStatus[] };
+export type ContactDeliveryRetryArgs = { deliveryId: string; expectedUpdatedAtMs: number };
+export type ContactDeliveryRetryResult = ContactSendResult;
 
 export type ContactRequestState =
   | "offered"

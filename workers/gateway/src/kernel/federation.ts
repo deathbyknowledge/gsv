@@ -11,6 +11,10 @@ import type {
   ContactInviteListArgs,
   ContactInviteListResult,
   ContactInviteSummary,
+  ContactDeliveryListArgs,
+  ContactDeliveryListResult,
+  ContactDeliveryRetryArgs,
+  ContactDeliveryRetryResult,
   ContactDeliveryGetArgs,
   ContactDeliveryGetResult,
   ContactListArgs,
@@ -69,6 +73,7 @@ import {
 import * as z from "zod";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
 import { getConversationById } from "../shared/utils";
+import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   handleFsReadTransfer,
@@ -144,6 +149,7 @@ import {
   consumePublicRateLimits,
   pruneFederationState,
   RECEIPT_RETENTION_MS,
+  MAX_DELIVERY_AGE_MS,
 } from "./federation/limits";
 import {
   assertRequestTransition,
@@ -182,7 +188,6 @@ export const MAX_FEDERATION_RECOVERABLE_INBOX = 250;
 export const FEDERATION_INBOX_RECOVERY_RETRY_MS = 30_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 const MAX_DELIVERY_ATTEMPTS = 12;
-const MAX_DELIVERY_AGE_MS = 7 * 24 * 60 * 60_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
@@ -659,10 +664,7 @@ export async function handleContactSend(
   ctx.requestSignal?.throwIfAborted();
   ensureLocalSubject(ownerUid, ctx);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
-  const messageId = await stableOpaqueId(
-    "msg",
-    [contact.id, contact.generation, idempotencyKey],
-  );
+  const messageId = await contactSendMessageId(contact.id, contact.generation, idempotencyKey);
   const localMessage = localOutboundMessage({
     messageId,
     text,
@@ -726,6 +728,40 @@ export async function handleContactSend(
     : admitted;
   ctx.requestSignal?.throwIfAborted();
   return contactSendResult(record, contact);
+}
+
+export function handleContactDeliveryList(args: ContactDeliveryListArgs, ctx: KernelContext): ContactDeliveryListResult {
+  const ownerUid = requireContactCaller(ctx, false);
+  const contact = requireOwnedContact(args.contactId, ownerUid, ctx);
+  const input = z.object({
+    deliveryIds: z.array(z.string().startsWith("delivery:").max(256)).max(100).default([]),
+    messageSequences: z.array(z.number().int().positive()).max(100).default([]),
+  }).parse(args);
+  const { deliveryIds: ids, messageSequences: sequences } = input;
+  if (ids.length + sequences.length > 100) throw new Error("Select at most 100 delivery identities or message sequences");
+  return { deliveries: ctx.federation.listDeliveries(ownerUid, contact.id, ids, sequences).map((record) => contactDeliveryStatus(record, contact)) };
+}
+
+export async function handleContactDeliveryRetry(args: ContactDeliveryRetryArgs, ctx: KernelContext): Promise<ContactDeliveryRetryResult> {
+  const ownerUid = requireContactHuman(ctx);
+  if (!Number.isSafeInteger(args.expectedUpdatedAtMs) || args.expectedUpdatedAtMs < 0) throw new Error("Delivery revision is invalid");
+  const retried = ctx.federation.transaction(() => {
+    const record = ctx.federation.outbox(args.deliveryId);
+    if (!record || record.ownerUid !== ownerUid) throw new Error("Delivery not found");
+    const contact = requireOwnedActiveContact(record.contactId, ownerUid, ctx);
+    if (contact.generation !== record.contactGeneration || !record.retryable || record.updatedAtMs !== args.expectedUpdatedAtMs
+      || Date.now() - record.createdAtMs >= MAX_DELIVERY_AGE_MS) throw new Error("This delivery cannot be retried; review its current state");
+    if (isReadyFederationOutbox(record) && record.payload.kind !== "message") throw new Error("Only a message can use delivery retry");
+    assertOutboundCapacity(ownerUid, contact.id, ctx, Date.now(), true);
+    consumeOutboundDeliveryRate(ownerUid, contact.id, ctx, Date.now());
+    if (!isReadyFederationOutbox(record)) assertResourceGrantCapacity(contact.id, record.preparation.resources.length, ctx);
+    return { record: ctx.federation.retryMessage(record), contact };
+  });
+  ctx.broadcastToUserUid(ownerUid, "contact.delivery.changed", { contactId: retried.contact.id });
+  await ctx.scheduleFederationDelivery(retried.record.deliveryId, Date.now(), true);
+  const record = retried.record.state === "preparing"
+    ? await advanceFederationMessagePreparationOrRecordFailure(retried.record, ctx) : retried.record;
+  return contactSendResult(record, retried.contact);
 }
 
 export function handleContactDeliveryGet(
@@ -1018,6 +1054,7 @@ export async function processFederationDelivery(
         deliveryId,
         record.contactGeneration,
         committedAtMs,
+        record.retryEpoch,
       )) {
         return false;
       }
@@ -1032,6 +1069,7 @@ export async function processFederationDelivery(
       return true;
     });
     if (!committed) return;
+    ctx.broadcastToUserUid(record.ownerUid, "contact.delivery.changed", { contactId: record.contactId });
     if (requestChanged) {
       ctx.broadcastToUserUid(record.ownerUid, "contact.request.changed", { contactId: record.contactId });
       await ctx.reconcileResponsibilityWake(record.ownerUid);
@@ -1117,6 +1155,7 @@ async function recordFederationOutboxFailure(
     !latest
     || latest.state !== record.state
     || latest.contactGeneration !== record.contactGeneration
+    || latest.retryEpoch !== record.retryEpoch
   ) {
     return;
   }
@@ -1140,17 +1179,23 @@ async function recordFederationOutboxFailure(
       message,
       retryAt,
       terminal,
+      Date.now(),
+      contactActive && (!isReadyFederationOutbox(record) || record.payload.kind === "message")
+        && Date.now() - record.createdAtMs < MAX_DELIVERY_AGE_MS && !isTerminalFederationError(error),
+      record.retryEpoch,
     )) return false;
     if (isReadyFederationOutbox(record)) requestChanged = syncRequestDeliveryOutcome(record, ctx);
     return true;
   });
   if (!recorded) return;
+  ctx.broadcastToUserUid(record.ownerUid, "contact.delivery.changed", { contactId: record.contactId });
   if (requestChanged) {
     ctx.broadcastToUserUid(record.ownerUid, "contact.request.changed", { contactId: record.contactId });
     await ctx.reconcileResponsibilityWake(record.ownerUid);
   }
   if (terminal) {
-    if (contactActive) {
+    const local = isReadyFederationOutbox(record) ? record.localMessage : record.preparation.localMessage;
+    if (contactActive && (local?.author.kind === "process" || isReadyFederationOutbox(record) && record.payload.kind !== "message")) {
       createDeliveryDebtResponsibility(record, message, ctx);
       await ctx.reconcileResponsibilityWake(record.ownerUid);
     }

@@ -51,6 +51,8 @@ const labels = {
   "contact.alias.set": "renamed a contact",
   "contact.revoke": "disconnected a contact",
   "contact.send": "sent a message to a contact",
+  "contact.delivery.list": "checked message deliveries",
+  "contact.delivery.retry": "retried a message delivery",
   "contact.delivery.get": "checked contact delivery",
   "contact.request.list": "listed contact requests",
   "contact.request.create": "created a contact request",

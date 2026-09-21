@@ -1,6 +1,6 @@
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_INBOX_KEY, conversationViewKey } from "./queryKeys";
+import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_INBOX_KEY, conversationViewKey, instrumentContactDeliveriesKey } from "./queryKeys";
 import type { QueryClient, QueryKey } from "@tanstack/preact-query";
 
 /** Discard any older snapshot, including an initial read that has not resolved. */
@@ -15,10 +15,10 @@ const conversationChangeSchema = z.object({ conversationId: z.string().min(1), v
 
 export async function syncContactDetailSignal(cache: QueryClient, signal: string, payload: JsonValue | undefined): Promise<void> {
   let key: QueryKey;
-  if (signal === "contact.request.changed") {
+  if (signal === "contact.request.changed" || signal === "contact.delivery.changed") {
     const parsed = contactChangeSchema.safeParse(payload);
     if (!parsed.success) return;
-    key = instrumentContactRequestsKey(parsed.data.contactId);
+    key = signal === "contact.delivery.changed" ? instrumentContactDeliveriesKey(parsed.data.contactId) : instrumentContactRequestsKey(parsed.data.contactId);
   } else if (signal === "conversation.changed") {
     const parsed = conversationChangeSchema.safeParse(payload);
     if (!parsed.success) return;

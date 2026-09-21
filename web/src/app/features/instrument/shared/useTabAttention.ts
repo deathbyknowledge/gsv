@@ -54,7 +54,7 @@ export function useTabAttention(): void {
   }, []);
 
   useEffect(() => {
-    if (!connected) return;
+    if (!connected || processes.isPending) return;
     return client.onSignal((signal, payload) => {
       if (signal !== "message.committed") return;
       const committed = committedMessageSchema.safeParse(payload);
@@ -64,5 +64,5 @@ export function useTabAttention(): void {
       if (author.kind === "contact" ? committed.data.attention !== "notify" : author.pid !== shipPid) return;
       attention.current?.arrived(committed.data.message.id);
     });
-  }, [client, connected, shipPid]);
+  }, [client, connected, shipPid, processes.isPending]);
 }

@@ -162,6 +162,8 @@ import {
   handleContactInviteCreate,
   handleContactInviteList,
   handleContactDeliveryGet,
+  handleContactDeliveryList,
+  handleContactDeliveryRetry,
   handleContactList,
   handleContactNoticeDismiss,
   handleContactRequestCreate,
@@ -775,6 +777,12 @@ async function dispatchKernel(
         break;
       case "contact.send":
         data = await handleContactSend(frame.args, ctx);
+        break;
+      case "contact.delivery.list":
+        data = handleContactDeliveryList(frame.args, ctx);
+        break;
+      case "contact.delivery.retry":
+        data = await handleContactDeliveryRetry(frame.args, ctx);
         break;
       case "contact.delivery.get":
         data = handleContactDeliveryGet(frame.args, ctx);

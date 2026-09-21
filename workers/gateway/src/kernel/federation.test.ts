@@ -222,6 +222,7 @@ describe("federation outbound boundary", () => {
       record.deliveryId,
       record.contactGeneration,
       now,
+      record.retryEpoch,
     );
     expect(markContactDelivered).toHaveBeenCalledWith(
       contact.id,
@@ -345,7 +346,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
-        wireVersion: 1,
+        wireVersion: 1, retryable: false, retryEpoch: 0,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -489,7 +490,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
-        wireVersion: 1,
+        wireVersion: 1, retryable: false, retryEpoch: 0,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -702,7 +703,7 @@ function activeContact(): FederationContactRecord {
 function pendingDelivery(contact: FederationContactRecord): FederationOutboxRecord {
   return {
     deliveryId: "delivery:remote",
-    wireVersion: 1,
+    wireVersion: 1, retryable: false, retryEpoch: 0,
     ownerUid: OWNER.uid,
     contactId: contact.id,
     contactGeneration: contact.generation,
@@ -751,6 +752,7 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
       isPersonalAgentUid: () => false,
     },
     procs: {},
+    broadcastToUserUid: vi.fn(),
     approaches: focusedFixture({ pendingConnection: () => false }),
     ...overrides,
   };

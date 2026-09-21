@@ -88,6 +88,6 @@ function fixture(storage: DurableObjectStorage) {
     connection: {}, conversations: registry, federation, broadcastToUserUid: vi.fn(),
     auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
   };
-  // The handlers use the actual owning stores; authentication is the explicit fixture above.
+  // SAFETY: the handlers use the actual owning stores; authentication is the explicit fixture above.
   return { ctx: context as KernelContext, registry, contact };
 }

@@ -365,7 +365,7 @@ function toInboxEntry(row: InboxRow): ConversationInboxEntry {
     view: { readThroughSequence: row.read_through_sequence, archived: row.archived === 1, revision: row.view_revision },
     unread: row.latest_incoming_sequence > row.read_through_sequence,
     latestIncomingSequence: row.latest_incoming_sequence,
-    // The projection is written only from committed, typed Conversation messages.
+    // SAFETY: the projection is written only from committed, typed Conversation messages.
     preview: row.preview_json ? JSON.parse(row.preview_json) as ConversationPreview : null,
   };
 }

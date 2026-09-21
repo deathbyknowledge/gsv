@@ -30,7 +30,7 @@ export function RelationshipPreferences({ contact, account }: { contact: Contact
     {preferences && <>
       <label class="people-setting"><input type="checkbox" checked={preferences.saved} disabled={disabled} onChange={(event) => update.mutate({ saved: event.currentTarget.checked })} /><span>Save in contacts<small>Your private address book. Removing it keeps this conversation.</small></span></label>
       <label class="people-setting"><input type="checkbox" checked={preferences.muted} disabled={disabled} onChange={(event) => update.mutate({ muted: event.currentTarget.checked })} /><span>Mute this conversation<small>Keep messages quietly. New messages won’t bring an archived conversation back.</small></span></label>
-      <label class="people-notifications">Message notifications<select disabled={disabled || preferences.muted} value={preferences.notifications} onChange={(event) => update.mutate({ notifications: event.currentTarget.value as "notify" | "digest" | "quiet" })}><option value="notify">Notify me</option><option value="digest">Include in my digest</option><option value="quiet">Quiet</option></select></label>
+      <label class="people-notifications">Message notifications<select disabled={disabled || preferences.muted} value={preferences.notifications} onChange={(event) => { const value = event.currentTarget.value; if (value === "notify" || value === "digest" || value === "quiet") update.mutate({ notifications: value }); }}><option value="notify">Notify me</option><option value="digest">Include in my digest</option><option value="quiet">Quiet</option></select></label>
       <p class="note">These preferences are private. They do not give your Ship permission to reply.</p>
     </>}
     <div class="people-block-control">

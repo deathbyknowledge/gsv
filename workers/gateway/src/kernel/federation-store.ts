@@ -119,6 +119,8 @@ export type FederationMessagePreparation = {
 };
 
 type FederationOutboxBase = {
+  retryable: boolean;
+  retryEpoch: number;
   deliveryId: string;
   ownerUid: number;
   contactId: string;
@@ -345,6 +347,8 @@ type PairingAttemptRow = {
 };
 
 type OutboxRow = {
+  retryable: number;
+  retry_epoch: number;
   delivery_id: string;
   wire_version: 1 | 2;
   owner_uid: number;
@@ -1363,12 +1367,13 @@ export class FederationStore {
     deliveryId: string,
     contactGeneration: string,
     now = Date.now(),
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = 'delivered', delivered_at = ?, next_attempt_at = NULL,
          last_error = NULL, updated_at = ?
-       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ?
+       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ? AND retry_epoch = ?
          AND EXISTS (
            SELECT 1 FROM federation_contacts
            WHERE contact_id = federation_outbox.contact_id AND generation = ?
@@ -1377,6 +1382,7 @@ export class FederationStore {
       now,
       deliveryId,
       contactGeneration,
+      retryEpoch,
       contactGeneration,
     );
     return cursor.rowsWritten > 0;
@@ -1390,13 +1396,15 @@ export class FederationStore {
     nextAttemptAtMs: number | null,
     terminal: boolean,
     now = Date.now(),
+    retryable = false,
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = ?, attempt_count = attempt_count + 1, next_attempt_at = ?,
          resource_count = CASE WHEN ? THEN 0 ELSE resource_count END,
-         last_error = ?, updated_at = ?
-       WHERE delivery_id = ? AND state = ? AND contact_generation = ?`,
+         last_error = ?, updated_at = ?, retryable = ?
+       WHERE delivery_id = ? AND state = ? AND contact_generation = ? AND retry_epoch = ?`,
       terminal
         ? expectedState === "preparing" ? "preparation_failed" : "terminal"
         : expectedState,
@@ -1404,11 +1412,34 @@ export class FederationStore {
       terminal ? 1 : 0,
       error,
       now,
+      Number(terminal && retryable),
       deliveryId,
       expectedState,
       contactGeneration,
+      retryEpoch,
     );
     return cursor.rowsWritten > 0;
+  }
+
+  listDeliveries(ownerUid: number, contactId: string, ids: readonly string[], sequences: readonly number[] = []): FederationOutboxRecord[] {
+    if (!ids.length && !sequences.length) return [];
+    return this.sql.exec<OutboxRow>(
+      `SELECT * FROM federation_outbox WHERE owner_uid = ? AND contact_id = ?
+       AND (delivery_id IN (${ids.map(() => "?").join(",")}) OR local_sequence IN (${sequences.map(() => "?").join(",")}))`, ownerUid, contactId, ...ids, ...sequences,
+    ).toArray().map(outboxFromRow);
+  }
+
+  retryMessage(record: FederationOutboxRecord, now = Date.now()): FederationOutboxRecord {
+    const updated = this.sql.exec(
+      `UPDATE federation_outbox SET state = CASE WHEN state = 'preparation_failed' THEN 'preparing' ELSE 'pending' END,
+        attempt_count = 0, next_attempt_at = ?, last_error = NULL, updated_at = ?, retryable = 0, retry_epoch = retry_epoch + 1,
+        resource_count = CASE WHEN state = 'preparation_failed' THEN json_array_length(preparation_json, '$.resources') ELSE resource_count END
+       WHERE delivery_id = ? AND owner_uid = ? AND contact_generation = ? AND updated_at = ?
+       AND retryable = 1 AND state IN ('preparation_failed', 'terminal')`,
+      now, now, record.deliveryId, record.ownerUid, record.contactGeneration, record.updatedAtMs,
+    );
+    if (!updated.rowsWritten) throw new Error("Delivery changed; review its current state before retrying");
+    return this.outbox(record.deliveryId)!;
   }
 
   terminatePendingForRevokedContact(
@@ -1957,6 +1988,8 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
 
 function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   const base = {
+    retryable: row.retryable === 1,
+    retryEpoch: row.retry_epoch,
     deliveryId: row.delivery_id,
     wireVersion: row.wire_version,
     ownerUid: row.owner_uid,

@@ -25,3 +25,4 @@ export const INSTRUMENT_SOURCES_KEY = ["instrument", "responsibility-sources"] a
 
 export const INSTRUMENT_INBOX_KEY = ["instrument", "inbox"] as const;
 export const conversationViewKey = (id: string) => ["instrument", "conversation-view", id] as const;
+export const instrumentContactDeliveriesKey = (id: string) => ["instrument", "contact-deliveries", id] as const;

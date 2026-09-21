@@ -97,6 +97,7 @@ import { KERNEL_V056_SEPARATE_SOCIAL_ATTENTION } from "./v056_separate_social_at
 import { KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS } from "./v057_contact_preferences_and_blocks";
 import { KERNEL_V058_PUBLIC_PROFILES } from "./v058_public_profiles";
 import { KERNEL_V059_FIRST_CONTACT_REQUESTS } from "./v059_first_contact_requests";
+import { KERNEL_V062_RETRY_CONTACT_MESSAGES } from "./v062_retry_contact_messages";
 import { KERNEL_V061_PRIVATE_CONVERSATION_VIEWS } from "./v061_private_conversation_views";
 import { KERNEL_V060_BOUND_APPROACH_INVITES } from "./v060_bound_approach_invites";
 
@@ -165,6 +166,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V059_FIRST_CONTACT_REQUESTS,
   KERNEL_V060_BOUND_APPROACH_INVITES,
   KERNEL_V061_PRIVATE_CONVERSATION_VIEWS,
+  KERNEL_V062_RETRY_CONTACT_MESSAGES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

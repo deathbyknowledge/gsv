@@ -315,6 +315,7 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     };
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
+      : signal === "contact.delivery.changed" ? "contact.delivery.list"
       : signal === "profile.changed" ? "profile.get"
       : signal === "approach.changed" ? "approach.list"
       : signal === "contact.invite.changed" ? "contact.invite.list"

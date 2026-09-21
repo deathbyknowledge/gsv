@@ -94,3 +94,13 @@
 .people-notifications { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--text); font: 15px/1.5 var(--gsv-font-prose); }
 .people-notifications select { background: var(--panel-2); border: 1px solid var(--border); padding: 8px; color: var(--text); font: 13px/1.5 var(--gsv-font-prose); }
 .people-block-control { padding-top: 16px; border-top: 1px solid var(--border); margin-top: 16px; }
+
+.people-message-actions { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
+.people-delivery { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--text-dim); font: 10px/1.6 var(--gsv-font-mono); }
+.people-delivery.is-failed { color: var(--error); }
+.people-delivery details { max-width: 55ch; }
+.people-delivery details p { font: 13px/1.5 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.people-reply-quote { margin: 8px 0 12px; padding: 4px 12px; border-left: 2px solid var(--accent); color: var(--text-dim); font: 14px/1.5 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
+.people-composer-reply { border-bottom: 1px solid var(--border); padding-block: 10px; font-size: 10px; color: var(--text-dim); }
+.people-composer-reply .people-reply-quote { max-height: 84px; overflow-y: auto; }
+.people-pending-message { opacity: .75; }
