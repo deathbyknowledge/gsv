@@ -642,6 +642,7 @@ impl GsvApp {
                         GestureContext::Disabled | GestureContext::Active { .. } => {
                             GESTURES_STANDBY
                         }
+                        GestureContext::Practice { .. } => GESTURES_UNAVAILABLE,
                     },
                     None => GESTURES_STARTING,
                     Some(_) => GESTURES_UNAVAILABLE,
