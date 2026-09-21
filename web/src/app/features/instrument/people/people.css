@@ -182,6 +182,7 @@
 .people-context-subscription legend { font: 13px/1.7 var(--gsv-font-prose); color: var(--text-dim); }
 .people-quote-editor { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
 .people-context-list .people-delivery { margin-block: 12px; }
+.people-introduction-message { padding-block: 18px; border-bottom: 1px solid var(--border); }
 .people-list-footer { flex-wrap: wrap; }
 @container instrument (max-width: 720px) {
   .people-context-review { grid-template-columns: 1fr; gap: 4px; }

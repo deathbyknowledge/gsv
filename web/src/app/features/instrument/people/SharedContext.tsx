@@ -10,12 +10,14 @@ import { refreshContactQuery } from "../wire/contactSync";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { ContextStatement, CONTEXT_KIND_LABELS, CONTEXT_KIND_EXPLANATIONS } from "./ContextStatement";
 import { ContextPublicationEditor } from "./ContextPublicationEditor";
+import { IntroductionComposer } from "./IntroductionComposer";
+import type { IntroductionPlan } from "./introductions";
 
 const NO_CURSOR: string | undefined = undefined;
 const KINDS: SharedContextKind[] = ["connection", "recommendation", "advisory"];
 
-export function SharedWithYou({ subject, sourceContactId, account, onOpen }: {
-  subject?: ActorRef; sourceContactId?: string; account: ConsoleAccount | undefined; onOpen: (id: string) => void;
+export function SharedWithYou({ subject, sourceContactId, account, onOpen, onIntroduce }: {
+  subject?: ActorRef; sourceContactId?: string; account: ConsoleAccount | undefined; onOpen: (id: string) => void; onIntroduce: (plan: IntroductionPlan) => void;
 }) {
   const { client, connected } = useGateway();
   const [now, setNow] = useState(Date.now());
@@ -48,6 +50,7 @@ export function SharedWithYou({ subject, sourceContactId, account, onOpen }: {
           <time dateTime={new Date(entry.receivedAtMs).toISOString()}>received {new Date(entry.receivedAtMs).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</time></div>
         <ContextStatement assertion={entry.record.assertion} />
         {entry.record.consent && <p class="people-note">Both endpoints approved this exact connection disclosure.</p>}
+        {entry.record.assertion.kind === "connection" && source?.state === "active" && account && canConfigure(account, "contact.send") && <button class="people-action" onClick={() => onIntroduce({ kind: "request", source, subject: entry.record.assertion.subject, label: entry.record.assertion.label })}>ask for an introduction…</button>}
       </li>;
     })}</ul>
     {results.hasNextPage && <button class="people-action" disabled={results.isFetchingNextPage} onClick={() => void results.fetchNextPage()}>{results.isFetchingNextPage ? "loading…" : "more selected context"}</button>}
@@ -60,15 +63,19 @@ export function ContactContext({ contact, account, onDirty, onOpen }: {
   const [publishing, setPublishing] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [sourceDirty, setSourceDirty] = useState(false);
+  const [introduction, setIntroduction] = useState<IntroductionPlan | null>(null);
   const changed = useCallback((dirty: boolean) => { setSourceDirty(dirty); onDirty(dirty); }, [onDirty]);
   const subject = { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id };
+  const introduce = (plan: IntroductionPlan) => { if (sourceDirty && !window.confirm("Discard these unsent subscription changes?")) return; setIntroduction(plan); };
+  if (introduction) return <IntroductionComposer plan={introduction} account={account} onClose={() => setIntroduction(null)} onDirty={onDirty} onOpen={onOpen} />;
   if (publishing) return <ContextPublicationEditor subject={subject} account={account} allowConnection={contact.state === "active"} onClose={() => setPublishing(false)} onDirty={onDirty} />;
   return <>
-    <SharedWithYou subject={subject} account={account} onOpen={onOpen} />
-    <div class="people-actions"><button class="people-action" disabled={sourceDirty || !account || !canConfigure(account, "contact.context.publish")} onClick={() => setPublishing(true)}>share about this person…</button></div>
+    <SharedWithYou subject={subject} account={account} onOpen={onOpen} onIntroduce={introduce} />
+    <div class="people-actions"><button class="people-action" disabled={sourceDirty || !account || !canConfigure(account, "contact.context.publish")} onClick={() => setPublishing(true)}>share about this person…</button>
+      {contact.state === "active" && <button class="people-action" disabled={sourceDirty || !account || !canConfigure(account, "contact.send")} onClick={() => introduce({ kind: "offer", person: contact })}>offer an introduction…</button>}</div>
     <ContextSourceControls contact={contact} account={account} onDirty={changed} />
     <button class="people-action" aria-expanded={sourceOpen} onClick={() => setSourceOpen((open) => !open)}>{sourceOpen ? "hide their shared statements" : "browse what they share"}</button>
-    {sourceOpen && <SharedWithYou sourceContactId={contact.id} account={account} onOpen={onOpen} />}
+    {sourceOpen && <SharedWithYou sourceContactId={contact.id} account={account} onOpen={onOpen} onIntroduce={introduce} />}
   </>;
 }
 

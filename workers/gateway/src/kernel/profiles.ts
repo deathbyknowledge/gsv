@@ -6,7 +6,7 @@ import { jsonValueSchema, profileFieldsSchema, publicProfileSchema } from "@huma
 import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
-import { requireContactCaller, requireContactHuman } from "./federation/authority";
+import { requireContactCaller, requireContactHuman, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { fetchFederationJson } from "./federation/http";
 import { canonicalJson, normalizeFederationOrigin, sha256Base64Url, verifySignedValue } from "./federation-crypto";
 
@@ -68,12 +68,18 @@ export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: Ke
 
 export async function handleProfileResolve(args: ProfileResolveArgs, ctx: KernelContext): Promise<ProfileResolveResult> {
   const ownerUid = requireContactCaller(ctx, false);
-  const input = z.string().check(z.maxLength(2_048)).parse(args.url);
+  const request = z.union([z.strictObject({ url: z.string().check(z.maxLength(2048)) }), z.strictObject({ contactId: z.string().check(z.minLength(1), z.maxLength(256)) })]).parse(args);
+  const contact = "contactId" in request ? requireOwnedActiveContact(request.contactId, ownerUid, ctx) : null;
+  const input = "url" in request ? request.url : `${contact!.remoteOrigin}/_gsv/federation/v2/subjects/${encodeURIComponent(contact!.remoteSubject.id)}`;
   const url = new URL(input);
-  if (!/^\/@[a-z][a-z0-9_-]{1,31}$/.test(url.pathname) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public GSV profile address");
+  if ((!contact && !/^\/@[a-z][a-z0-9_-]{1,31}$/.test(url.pathname)) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public GSV profile address");
   const profile = publicProfileSchema.parse(await fetchFederationJson(url.href, { method: "GET", headers: { accept: "application/json" }, signal: ctx.requestSignal }, ctx));
-  await verifyPublicProfile(profile, url.href);
+  await verifyPublicProfile(profile, contact ? profile.url : url.href);
   requireContactCaller(ctx, false);
+  if (contact) {
+    requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
+    if (profile.actor.shipId !== contact.remoteShipId || profile.actor.subjectId !== contact.remoteSubject.id || profile.origin !== contact.remoteOrigin) throw new Error("Public profile does not match this contact");
+  }
   const pinned = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
   if (pinned && (pinned.remoteOrigin !== profile.origin || canonicalJson(jsonValueSchema.parse(pinned.remotePublicKey)) !== canonicalJson(jsonValueSchema.parse(profile.publicKey)))) {
     throw new Error("This profile differs from the pinned contact identity");

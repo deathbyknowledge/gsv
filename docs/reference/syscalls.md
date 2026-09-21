@@ -725,7 +725,7 @@ federated subject. `expectedRevision` prevents stale edits or publication.
   "profile.update": { args: { expectedRevision: number; draft: ProfileFields }; result: { profile: ProfileState } };
   "profile.publish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
   "profile.unpublish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
-  "profile.resolve": { args: { url: string }; result: { profile: PublicProfile } };
+  "profile.resolve": { args: { url: string } | { contactId: string }; result: { profile: PublicProfile } };
 }
 ```
 
@@ -753,7 +753,8 @@ after reading storage. Unreferenced uploads expire after 24 hours; each owner ma
 retain eight images, with an installation ceiling of 2,048. Neither syscall
 accepts another account or a caller-chosen storage address.
 
-`profile.resolve` fetches one explicitly chosen profile URL through public-only
+`profile.resolve` fetches one explicitly chosen profile URL (or the published
+subject of one owned active contact) through public-only
 federation egress. It verifies the profile domain, address, key-derived actor and
 signature, and rejects disagreement with a pinned contact. It does not pair,
 send a request, save a contact or wake a Process.

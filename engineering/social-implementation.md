@@ -311,3 +311,13 @@ proof. A publisher therefore cannot keep an old approval alive by issuing new
 page leases. The still-unreleased v067 schema includes the bounded renewal
 deadline alongside each consent. Expiry/renewal/withdrawal regressions are added
 for CI, with no local execution.
+
+Introductions now have guided ordinary-message flows for requesting a mutual
+introduction, asking the proposed recipient first, and reviewing the agreed
+introduction in each separate conversation. Only a selected human/approved
+reply offers the completion action; the intermediary explicitly confirms what
+both people agreed to share. Each send has an exact generation-bound intent and
+normal delivery status. There is no new introduction authority or pairing path.
+Explicit contact-based public-profile resolution pins the subject/key and
+rechecks the contact generation after fetch. CI regressions cover that boundary
+and exclude private aliases, replies and attachments from introduction drafts.

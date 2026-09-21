@@ -15,6 +15,8 @@ import { MessageDelivery } from "./MessageDelivery";
 import { ConversationSearch } from "./ConversationSearch";
 import { ReportEvidence } from "./ReportEvidence";
 import { ContextPublicationEditor } from "./ContextPublicationEditor";
+import { IntroductionComposer } from "./IntroductionComposer";
+import { isIntroductionConsent, type IntroductionPlan } from "./introductions";
 
 const NO_SEQUENCE: number | null = null;
 
@@ -39,6 +41,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const [selected, setSelected] = useState<ConversationMessage[]>([]);
   const [reporting, setReporting] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [introduction, setIntroduction] = useState<IntroductionPlan | null>(null);
   const maySend = !!account && canConfigure(account, "contact.send")
     && (account.uid === 0 || account.uid === contact.ownerUid) && contact.state === "active";
   const disabled = !connected || !maySend;
@@ -103,9 +106,11 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
 
   if (reporting) return <ReportEvidence messages={selected} account={account} onDirty={onWorkDirty} onOpen={onOpenContact} onClose={() => { setReporting(false); setSelected([]); }} />;
   if (sharing) return <ContextPublicationEditor subject={{ shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }} account={account} allowConnection={contact.state === "active"} messages={selected} onDirty={onWorkDirty} onClose={() => { setSharing(false); setSelected([]); }} />;
+  if (introduction) return <IntroductionComposer plan={introduction} account={account} onDirty={onWorkDirty} onOpen={onOpenContact} onClose={() => { setIntroduction(null); setSelected([]); }} />;
   return <section class="fleet-contact-conversation" aria-label="Contact messages">
     {selected.length > 0 && <div class="people-selection" role="region" aria-label="Selected messages"><span>{selected.length} selected</span><button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.send")} onClick={() => setReporting(true)}>report selected…</button>
       <button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.context.publish") || selected.length > 3 || !selected.some((message) => message.text.trim())} onClick={() => setSharing(true)}>share a statement with quotes…</button>
+      {selected.length === 1 && isIntroductionConsent(selected[0], contact) && <button class="people-action" disabled={disabled} onClick={() => setIntroduction({ kind: "forward", recipient: contact, consent: selected[0] })}>make an agreed introduction…</button>}
       {selected.length > 3 && <span>Choose up to 3 messages for shared quotes.</span>}<button class="people-action" onClick={() => setSelected([])}>clear selection</button></div>}
     {maySearch && <ConversationSearch key={contact.conversationId} conversationId={contact.conversationId} onOpen={(sequence) => {
       follow.current = true;

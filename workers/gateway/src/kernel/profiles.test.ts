@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import { bodyFromBytes, bodyToBytes, type ProfileFields } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, bodyToBytes, jsonValueSchema, type ProfileFields } from "@humansandmachines/gsv/protocol";
 import { profileImageFixture } from "../test-support/profile-image";
 import { handleProfileAvatarUpload, handleProfileAvatarRead } from "./profile-images";
 import { profilePngDimensions } from "./profile-png";
@@ -11,12 +11,34 @@ import type { KernelContext } from "./context";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import { ProfileStore } from "./profile-store";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, processProfilePublication, verifyPublicProfile } from "./profiles";
+import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, processProfilePublication, verifyPublicProfile } from "./profiles";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", gecos: "Person", home: "/home/private-login", cwd: "/home/private-login" };
 const DRAFT: ProfileFields = { alias: "public-person", displayName: "Published name", about: "Hello from my space", contactPolicy: "requests", representation: "human-and-ship" };
 
 describe("explicit profile publication", () => {
+  it("resolves only the explicitly selected contact's pinned public subject", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      await handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const profile = ctx.profiles.publication(OWNER.uid)!.profile;
+      const contact = ctx.federation.activateContact({ ownerUid: OWNER.uid, remoteShipId: profile.actor.shipId,
+        remoteSubject: { id: profile.actor.subjectId, displayName: "Private local label" }, remoteOrigin: profile.origin,
+        remotePublicKey: profile.publicKey, sharedSecret: "secret", generation: "generation:profile", threadId: "thread:profile" });
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json(profile));
+      try {
+        expect(await handleProfileResolve({ contactId: contact.id }, ctx)).toEqual({ profile });
+        expect(fetch).toHaveBeenCalledWith(`${profile.origin}/_gsv/federation/v2/subjects/${encodeURIComponent(profile.actor.subjectId)}`, expect.anything());
+        const { signature: _signature, ...fields } = profile;
+        const foreign = { ...fields, actor: { ...fields.actor, subjectId: "subject:someone-else" } };
+        fetch.mockResolvedValueOnce(Response.json({ ...foreign, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(foreign)) }));
+        await expect(handleProfileResolve({ contactId: contact.id }, ctx)).rejects.toThrow("does not match");
+        fetch.mockImplementationOnce(async () => { ctx.federation.revoke(contact.id, OWNER.uid); return Response.json(profile); });
+        await expect(handleProfileResolve({ contactId: contact.id }, ctx)).rejects.toThrow("not found");
+      } finally { fetch.mockRestore(); }
+    });
+  });
   it("keeps uploaded images private and collects only images outside every saved or approved snapshot", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = profileContext(storage);

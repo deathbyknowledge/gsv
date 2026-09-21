@@ -86,5 +86,11 @@ context before forwarding it. Recipients still decide whether to engage. There
 is no automatic group, pairing, resource access or inherited trust.
 
 The context paths and People review screens are implemented on the feature
-branch. Introductions and the separate scoped-assistance batch remain in progress.
+branch. Introductions use reviewed ordinary messages: ask a mutual contact, ask
+the proposed recipient first, then select that person's human or approved reply
+and review the agreed introduction separately for each conversation. The human
+confirms what both people agreed to disclose; no model interprets “yes” as a
+permission grant. Private aliases, source replies and files are not copied into
+the draft. An optional public profile is resolved only for the deliberately
+selected pinned contact. The separate scoped-assistance batch remains in progress.
 CI and maintainer acceptance, rather than this document, establish validation.

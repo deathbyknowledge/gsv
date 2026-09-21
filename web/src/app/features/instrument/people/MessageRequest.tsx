@@ -9,6 +9,8 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { approachStatus, requestMayRetry } from "./peopleModel";
 import { ReportEvidence } from "./ReportEvidence";
 import { SharedWithYou } from "./SharedContext";
+import { IntroductionComposer } from "./IntroductionComposer";
+import type { IntroductionPlan } from "./introductions";
 
 export function MessageRequest({ request, account, onOpen, onDirty }: {
   request: ApproachSummary; account: ConsoleAccount | undefined; onOpen: (contactId: string) => void; onDirty: (dirty: boolean) => void;
@@ -17,6 +19,7 @@ export function MessageRequest({ request, account, onOpen, onDirty }: {
   const cache = useQueryClient();
   const [blockConfirm, setBlockConfirm] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [introduction, setIntroduction] = useState<IntroductionPlan | null>(null);
   const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY });
   const allowed = (name: string) => connected && !!account && canConfigure(account, name);
   const history = useQuery({
@@ -34,6 +37,7 @@ export function MessageRequest({ request, account, onOpen, onDirty }: {
   const error = history.error ?? decide.error ?? retry.error ?? block.error;
 
   if (reporting && message) return <ReportEvidence messages={[message]} account={account} onDirty={onDirty} onOpen={onOpen} onClose={() => setReporting(false)} />;
+  if (introduction) return <IntroductionComposer plan={introduction} account={account} onDirty={onDirty} onOpen={onOpen} onClose={() => setIntroduction(null)} />;
   return <section class="people-request" aria-labelledby="message-request-title">
     <div class="people-kicker">{request.direction === "incoming" ? "Message request from" : "Your request to"}</div>
     <h1 id="message-request-title">{request.displayName}</h1>
@@ -42,7 +46,7 @@ export function MessageRequest({ request, account, onOpen, onDirty }: {
     {!allowed("conversation.history") && connected && <p class="people-note">This account cannot read the first message.</p>}
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}
     {message && request.direction === "incoming" && <button class="people-action" disabled={pending || !allowed("contact.send")} onClick={() => setReporting(true)}>report this message…</button>}
-    <SharedWithYou subject={request.peer} account={account} onOpen={onOpen} />
+    <SharedWithYou subject={request.peer} account={account} onOpen={onOpen} onIntroduce={setIntroduction} />
     {request.state === "preparing" && <p class="people-note">Your message is saved. It’s being added to the conversation before delivery.</p>}
     {canDecide && request.direction === "incoming" && <div class="people-decision">
       <h2>Open a conversation?</h2>
