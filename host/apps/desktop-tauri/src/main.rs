@@ -149,6 +149,17 @@ fn trusted_navigation(url: &Url) -> bool {
 }
 
 fn main() {
+    // WebKitGTK's Skia GPU workers can release GL resources concurrently with
+    // NVIDIA's process-exit cleanup. Keep GPU painting on the main thread on
+    // these systems, respecting an explicit WebKit override. Set the environment
+    // before Tauri/GTK or the async runtime starts any threads.
+    #[cfg(target_os = "linux")]
+    if std::path::Path::new("/sys/module/nvidia").exists()
+        && std::env::var_os("WEBKIT_SKIA_GPU_PAINTING_THREADS").is_none()
+    {
+        std::env::set_var("WEBKIT_SKIA_GPU_PAINTING_THREADS", "0");
+    }
+
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             desktop_session,

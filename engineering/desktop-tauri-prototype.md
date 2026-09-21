@@ -640,9 +640,20 @@ libnvidia-eglcore 610.57.04. The available core's SkiaGPUWorker was releasing a
 Skia GL texture and context while the main thread was in NVIDIA cleanup from
 libc exit. Other worker stacks also showed GL resource destruction. No OOM was
 found. This supports a WebKit/NVIDIA graphics-teardown fault; it does not establish
-that every reported quit failure has the same cause. No graphics workaround or
-crash-notification suppression has been installed. Clean exit remains a production
-acceptance item on this machine.
+that every reported quit failure has the same cause. The latest core (835955,
+21:00:23 CEST) repeats this same fault: two Skia GPU workers destroy contexts while
+the main thread runs the driver's exit handlers.
+
+The host now defaults `WEBKIT_SKIA_GPU_PAINTING_THREADS=0` when the Linux NVIDIA
+kernel module is loaded, before Tauri, GTK or the async runtime starts. Explicit
+environment settings take precedence. WebKitGTK 2.52.6
+[supports GPU painting on the main thread with this setting](https://github.com/WebKit/WebKit/blob/webkitgtk-2.52.6/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp#L49-L54);
+it avoids the worker-local GL teardown implicated by the stacks without switching
+to software rendering. This is an app-local mitigation, not an upstream driver
+fix, and does not suppress crash reports or change the existing helper shutdown
+and unsaved-work paths. A loaded module is a conservative detection rule: it can
+also apply on hybrid machines using a different GPU. User confirmation of clean
+exit and responsive navigation, typing and hand animation is still required.
 
 Thumb classification now projects into a palm-local plane, measures lateral
 extension from the thumb's own base, and separately accepts a thumb raised beside
