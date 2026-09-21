@@ -27,7 +27,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     quitting.current = true;
     void invoke("desktop_quit").catch(() => {
       quitting.current = false;
-      onError("Could not quit.");
+      onError("Could not quit the prototype.");
     });
   }, [onError]);
   const requestQuit = useCallback(() => {
@@ -80,7 +80,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); setConfirmation(null); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit?"} Unsent work will be discarded.</p>
+      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
       <button type="button" onClick={() => setConfirmation(null)}>keep working</button>
       <button type="button" onClick={() => {
         if (confirmation === "disconnect") void disconnect();
@@ -140,7 +140,8 @@ export function DesktopApp() {
         }).catch(() => setError("Use an HTTPS space address, such as https://your-space.example. HTTP is allowed for localhost."))
           .finally(() => setBusy(false));
       }}>
-        <h1>Connect your space</h1>
+        <h1>GSV Tauri Prototype</h1>
+        <p>Connect one space. Sign in with your existing account on the next screen.</p>
         <label>Space address<input type="url" required value={origin} placeholder="https://your-space.example" onInput={(event) => setOrigin(event.currentTarget.value)} /></label>
         <button type="submit" disabled={busy || !session}>{busy ? "connecting…" : "continue"}</button>
         {import.meta.env.DEV && <a href="/?mock=1">open the development mock</a>}

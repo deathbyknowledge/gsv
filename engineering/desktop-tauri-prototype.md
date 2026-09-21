@@ -629,9 +629,9 @@ Regression cases are included in source; local execution stays with the user.
 
 The prototype strip has been removed. Desktop supplies a quiet space-name control
 to the shared Instrument and sign-in headers. Its menu owns recovery, disconnect,
-quit, and on-demand input timings; F8 still opens timings directly. Native input
-panels have less repeated copy. Browser entry points supply neither this identity
-control nor the native-input provider, so voice, gestures, practice and input
+quit, and on-demand input timings; F8 still opens timings directly. Browser entry
+points supply neither this identity control nor the native-input provider, so
+voice, gestures, practice and input
 sounds are not shown or started there. Shared source does not mean that native
 features are available in the browser, nor that a deployed web build has changed.
 
@@ -650,3 +650,11 @@ the index knuckle. Depth over a fist no longer counts as lateral spread. Open an
 closed score thresholds leave an uncertain interval; temporal hold and reset
 logic are unchanged. Source cases cover a tucked straight thumb, rotation and
 mirroring, thumbs-up, and partial extension. Human camera testing is still needed.
+
+## Deferred design work
+
+The focused Zen history experiment is preserved on the local branch
+`experiment/desktop-zen-history` at `9fccf5a4`. The active Desktop prototype retains
+the original transcript presentation. The unsolicited copy reductions from the
+space-menu batch have been undone so the user can review the previous wording and
+choose what to trim.
