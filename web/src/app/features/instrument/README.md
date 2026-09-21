@@ -122,6 +122,9 @@ command does nothing and does not count as an unsent draft; command history is
 still available with the arrow keys. A rejected start preserves the command.
 Pending command output uses the shared glyph spinner; failures, unavailable
 status and stopping remain explicit.
+All spinner sizes keep a square layout box. Their glyphs use fixed Departure
+Mono metrics and the matching projection, then scale uniformly inside that box;
+small indicators do not lay out their text at roughly one-pixel font sizes.
 
 The native gesture guide shows one hand animation at a time through the shared
 ASCII scene host. Select a command to see its hold and fist reset; alternative
