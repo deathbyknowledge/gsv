@@ -5,6 +5,11 @@ production native helper supervisors through `desktop-native`. Production GPUI
 Desktop, its credentials, daemon, CLI endpoint and installer remain separate.
 The ownership record is [here](../../../../engineering/desktop-tauri-prototype.md).
 
+The requested prototype features are implemented and the local executable builds.
+Final human acceptance and CI verification remain open. The known WebKit/NVIDIA
+renderer crash during exit is unresolved. Production replacement, native feature
+parity and supported-platform distribution are separate from this prototype.
+
 ## Build and open on Linux
 
 From the repository root, with Rust, Node/npm and the
@@ -94,33 +99,36 @@ excludes the mock. The real helpers are still real in development mode.
 
 1. Connect the production space yourself. Check Zen, theme, receipts, approvals,
    streaming, attachment send and optimistic message acknowledgement.
-2. Open Voice beside Attach, then start listening. Check preparation, partial text, finish, cancel, device selection,
-   and acknowledged mute. Type before/after the dictated range. Editing inside
-   dictated text stops capture and preserves the correction; restart Voice to
+2. Open Voice beside Attach, then start listening. Check preparation, partial text,
+   pause/cancel and device selection. Type before/after the dictated range. Editing
+   inside dictated text stops capture and preserves the correction; restart Voice to
    continue. Enter while listening uses ordinary conversation sending, preserves
    files and keeps the microphone on. Opening controls alone must not capture
    microphone audio; closing them must not silently stop active dictation.
-3. Open Gestures and enable the camera: it starts disarmed. Deliberately arm, then check the existing
-   1–5 vocabulary (start/finish, send, delete, clear, mute), fist reset, scroll
-   chord and tracking loss. The quiet gesture control shows camera/armed state,
-   a recognized hold's progress and accepted commands; its panel contains the
-   hand guide. Clear/delete affect only unsent dictated text. The panel closes
-   with Escape or an outside click, without resizing the conversation. All
+3. Open Hands-free and enable it: Ready means camera on, microphone off. One
+   finger starts or pauses listening, two sends, three deletes, and four clears
+   dictated text. Holding both fists turns hands-free off. Check fist reset, the scroll
+   chord and tracking loss. The control shows state, hold progress and accepted
+   commands; its panel contains the hand guide. Clear/delete affect only unsent
+   dictated text. The panel closes with Escape or an outside click, without
+   resizing the conversation. All
    feedback stays outside the editable draft.
    Compare index + middle + ring with thumb + index + middle: both must be three
    and delete a dictated character, never send. Try other combinations for the
    same count, a thumb alone, partially bent digits, and a fist between commands.
    The guide's selectors play examples without enabling the camera. Check both
-   hands for arm/disarm and scrolling, pause/play, and reduced-motion stills.
+   hands for shutdown and scrolling, draggable demonstrations, and reduced-motion
+   stills. Start tutorial and check automatic progression, corrective feedback
+   for a wrong gesture, local dictation, completion, and capture stopping on close.
 4. Try unfocused use and minimization. If the webview stops responding for three
-   seconds, native input stops and disarms. Reconnect native input and explicitly
+   seconds, native input stops. Reconnect native input and explicitly
    restart it. No old action should arrive in a later draft. Repeat after sleep,
    reload, Process selection change and logout.
 5. Disconnect the space, then select another destination. Its username may also
    be `root`; it must show fresh sign-in with no old history, draft, uploads,
    pending sends or terminal recovery. The disconnect action warns about unsent
    work and tears down the whole frontend.
-6. Quit and reopen. Camera/voice must be off and gestures disarmed. The independent
+6. Quit and reopen. Camera and microphone must be off. The independent
    daemon and installed Desktop should remain available.
    Repeat with the window manager's Close action (Super+W): with no unsaved work
    it should exit directly; with a draft it should offer Keep working or Quit.
@@ -171,6 +179,9 @@ shortcut, and timing collectors have been removed.
 
 ## Current limits
 
+- On the prototype NVIDIA machine, a WebKitWebProcess core shows a GPU-worker
+  crash during graphics teardown on exit. Clean exit remains unresolved; see
+  the ownership record for the diagnosis.
 - Minimized webview suspension interrupts dictation. This is explicit fail-closed
   behavior for the prototype, not production native parity.
 - Desktop CLI controls, tray, automatic local machine enrollment, persistent
