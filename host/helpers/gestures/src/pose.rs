@@ -54,7 +54,10 @@ pub fn recognize(landmarks: &[Landmark; HAND_LANDMARK_COUNT]) -> PoseRecognition
                 low(straightness, 0.50, 0.30),
             )
         })
-        .chain(std::iter::once((features.thumb_open, features.thumb_closed)));
+        .chain(std::iter::once((
+            features.thumb_open,
+            features.thumb_closed,
+        )));
     let mut count = 0;
     let mut score = 1.0_f32;
     for (open, closed) in fingers {
@@ -104,7 +107,8 @@ impl Features {
             return None;
         }
 
-        let (thumb_straight, thumb_palm_distance, thumb_outward) = thumb_geometry(landmarks, scale);
+        let (thumb_straight, thumb_spread, thumb_lift, thumb_outside) =
+            thumb_geometry(landmarks, scale)?;
         Some(Self {
             fingers: [
                 finger_straightness(
@@ -132,60 +136,57 @@ impl Features {
                     landmarks[PINKY_TIP],
                 ),
             ],
-            thumb_open: minimum(&[
-                high(thumb_straight, 0.62, 0.25),
-                high(thumb_palm_distance, 0.58, 0.24),
-                high(thumb_outward, 0.35, 0.25),
-            ]),
+            thumb_open: high(thumb_straight, 0.62, 0.25).min(high(thumb_spread, 0.38, 0.16).max(
+                minimum(&[
+                    high(thumb_lift, 0.50, 0.18),
+                    high(thumb_outside, 0.08, 0.10),
+                ]),
+            )),
             thumb_closed: minimum(&[
-                low(thumb_palm_distance, 0.48, 0.28),
-                low(thumb_outward, 0.12, 0.28),
+                low(thumb_spread, 0.16, 0.18),
+                low(thumb_lift, 0.28, 0.18).max(low(thumb_outside, -0.03, 0.08)),
             ]),
         })
     }
 }
 
-fn thumb_geometry(landmarks: &[Landmark; HAND_LANDMARK_COUNT], scale: f32) -> (f32, f32, f32) {
-    let thumb_straight = finger_straightness(
-        landmarks[THUMB_CMC],
+fn thumb_geometry(
+    landmarks: &[Landmark; HAND_LANDMARK_COUNT],
+    scale: f32,
+) -> Option<(f32, f32, f32, f32)> {
+    // The thumb rotates at its base. A straight thumb can lie across a fist,
+    // so extension must also clear the palm, not merely straighten its joints.
+    let thumb_straight = straight_joint(
         landmarks[THUMB_MCP],
         landmarks[THUMB_IP],
         landmarks[THUMB_TIP],
     );
-    let palm_center = average(&[
-        landmarks[INDEX_MCP],
-        landmarks[MIDDLE_MCP],
-        landmarks[RING_MCP],
-        landmarks[PINKY_MCP],
-    ]);
-    let thumb_palm_distance = distance(landmarks[THUMB_TIP], palm_center) / scale;
-    let outward_axis = subtract(landmarks[INDEX_MCP], landmarks[PINKY_MCP]);
-    let outward_denominator = dot(outward_axis, outward_axis);
-    let thumb_outward = if outward_denominator <= f32::EPSILON {
-        0.0
-    } else {
-        dot(
-            subtract(landmarks[THUMB_TIP], landmarks[INDEX_MCP]),
-            outward_axis,
-        ) / outward_denominator
-    };
-    (thumb_straight, thumb_palm_distance, thumb_outward)
-}
-
-fn average(values: &[Landmark]) -> Landmark {
-    let count = values.len() as f32;
-    let sum = values
-        .iter()
-        .fold(Landmark::default(), |sum, value| Landmark {
-            x: sum.x + value.x,
-            y: sum.y + value.y,
-            z: sum.z + value.z,
-        });
-    Landmark {
-        x: sum.x / count,
-        y: sum.y / count,
-        z: sum.z / count,
+    let length_axis = subtract(landmarks[MIDDLE_MCP], landmarks[WRIST]);
+    let length = magnitude(length_axis);
+    if length <= f32::EPSILON {
+        return None;
     }
+    let length_axis = length_axis.map(|component| component / length);
+    let across = subtract(landmarks[INDEX_MCP], landmarks[PINKY_MCP]);
+    let along = dot(across, length_axis);
+    let outward = std::array::from_fn(|axis| across[axis] - along * length_axis[axis]);
+    let width = magnitude(outward);
+    if width <= f32::EPSILON {
+        return None;
+    }
+    let outward_axis = outward.map(|component| component / width);
+    let from_base = subtract(landmarks[THUMB_TIP], landmarks[THUMB_CMC]);
+    let from_knuckle = subtract(landmarks[THUMB_TIP], landmarks[INDEX_MCP]);
+
+    // Project into the palm plane: depth over curled fingers is not spread.
+    // A thumb may either spread away from its own base or rise beside the
+    // index knuckle (thumbs-up). Intermediate positions remain unknown.
+    Some((
+        thumb_straight,
+        dot(from_base, outward_axis) / scale,
+        dot(from_knuckle, length_axis) / scale,
+        dot(from_knuckle, outward_axis) / scale,
+    ))
 }
 
 fn finger_straightness(mcp: Landmark, pip: Landmark, dip: Landmark, tip: Landmark) -> f32 {
@@ -440,5 +441,60 @@ mod tests {
             landmarks[joint] = Landmark { x, y, z: 0.0 };
         }
         assert_eq!(recognize(&landmarks).pose, HandPose::FourFingers);
+    }
+
+    #[test]
+    fn a_straight_thumb_resting_on_the_side_of_a_fist_stays_closed() {
+        let mut landmarks = finger_count(0);
+        for (joint, x, y, z) in [
+            (THUMB_CMC, -1.14, -0.48, 0.32),
+            (THUMB_MCP, -1.11, -0.24, 0.37),
+            (THUMB_IP, -1.08, 0.0, 0.42),
+            (THUMB_TIP, -1.05, 0.24, 0.47),
+        ] {
+            landmarks[joint] = Landmark { x, y, z };
+        }
+        for mirrored in [false, true] {
+            for angle in [0.0_f32, 0.7, 1.5, 2.4] {
+                let transformed = landmarks.map(|point| {
+                    let x = if mirrored { -point.x } else { point.x };
+                    Landmark {
+                        x: 2.0 + 0.3 * (x * angle.cos() - point.z * angle.sin()),
+                        y: -1.0 + 0.3 * point.y,
+                        z: 0.5 + 0.3 * (x * angle.sin() + point.z * angle.cos()),
+                    }
+                });
+                assert_eq!(recognize(&transformed).pose, HandPose::Fist);
+            }
+        }
+    }
+
+    #[test]
+    fn a_thumb_raised_beside_the_index_knuckle_counts_as_one() {
+        let mut landmarks = finger_count(0);
+        for (joint, x, y) in [
+            (THUMB_CMC, -0.75, -0.45),
+            (THUMB_MCP, -0.82, -0.05),
+            (THUMB_IP, -0.89, 0.40),
+            (THUMB_TIP, -0.96, 0.85),
+        ] {
+            landmarks[joint] = Landmark { x, y, z: 0.0 };
+        }
+        assert_eq!(recognize(&landmarks).pose, HandPose::OneFinger);
+    }
+
+    #[test]
+    fn a_thumb_partway_out_of_the_fist_is_unknown() {
+        let mut landmarks = finger_count(0);
+        landmarks[WRIST].x = landmarks[MIDDLE_MCP].x;
+        for (joint, x, y) in [
+            (THUMB_CMC, -0.80, -0.50),
+            (THUMB_MCP, -0.91, -0.25),
+            (THUMB_IP, -1.02, 0.0),
+            (THUMB_TIP, -1.13, 0.25),
+        ] {
+            landmarks[joint] = Landmark { x, y, z: 0.0 };
+        }
+        assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
     }
 }
