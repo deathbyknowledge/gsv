@@ -598,7 +598,10 @@ counter observes the existing reset rather than changing when it is accepted.
 Practice advances automatically once each gesture's operation and actual fist
 reset are complete. The fist is shown and acknowledged before a short transition.
 Dictation waits for text to settle; scrolling requires movement followed by a
-stop. The final two-fist exit stops capture and closes the tutorial after feedback.
+stop. The final two-fist exit stops capture and opens a persistent success screen
+confirming that camera and microphone are off. Done closes the tutorial; Practise
+again clears only the local practice draft and progress, returning to the opening
+lesson with capture off. Skipped lessons are reflected in the completion count.
 Back, step selection and Skip remain available, but the practice pipeline requires
 no keyboard or mouse after Start practice. Tests were updated in source; local
 execution remains deferred to the human testing workflow.

@@ -31,6 +31,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const [sent, setSent] = useState<string | null>(null);
   const [step, setStep] = useState(0);
   const [complete, setComplete] = useState(false);
+  const finished = complete && step === steps.length - 1;
   const [recognized, setRecognized] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(() => new Set());
   const [actions, setActions] = useState<Record<SegmentAction, number>>({ send: 0, delete: 0, clear: 0 });
@@ -71,7 +72,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
     element.showModal();
     return () => { if (element.open) element.close(); };
   }, []);
-  useLayoutEffect(() => { heading.current?.focus({ preventScroll: true }); }, [step]);
+  useLayoutEffect(() => { heading.current?.focus({ preventScroll: true }); }, [step, finished]);
   const go = (next: number) => {
     entered.current = { sequence: progress.current.snapshot?.gesture_action_sequence ?? 0, actions: progress.current.actions, gesture: 0, hadDraft: Boolean(value.current.trim()), scrolled: false };
     setComplete(false);
@@ -81,6 +82,15 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const finishStep = () => {
     setComplete(true);
     setCompleted((current) => new Set([...current, step]));
+  };
+  const restart = () => {
+    value.current = "";
+    setDraft("");
+    setSent(null);
+    setActions({ send: 0, delete: 0, clear: 0 });
+    setCompleted(new Set());
+    go(0);
+    control.reconnect();
   };
   useEffect(() => {
     if (!snapshot || step === 0 || complete) return;
@@ -110,14 +120,11 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
     return () => window.clearTimeout(timer);
   }, [step, complete, listening, draft, notice]);
   useEffect(() => {
-    if (!complete || !snapshot || notice || (step !== steps.length - 1 && !camera)) return;
+    if (!complete || finished || !snapshot || notice || !camera) return;
     let timer = 0;
     const schedule = () => {
       window.clearTimeout(timer);
-      if (!document.hidden) timer = window.setTimeout(() => {
-        if (step === steps.length - 1) close();
-        else go(step + 1);
-      }, step === steps.length - 1 ? 1800 : 900);
+      if (!document.hidden) timer = window.setTimeout(() => go(step + 1), 900);
     };
     schedule();
     document.addEventListener("visibilitychange", schedule);
@@ -125,7 +132,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", schedule);
     };
-  }, [complete, step, snapshot?.lease, notice, camera]);
+  }, [complete, finished, step, snapshot?.lease, notice, camera]);
 
   const state = listening ? "Listening" : camera ? "Ready" : "Off";
   const preparing = (camera && snapshot?.gesture_status !== "ready") || (voice && !listening);
@@ -133,18 +140,32 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
   const awaitingFist = resetting && (snapshot?.gesture_reset_after_action ?? 0) < recognized;
   const liveMessage = notice ? "Input needs attention" : !snapshot ? "Connecting input…"
     : awaitingFist ? "Command detected · close your right hand to reset"
-    : complete ? step === 8 ? "✓ Camera and microphone off. You’re ready." : resetting ? "✓ Fist detected · next step…" : "✓ Done · next step…"
+    : complete ? resetting ? "✓ Fist detected · next step…" : "✓ Done · next step…"
     : feedback?.progress != null ? feedback.message
     : resetting ? "✓ Fist detected · waiting for the action to finish"
     : !camera && !voice ? "Camera and microphone off"
     : preparing && voice ? "Preparing microphone…"
     : !camera && listening ? "Listening · camera off" : feedback?.action ?? feedback?.message;
-  return <dialog ref={dialog} class="native-tutorial" aria-labelledby="native-tutorial-title" data-instrument-dialog
+  const practised = steps.slice(1).filter((_, index) => completed.has(index + 1)).length;
+  return <dialog ref={dialog} class="native-tutorial" aria-labelledby="native-tutorial-title" data-instrument-dialog data-complete={finished ? "true" : undefined}
     onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => event.stopPropagation()}>
     <header class="native-tutorial-head">
       <span>Hands-free <span class="native-tutorial-tag">private practice</span></span>
       <button type="button" onClick={close}>close <kbd>esc</kbd></button>
     </header>
+    {finished ? <>
+      <section class="native-tutorial-completion">
+        <span class="native-completion-mark" aria-hidden="true">✓</span>
+        <p class="native-tutorial-count">{practised === steps.length - 1 ? "Tutorial complete" : `${practised} of ${steps.length - 1} lessons practised`}</p>
+        <h2 ref={heading} id="native-tutorial-title" tabIndex={-1}>{practised === steps.length - 1 ? "You’re ready." : "Practice finished."}</h2>
+        <p>Camera and microphone are off.</p>
+        <p class="native-panel-footnote">Enable hands-free from the prompt whenever you want to use it.</p>
+      </section>
+      <footer class="native-tutorial-footer">
+        <button type="button" onClick={restart}>practise again</button>
+        <button type="button" class="native-primary" onClick={close}>done</button>
+      </footer>
+    </> : <>
     <nav class="native-tutorial-steps" aria-label="Tutorial steps">
       {steps.map((entry, index) => <button type="button" key={entry.label} aria-current={step === index ? "step" : undefined}
         aria-label={`${index + 1}. ${entry.label}${completed.has(index) ? ", completed" : ""}`}
@@ -211,11 +232,12 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
           <button type="button" class="native-primary" disabled={!snapshot} onClick={() => {
             void control.command({ kind: "gestures", enabled: true }); go(1);
           }}>start practice →</button>
-        </> : step === steps.length - 1 ? <button type="button" class="native-primary" onClick={close}>finish</button> : <>
+        </> : step === steps.length - 1 ? <span>Hold both fists to finish</span> : <>
           {!complete && <button type="button" onClick={() => go(step + 1)}>skip step</button>}
           {complete && <span class="native-tutorial-success" role="status">next step…</span>}
         </>}
       </div>
     </footer>
+    </>}
   </dialog>;
 }
