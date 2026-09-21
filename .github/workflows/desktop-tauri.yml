@@ -6,7 +6,10 @@ on:
     paths:
       - '.github/workflows/desktop-tauri.yml'
       - 'host/apps/desktop-tauri/**'
+      - 'host/Cargo.*'
       - 'host/crates/desktop-native/**'
+      - 'host/crates/gesture-protocol/**'
+      - 'host/helpers/**'
       - 'web/src/desktop/**'
       - 'web/src/app/services/platform/**'
       - 'web/vite.desktop.config.ts'
@@ -53,6 +56,7 @@ jobs:
           cp host/target/debug/gsv-desktop-tauri host/target/debug/gsv-transcribe host/target/debug/gsv-vision release/local/tauri-prototype/
           cp host/helpers/transcriber/THIRD_PARTY.md host/apps/desktop-tauri/README.md LICENSE release/local/tauri-prototype/
           cp host/helpers/gestures/models/LICENSE.apache-2.0 host/helpers/gestures/models/PROVENANCE.md release/local/tauri-prototype/licenses/gesture-models/
+          cp host/helpers/gestures/THIRD_PARTY.md release/local/tauri-prototype/licenses/gesture-models/
           cd release/local/tauri-prototype
           sha256sum gsv-desktop-tauri gsv-transcribe gsv-vision > SHA256SUMS
           tar -czf ../gsv-tauri-prototype-linux-x64.tar.gz .
