@@ -732,7 +732,7 @@ async function dispatchKernel(
         data = await handleContactContextSync(frame.args, ctx);
         break;
       case "contact.context.publications":
-        data = handleContactContextPublications(ctx);
+        data = handleContactContextPublications(frame.args, ctx);
         break;
       case "contact.context.publish":
         data = await handleContactContextPublish(frame.args, ctx);

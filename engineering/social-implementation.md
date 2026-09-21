@@ -294,3 +294,11 @@ Generation changes and unsubscribe remove cached visibility, and old responses
 cannot restore it. Store and cryptographic boundary regressions are added for
 CI. People publication/subscription/review UX, introductions and scoped Ship
 assistance remain unfinished. No local checks or browser trial were run.
+
+The People context slice exposes local attributed context beside person and
+request details, per-source/kind subscriptions, selected quoted evidence,
+publication review/revision/withdrawal and exact connection-consent review.
+Owner publication and consent lists are paged. Control deliveries use the
+existing receipt and retry primitives with a final supersession fence before
+outbound dispatch. CI runs the new behavior checks; rendered acceptance is
+still the maintainer's task. Introductions and scoped Ship assistance remain.

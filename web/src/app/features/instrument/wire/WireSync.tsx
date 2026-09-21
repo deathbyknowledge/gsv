@@ -4,7 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
 import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
-import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROFILE_KEY, INSTRUMENT_APPROACHES_KEY, INSTRUMENT_INBOX_KEY, INSTRUMENT_ATTENTION_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROFILE_KEY, INSTRUMENT_SHARED_CONTEXT_KEY, INSTRUMENT_APPROACHES_KEY, INSTRUMENT_INBOX_KEY, INSTRUMENT_ATTENTION_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
 import { syncWorkSignal } from "./workSync";
@@ -50,6 +50,10 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "contact.context.changed" || signal === "contact.changed" || signal === "contact.delivery.changed") {
+        void refreshContactQuery(queryClient, INSTRUMENT_SHARED_CONTEXT_KEY);
+        if (signal === "contact.context.changed") return;
+      }
       if (signal === "conversation.attention.changed") {
         void refreshContactQuery(queryClient, INSTRUMENT_ATTENTION_KEY);
         return;

@@ -73,3 +73,14 @@ acknowledgement have distinct language. Choosing an action opens a short review
 with an optional note; a changed request requires rereview, while an uncertain
 submission keeps its exact retry intent. Fleet remains the home for private
 execution details and responsibilities.
+
+Shared with you sits beside a person's details and a message request. It reads
+only locally cached statements from chosen sources, with named attribution,
+selected quotes, expiry and receipt freshness. The person inspector also owns
+per-kind subscription review and an explicit view of what that one person
+shares. Your shared context lists owned publications and incoming connection
+consent decisions in separate bounded pages. Publishing and consent each show
+the exact wording, audience and expiry before committing. Selected-message
+sharing exposes at most three reviewed excerpts, with no implicit file grants.
+Delivery receipts and exact retries distinguish a saved proposal from a
+received proposal and from the person's eventual consent decision.

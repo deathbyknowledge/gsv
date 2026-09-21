@@ -4,16 +4,16 @@ import {
   sharedContextRecordSchema, socialIdSchema,
   type ContactContextListArgs, type ContactContextListResult, type ContactContextSourcesResult,
   type ContactContextSubscribeArgs, type ContactContextSubscribeResult, type ContactContextSyncArgs, type ContactContextSyncResult,
-  type ContactContextPublicationsResult, type ContactContextPublishArgs, type ContactContextPublishResult,
+  type ContactContextPublicationsArgs, type ContactContextPublicationsResult, type ContactContextPublishArgs, type ContactContextPublishResult,
   type ContactContextWithdrawArgs, type ContactContextWithdrawResult, type ContactContextConsentArgs, type ContactContextConsentResult,
   type FederationContextDelivery, type SharedContextConsent, type SharedContextQuote,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
-import type { FederationContactRecord } from "./federation-store";
+import type { FederationContactRecord, FederationReadyOutboxRecord } from "./federation-store";
 import { requireContactCaller, requireContactHuman, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { assertOutboundCapacity, consumeOutboundDeliveryRate, consumePublicRateLimits } from "./federation/limits";
 import { federationInputFingerprint, rearmPendingDelivery } from "./federation/delivery";
-import { PublicFederationError } from "./federation/errors";
+import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { publication } from "./shared-context-publications";
 import { assertionHash, CONTEXT_LIFETIME_MS, remoteActor, sameActor, syncContextSource, verifyContextAssertion, verifyContextConsent } from "./shared-context-wire";
 import { getConversationById } from "../shared/utils";
@@ -28,6 +28,7 @@ const publishSchema = z.strictObject({
   label: z.string().check(z.minLength(1), z.maxLength(80)), text: z.string().check(z.maxLength(1024)), category: z.optional(z.string().check(z.minLength(1), z.maxLength(64))),
   expiresAtMs: z.int().check(z.minimum(1)), evidence: z.optional(z.array(z.strictObject({ conversationId: socialIdSchema,
     messageId: socialIdSchema, sequence: z.int().check(z.minimum(1)), text: z.string().check(z.minLength(1), z.maxLength(512)) })).check(z.maxLength(3))),
+  retainEvidence: z.optional(z.boolean()),
 }) satisfies z.ZodMiniType<ContactContextPublishArgs>;
 const consentSchema = z.strictObject({ contactId: socialIdSchema, expectedGeneration: socialIdSchema, assertionId: socialIdSchema,
   assertionRevision: z.int().check(z.minimum(1)), expectedDecisionRevision: z.int().check(z.minimum(0), z.maximum(2)),
@@ -62,9 +63,21 @@ export async function handleContactContextSync(raw: ContactContextSyncArgs, ctx:
   return { scheduled: true };
 }
 
-export function handleContactContextPublications(ctx: KernelContext): ContactContextPublicationsResult {
+export function handleContactContextPublications(raw: ContactContextPublicationsArgs, ctx: KernelContext): ContactContextPublicationsResult {
   const ownerUid = requireContactHuman(ctx);
-  return { publications: ctx.sharedContext.publications.list(ownerUid), consentRequests: ctx.sharedContext.publications.consentRequests(ownerUid) };
+  const args = z.strictObject({ section: z.enum(["publications", "consents"]), cursor: z.optional(z.string().check(z.maxLength(1024))), limit: z.optional(z.int().check(z.minimum(1), z.maximum(20))) }).parse(raw);
+  return ctx.sharedContext.publications.ownedPage(ownerUid, args);
+}
+
+export function assertCurrentContextDelivery(record: FederationReadyOutboxRecord, ctx: KernelContext): void {
+  const payload = record.payload;
+  if (payload.kind === "context.consent.request") {
+    const current = ctx.sharedContext.publications.row(record.ownerUid, payload.record.assertion.id);
+    if (!current || current.state === "withdrawn" || current.revision !== payload.record.assertion.revision || current.expires_at <= Date.now()) throw new FederationHttpError(409, "Connection proposal was superseded or expired");
+  } else if (payload.kind === "context.consent.decision") {
+    const current = ctx.sharedContext.publications.consentRequest(record.contactId, payload.consent.assertionId);
+    if (!current?.consent || current.generation !== record.contactGeneration || JSON.stringify(current.consent) !== JSON.stringify(payload.consent)) throw new FederationHttpError(409, "Connection consent was superseded");
+  }
 }
 
 export async function handleContactContextPublish(raw: ContactContextPublishArgs, ctx: KernelContext): Promise<ContactContextPublishResult> {
@@ -94,7 +107,9 @@ export async function handleContactContextPublish(raw: ContactContextPublishArgs
     contact = await negotiateContactProtocol(found, ctx);
     if (!contact.protocol?.features.includes("context")) throw new Error("This person's GSV does not support connection consent yet");
   }
-  const evidence: SharedContextQuote[] = [];
+  if (args.retainEvidence && (!previous || args.evidence?.length)) throw new Error("Choose either the existing quotes or a new selection");
+  const evidence: SharedContextQuote[] = args.retainEvidence && previous
+    ? sharedContextRecordSchema.parse(JSON.parse(previous.record_json)).assertion.evidence : [];
   for (const selected of args.evidence ?? []) {
     const conversation = ctx.conversations.get(selected.conversationId);
     if (!conversation || conversation.ownerUid !== ownerUid) throw new Error("Selected evidence is unavailable");

@@ -6,6 +6,20 @@ import { SharedContextStore } from "./shared-context-store";
 import { CONTEXT_LEASE_MS } from "./shared-context-publications";
 
 describe("selected shared context storage", () => {
+  it("pages the owner's publications independently from consent requests", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const { context, federation } = fixture(storage);
+      for (const id of ["one", "two", "three"]) federation.transaction(() => context.publications.write({ ownerUid: 1000, expectedRevision: 0, expectedSequence: 0, record: record(id), intentId: `intent:${id}`, intentHash: id }));
+      const first = context.publications.ownedPage(1000, { section: "publications", limit: 2 });
+      expect(first.publications).toHaveLength(2);
+      expect(first.next).toBeDefined();
+      const second = context.publications.ownedPage(1000, { section: "publications", limit: 2, cursor: first.next });
+      expect(second.publications).toHaveLength(1);
+      expect(new Set([...first.publications, ...second.publications].map((item) => item.record.assertion.id)).size).toBe(3);
+      expect(context.publications.ownedPage(2000, { section: "publications" }).publications).toEqual([]);
+      expect(context.publications.ownedPage(1000, { section: "consents" }).consentRequests).toEqual([]);
+    });
+  });
   it("stages snapshots and keeps the last complete projection through a failed continuation", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const { context, contact } = fixture(storage);

@@ -40,12 +40,13 @@ export type ContactContextSubscribeArgs = { contactId: string; expectedGeneratio
 export type ContactContextSubscribeResult = { source: SharedContextSource | null };
 export type ContactContextSyncArgs = { contactId: string; expectedRevision: number };
 export type ContactContextSyncResult = { scheduled: true };
-export type ContactContextPublicationsArgs = Record<string, never>;
-export type ContactContextPublicationsResult = { publications: SharedContextPublication[]; consentRequests: SharedContextConsentRequest[] };
+export type ContactContextPublicationsArgs = { section: "publications" | "consents"; cursor?: string; limit?: number };
+export type ContactContextPublicationsResult = { publications: SharedContextPublication[]; consentRequests: SharedContextConsentRequest[]; next?: string };
 export type ContactContextPublishArgs = {
   id: string; expectedRevision: number; idempotencyKey: string;
   subject: ActorRef; kind: SharedContextKind; label: string; text: string; category?: string; expiresAtMs: number;
   evidence?: { conversationId: string; messageId: string; sequence: number; text: string }[];
+  retainEvidence?: boolean;
 };
 export type ContactContextPublishResult = { publication: SharedContextPublication };
 export type ContactContextWithdrawArgs = { id: string; expectedRevision: number };

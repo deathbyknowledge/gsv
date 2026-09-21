@@ -13,13 +13,14 @@ import { NewConversation } from "./NewConversation";
 import { ConversationAttention } from "./ConversationAttention";
 import { useAttentionSummary } from "./useAttentionSummary";
 import { BlockedPeople } from "./BlockedPeople";
+import { SharedContextManager } from "./SharedContextManager";
 import { MessageRequest } from "./MessageRequest";
 import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
 import "../fleet/fleet.css";
 import "./people.css";
 
 type PeopleView = "inbox" | "requests" | "contacts";
-type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" | "blocked" | "attention" } | null;
+type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" | "blocked" | "attention" | "sharing" } | null;
 const NO_CONTACT_CURSOR: ContactListArgs["after"] = undefined;
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
@@ -147,12 +148,15 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
         {view === "contacts" && addressBook.hasNextPage && <button class="people-action people-more" disabled={addressBook.isFetchingNextPage} onClick={() => void addressBook.fetchNextPage()}>{addressBook.isFetchingNextPage ? "loading…" : "more contacts"}</button>}
         {view === "inbox" && inbox.hasNextPage && <button class="people-action people-more" disabled={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>{inbox.isFetchingNextPage ? "loading…" : "earlier conversations"}</button>}
       </>}
-      <footer class="people-list-footer"><button class="people-action" disabled={busy} onClick={onProfile}>your public profile</button><button class="people-action" disabled={busy} onClick={() => setSelection({ kind: "blocked" })}>blocked people</button>{!connected && <span role="status">reconnecting…</span>}</footer>
+      <footer class="people-list-footer"><button class="people-action" disabled={busy} onClick={onProfile}>your public profile</button>
+        {account && canConfigure(account, "contact.context.publications") && <button class="people-action" disabled={busy} onClick={() => setSelection({ kind: "sharing" })}>your shared context</button>}
+        <button class="people-action" disabled={busy} onClick={() => setSelection({ kind: "blocked" })}>blocked people</button>{!connected && <span role="status">reconnecting…</span>}</footer>
     </aside>
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label="Selected conversation">
       {selection && <button class="people-action people-back" disabled={busy} onClick={() => setSelection(null)}>← back to {view}</button>}
       {selection?.kind === "compose" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} onOpen={openContact} onInvitation={() => setSelection({ kind: "invitation" })} />
         : selection?.kind === "attention" ? <ConversationAttention account={account} onOpen={openContact} />
+        : selection?.kind === "sharing" ? <SharedContextManager account={account} onDirty={setPanelDirty} onOpen={openContact} />
         : selection?.kind === "blocked" ? <BlockedPeople account={account} />
         : selection?.kind === "invitation" ? <AddContact account={account} onClose={() => setSelection(null)} onAdded={openContact} />
         : selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={view === "contacts" ? "details" : "messages"} onWorkDirty={setPanelDirty} onOpenContact={openContact} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />

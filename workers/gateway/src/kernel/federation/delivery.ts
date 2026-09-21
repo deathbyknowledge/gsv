@@ -104,6 +104,12 @@ export async function rearmPendingDelivery(
   );
 }
 
+export function supportsHumanDeliveryRetry(record: FederationOutboxRecord): boolean {
+  if (!isReadyFederationOutbox(record)) return true;
+  return record.payload.kind === "message" || record.payload.kind === "context.consent.request"
+    || record.payload.kind === "context.consent.decision" || record.payload.kind === "context.withdraw";
+}
+
 export function deliveryRetryDelayMs(attempt: number): number {
   return Math.min(60 * 60_000, 2_000 * (2 ** Math.min(10, Math.max(0, attempt - 1))));
 }

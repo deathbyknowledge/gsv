@@ -1,5 +1,6 @@
 import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
 import { ContactRequests } from "./ContactRequests";
+import { ContactContext } from "./SharedContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { contactDisplayName, type ContactInviteCreateResult, type ContactListResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
@@ -143,6 +144,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
       <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
     </form>
     <RelationshipPreferences contact={contact} account={account} />
+    <ContactContext contact={contact} account={account} onDirty={workChanged} onOpen={onOpenContact} />
     {contact.state === "active" && <div class="fleet-place-form">
       {confirm ? <>
         <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>

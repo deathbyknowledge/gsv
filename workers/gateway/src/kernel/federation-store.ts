@@ -1466,7 +1466,7 @@ export class FederationStore {
     ).toArray().map(outboxFromRow);
   }
 
-  retryMessage(record: FederationOutboxRecord, now = Date.now()): FederationOutboxRecord {
+  retryDelivery(record: FederationOutboxRecord, now = Date.now()): FederationOutboxRecord {
     const updated = this.sql.exec(
       `UPDATE federation_outbox SET state = CASE WHEN state = 'preparation_failed' THEN 'preparing' ELSE 'pending' END,
         attempt_count = 0, next_attempt_at = ?, last_error = NULL, updated_at = ?, retryable = 0, retry_epoch = retry_epoch + 1,

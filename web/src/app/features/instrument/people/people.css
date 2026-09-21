@@ -153,3 +153,38 @@
 .people-attention-list h3 { margin: 12px 0; }
 .people-attention-list h3 .people-action { color: var(--text-title); font: 500 19px/1.5 var(--gsv-font-prose); }
 .people-attention-preview { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.7 var(--gsv-font-prose); color: var(--text); }
+
+.people-shared-context, .people-context-subscription { margin-block: 28px; padding-top: 22px; border-top: 1px solid var(--border); }
+.people-shared-context h3, .people-context-subscription h3 { color: var(--text-title); font: 500 20px/1.4 var(--gsv-font-prose); margin: 0 0 12px; }
+.people-context-manager, .people-context-editor { width: 100%; max-width: 46rem; padding-bottom: 28px; color: var(--text); }
+.people-context-manager h2, .people-context-editor h2 { font: 500 30px/1.3 var(--gsv-font-prose); margin: 8px 0 18px; color: var(--text-title); }
+.people-context-manager > .people-directions { padding-block: 18px; border-bottom: 1px solid var(--border); }
+.people-context-empty { padding-block: 28px; font: 17px/1.7 var(--gsv-font-prose); }
+.people-context-list { list-style: none; padding: 0; margin-block: 20px; }
+.people-context-list > li { padding-block: 22px; border-bottom: 1px solid var(--border); }
+.people-context-list > li:first-child { padding-top: 0; }
+.people-context-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--text-dim); font: 10px/1.7 var(--gsv-font-mono); }
+.people-context-attribution { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 18px; margin-bottom: 18px; font: 12px/1.7 var(--gsv-font-prose); }
+.people-context-attribution time { font: 10px/1.6 var(--gsv-font-mono); color: var(--text-dim); }
+.people-context-statement h4, .people-context-editor h3 { color: var(--text-title); font: 500 19px/1.5 var(--gsv-font-prose); margin-block: 8px; }
+.people-context-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.7 var(--gsv-font-prose); }
+.people-context-statement blockquote, .people-context-editor blockquote { white-space: pre-wrap; overflow-wrap: anywhere; margin: 16px 0; padding: 4px 0 4px 16px; border-left: 2px solid var(--border); color: var(--text-dim); font: 14px/1.7 var(--gsv-font-prose); }
+.people-context-editor > p { font: 16px/1.7 var(--gsv-font-prose); }
+.people-context-editor > .people-kicker { font: 10px/1.6 var(--gsv-font-mono); }
+.people-context-editor label:not(.people-check) { display: flex; flex-direction: column; gap: 8px; margin-block: 20px; font: 14px/1.5 var(--gsv-font-prose); }
+.people-context-editor input:not([type="checkbox"]), .people-context-editor textarea, .people-context-editor select { width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; color: var(--text); background: var(--void); border: 1px solid var(--border); font: 16px/1.5 var(--gsv-font-prose); }
+.people-context-editor textarea { resize: vertical; }
+.people-context-editor > .people-action { margin-top: 22px; }
+.people-context-review { display: grid; grid-template-columns: minmax(70px, auto) minmax(0, 1fr); gap: 12px 20px; border-block: 1px solid var(--border); padding-block: 18px; font: 14px/1.7 var(--gsv-font-prose); }
+.people-context-review dt { color: var(--text-dim); }
+.people-context-review dd { margin: 0; overflow-wrap: anywhere; }
+.people-context-subscription fieldset { border: 0; padding: 0; margin-block: 16px; }
+.people-context-subscription legend { font: 13px/1.7 var(--gsv-font-prose); color: var(--text-dim); }
+.people-quote-editor { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.people-context-list .people-delivery { margin-block: 12px; }
+.people-list-footer { flex-wrap: wrap; }
+@container instrument (max-width: 720px) {
+  .people-context-review { grid-template-columns: 1fr; gap: 4px; }
+  .people-context-review dd { margin-bottom: 12px; }
+  .people-context-manager h2, .people-context-editor h2 { font-size: 25px; }
+}

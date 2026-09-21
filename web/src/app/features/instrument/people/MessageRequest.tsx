@@ -8,6 +8,7 @@ import { INSTRUMENT_APPROACHES_KEY, instrumentContactConversationKey } from "../
 import { LoadingState } from "../../../components/ui/Spinner";
 import { approachStatus, requestMayRetry } from "./peopleModel";
 import { ReportEvidence } from "./ReportEvidence";
+import { SharedWithYou } from "./SharedContext";
 
 export function MessageRequest({ request, account, onOpen, onDirty }: {
   request: ApproachSummary; account: ConsoleAccount | undefined; onOpen: (contactId: string) => void; onDirty: (dirty: boolean) => void;
@@ -41,6 +42,7 @@ export function MessageRequest({ request, account, onOpen, onDirty }: {
     {!allowed("conversation.history") && connected && <p class="people-note">This account cannot read the first message.</p>}
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}
     {message && request.direction === "incoming" && <button class="people-action" disabled={pending || !allowed("contact.send")} onClick={() => setReporting(true)}>report this message…</button>}
+    <SharedWithYou subject={request.peer} account={account} onOpen={onOpen} />
     {request.state === "preparing" && <p class="people-note">Your message is saved. It’s being added to the conversation before delivery.</p>}
     {canDecide && request.direction === "incoming" && <div class="people-decision">
       <h2>Open a conversation?</h2>

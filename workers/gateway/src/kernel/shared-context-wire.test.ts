@@ -9,10 +9,26 @@ import { SharedContextStore } from "./shared-context-store";
 import { assertionHash, receiveContextSync, verifyContextConsent, verifyContextRecord } from "./shared-context-wire";
 import { handleContactContextPublish, handleContactContextSubscribe, handleContactContextWithdraw } from "./shared-context";
 import { CONTEXT_LEASE_MS } from "./shared-context-publications";
+import { handleContactDeliveryRetry } from "./federation";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 
 describe("authenticated selected relationship context", () => {
+  it("retries an exact current proposal and fences it when the human withdraws it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, contact } = await fixture(storage);
+      ctx.federation.setProtocol(contact.id, contact.generation, { version: 2, features: ["context"], checkedAtMs: Date.now() });
+      const result = await handleContactContextPublish({ id: "connection:retry", expectedRevision: 0, idempotencyKey: "intent:retry", kind: "connection",
+        subject: { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, label: "Reviewed connection", text: "We work together", expiresAtMs: Date.now() + CONTEXT_LEASE_MS }, ctx);
+      const id = result.publication.deliveryId!;
+      ctx.federation.markOutboxFailed(id, contact.generation, "pending", "Response lost", null, true, Date.now(), true);
+      const failed = ctx.federation.outbox(id)!;
+      expect(await handleContactDeliveryRetry({ deliveryId: id, expectedUpdatedAtMs: failed.updatedAtMs }, ctx)).toMatchObject({ deliveryId: id, state: "queued" });
+      await handleContactContextWithdraw({ id: "connection:retry", expectedRevision: 1 }, ctx);
+      ctx.federation.markOutboxFailed(id, contact.generation, "pending", "Response lost", null, true, Date.now(), true, 1);
+      await expect(handleContactDeliveryRetry({ deliveryId: id, expectedUpdatedAtMs: ctx.federation.outbox(id)!.updatedAtMs }, ctx)).rejects.toThrow("superseded");
+    });
+  });
   it("binds opaque cursors to the viewer, current generation and selected kinds", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, contact, subject, identity } = await fixture(storage);

@@ -1,6 +1,6 @@
 import { z } from "zod/mini";
 import {
-  contextSyncRequestSchema, contextSyncResponseSchema, jsonValueSchema, sharedContextKindsSchema, sharedContextRecordSchema,
+  contextSyncResponseSchema, jsonValueSchema, sharedContextKindsSchema, sharedContextRecordSchema,
   type ActorRef, type ContextSyncRequest, type ContextSyncResponse, type FederationPublicKey,
   type SharedContextRecord, type SharedContextConsent, type SignedContextAssertion,
 } from "@humansandmachines/gsv/protocol";
@@ -60,8 +60,7 @@ export async function verifyContextRecord(record: SharedContextRecord, contact: 
   if (encoder.encode(JSON.stringify(record)).length > 8192) throw new Error("Shared statement is too large");
 }
 
-export async function receiveContextSync(raw: unknown, ctx: KernelContext): Promise<ContextSyncResponse> {
-  const request = contextSyncRequestSchema.parse(raw);
+export async function receiveContextSync(request: ContextSyncRequest, ctx: KernelContext): Promise<ContextSyncResponse> {
   if (Math.abs(Date.now() - request.timestampMs) > 5 * 60_000 || request.kinds.length === 0) throw new PublicFederationError(400, "Invalid shared context request");
   const contact = ctx.federation.getForInbound(request.sender.shipId, request.sender.subjectId, request.recipientSubjectId);
   if (!contact || contact.generation !== request.generation || contact.state !== "active" || !profileOwnerActive(contact.ownerUid, ctx)) throw new PublicFederationError(404, "Shared context source unavailable");

@@ -2,6 +2,7 @@ import {
   sharedContextRecordSchema, sharedContextConsentSchema, signedContextAssertionSchema,
   type SharedContextPublication, type SharedContextConsent,
   type SharedContextConsentRequest, type SignedContextAssertion, type SharedContextKind,
+  type ContactContextPublicationsArgs, type ContactContextPublicationsResult,
 } from "@humansandmachines/gsv/protocol";
 import type { FederationContactRecord } from "./federation-store";
 
@@ -25,6 +26,22 @@ export class ContextPublications {
 
   list(ownerUid: number, now = Date.now()): SharedContextPublication[] {
     return this.sql.exec<ContextPublicationRow>("SELECT * FROM social_context_publications WHERE owner_uid = ? ORDER BY sequence DESC", ownerUid).toArray().map((row) => publication(row, now));
+  }
+
+  ownedPage(ownerUid: number, args: ContactContextPublicationsArgs, now = Date.now()): ContactContextPublicationsResult {
+    const limit = args.limit ?? 20;
+    if (args.section === "publications") {
+      const rows = this.sql.exec<ContextPublicationRow>("SELECT * FROM social_context_publications WHERE owner_uid = ? AND id > ? ORDER BY id LIMIT ?", ownerUid, args.cursor ?? "", limit + 1).toArray();
+      const selected = rows.slice(0, limit);
+      return { publications: selected.map((row) => publication(row, now)), consentRequests: [], ...(rows.length > limit ? { next: selected.at(-1)!.id } : undefined) };
+    }
+    const rows = this.sql.exec<ConsentRow>(`SELECT r.* FROM social_context_consents r JOIN federation_contacts c ON c.contact_id = r.contact_id
+      AND c.owner_uid = r.owner_uid AND c.generation = r.generation AND c.state = 'active'
+      WHERE r.owner_uid = ? AND r.expires_at > ? AND r.record_json IS NOT NULL AND (r.contact_id || char(0) || r.assertion_id) > ?
+      ORDER BY r.contact_id, r.assertion_id LIMIT ?`, ownerUid, now, args.cursor ?? "", limit + 1).toArray();
+    const selected = rows.slice(0, limit);
+    const last = selected.at(-1);
+    return { publications: [], consentRequests: selected.map(consentRequest), ...(rows.length > limit && last ? { next: `${last.contact_id}\u0000${last.assertion_id}` } : undefined) };
   }
 
   write(input: { ownerUid: number; expectedRevision: number; expectedSequence: number; record: SignedContextAssertion; intentId: string; intentHash: string; contact?: FederationContactRecord; deliveryId?: string }, now = Date.now()): SharedContextPublication {

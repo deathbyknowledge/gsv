@@ -131,7 +131,8 @@ import { FederationHttpError, PublicFederationError } from "./federation/errors"
 import { fetchFederation, fetchFederationJson as fetchJson, readFederationBody, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
 import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
 import { CONTEXT_SYNC_PATH, receiveContextSync } from "./shared-context-wire";
-import { commitInboundContext } from "./shared-context";
+import { contextSyncRequestSchema } from "@humansandmachines/gsv/protocol";
+import { assertCurrentContextDelivery, commitInboundContext } from "./shared-context";
 import {
   assertDeliveryReplay,
   contactDeliveryStatus,
@@ -141,6 +142,7 @@ import {
   federationInputFingerprint,
   isTerminalFederationError,
   rearmPendingDelivery,
+  supportsHumanDeliveryRetry,
 } from "./federation/delivery";
 import {
   assertContactCapacity,
@@ -763,11 +765,12 @@ export async function handleContactDeliveryRetry(args: ContactDeliveryRetryArgs,
     const contact = requireOwnedActiveContact(record.contactId, ownerUid, ctx);
     if (contact.generation !== record.contactGeneration || !record.retryable || record.updatedAtMs !== args.expectedUpdatedAtMs
       || Date.now() - record.createdAtMs >= MAX_DELIVERY_AGE_MS) throw new Error("This delivery cannot be retried; review its current state");
-    if (isReadyFederationOutbox(record) && record.payload.kind !== "message") throw new Error("Only a message can use delivery retry");
+    if (!supportsHumanDeliveryRetry(record)) throw new Error("This delivery uses its owning work-request recovery action");
+    if (isReadyFederationOutbox(record)) assertCurrentContextDelivery(record, ctx);
     assertOutboundCapacity(ownerUid, contact.id, ctx, Date.now(), true);
     consumeOutboundDeliveryRate(ownerUid, contact.id, ctx, Date.now());
     if (!isReadyFederationOutbox(record)) assertResourceGrantCapacity(contact.id, record.preparation.resources.length, ctx);
-    return { record: ctx.federation.retryMessage(record), contact };
+    return { record: ctx.federation.retryDelivery(record), contact };
   });
   ctx.broadcastToUserUid(ownerUid, "contact.delivery.changed", { contactId: retried.contact.id });
   await ctx.scheduleFederationDelivery(retried.record.deliveryId, Date.now(), true);
@@ -1065,6 +1068,7 @@ export async function processFederationDelivery(
       signature: await signContactEnvelope(contact.sharedSecret, jsonValue(unsigned)),
     };
     if (!currentFederationDeliveryContact(record, ctx)) return;
+    assertCurrentContextDelivery(record, ctx);
     const receipt = (record.wireVersion === 2 ? federationDeliveryReceiptV2Schema : federationDeliveryReceiptSchema).parse(await fetchJson(
       `${contact.remoteOrigin}${record.wireVersion === 2 ? DELIVERY_V2_PATH : DELIVERY_PATH}`,
       {
@@ -1218,7 +1222,7 @@ async function recordFederationOutboxFailure(
       retryAt,
       terminal,
       Date.now(),
-      contactActive && (!isReadyFederationOutbox(record) || record.payload.kind === "message")
+      contactActive && supportsHumanDeliveryRetry(record)
         && Date.now() - record.createdAtMs < MAX_DELIVERY_AGE_MS && !isTerminalFederationError(error),
       record.retryEpoch,
     )) return false;
@@ -1272,7 +1276,7 @@ export async function handleFederationHttpRequest(
   const url = new URL(request.url);
   try {
     if (url.pathname === CONTEXT_SYNC_PATH && request.method === "POST") {
-      return jsonResponse(jsonValue(await receiveContextSync(await readBoundedJson(request), ctx)));
+      return jsonResponse(jsonValue(await receiveContextSync(contextSyncRequestSchema.parse(await readBoundedJson(request)), ctx)));
     }
     if ([APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(url.pathname) && request.method === "POST") {
       consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
