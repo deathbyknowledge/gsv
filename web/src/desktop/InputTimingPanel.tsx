@@ -57,7 +57,7 @@ export function InputTimingPanel() {
         if (event.key === "Escape") { event.preventDefault(); close(); }
       }}>
       <header><h2 id="desktop-input-timings-title">Input timings</h2><button type="button" onClick={close}>close</button></header>
-      <p>Clear samples and close this panel. Tap j/k with a pause between presses, then briefly hold each key. Click the prompt and type without sending. Reopen it to read the result.</p>
+      <p>Clear samples and close this panel. Tap j/k with a pause between presses, then briefly hold each key. Click the prompt, type without sending, and move through the draft with the arrow keys. Reopen it to read the result.</p>
       <table>
         <thead><tr><th>Input</th><th>Samples</th><th>Dispatch p95</th><th>Frame median</th><th>Frame p95</th><th>Frame max</th></tr></thead>
         <tbody>{(["keyboard", "navigation", "navigationTap", "navigationRepeat", "typing", "promptClick"] as const).map((kind) => {
@@ -80,7 +80,17 @@ export function InputTimingPanel() {
         })}</tbody>
       </table>
       <p>The handler includes synchronous scroll measurements. UI update work measures Preact and its layout effects while navigation awaits a frame; it excludes later painting and presentation. These percentiles cannot be added or subtracted as one event.</p>
-      {!report.work.handlerSupported && <p>Handler timing is unavailable in this renderer.</p>}
+      <table>
+        <thead><tr><th>Prompt</th><th>Samples</th><th>Median</th><th>p95</th><th>Max</th></tr></thead>
+        <tbody>{(["promptMeasure", "promptInputToCaret", "promptCursorToCaret"] as const).map((kind) => {
+          const sample = report.work.phases[kind];
+          const label = { promptMeasure: "Measurement work", promptInputToCaret: "Input → caret", promptCursorToCaret: "Arrow/Home/End → caret" }[kind];
+          return <tr key={kind}><th>{label}</th><td>{sample?.count ?? 0}</td>
+            <td>{sample ? `${sample.p50Ms} ms` : "—"}</td><td>{sample ? `${sample.p95Ms} ms` : "—"}</td><td>{sample ? `${sample.maxMs} ms` : "—"}</td></tr>;
+        })}</tbody>
+      </table>
+      <p>Caret timings end after the prompt refresh has applied its cursor position, before painting and display. Input starts at the text-change event; arrows, Home and End start at keydown. The earlier next-frame callback can run before this work.</p>
+      {!report.work.handlerSupported && <p>Work and caret timing are unavailable in this renderer.</p>}
       <div class="desktop-timing-actions">
         <button type="button" onClick={() => { window.gsvInputTiming.reset(); setReport(readReport()); setCopied(null); }}>clear samples</button>
         <button type="button" onClick={() => { setReport(readReport()); setCopied(null); }}>refresh</button>

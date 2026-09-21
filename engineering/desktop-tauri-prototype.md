@@ -257,3 +257,41 @@ keyboard samples, below the 200-sample cap. A keyboard p95 of 19 ms means at
 least 31 of the 38 navigation samples reached the next callback within roughly
 19 ms. The tail does not imply a consistent 109 ms delay. Further diagnostics
 are optional; this report alone is not a reason for another performance change.
+
+## Prompt cursor responsiveness
+
+The user finds typing and arrow movement slightly less responsive than the
+improved conversation browsing. The old next-frame sample ends in a callback
+registered by the document capture listener, before PromptLine's own scheduled
+measurement and component update. Its 16–17 ms typing result therefore did not
+establish that the visible cursor had caught up.
+
+PromptLine owns the block caret and its correspondence to the textarea's native
+selection. Its cursor refresh listened to keyup, click and select, but not
+selectionchange or navigation keydown. In the installed WebKitGTK 2.52.6 source,
+[selectionChanged](https://github.com/WebKit/WebKit/blob/webkitgtk-2.52.6/Source/WebCore/html/HTMLTextFormControlElement.cpp#L526)
+dispatches select only for a non-collapsed selection. Ordinary arrow movement
+could therefore leave the block at its old position until key release. The
+independent one-second blink was also never reset on movement, allowing the
+block to move during its half-second invisible phase.
+
+The shared prompt now subscribes to textarea selectionchange and schedules a
+refresh on Arrow/Home/End keydown, after the browser's default action, including
+auto-repeat. The measurement applies the caret's transform and visibility
+directly instead of scheduling another component render. The mirror retains its
+text nodes and marker, and caret-only movement does not remeasure textarea
+height. Editing resets the existing blink to its visible phase; unfocused
+carets pause it, and reduced motion retains the existing no-animation rule.
+The browser still owns text editing, selection, composition and keyboard
+movement; PromptLine owns presentation and preserves its submit/history/picker
+interception contracts.
+
+Prototype reports retain bounded, static-name durations for prompt measurement,
+input-event-to-caret refresh and Arrow/Home/End-keydown-to-caret refresh. They
+end after geometry and cursor styles are applied, before painting and display.
+They retain no text, raw keys or selection positions. Coalesced events share the
+same refresh endpoint; an earlier synchronous refresh can already have applied
+the position. Compilation does not establish the improvement: the next human
+pass should compare typing, tapped and held arrows, selection with Shift,
+wrapped/multiline drafts, cursor movement after an idle blink, and prompt focus
+at the current zoom. The running testing window remains untouched.

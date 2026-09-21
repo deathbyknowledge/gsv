@@ -242,6 +242,8 @@
 }
 .prompt-line .block-caret {
   position: absolute;
+  visibility: hidden;
+  animation-play-state: paused;
   left: 0;
   top: 0;
   font-size: var(--prompt-font-size, 1em);
@@ -249,6 +251,7 @@
   height: 1em;
   pointer-events: none;
 }
+.prompt-line textarea:focus ~ .block-caret { animation-play-state: running; }
 .prompt-line textarea:focus {
   text-shadow: var(--glow-focus);
 }

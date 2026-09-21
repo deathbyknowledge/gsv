@@ -145,6 +145,13 @@ pending. A low work duration with a high dispatch or frame delay directs the
 next investigation outside that measured code; it does not prove a GPU cause.
 The report includes a loaded-row count, and still contains no conversation data.
 
+The **Prompt** table measures cursor-refresh work and the time from typing or
+Arrow/Home/End keydown through applying the custom caret position. This endpoint
+is later than the generic next-frame callback, but still precedes painting and
+display. Compare tapped and held arrows, Shift selection, wrapped/multiline
+drafts and typing after the cursor has been idle. Use your own unsent draft;
+reports retain durations only.
+
 The same input timings remain available in the webview inspector:
 
 ```js

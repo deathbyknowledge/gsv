@@ -3,7 +3,7 @@ import { options } from "preact";
 type Sample = { dispatch: number; frame: number };
 type InputKind = "keyboard" | "navigation" | "navigationTap" | "navigationRepeat" | "typing" | "promptClick";
 type TimingSummary = { count: number; dispatchP50Ms: number; dispatchP95Ms: number; nextFrameP50Ms: number; nextFrameP95Ms: number; nextFrameMaxMs: number } | null;
-type WorkKind = "navigationHandler" | "navigationUpdateQueue" | "navigationUpdate";
+type WorkKind = "navigationHandler" | "navigationUpdateQueue" | "navigationUpdate" | "promptMeasure" | "promptInputToCaret" | "promptCursorToCaret";
 type WorkSummary = { count: number; p50Ms: number; p95Ms: number; maxMs: number } | null;
 
 declare global {
@@ -19,7 +19,10 @@ declare global {
 /** Bounded, local timing data for the prototype's human acceptance pass; no keys, text or targets. */
 export function installInputTiming(): void {
   const samples: Record<InputKind, Sample[]> = { keyboard: [], navigation: [], navigationTap: [], navigationRepeat: [], typing: [], promptClick: [] };
-  const work: Record<WorkKind, number[]> = { navigationHandler: [], navigationUpdateQueue: [], navigationUpdate: [] };
+  const work: Record<WorkKind, number[]> = {
+    navigationHandler: [], navigationUpdateQueue: [], navigationUpdate: [],
+    promptMeasure: [], promptInputToCaret: [], promptCursorToCaret: [],
+  };
   const pending: { kind: InputKind; navigation: boolean; repeat: boolean; started: number; dispatch: number }[] = [];
   const recordWork = (kind: WorkKind, duration: number) => {
     work[kind].push(duration);
@@ -28,6 +31,9 @@ export function installInputTiming(): void {
   const collectMeasures = (entries: PerformanceEntry[]) => {
     for (const entry of entries) {
       if (entry.name === "gsv.zen.navigate") recordWork("navigationHandler", entry.duration);
+      else if (entry.name === "gsv.prompt.measure") recordWork("promptMeasure", entry.duration);
+      else if (entry.name === "gsv.prompt.input-to-caret") recordWork("promptInputToCaret", entry.duration);
+      else if (entry.name === "gsv.prompt.cursor-to-caret") recordWork("promptCursorToCaret", entry.duration);
     }
   };
   const observer = typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes.includes("measure")
@@ -109,6 +115,9 @@ export function installInputTiming(): void {
         navigationHandler: summarizeWork(work.navigationHandler),
         navigationUpdateQueue: summarizeWork(work.navigationUpdateQueue),
         navigationUpdate: summarizeWork(work.navigationUpdate),
+        promptMeasure: summarizeWork(work.promptMeasure),
+        promptInputToCaret: summarizeWork(work.promptInputToCaret),
+        promptCursorToCaret: summarizeWork(work.promptCursorToCaret),
       } };
     },
     reset: () => {

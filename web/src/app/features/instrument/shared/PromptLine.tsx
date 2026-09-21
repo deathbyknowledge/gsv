@@ -60,23 +60,30 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
   const mirrorRef = useRef<HTMLSpanElement>(null);
+  const mirrorText = useRef<{ before: Text; marker: HTMLSpanElement; after: Text } | null>(null);
+  const caretRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
   const revision = useRef(0);
   const submitting = useRef(false);
   const autoFocusHandled = useRef(false);
   /* the block caret: the input's own caret is hidden and a block is drawn where it is, measured off a mirror of the text before it */
-  const [focused, setFocused] = useState(false);
-  const [caret, setCaret] = useState({ x: 0, y: 0, visible: true });
   const measureFrame = useRef(0);
   const revealPending = useRef(false);
+  const caretTimings = useRef<{ kind: "input" | "cursor"; start: number }[]>([]);
+  const recordCaretInput = (event: Event, kind: "input" | "cursor") => {
+    if (event.timeStamp >= 0 && event.timeStamp <= performance.now() && caretTimings.current.length < 64) {
+      caretTimings.current.push({ kind, start: event.timeStamp });
+    }
+  };
   const metrics = useRef<{ fontSize: number; lineHeight: number } | null>(null);
-  const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean } | null>(null);
+  const measured = useRef<{ value: string; start: number; end: number; width: number; top: number; left: number; reveal: boolean; focused: boolean } | null>(null);
   const measure = useCallback((reveal = false) => {
     const input = inputRef.current;
     const mirror = mirrorRef.current;
     const field = fieldRef.current;
     const chip = chipRef.current;
-    if (!input || !mirror || !field || !chip) return;
+    const caret = caretRef.current;
+    if (!input || !mirror || !field || !chip || !caret) return;
     if (!metrics.current) {
       field.style.setProperty("--prompt-indent", `${chip.offsetWidth + 12}px`);
       const style = getComputedStyle(input);
@@ -86,37 +93,53 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       mirror.style.font = style.font;
       mirror.style.letterSpacing = style.letterSpacing;
       mirror.style.textIndent = style.textIndent;
+      chip.style.top = `${Math.max(0, (metrics.current.lineHeight - chip.offsetHeight) / 2)}px`;
       measured.current = null;
     }
     const { fontSize, lineHeight } = metrics.current;
     const width = input.clientWidth;
     const at = input.selectionStart;
+    const focused = document.activeElement === input && !input.disabled;
     const previous = measured.current;
     if (previous && previous.value === input.value && previous.start === at && previous.end === input.selectionEnd
       && previous.width === width && previous.top === input.scrollTop && previous.left === input.scrollLeft
+      && previous.focused === focused
       && (!reveal || previous.reveal)) return;
-    measured.current = { value: input.value, start: at, end: input.selectionEnd, width, top: input.scrollTop, left: input.scrollLeft, reveal };
-    const marker = document.createElement("span");
+    if (!mirrorText.current) {
+      const before = document.createTextNode("");
+      const marker = document.createElement("span");
+      const after = document.createTextNode("");
+      marker.append(after);
+      mirror.replaceChildren(before, marker);
+      mirrorText.current = { before, marker, after };
+    }
+    const { before, marker, after } = mirrorText.current;
     // Keep the suffix in the mirror: word wrapping depends on text after the caret too.
-    marker.textContent = input.value.slice(at) || "\u200b";
-    mirror.style.width = `${width}px`;
-    mirror.replaceChildren(document.createTextNode(input.value.slice(0, at)), marker);
-    const height = `${mirror.offsetHeight}px`;
-    if (input.style.height !== height) input.style.height = height;
+    if (!previous || previous.value !== input.value || previous.start !== at) {
+      before.data = input.value.slice(0, at);
+      after.data = input.value.slice(at) || "\u200b";
+    }
+    if (previous?.width !== width) mirror.style.width = `${width}px`;
     const lineTop = Math.round(marker.offsetTop / lineHeight) * lineHeight;
-    if (reveal && document.activeElement === input && input.selectionStart === input.selectionEnd) {
+    const left = marker.offsetLeft;
+    if (!previous || previous.value !== input.value || previous.width !== width) {
+      const height = `${mirror.offsetHeight}px`;
+      if (input.style.height !== height) input.style.height = height;
+    }
+    if (reveal && focused && input.selectionStart === input.selectionEnd) {
       const bottom = lineTop + lineHeight;
       if (lineTop < input.scrollTop) input.scrollTop = lineTop;
       else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
     }
-    chip.style.top = `${Math.max(0, (lineHeight - chip.offsetHeight) / 2)}px`;
     chip.style.transform = `translateY(${-input.scrollTop}px)`;
-    const next = {
-      x: marker.offsetLeft - input.scrollLeft,
-      y: lineTop + (lineHeight - fontSize) / 2 - input.scrollTop,
-      visible: input.selectionStart === input.selectionEnd,
-    };
-    setCaret((current) => current.x === next.x && current.y === next.y && current.visible === next.visible ? current : next);
+    const visible = focused && input.selectionStart === input.selectionEnd;
+    // Cursor geometry belongs to this measurement, without a component update after the frame callback.
+    caret.style.transform = `translate(${left - input.scrollLeft}px, ${lineTop + (lineHeight - fontSize) / 2 - input.scrollTop}px)`;
+    caret.style.visibility = visible ? "visible" : "hidden";
+    if (visible && (!previous?.focused || previous.value !== input.value || previous.start !== at || previous.end !== input.selectionEnd)) {
+      for (const animation of caret.getAnimations()) animation.currentTime = 0;
+    }
+    measured.current = { value: input.value, start: at, end: input.selectionEnd, width, top: input.scrollTop, left: input.scrollLeft, reveal, focused };
   }, []);
   const scheduleMeasure = useCallback((reveal = false, refresh = false) => {
     if (refresh) metrics.current = null;
@@ -126,15 +149,30 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       measureFrame.current = 0;
       const reveal = revealPending.current;
       revealPending.current = false;
+      const start = performance.now();
       measure(reveal);
+      const end = performance.now();
+      performance.measure("gsv.prompt.measure", { start, end });
+      performance.clearMeasures("gsv.prompt.measure");
+      for (const sample of caretTimings.current.splice(0)) {
+        const name = sample.kind === "input" ? "gsv.prompt.input-to-caret" : "gsv.prompt.cursor-to-caret";
+        performance.measure(name, { start: sample.start, end });
+        performance.clearMeasures(name);
+      }
     });
   }, [measure]);
   useLayoutEffect(() => {
     metrics.current = null;
     measure(true);
-    const input = inputRef.current;
-    if (input && document.activeElement === input) setFocused(true);
   }, [measure, disabled, command, place.label, place.online, dir]);
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    const selectionChanged = () => scheduleMeasure(true);
+    // `select` does not report an ordinary collapsed-caret move in WebKit.
+    input.addEventListener("selectionchange", selectionChanged);
+    return () => input.removeEventListener("selectionchange", selectionChanged);
+  }, [scheduleMeasure]);
   useLayoutEffect(() => {
     if (!autoFocus || disabled || autoFocusHandled.current) return;
     autoFocusHandled.current = true;
@@ -155,7 +193,8 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     };
   }, [scheduleMeasure]);
   const read = (): string => inputRef.current?.value ?? "";
-  const changed = (): void => {
+  const changed = (event?: Event): void => {
+    if (event) recordCaretInput(event, "input");
     revision.current++;
     const value = read();
     setCommand(value.startsWith("$"));
@@ -218,13 +257,15 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       input.blur();
       return;
     }
-    if (!onHistory || input.value !== "") return;
-    if (event.key === "ArrowUp") {
+    if (onHistory && input.value === "" && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
-      onHistory(-1);
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      onHistory(1);
+      onHistory(event.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
+    if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") {
+      recordCaretInput(event, "cursor");
+      // The frame observes the browser's default selection change, including held-key repeats.
+      scheduleMeasure(true);
     }
   };
   const chipTitle = command ? `runs on ${place.label} in ${dir}` : place.online ? `on ${place.label}; press to change` : `${place.label} is offline; press to change`;
@@ -250,9 +291,6 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           spellcheck={false}
           disabled={disabled}
           onKeyDown={onKeyDown}
-          onKeyUp={() => scheduleMeasure(true)}
-          onClick={() => scheduleMeasure(true)}
-          onSelect={() => scheduleMeasure(true)}
           onScroll={() => scheduleMeasure()}
           onInput={changed}
           onPaste={(event) => {
@@ -260,17 +298,17 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
             if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); }
           }}
           onFocus={() => {
-            setFocused(true);
             scheduleMeasure(true);
             onFocusChange?.(true);
           }}
           onBlur={() => {
-            setFocused(false);
+            if (caretRef.current) caretRef.current.style.visibility = "hidden";
+            measured.current = null;
             onFocusChange?.(false);
           }}
         />
         <span class="mirror" ref={mirrorRef} aria-hidden="true" />
-        {focused && !disabled && caret.visible ? <span class="block-caret" style={{ transform: `translate(${caret.x}px, ${caret.y}px)` }} aria-hidden="true" /> : null}
+        <span class="block-caret" ref={caretRef} aria-hidden="true" />
       </span>
     </form>
   );
