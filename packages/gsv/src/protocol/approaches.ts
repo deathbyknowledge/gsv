@@ -13,6 +13,7 @@ export type ApproachSummary = {
   peer: ActorRef;
   displayName: string;
   conversationId: string;
+  messageSequence?: number;
   state: ApproachState;
   revision: number;
   delivery: ApproachDeliveryState;

@@ -13,6 +13,7 @@ export type ApproachGetArgs = { approachId: string };
 export type ApproachResult = { approach: ApproachSummary };
 export type ApproachListArgs = {
   direction: "incoming" | "outgoing";
+  status?: "active" | "history";
   before?: { createdAtMs: number; id: string };
   limit?: number;
 };

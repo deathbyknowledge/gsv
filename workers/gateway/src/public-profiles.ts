@@ -49,7 +49,7 @@ export async function servePublicProfileRequest(
     "content-type": json ? "application/json; charset=utf-8" : "text/html; charset=utf-8",
     "cache-control": "public, max-age=0, must-revalidate", vary: "Accept", etag,
     "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
-    "content-security-policy": "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     "x-robots-tag": "noindex, nofollow",
   });
   if (request.headers.get("if-none-match")?.split(",").map((entry) => entry.trim()).includes(etag)) return new Response(null, { status: 304, headers });

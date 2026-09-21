@@ -24,5 +24,6 @@ export async function syncContactDetailSignal(cache: QueryClient, signal: string
     if (!parsed.success) return;
     key = instrumentContactConversationKey(parsed.data.conversationId);
   } else return;
-  if (cache.getQueryState(key)) await refreshContactQuery(cache, key);
+  await cache.cancelQueries({ queryKey: key });
+  await cache.invalidateQueries({ queryKey: key });
 }

@@ -22,6 +22,9 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">
+        <button type="button" onClick={() => onNavigate(distance === "people" ? "zen" : "people")}>
+          <kbd>p</kbd>{distance === "people" ? "zen" : "people"}
+        </button>
         <button type="button" onClick={() => onNavigate(distance === "fleet" ? "zen" : "fleet")}>
           <kbd>z</kbd>{distance === "fleet" ? "zen" : "fleet"}
         </button>

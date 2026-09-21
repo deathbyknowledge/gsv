@@ -9,6 +9,7 @@ import { Zen } from "./zen/Zen";
 import { Fleet } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
+import { People } from "./people/People";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
@@ -19,7 +20,7 @@ import { useTabAttention } from "./shared/useTabAttention";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
-export type Distance = "zen" | "fleet" | "memory" | "settings";
+export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
 export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
@@ -29,9 +30,10 @@ const DISTANCE_TO_PATH = {
   fleet: "/fleet",
   memory: "/memory",
   settings: "/zen/settings",
+  people: "/people",
 } satisfies Record<Distance, string>;
 
-const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings"];
+const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
 
 function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
@@ -74,6 +76,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [zenDirty, setZenDirty] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
+  const [peopleDirty, setPeopleDirty] = useState(false);
+  const [settingsEntry, setSettingsEntry] = useState<"profile" | "preferences">("preferences");
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
@@ -109,10 +113,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       if (zenDirty && !window.confirm("Discard your unsent message and attachments?")) return false;
       if (fleetDirty && !window.confirm("Discard your unsaved Fleet changes?")) return false;
       if (memoryDirty && !window.confirm("Discard your unsaved Memory changes?")) return false;
+      if (peopleDirty && !window.confirm("Leave People and discard your unsent messages?")) return false;
       setSettingsDirty(false);
       setZenDirty(false);
       setFleetDirty(false);
       setMemoryDirty(false);
+      setPeopleDirty(false);
       setFleetReference(reference);
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       if (reducedMotion()) {
@@ -133,7 +139,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       }, MOVE_MS);
       return true;
     },
-    [distance, settingsDirty, zenDirty, fleetDirty, memoryDirty],
+    [distance, settingsDirty, zenDirty, fleetDirty, memoryDirty, peopleDirty],
   );
 
   useLayoutEffect(() => {
@@ -166,6 +172,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       if (event.key === "m") {
         event.preventDefault();
         move(distance === "memory" ? "zen" : "memory");
+      }
+      if (event.key === "p") {
+        event.preventDefault();
+        move(distance === "people" ? "zen" : "people");
       }
       if (event.key === ",") {
         event.preventDefault();
@@ -206,6 +216,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <dl>
             <dt>z</dt><dd>Fleet · press again to return to Zen</dd>
             <dt>m</dt><dd>Memory · press again to return to Zen</dd>
+            <dt>p</dt><dd>People · press again to return to Zen</dd>
             <dt>,</dt><dd>Settings · press again to return to Zen</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
@@ -284,7 +295,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             setZenPrefill(prompt);
           }} />
         ) : distance === "settings" ? (
-          <Settings onDirtyChange={setSettingsDirty} />
+          <Settings initialSection={settingsEntry} onDirtyChange={setSettingsDirty} />
+        ) : distance === "people" ? (
+          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry("profile"); }} />
         ) : (
           <Fleet
             onCommand={(target) => { if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); } }}

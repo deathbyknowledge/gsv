@@ -252,13 +252,16 @@ export class ApproachStore {
     return row ? record(row) : null;
   }
 
-  list(ownerUid: number, input: { direction: ApproachSummary["direction"]; before?: { createdAtMs: number; id: string }; limit: number }): ApproachSummary[] {
+  list(ownerUid: number, input: { direction: ApproachSummary["direction"]; status?: "active" | "history"; before?: { createdAtMs: number; id: string }; limit: number }): ApproachSummary[] {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("Message request page limit must be between 1 and 100");
-    const rows = input.before
-      ? this.sql.exec<ApproachRow>(`SELECT * FROM social_approaches WHERE owner_uid = ? AND direction = ?
-        AND (created_at, approach_id) < (?, ?) ORDER BY created_at DESC, approach_id DESC LIMIT ?`, ownerUid, input.direction, input.before.createdAtMs, input.before.id, input.limit)
-      : this.sql.exec<ApproachRow>(`SELECT * FROM social_approaches WHERE owner_uid = ? AND direction = ?
-        ORDER BY created_at DESC, approach_id DESC LIMIT ?`, ownerUid, input.direction, input.limit);
+    const active = `(state IN ${PENDING_STATES} OR (state = 'accepted' AND (next_attempt_at IS NOT NULL OR attempts >= 12)))`;
+    const status = input.status === "active" ? `AND ${active}` : input.status === "history" ? `AND NOT ${active}` : "";
+    const before = input.before ? "AND (created_at, approach_id) < (?, ?)" : "";
+    const values: (string | number)[] = [ownerUid, input.direction];
+    if (input.before) values.push(input.before.createdAtMs, input.before.id);
+    values.push(input.limit);
+    const rows = this.sql.exec<ApproachRow>(`SELECT * FROM social_approaches WHERE owner_uid = ? AND direction = ?
+      ${status} ${before} ORDER BY created_at DESC, approach_id DESC LIMIT ?`, ...values);
     return rows.toArray().map(summary);
   }
 
@@ -348,6 +351,7 @@ function summary(row: ApproachRow): ApproachSummary {
     createdAtMs: row.created_at, updatedAtMs: row.updated_at, expiresAtMs: row.expires_at,
   };
   if (row.accepted_at !== null) result.acceptedAtMs = row.accepted_at;
+  if (row.message_sequence !== null) result.messageSequence = row.message_sequence;
   if (row.contact_generation !== null) result.contactId = row.contact_id;
   if (row.state === "accepting" || row.state === "accepted") {
     result.connection = row.attempts >= 12 ? "failed" : row.state === "accepting" || row.next_attempt_at !== null ? "connecting" : "connected";

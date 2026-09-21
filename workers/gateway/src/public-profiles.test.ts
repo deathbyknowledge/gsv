@@ -13,6 +13,19 @@ const PROFILE: PublicProfile = {
 const projection = { ownerUid: 1000, alias: "person", revision: 1, key: "social/profiles/subject/1.json" };
 
 describe("public profile projection serving", () => {
+  it("hands off only the reviewed public profile address without creating an approach", async () => {
+    const bucket = createInstallationStorage(env.STORAGE, `inst_${crypto.randomUUID()}`);
+    await bucket.put(projection.key, JSON.stringify({ ...PROFILE, contactPolicy: "requests" }));
+    const response = await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, bucket, async () => projection);
+    const html = await response.text();
+    expect(html).toContain('data-profile="https://profile.example/@person"');
+    expect(html).toContain('src="/social/connect.js"');
+    expect(html).toContain("Your GSV address");
+    expect(html).not.toContain("approach.create");
+    expect(html).not.toContain("ownerUid");
+    expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
+  });
+
   it("uses exact alias and subject routes without admitting ambiguous paths", () => {
     expect(matchPublicProfilePath("/@person")).toEqual({ locator: { alias: "person" }, json: false });
     expect(matchPublicProfilePath("/_gsv/federation/v2/subjects/subject%3Aone")).toEqual({ locator: { subjectId: "subject:one" }, json: true });

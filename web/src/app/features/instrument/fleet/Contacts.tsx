@@ -115,8 +115,8 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests">(draft.text || draft.media.length ? "messages" : "details");
+export function ContactInspector({ contact, account, draft, onDraft, onSend, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length ? "messages" : "details"));
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";

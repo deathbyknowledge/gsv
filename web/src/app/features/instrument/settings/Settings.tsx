@@ -17,15 +17,16 @@ import "./settings.css";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
+  initialSection?: "preferences" | "profile";
 };
 
 const SECTIONS = ["preferences", "profile", "permissions", "instructions", "messengers", "mcp", "sign-in", "people"] as const;
 type Section = typeof SECTIONS[number];
 
-export function Settings({ onDirtyChange }: SettingsProps) {
+export function Settings({ onDirtyChange, initialSection = "preferences" }: SettingsProps) {
   const { client, connected } = useGateway();
   const { service: session } = useSession();
-  const [section, setSection] = useState<Section>("preferences");
+  const [section, setSection] = useState<Section>(initialSection);
   const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, profile: false, permissions: false, instructions: false, messengers: false, mcp: false, "sign-in": false, people: false });
   const profileDirty = useCallback((value: boolean) => setDirty((old) => old.profile === value ? old : { ...old, profile: value }), []);
   const peopleDirty = useCallback((value: boolean) => setDirty((old) => old.people === value ? old : { ...old, people: value }), []);

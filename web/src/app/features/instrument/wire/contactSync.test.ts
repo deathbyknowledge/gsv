@@ -54,6 +54,18 @@ describe("contact change notifications", () => {
 
 
 describe("contact detail notifications", () => {
+  it("refreshes a paginated history beneath its conversation key", async () => {
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cleanup.push(() => cache.clear());
+    const key = [...instrumentContactConversationKey("one"), "history", null];
+    cache.setQueryData(key, ["old"]);
+    const load = vi.fn(async () => ["new"]);
+    const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
+    cleanup.push(observer.subscribe(() => undefined));
+    await syncContactDetailSignal(cache, "conversation.changed", { conversationId: "one" });
+    expect(load).toHaveBeenCalledOnce();
+    expect(cache.getQueryData(key)).toEqual(["new"]);
+  });
   it.each([
     ["conversation.changed", instrumentContactConversationKey("one"), { conversationId: "one", latestSequence: 2 }],
     ["contact.request.changed", instrumentContactRequestsKey("one"), { contactId: "one" }],

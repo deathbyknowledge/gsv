@@ -32,9 +32,10 @@ export function handleApproachGet(args: ApproachGetArgs, ctx: KernelContext): Ap
 export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): ApproachListResult {
   const ownerUid = requireContactHuman(ctx);
   const direction = z.enum(["incoming", "outgoing"]).parse(args.direction);
+  const status = z.optional(z.enum(["active", "history"])).parse(args.status);
   const limit = args.limit ?? 30;
   const before = args.before ? z.strictObject({ createdAtMs: z.int().check(z.positive()), id: idSchema }).parse(args.before) : undefined;
-  const approaches = ctx.approaches.list(ownerUid, { direction, limit, before });
+  const approaches = ctx.approaches.list(ownerUid, { direction, status, limit, before });
   const last = approaches.at(-1);
   return { approaches, ...(last && approaches.length === limit ? { next: { createdAtMs: last.createdAtMs, id: last.id } } : undefined) };
 }

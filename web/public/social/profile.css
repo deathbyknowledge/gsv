@@ -16,4 +16,16 @@ h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; lett
 footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px; }
 a { color: var(--accent); text-underline-offset: 4px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+.connect { margin-top: 32px; border-block: 1px solid var(--line); padding-block: 20px; }
+.connect summary { color: var(--accent); cursor: pointer; list-style: none; }
+.connect summary::-webkit-details-marker { display: none; }
+.connect summary span { float: right; }
+.connect form { padding-top: 24px; }
+.connect label { display: block; font-size: 14px; margin-bottom: 8px; }
+.connect-input { display: flex; flex-wrap: wrap; gap: 10px; }
+.connect input { min-width: 0; flex: 1 1 200px; border: 1px solid var(--line); background: transparent; color: var(--text); padding: 12px; font: inherit; font-size: 16px; }
+.connect button { border: 1px solid var(--accent); background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 12px 16px; cursor: pointer; }
+.connect p, .connect noscript { font-size: 14px; color: var(--muted); }
+.connect .connect-error { color: var(--text); }
+.connect :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 @media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
