@@ -4,7 +4,8 @@
 .desktop-strip > button { flex-shrink: 0; white-space: nowrap; }
 .desktop-strip button, .desktop-error button { color: inherit; background: transparent; border: 0; text-decoration: underline; cursor: pointer; }
 .desktop-root:has(.desktop-strip) .instrument { --instrument-height: calc(100dvh - 30px); top: 30px; height: var(--instrument-height); }
-.desktop-confirm { position: fixed; z-index: 201; top: 36px; right: 12px; max-width: 400px; padding: 20px; border: 1px solid currentColor; background: #191727; color: white; }
+.desktop-confirm { position: fixed; inset: 36px 12px auto auto; margin: 0; max-width: min(400px, calc(100vw - 24px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 20px; border: 1px solid currentColor; background: #191727; color: white; }
+.desktop-confirm::backdrop { background: rgba(0, 0, 0, .35); }
 .desktop-confirm button { margin: 12px 16px 0 0; }
 .desktop-connect { position: relative; z-index: 1; max-width: 480px; margin: auto; padding: 40px; display: flex; flex-direction: column; gap: 20px; }
 .desktop-connect input { display: block; width: 100%; margin-top: 12px; padding: 10px; color: inherit; background: transparent; border: 1px solid currentColor; }

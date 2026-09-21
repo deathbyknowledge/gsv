@@ -119,7 +119,8 @@ excludes the mock. The real helpers are still real in development mode.
    daemon and installed Desktop should remain available.
    Repeat with the window manager's Close action (Super+W): with no unsaved work
    it should exit directly; with a draft it should offer Keep working or Quit.
-   Keep working must preserve the draft, including one in a hidden view.
+   Keep working must preserve the draft, including one in a hidden view. Repeat
+   with a Fleet inspector open: the quit confirmation must appear above it.
 7. Cycle `x` through 100%, 150% and 200%. Check text sharpness, full-window fit,
    prompt/caret alignment, and layout in Zen, Fleet, Memory and Settings.
    At each size, open Voice and Gestures: their panels should use the available
@@ -142,6 +143,16 @@ excludes the mock. The real helpers are still real in development mode.
    highlighting another row must not discard or ask to discard the edit;
    intentionally opening another page still protects it. Check that typing
    spaces and j/k in the search/editor fields retains ordinary text behavior.
+10. In Fleet, use j/k across places, processes, contacts, work, ledger rows and
+    files. Only focus should move: no inspector should appear and no file or
+    process-detail read should result from highlighting. Click, Space or Enter
+    should open a centered inspector; a folder should expand in place. Escape,
+    close and a backdrop click should return focus to the opener. Check scrolling
+    and contact messages in the dialog at 100%, 150% and 200% zoom. Close and
+    reopen a routine editor with a draft, then switch views and return: it should
+    retain the edit. Opening another item still protects unsaved routine edits.
+    Check an expanded file, its return to the preview, explicit pagination and
+    links into Fleet from Zen. Closed inspectors should pause their queries.
 
 For local timing diagnostics, press **F8** or open **timings** in the in-app
 prototype bar. This strip is part of the page, independent of window-manager

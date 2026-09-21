@@ -387,14 +387,11 @@
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
 @container instrument (max-width: 1280px) {
-  .fleet-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .fleet-ledger { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .who { display: none; }
 }
 @container instrument (max-width: 900px) {
   .instrument-top { padding: 0 18px; }
-  .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: calc(45vh / var(--type-scale)); }
   .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .t { display: none; }
   .zen-bottom { padding: 0 18px 14px; }

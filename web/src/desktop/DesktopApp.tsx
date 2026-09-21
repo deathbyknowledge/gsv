@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { App } from "../app/App";
 import { AuthScene } from "../app/features/session/AuthLayout";
 import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
@@ -12,6 +12,14 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
   const [confirmation, setConfirmation] = useState<"disconnect" | "quit" | null>(null);
+  const confirmationDialog = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const dialog = confirmationDialog.current;
+    if (!dialog) return;
+    // A native close request must remain actionable above any open Instrument dialog.
+    if (confirmation && !dialog.open) dialog.showModal();
+    if (!confirmation && dialog.open) dialog.close();
+  }, [confirmation]);
   const quitting = useRef(false);
   const quit = useCallback(() => {
     if (quitting.current) return;
@@ -75,14 +83,16 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
       <button type="button" onClick={() => setConfirmation("disconnect")}>disconnect space</button>
       <button type="button" onClick={requestQuit}>quit</button>
     </div>
-    {confirmation && <div class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?">
+    <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
+      onCancel={(event) => { event.preventDefault(); setConfirmation(null); }}
+      onKeyDown={(event) => event.stopPropagation()}>
       <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
       <button type="button" onClick={() => setConfirmation(null)}>keep working</button>
       <button type="button" onClick={() => {
         if (confirmation === "disconnect") void disconnect();
         else quit();
       }}>{confirmation === "disconnect" ? "disconnect" : "quit"}</button>
-    </div>}
+    </dialog>
     <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>
   </>;
 }

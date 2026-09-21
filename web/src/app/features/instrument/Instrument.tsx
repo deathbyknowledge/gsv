@@ -6,7 +6,7 @@ import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
-import { Fleet } from "./fleet/Fleet";
+import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
 import type { FleetReference } from "./fleet/fleetModel";
@@ -62,7 +62,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const { service: session } = useSession();
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
-  const [fleetReference, setFleetReference] = useState<FleetReference | null>(null);
+  const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
@@ -96,10 +96,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
       if (to === distance) {
-        if (reference) setFleetReference(reference);
+        if (reference) setFleetRequest({ reference });
         return true;
       }
-      if (reference) setFleetReference(reference);
+      if (reference) setFleetRequest({ reference });
       history.replaceState(null, "", DISTANCE_TO_PATH[to]);
       setDistance(to);
       return true;
@@ -214,10 +214,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           {distance === "fleet" && <>
             <h4>Fleet</h4>
             <dl>
-              <dt>j / ↓</dt><dd>Select the next row</dd>
-              <dt>k / ↑</dt><dd>Select the previous row</dd>
-              <dt>Enter</dt><dd>Open a file or folder; otherwise focus the inspector’s main action</dd>
-              <dt>/</dt><dd>Open a command prompt for the selected place</dd>
+              <dt>j / ↓</dt><dd>Highlight the next row</dd>
+              <dt>k / ↑</dt><dd>Highlight the previous row</dd>
+              <dt>Space / Enter</dt><dd>Open the highlighted item or toggle a folder</dd>
+              <dt>Esc</dt><dd>Close the inspector</dd>
+              <dt>/</dt><dd>Open a command prompt for the highlighted place</dd>
               <dt>t</dt><dd>Switch between human labels and technical details</dd>
             </dl>
             <h4>Expanded file</h4>
@@ -269,7 +270,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
               if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
             }}
             onDirtyChange={setFleetDirty}
-            initialReference={fleetReference}
+            openRequest={fleetRequest}
             onZen={(prefill, pid) => {
               if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;

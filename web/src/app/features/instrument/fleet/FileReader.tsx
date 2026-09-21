@@ -1,7 +1,7 @@
 import type { FsReadResult } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { readChatResource } from "../../../services/chat/backend/chatService";
@@ -22,6 +22,14 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
 }) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
+  const backButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    // Wait for the preview dialog to close in this commit before focusing its replacement.
+    queueMicrotask(() => {
+      const button = backButton.current;
+      if (button && !button.closest("[hidden]")) button.focus({ preventScroll: true });
+    });
+  }, []);
   const [draft, setDraft] = useState<{ original: string; text: string } | null>(null);
   const [removing, setRemoving] = useState(false);
   const readFile = async () => {
@@ -104,7 +112,7 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && draft && !busy && dirty) { event.preventDefault(); save.mutate(draft); }
   }}>
     <header class="file-reader-head">
-      <button class="file-reader-action" type="button" disabled={busy} onClick={close}>← back to fleet</button>
+      <button ref={backButton} class="file-reader-action" type="button" disabled={busy} onClick={close}>← back to fleet</button>
       <span class="file-reader-path">{file.target} · {file.path}</span>
       <div class="file-reader-actions">
         {draft ? <>

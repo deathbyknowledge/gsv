@@ -1,4 +1,5 @@
 import { FileReader } from "./FileReader";
+import { FleetDialog } from "./FleetDialog";
 import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
 import { RoutineEditor } from "./RoutineEditor";
 import { useDraftGuard } from "../shared/useDraftGuard";
@@ -42,7 +43,6 @@ import {
   runsTodayByPlace,
   targetRow,
   visibleProcesses,
-  reconcileFleetSelection,
   type LedgerLine,
   type Place,
   shortPid,
@@ -62,7 +62,7 @@ export type FleetProps = {
   onCommand: (target: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   /** The row to land on, when Zen sent us here from a reference. */
-  initialReference: FleetReference | null;
+  openRequest: { reference: FleetReference } | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
   onZen: (prefill?: string, pid?: string) => void;
 };
@@ -96,7 +96,7 @@ function outcomeWord(outcome: string): string {
   return outcome;
 }
 
-export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: FleetProps) {
+export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetProps) {
   const active = useViewActive();
   const [contactDirty, setContactDirty] = useState(false);
   const [fileDirty, setFileDirty] = useState(false);
@@ -105,6 +105,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   const contactDrafts = useContactDrafts(setContactDirty);
   const { client, connected } = useGateway();
   const now = useNow(active);
+  const initialReference = openRequest?.reference ?? null;
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
@@ -160,7 +161,10 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     [places],
   );
 
+  /** A linked process or target keeps its identity when unavailable; ordinary row navigation can leave it. */
+  // Only explicit activation changes the inspector. Keyboard browsing uses DOM focus.
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
+  const [inspectorOpen, setInspectorOpen] = useState(Boolean(initialRow || initialConnect));
   const [creatingProcess, setCreatingProcess] = useState(false);
   const [connecting, setConnecting] = useState<"place" | "contact" | null>(initialConnect);
   useLayoutEffect(() => {
@@ -170,7 +174,9 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     setWorkPanel(null);
     setCreatingProcess(false);
     setConnecting(initialConnect);
-  }, [initialReference]);
+    setInspectorOpen(Boolean(initialRow || initialConnect));
+    if (initialRow) focusedRow.current = initialRow;
+  }, [openRequest]);
 
   const selectedContact = selected?.startsWith("contact:") ? contacts.find((contact) => `contact:${contact.id}` === selected) : undefined;
 
@@ -191,7 +197,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   /* the technical view shows raw syscalls and arguments; t toggles it */
   const [technical, setTechnical] = useState(false);
   const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
-  const shownProcesses = useMemo(() => visibleProcesses(processes, selected, processLimit), [processes, selected, processLimit]);
+  const shownProcesses = useMemo(() => visibleProcesses(processes, inspectorOpen ? selected : null, processLimit), [processes, inspectorOpen, selected, processLimit]);
   useEffect(() => {
     if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
   }, [shownProcesses.length, processLimit]);
@@ -205,6 +211,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     setOpenFile(null);
     setCreatingProcess(false);
     setConnecting(null);
+    setInspectorOpen(true);
   }, [workDirty, selected]);
   const selectFile = useCallback((file: OpenFile) => {
     if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
@@ -213,12 +220,12 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     setOpenFile(file);
     setCreatingProcess(false);
     setConnecting(null);
+    setInspectorOpen(true);
   }, [workDirty]);
   const processNameFor = (pid: string): string => {
     const found = processes.find((process) => process.pid === pid);
     return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
   };
-  const inspectorRef = useRef<HTMLElement>(null);
   const cmdPlace = selectedPlace ?? places.find((place) => place.id === CLOUD_TARGET_ID) ?? null;
 
   const openCmd = useCallback(() => onCommand(cmdPlace?.id ?? CLOUD_TARGET_ID), [onCommand, cmdPlace?.id]);
@@ -230,25 +237,14 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   }, [sysLedgerQuery]);
   /* the rows are whatever is on screen, in reading order: places, processes, the ledger, folders and files */
   const manifestRef = useRef<HTMLDivElement>(null);
-  const visibleRows = useCallback((): FleetRow[] => {
-    const nodes = manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [];
-    return Array.from(nodes).map((node) => node.dataset.row).filter(isFleetRow);
-  }, []);
+  const focusedRow = useRef<FleetRow | null>(initialRow);
   useEffect(() => {
-    if (!active || creatingProcess || connecting || workPanel || workDirty) return;
-    if (selected?.startsWith("proc:") && (processesQuery.isPending || processesQuery.isFetching)) return;
-    if (selected?.startsWith("target:") && (targetsQuery.isPending || targetsQuery.isFetching)) return;
-    const rows = visibleRows();
-    if (rows.length === 0) return;
-    const next = reconcileFleetSelection(selected, initialRow, rows);
-    if (next !== selected) setSelected(next);
-  }, [active, places, shownProcesses, shownLedger, processesQuery.isPending, processesQuery.isFetching, targetsQuery.isPending, targetsQuery.isFetching, selected, initialRow, visibleRows, creatingProcess, connecting, contactsQuery.data, work.current.data, work.past.data, work.routines.data, work.filterPid, work.history, workPanel, workDirty]);
-  useEffect(() => {
-    if (!active || !selected) return;
+    if (!active || !inspectorOpen || !selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
     // ledger rows are display: contents and have no box of their own; their first cell does
+    // They now have grid boxes, so every row can scroll directly.
     row?.scrollIntoView({ block: "nearest" });
-  }, [selected, places, shownProcesses]);
+  }, [active, inspectorOpen, selected, places, shownProcesses]);
   const selectedLine = useMemo(
     () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
     [selected, shownLedger],
@@ -257,55 +253,46 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   useLayoutEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.closest(".fleet-process-form, .fleet-connection")) return;
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (typing || expandedFile) return;
-      if (event.key === "Enter" && target instanceof HTMLElement && target.closest("button, a[href]")) return;
-      const rows = visibleRows();
-      if (event.metaKey || event.ctrlKey || event.altKey || rows.length === 0) return;
-      const index = selected ? rows.indexOf(selected) : 0;
-      if (event.key === "j" || event.key === "ArrowDown") {
-        event.preventDefault();
-        selectRow(rows[Math.min(rows.length - 1, index + 1)]);
-      } else if (event.key === "k" || event.key === "ArrowUp") {
-        event.preventDefault();
-        selectRow(rows[Math.max(0, index - 1)]);
-      } else if (event.key === "t") {
+      if (typing || expandedFile || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "t") {
         event.preventDefault();
         setTechnical((value) => !value);
+        return;
+      }
+      if (inspectorOpen || (target instanceof HTMLElement && target.closest("[role=dialog], dialog"))) return;
+      if (event.key === "j" || event.key === "ArrowDown" || event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const rows = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).filter((row) => !row.matches(":disabled"));
+        const focused = target instanceof HTMLElement ? target.closest<HTMLElement>("[data-row]") : null;
+        let at = rows.findIndex((row) => row === focused);
+        if (at < 0) at = rows.findIndex((row) => row.dataset.row === focusedRow.current);
+        const direction = event.key === "j" || event.key === "ArrowDown" ? 1 : -1;
+        const next = rows[Math.max(0, Math.min(rows.length - 1, at + direction))];
+        if (next) {
+          next.focus({ preventScroll: true });
+          next.scrollIntoView({ block: "nearest" });
+        }
+      } else if (event.key === "Enter" || event.key === " ") {
+        if (!(target instanceof HTMLElement) || target.closest("button, a[href], summary")) return;
+        const row = target.closest<HTMLElement>("[data-row]");
+        if (!row || !manifestRef.current?.contains(row)) return;
+        event.preventDefault();
+        if (!event.repeat) row.click();
       } else if (event.key === "/") {
         event.preventDefault();
-        openCmd();
-      } else if (event.key === "Enter" && selected && (selected.startsWith("dir:") || selected.startsWith("file:"))) {
-        event.preventDefault();
-        manifestRef.current?.querySelector<HTMLElement>(`[data-row="${selected}"]`)?.click();
-      } else if (event.key === "Enter" && selected === olderRow) {
-        event.preventDefault();
-        loadOlder();
-      } else if (event.key === "Enter" && selected === moreRow) {
-        event.preventDefault();
-        setProcessLimit(shownProcesses.length < processes.length ? shownProcesses.length + 20 : PROCESS_PAGE);
-      } else if (event.key === "Enter") {
-        const primary = inspectorRef.current?.querySelector<HTMLButtonElement>("button.is-primary");
-        if (primary) {
-          event.preventDefault();
-          primary.focus();
-        }
+        const place = places.find((place) => targetRow(place.id) === focusedRow.current);
+        onCommand(place?.id ?? CLOUD_TARGET_ID);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selected, openCmd, expandedFile, processes.length, shownProcesses.length, loadOlder, visibleRows, selectRow]);
-
-  useEffect(() => {
-    if (!active || !selected) return;
-    const row = document.querySelector<HTMLElement>(`.fleet tr[data-row="${selected}"]`);
-    row?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
+  }, [active, inspectorOpen, expandedFile, places, onCommand]);
 
   const connect = (to: "place" | "contact") => {
     if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
@@ -314,11 +301,12 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
     setOpenFile(null);
     setCreatingProcess(false);
     setConnecting(to);
-    inspectorRef.current?.scrollIntoView({ block: "nearest" });
+    setInspectorOpen(true);
   };
   const selectConnected = (row: FleetRow) => {
     setConnecting(null);
     setSelected(row);
+    setInspectorOpen(true);
   };
 
   const ledgerState = sysLedgerQuery.isPending ? "ledger loading" : "ledger current";
@@ -327,9 +315,9 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   const selectedWork = work.records.find((record) => selected === `work:${record.id}`);
   const selectedRoutine = work.schedules.find((schedule) => selected === `routine:${schedule.id}`);
   const openWorkPanel = (panel: "new" | "sources") => {
-    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
+    if (panel !== workPanel && workDirty && !window.confirm("Discard this unsaved routine?")) return;
     setWorkPanel(panel); setSelected(null); setOpenFile(null); setCreatingProcess(false); setConnecting(null);
-    inspectorRef.current?.scrollIntoView({ block: "nearest" });
+    setInspectorOpen(true);
   };
   const filterWork = (pid: string) => {
     work.setHistory(false); work.setFilterPid(pid);
@@ -337,16 +325,39 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   };
   const costFor = (pid: string) => costToday.get(pid) ?? null;
   const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
+  const closeInspector = () => {
+    setInspectorOpen(false);
+    requestAnimationFrame(() => {
+      const manifest = manifestRef.current;
+      if (!manifest || manifest.closest("[hidden]") || manifest.contains(document.activeElement)) return;
+      // An expanded file or a view change can remove the dialog's original opener.
+      const row = Array.from(manifest.querySelectorAll<HTMLElement>("[data-row]")).find((entry) => entry.dataset.row === focusedRow.current);
+      row?.focus({ preventScroll: true });
+    });
+  };
+  const inspectorTitle = workPanel === "new" ? "New routine" : workPanel === "sources" ? "Standing responsibilities"
+    : connecting === "place" ? "Connect a place" : connecting === "contact" ? "Add a contact"
+      : creatingProcess ? "New process" : openFile ? "File" : selected?.startsWith("work:") ? "Responsibility"
+        : selected?.startsWith("routine:") ? "Routine" : selected?.startsWith("contact:") ? "Contact"
+          : selected?.startsWith("ledger:") ? "Activity" : selected?.startsWith("proc:") ? "Process" : "Place";
 
   return (
     <main class="fleet" aria-label="Fleet">
       {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty} onClose={(deleted) => {
-        if (deleted) setOpenFile(null);
+        if (deleted) { setOpenFile(null); setInspectorOpen(false); }
         setExpandedFile(null);
         requestAnimationFrame(() => { if (manifestRef.current) manifestRef.current.scrollTop = savedScroll.current; });
       }} />}
       <div class="fleet-body" hidden={Boolean(expandedFile)}>
-        <div ref={manifestRef} class="fleet-manifest">
+        <div ref={manifestRef} class="fleet-manifest" onFocusCapture={(event) => {
+          const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-row]") : null;
+          const key = row?.dataset.row;
+          if (isFleetRow(key)) focusedRow.current = key;
+        }} onClickCapture={(event) => {
+          if (!(event.target instanceof HTMLElement)) return;
+          const row = event.target.closest<HTMLElement>("[data-row]");
+          if (row && !event.target.closest("button, a[href]")) row.focus({ preventScroll: true });
+        }}>
           <section class="fleet-block">
             <h2>
               <i /> Places
@@ -370,7 +381,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
                   <tr
                     key={place.id}
                     data-row={targetRow(place.id)}
-                    class={selected === targetRow(place.id) ? "is-sel" : ""}
                     tabIndex={0}
                     onClick={() => selectRow(targetRow(place.id))}
                   >
@@ -399,7 +409,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
                 setOpenFile(null);
                 setConnecting(null);
                 setCreatingProcess(true);
-                inspectorRef.current?.scrollIntoView({ block: "nearest" });
+                setInspectorOpen(true);
               }}>new process</button> : null}
               <span class="count">{processes.length}</span>
             </h2>
@@ -421,7 +431,6 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
                   <tr
                     key={process.pid}
                     data-row={processRow(process.pid)}
-                    class={selected === processRow(process.pid) ? "is-sel" : ""}
                     tabIndex={0}
                     onClick={() => selectRow(processRow(process.pid))}
                   >
@@ -437,14 +446,14 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
                   </tr>
                 ))}
                 {processes.length > PROCESS_PAGE ? (
-                  <tr class={`more${selected === moreRow ? " is-sel" : ""}`} data-row={moreRow} tabIndex={0} onClick={() => selectRow(moreRow)}>
+                  <tr class="more">
                     <td colSpan={6}>
                       {shownProcesses.length < processes.length ? (
-                        <button type="button" onClick={() => setProcessLimit(shownProcesses.length + 20)}>
+                        <button type="button" data-row={moreRow} onClick={() => setProcessLimit(shownProcesses.length + 20)}>
                           show {Math.min(20, processes.length - shownProcesses.length)} more of {processes.length}
                         </button>
                       ) : (
-                        <button type="button" onClick={() => setProcessLimit(PROCESS_PAGE)}>
+                        <button type="button" data-row={moreRow} onClick={() => setProcessLimit(PROCESS_PAGE)}>
                           show fewer
                         </button>
                       )}
@@ -468,13 +477,13 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
               : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
               : <div class="tablewrap"><table>
                 <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
-                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} class={selected === `contact:${contact.id}` ? "is-sel" : ""} onClick={() => selectRow(`contact:${contact.id}`)}>
+                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} onClick={() => selectRow(`contact:${contact.id}`)}>
                   <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
                 </tr>)}</tbody>
               </table></div>}
           </section>
 
-          <WorkSections work={work} account={viewer} processes={processes} selected={selected} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
+          <WorkSections work={work} account={viewer} processes={processes} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
 
           <section class="fleet-block">
             <h2>
@@ -483,7 +492,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
             {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
             <div class="fleet-ledger" role="table">
               {shownLedger.map((line) => (
-                <div class={`row${selected === ledgerRow(line.id) ? " is-sel" : ""}`} role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => selectRow(ledgerRow(line.id))}>
+                <div class="row" role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => selectRow(ledgerRow(line.id))}>
                   <span class="t">{clockTime(line.timestamp)}</span>
                   <span class="place">{placeLabel(line.place)}</span>
                   <span class="what">{technical ? line.syscall : line.what}</span>
@@ -496,8 +505,8 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
               ))}
               {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? <LoadingState>reading…</LoadingState> : "nothing has run yet"}</span> : null}
               {sysLedgerQuery.hasNextPage ? (
-                <div class={`older${selected === olderRow ? " is-sel" : ""}`} data-row={olderRow} tabIndex={0} onClick={() => selectRow(olderRow)}>
-                  <button type="button" onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
+                <div class="older">
+                  <button type="button" data-row={olderRow} onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
                     {sysLedgerQuery.isFetchingNextPage ? <LoadingState>reading…</LoadingState> : `show ${LEDGER_PAGE} older`}
                   </button>
                 </div>
@@ -521,15 +530,15 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
                 </ul>
               ) : null}
               {places.map((place) => (
-                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={selectFile} selectedRow={selected} onSelect={selectRow} />
+                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={selectFile} />
               ))}
             </div>
           </section>
         </div>
 
-        <aside class="fleet-inspector" ref={inspectorRef}>
+        <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} onClose={closeInspector}>
           {workPanel === "new" ? (
-            <RoutineEditor onDirty={setWorkDirty} onCancel={() => setWorkPanel(null)} onSaved={(id) => { setWorkPanel(null); setSelected(`routine:${id}`); }} />
+            <RoutineEditor onDirty={setWorkDirty} onCancel={() => { setWorkPanel(null); closeInspector(); }} onSaved={(id) => { setWorkPanel(null); setSelected(`routine:${id}`); }} />
           ) : workPanel === "sources" ? (
             <StandingResponsibilities account={viewer} />
           ) : selectedWork && !openFile ? (
@@ -537,20 +546,20 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           ) : selectedRoutine && !openFile ? (
             <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
           ) : connecting === "place" ? (
-            <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={() => setConnecting(null)} onConnected={(id) => selectConnected(targetRow(id))} />
+            <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
           ) : connecting === "contact" ? (
-            <AddContact account={viewer} onClose={() => setConnecting(null)} onAdded={(id) => selectConnected(`contact:${id}`)} />
+            <AddContact account={viewer} onClose={closeInspector} onAdded={(id) => selectConnected(`contact:${id}`)} />
           ) : selectedContact && !openFile ? (
             <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer}
                   draft={contactDrafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT}
                   onDraft={(change) => contactDrafts.update(selectedContact.id, change)}
                   onSend={() => void contactDrafts.send(selectedContact.id)} />
           ) : creatingProcess ? (
-            <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => setCreatingProcess(false)} />
+            <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
           ) : selectedLine && !openFile ? (
             <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onProcess={(pid) => selectRow(processRow(pid))} />
           ) : openFile ? (
-            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => setOpenFile(null)} onZen={onZen} onExpand={() => {
+            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={closeInspector} onZen={onZen} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
               setExpandedFile(openFile);
             }} />
@@ -563,7 +572,16 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
               runsToday={runsToday.get(selectedPlace.id) ?? 0}
               now={now}
               onRun={openCmd}
-              onBrowse={() => document.querySelector(".fleet-tree")?.scrollIntoView({ block: "start" })}
+              onBrowse={() => {
+                closeInspector();
+                requestAnimationFrame(() => {
+                  if (manifestRef.current?.closest("[hidden]")) return;
+                  const rowKey = `dir:${selectedPlace.id}:${selectedPlace.id === CLOUD_TARGET_ID ? "~" : "."}`;
+                  const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === rowKey);
+                  row?.focus({ preventScroll: true });
+                  row?.scrollIntoView({ block: "nearest" });
+                });
+              }}
               onZen={onZen}
             />
           ) : selectedProcess ? (
@@ -596,7 +614,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
           ) : (
             <p class="note">{connected ? "Nothing here yet." : "Connecting…"}</p>
           )}
-        </aside>
+        </FleetDialog>
       </div>
 
 
@@ -618,8 +636,6 @@ function DirNode({
   depth,
   enabled,
   onOpenFile,
-  selectedRow,
-  onSelect,
 }: {
   place: Place;
   path: string;
@@ -627,8 +643,6 @@ function DirNode({
   depth: number;
   enabled: boolean;
   onOpenFile: OpenFileHandler;
-  selectedRow: FleetRow | null;
-  onSelect: (row: FleetRow) => void;
 }) {
   const rowKey: FleetRow = `dir:${place.id}:${path}`;
   const { client } = useGateway();
@@ -644,19 +658,16 @@ function DirNode({
   return (
     <div class={depth === 0 ? "" : "dir"}>
       <div
-        class={`place-head${open ? " is-open" : ""}${selectedRow === rowKey ? " is-sel" : ""}`}
+        class={`place-head${open ? " is-open" : ""}`}
         role="button"
         tabIndex={0}
         aria-expanded={open}
         data-row={rowKey}
-        onClick={() => {
-          onSelect(rowKey);
-          toggle();
-        }}
+        onClick={toggle}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            toggle();
+            if (!event.repeat) toggle();
           }
         }}
       >
@@ -671,13 +682,13 @@ function DirNode({
           {entries.slice(0, 60).map((entry) =>
             entry.kind === "directory" ? (
               <li key={entry.path}>
-                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} selectedRow={selectedRow} onSelect={onSelect} />
+                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} />
               </li>
             ) : (
               <li key={entry.path} class="f">
                 <button
                   type="button"
-                  class={`file${selectedRow === `file:${place.id}:${entry.path}` ? " is-sel" : ""}`}
+                  class="file"
                   data-row={`file:${place.id}:${entry.path}`}
                   onClick={() => {
                     onOpenFile({ target: place.id, path: entry.path, name: entry.name });
@@ -696,9 +707,9 @@ function DirNode({
   );
 }
 
-function PlaceTree({ place, enabled, onOpenFile, selectedRow, onSelect }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler; selectedRow: FleetRow | null; onSelect: (row: FleetRow) => void }) {
+function PlaceTree({ place, enabled, onOpenFile }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler }) {
   // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
-  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} selectedRow={selectedRow} onSelect={onSelect} />;
+  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} />;
 }
 
 const PREVIEW_LINES = 40;
