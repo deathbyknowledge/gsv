@@ -44,7 +44,7 @@ import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 import { resolveSelectedMessageTarget } from "./targets";
-import { assertScopedProcess, currentProcessScope, validateScopePolicy } from "./process-scope";
+import { assertScopedProcess, assertScopedProcessInput, currentProcessScope, validateScopePolicy } from "./process-scope";
 import { processScopePolicySchema } from "@humansandmachines/gsv/protocol";
 import { stableOpaqueId } from "../shared/stable-id";
 
@@ -831,8 +831,10 @@ export async function forwardToProcess(
       ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
       : frame;
   if (processFrame.call === "proc.send" && processFrame.args.selectedTarget !== undefined) {
+    assertScopedProcessInput(ctx, pid, processFrame.args);
     processFrame.args.selectedTarget = await resolveSelectedMessageTarget(ctx, processFrame.args.selectedTarget);
   }
+  if (processFrame.call === "proc.send") assertScopedProcessInput(ctx, pid, processFrame.args);
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
   }

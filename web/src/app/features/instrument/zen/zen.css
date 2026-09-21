@@ -13,6 +13,23 @@
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
+.zen.has-scoped-work { grid-template-rows: auto minmax(0, 1fr) auto; }
+.zen-scoped-work {
+  padding: calc(var(--instrument-header-height) + 14px) max(18px, 6vw) 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.zen-scoped-heading { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; justify-content: space-between; }
+.zen-scoped-heading strong { color: var(--text); font-weight: 500; }
+.zen-scoped-work p { margin: 8px 0; line-height: 1.5; }
+.zen-scoped-work button { color: var(--accent); text-align: left; background: none; border: 0; padding: 4px 0; cursor: pointer; }
+.zen-scoped-work button:disabled { opacity: .5; cursor: default; }
+.zen-scoped-work summary { cursor: pointer; }
+.zen-scoped-work :focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.zen.has-scoped-work .zen-content { padding-top: 3vh; }
 @media (max-width: 720px) {
   .zen-body { grid-template-columns: 18px 1fr 18px; }
 }

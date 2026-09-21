@@ -25,12 +25,15 @@ const NO_CONTACT_CURSOR: ContactListArgs["after"] = undefined;
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 
-export function People({ onDirtyChange, onProfile, onOpenHelper }: { onDirtyChange: (dirty: boolean) => void; onProfile: () => void; onOpenHelper: (pid: string) => void }) {
+export function People({ onDirtyChange, onProfile, onOpenHelper, initialHelp }: {
+  onDirtyChange: (dirty: boolean) => void; onProfile: () => void;
+  onOpenHelper: (pid: string, contactId: string) => void; initialHelp?: { contactId: string; pid: string } | null;
+}) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const attention = useAttentionSummary();
   const [compose, setCompose] = useState(() => emptyApproachDraft(new URLSearchParams(window.location.search).get("compose") ?? ""));
-  const [selection, updateSelection] = useState<Selection>(() => compose.url ? { kind: "compose" } : null);
+  const [selection, updateSelection] = useState<Selection>(() => compose.url ? { kind: "compose" } : initialHelp ? { kind: "contact", id: initialHelp.contactId } : null);
   const [panelDirty, setPanelDirty] = useState(false);
   const setSelection = (next: Selection) => {
     if (panelDirty && !window.confirm("Discard these unsent changes?")) return;
@@ -159,7 +162,7 @@ export function People({ onDirtyChange, onProfile, onOpenHelper }: { onDirtyChan
         : selection?.kind === "sharing" ? <SharedContextManager account={account} onDirty={setPanelDirty} onOpen={openContact} />
         : selection?.kind === "blocked" ? <BlockedPeople account={account} />
         : selection?.kind === "invitation" ? <AddContact account={account} onClose={() => setSelection(null)} onAdded={openContact} />
-        : selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={view === "contacts" ? "details" : "messages"} onWorkDirty={setPanelDirty} onOpenContact={openContact} onOpenHelper={onOpenHelper} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+        : selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={initialHelp?.contactId === selectedContact.id ? "help" : view === "contacts" ? "details" : "messages"} initialHelperPid={initialHelp?.contactId === selectedContact.id ? initialHelp.pid : undefined} onWorkDirty={setPanelDirty} onOpenContact={openContact} onOpenHelper={(pid) => onOpenHelper(pid, selectedContact.id)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
         : requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={openContact} onDirty={setPanelDirty} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">Opening request…</LoadingState>
         : selection?.kind === "contact" ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
         : <div class="people-empty"><div class="people-kicker">Intentional connections</div><h2>Your people.<br />One conversation at a time.</h2><p>Open a conversation, review a request, or reach someone new. Your Ship joins only when you choose.</p><button class="people-action" disabled={busy || !connected || !account || !canConfigure(account, "approach.create")} onClick={() => setSelection({ kind: "compose" })}>start a conversation ↗</button></div>}

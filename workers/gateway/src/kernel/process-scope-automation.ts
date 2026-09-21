@@ -14,7 +14,7 @@ export class ProcessScopeAutomation {
   register(scope: ProcessScope, sequence: number, now = Date.now()): void {
     if (!scope.policy.automatic) return;
     const contact = scope.policy.conversations[0];
-    const active = this.sql.exec("SELECT 1 FROM process_scope_automation a JOIN process_scopes s ON a.scope_id = s.id WHERE a.contact_id = ? AND s.state = 'active' AND s.expires_at > ?", contact.contactId, now).toArray();
+    const active = this.sql.exec("SELECT 1 FROM process_scope_automation a JOIN process_scopes s ON a.scope_id = s.id WHERE a.contact_id = ? AND a.generation = ? AND s.state = 'active' AND s.expires_at > ?", contact.contactId, contact.generation, now).toArray();
     if (active.length) throw new Error("Stop the existing automatic helper for this person before enabling another");
     this.sql.exec("INSERT INTO process_scope_automation (scope_id, contact_id, conversation_id, generation, start_sequence) VALUES (?, ?, ?, ?, ?)",
       scope.id, contact.contactId, contact.conversationId, contact.generation, sequence);

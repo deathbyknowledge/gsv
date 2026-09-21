@@ -110,9 +110,9 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, onWorkDirty, onOpenContact, onOpenHelper }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, initialHelperPid, onWorkDirty, onOpenContact, onOpenHelper }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" | "help"; initialHelperPid?: string }) {
   const [section, setSection] = useState<"details" | "messages" | "requests" | "help">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
-  const [helperPid, setHelperPid] = useState<string | null>(null);
+  const [helperPid, setHelperPid] = useState<string | null>(initialHelperPid ?? null);
   const [workDirty, setWorkDirty] = useState(false);
   const workChanged = useCallback((dirty: boolean) => { setWorkDirty(dirty); onWorkDirty(dirty); }, [onWorkDirty]);
   const { client, connected } = useGateway();

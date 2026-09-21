@@ -29,7 +29,7 @@ import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import { resolveSelectedMessageTarget } from "./targets";
-import { assertScopedConversation, currentProcessScope } from "./process-scope";
+import { assertScopedConversation, assertScopedProcessInput, currentProcessScope } from "./process-scope";
 import * as z from "zod/mini";
 
 const conversationClientStateSchema = z.object({
@@ -131,6 +131,7 @@ export async function handleConversationSend(
   if (conversation.kind === "ship" && !handler.isPersonalController) {
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
+  assertScopedProcessInput(ctx, conversation.handlerPid, args);
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
   const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
@@ -144,6 +145,7 @@ export async function handleConversationSend(
     messageId,
   );
   ctx.requestSignal?.throwIfAborted();
+  assertScopedProcessInput(ctx, conversation.handlerPid, args);
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId,
     idempotencyKey,
@@ -197,6 +199,7 @@ export async function handleConversationSend(
   }
   let result: Extract<ProcSendResult, { ok: true }>;
   try {
+    assertScopedProcessInput(ctx, conversation.handlerPid, args);
     // SAFETY: The process RPC boundary returns a response frame for this request.
     const response = await sendFrameToProcess(
       ctx.installationId,

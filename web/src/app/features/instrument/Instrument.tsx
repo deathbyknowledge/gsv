@@ -77,6 +77,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
+  const [peopleHelp, setPeopleHelp] = useState<{ contactId: string; pid: string } | null>(null);
   const [settingsEntry, setSettingsEntry] = useState<"profile" | "preferences">("preferences");
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
@@ -284,7 +285,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage(page);
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} onPeople={(contactId, pid) => { if (move("people")) setPeopleHelp({ contactId, pid }); }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
         ) : distance === "memory" ? (
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(page, prompt) => {
             if (!move("zen")) return;
@@ -296,7 +297,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         ) : distance === "settings" ? (
           <Settings initialSection={settingsEntry} onDirtyChange={setSettingsDirty} />
         ) : distance === "people" ? (
-          <People onDirtyChange={setPeopleDirty} onOpenHelper={(pid) => { if (move("zen")) { setZenTarget(null); setZenPrefill(null); setZenPid(pid); } }} onProfile={() => { if (move("settings")) setSettingsEntry("profile"); }} />
+          <People onDirtyChange={setPeopleDirty} initialHelp={peopleHelp} onOpenHelper={(pid, contactId) => { if (move("zen")) { setPeopleHelp({ contactId, pid }); setZenTarget(null); setZenPrefill(null); setZenPid(pid); } }} onProfile={() => { if (move("settings")) setSettingsEntry("profile"); }} />
         ) : (
           <Fleet
             onCommand={(target) => { if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); } }}

@@ -61,6 +61,14 @@ scoped family. `proc.scope.revoke` requires a direct signed-in human and the
 reviewed revision. Changing a grant requires creating a fresh helper; it cannot
 retroactively clean a broader Process history.
 
+Follow-up inputs through both `conversation.send` and `proc.send` may supply
+text, but cannot append files or target selections to a scoped Process. Those
+require a fresh reviewed helper. The Kernel rechecks the grant before retaining
+Conversation input and before Process admission. Zen keeps its access, expiry,
+remaining allowance and a return to the conversation's reply reviews visible;
+device selection, attachments and direct owner shell commands are absent from
+this restricted work surface.
+
 People uses this runtime for selected-message assistance, private helper replies
 and durable exact-draft review. See social-drafts.md. A scoped contact send
 requires a causal reply reference; creating a contact never enables automatic

@@ -63,6 +63,14 @@ The helper shows admitted and queued messages, the pause reason and a stop
 control. Creation retries recover the same helper. Renewal means stopping the
 old helper and making another explicit choice, never extending access silently.
 
+Opening a helper's full work in Zen keeps a persistent access summary and a
+return to that same conversation and helper. Its prompt accepts private follow-
+up text only. Reviewed material replaces the usual device chip, and attachment
+and direct-command controls are hidden. Revoked, expired, disconnected or
+exhausted work remains readable with its composer disabled. Scope and contact
+signals refresh that state across clients. A broader task starts with a fresh
+review in People.
+
 Verification is split by the standing work agreement: CI owns automated
 behavior and boundary checks; the maintainer trials the rendered UI, keyboard,
 mobile and two-space flows. These design decisions are not a claim that the

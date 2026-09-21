@@ -1,4 +1,4 @@
-import type { FileResourceReference, ProcessScope, ProcessScopePolicy } from "@humansandmachines/gsv/protocol";
+import type { FileResourceReference, ProcessScope, ProcessScopePolicy, ProcSendArgs } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
 import { hasCapability } from "./capabilities";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
@@ -66,6 +66,20 @@ export function validateScopePolicy(policy: ProcessScopePolicy, ownerUid: number
 export function assertScopedProcess(ctx: KernelContext, pid: string): void {
   const scope = currentProcessScope(ctx);
   if (scope && ctx.procs.scopes.forProcess(pid)?.id !== scope.id) throw new Error("Process is outside this helper's scope");
+}
+
+/** Follow-up text may guide existing work; files and targets require a fresh reviewed grant. */
+export function assertScopedProcessInput(ctx: KernelContext, pid: string, input: Pick<ProcSendArgs, "media" | "selectedTarget">): void {
+  const scopeId = ctx.procs.get(pid)?.scopeId;
+  if (!scopeId) return;
+  const scope = ctx.procs.scopes.requireActive(scopeId);
+  for (const grant of scope.policy.conversations) {
+    const contact = ctx.federation.get(grant.contactId);
+    if (!contact || contact.ownerUid !== scope.ownerUid || contact.state !== "active" || contact.generation !== grant.generation) {
+      throw new Error("This helper's connection is no longer active");
+    }
+  }
+  if (input.selectedTarget !== undefined || input.media?.length) throw new Error("Choose a fresh helper to share more files or targets; this helper accepts follow-up text only");
 }
 
 export function assertScopedConversation(ctx: KernelContext, conversationId: string): void {
