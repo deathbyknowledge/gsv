@@ -10,6 +10,26 @@ The ownership record is [here](../../../../engineering/desktop-tauri-prototype.m
 From the repository root, with Rust, Node/npm and the
 [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux):
 
+Install WebKit's media runtime as well as its development libraries. The shared
+frontend renders audio/video attachments, and WebKitGTK needs GStreamer plugins
+even though native voice capture runs in `gsv-transcribe`:
+
+```bash
+# Arch Linux
+sudo pacman -S --needed gst-plugins-base gst-plugins-good gst-libav
+
+# Ubuntu / Debian
+sudo apt-get install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+```
+
+`autoaudiosink` comes from [GStreamer Good Plug-ins](https://gstreamer.freedesktop.org/documentation/autodetect/autoaudiosink.html).
+If it is missing, WebKitGTK 2.52.6 can abort its page process during media
+initialization, leaving the native window unresponsive. This was observed on
+the prototype machine; successfully compiling WebKit bindings does not establish
+that these runtime plugins are installed.
+
+Build and launch:
+
 ```bash
 npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
 npm run gsv:build
