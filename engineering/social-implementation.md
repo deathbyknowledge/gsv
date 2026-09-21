@@ -197,6 +197,14 @@ typechecking found a missing SDK namespace declaration. `f2b0f483` and
 `6e9e7fc1` fix those and include capability-gated publication notifications.
 The complete new profile integration flow still awaits a passing CI run.
 
+CI at `ab7efab2` passed Gateway unit/integration, workspace, adapters and lint,
+including the new profile publication flow. The next source batch implements
+first-contact admission, exact signed claims, durable confirmation, bounded
+recovery, and unaccepted-history cleanup. It adds CI cases for lost responses,
+proof of recipient key possession, private-invitation separation, blocking,
+retention and the real two-space flow. Web request composition and inbox design
+continue after this backend checkpoint; it is not feature completion.
+
 The first-contact contract now lives in `docs/architecture/social-approaches.md`.
 It reuses invitation derivation and receipts with an exact peer/approach-bound
 claim signature and durable confirmation before the issuer dispatches messages.

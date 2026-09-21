@@ -61,6 +61,10 @@ import {
   MAX_FEDERATION_REQUEST_DETAILS_BYTES,
   MAX_FEDERATION_REQUEST_TITLE_BYTES,
   MAX_FEDERATION_RESOURCE_BYTES,
+  approachEnvelopeSchema,
+  approachClaimSchema,
+  approachConfirmationSchema,
+  approachWithdrawalSchema,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
@@ -72,6 +76,10 @@ import {
   type FsOpenedSource,
 } from "../drivers/native/fs";
 import type { KernelContext } from "./context";
+import { ApproachAdmissionError } from "./approach-store";
+import { receiveApproach } from "./approaches/admission";
+import { claimApproach, confirmApproach, withdrawApproach } from "./approaches/pairing";
+import { APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH } from "./approaches/shared";
 import { kernelPeerContext } from "./peer";
 import { ensurePersonalController } from "./personal-controller";
 import {
@@ -223,6 +231,7 @@ export function isFederationPublicPath(pathname: string): boolean {
   return pathname === SHIP_DOCUMENT_PATH
     || pathname === SHIP_DOCUMENT_V2_PATH
     || pathname === DELIVERY_V2_PATH
+    || [APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(pathname)
     || pathname === INVITE_ACCEPT_PATH
     || pathname === DELIVERY_PATH
     || pathname.startsWith(RESOURCE_PATH_PREFIX);
@@ -312,6 +321,7 @@ export function handleContactInviteCancel(
   const inviteId = args.inviteId.trim();
   if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
   const previous = ctx.federation.invite(inviteId);
+  if (previous?.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
   const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
   if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
   return { invite: contactInviteSummary(invite, now) };
@@ -953,6 +963,11 @@ export async function processFederationDelivery(
     return;
   }
 
+  if (ctx.approaches.pendingConnection(contact.id, contact.generation)) {
+    await ctx.scheduleFederationDelivery(deliveryId, Date.now() + 30_000);
+    return;
+  }
+
   try {
     await commitLocalOutboxMessage(record, contact, ctx);
     if (!currentFederationDeliveryContact(record, ctx)) return;
@@ -1172,6 +1187,15 @@ export async function handleFederationHttpRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   try {
+    if ([APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(url.pathname) && request.method === "POST") {
+      consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
+      const input = await readBoundedJson(request);
+      const publicContext = { ...ctx, requestSignal: request.signal };
+      if (url.pathname === APPROACH_PATH) return jsonResponse(jsonValue(await receiveApproach(approachEnvelopeSchema.parse(input), publicContext)));
+      if (url.pathname === APPROACH_CLAIM_PATH) return jsonResponse(jsonValue(await claimApproach(approachClaimSchema.parse(input), publicContext)));
+      if (url.pathname === APPROACH_CONFIRM_PATH) return jsonResponse(jsonValue(await confirmApproach(approachConfirmationSchema.parse(input), publicContext)));
+      return jsonResponse(jsonValue(await withdrawApproach(approachWithdrawalSchema.parse(input), publicContext)));
+    }
     if (url.pathname === SHIP_DOCUMENT_V2_PATH && (request.method === "GET" || request.method === "POST")) {
       if (request.body) {
         try {
@@ -1372,6 +1396,7 @@ async function acceptRemoteInvite(
   const tokenHash = await sha256Base64Url(input.token);
   const invite = ctx.federation.inviteByTokenHash(tokenHash);
   if (!invite) throw new PublicFederationError(404, "Contact invite not found");
+  if (invite.purpose === "approach") throw new PublicFederationError(404, "Contact invite not found");
   if (invite.state === "cancelled") {
     throw new PublicFederationError(410, "Contact invite was cancelled");
   }
@@ -2489,7 +2514,7 @@ async function readBoundedJson(request: Request): Promise<JsonValue> {
   const bytes = await bodyToBytes(
     { stream: request.body, length: contentLength ? Number(contentLength) : undefined },
     MAX_PUBLIC_JSON_BYTES,
-    request.signal,
+    AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
   );
   try {
     return jsonValueSchema.parse(JSON.parse(decoder.decode(bytes)));
@@ -2551,6 +2576,11 @@ function assertCurrentTimestamp(timestampMs: number): void {
 
 function publicFederationFailure(cause: unknown): PublicFederationFailure {
   if (cause instanceof FederationActorBlockedError) return { status: 404, message: "Contact pairing is unavailable" };
+  if (cause instanceof ApproachAdmissionError) {
+    if (cause.reason === "collision") return { status: 409, message: "A message request is already pending for these participants", retryAfterMs: 60_000 };
+    if (cause.reason === "capacity") return { status: 429, message: "Message requests are temporarily unavailable", retryAfterMs: 3_600_000 };
+    return { status: 404, message: "Message requests are unavailable" };
+  }
   if (cause instanceof PublicFederationError) {
     return {
       status: cause.status,

@@ -751,6 +751,7 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
       isPersonalAgentUid: () => false,
     },
     procs: {},
+    approaches: focusedFixture({ pendingConnection: () => false }),
     ...overrides,
   };
   // SAFETY: each test exercises only the KernelContext members supplied by its focused fixture.

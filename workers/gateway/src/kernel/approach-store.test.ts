@@ -1,9 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { APPROACH_LIFETIME_MS, ApproachStore, type PrepareApproach } from "./approach-store";
+import { APPROACH_LIFETIME_MS, APPROACH_RECEIPT_MS, ApproachStore, type PrepareApproach } from "./approach-store";
 import { FederationStore } from "./federation-store";
 
 describe("durable first-contact records", () => {
+  it("measures the full installation intake budget and frees admission capacity after expiry", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const requests = new ApproachStore(storage);
+      const baseline = sql.databaseSize;
+      const ids: string[] = [];
+      const now = Date.now();
+      for (let index = 0; index < 1000; index++) {
+        const input = incoming(1000 + Math.floor(index / 250));
+        input.content.text = "x".repeat(32_768);
+        ids.push(requests.prepare(input, () => {}, now).summary.id);
+      }
+      expect(() => requests.prepare(incoming(1004), () => {}, now)).toThrow("capacity");
+      expect(sql.databaseSize - baseline).toBeLessThan(96 * 1024 * 1024);
+      console.info("first-contact Kernel capacity (1000 full-size pending fixtures)", { baseline, bytes: sql.databaseSize });
+      const expiry = now + APPROACH_LIFETIME_MS + 1_000;
+      requests.expire(ids[0], expiry);
+      expect(requests.get(ids[0])).toMatchObject({ pendingText: null, setupToken: null, summary: { state: "expired" } });
+      expect(requests.prepare(incoming(1004), () => {}).summary.state).toBe("preparing");
+      requests.removeSettled(ids[0], expiry + APPROACH_RECEIPT_MS);
+      expect(requests.get(ids[0])).toBeNull();
+    });
+  }, 30_000);
+
+  it("retains an in-flight acceptance through the receipt grace window and preserves accepted history across blocking", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const requests = new ApproachStore(storage);
+      const input = incoming();
+      const created = requests.prepare(input, () => {});
+      requests.messageCommitted(created.summary.id, 1);
+      requests.beginAcceptance(created.summary.id, 1000, 1, "attempt:durable");
+      requests.expire(created.summary.id, input.content.expiresAtMs + 1);
+      expect(requests.get(created.summary.id)?.summary.state).toBe("accepting");
+      const committed = requests.commitClaim(created.summary.id, "attempt:durable", "generation:one", { receipt: "durable" }, input.content.expiresAtMs + 1);
+      expect(committed.summary.acceptedAtMs).toBe(input.content.expiresAtMs + 1);
+      expect(committed.setupToken).toBeNull();
+      requests.blockForActor(1000, input.peer);
+      expect(requests.get(created.summary.id)?.summary.acceptedAtMs).toBe(committed.summary.acceptedAtMs);
+      expect(() => requests.commitClaim(created.summary.id, "attempt:durable", "generation:one", {})).toThrow("changed");
+    });
+  });
+
   it("reserves one request, resumes the same append, and keeps setup material out of summaries", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const requests = new ApproachStore(storage);

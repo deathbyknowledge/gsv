@@ -50,6 +50,7 @@ export class FederationActorBlockedError extends Error {
 
 type FederationInviteBase = {
   inviteId: string;
+  purpose: "private" | "approach";
   ownerUid: number;
   tokenHash: string;
   issuingShipId: string;
@@ -307,6 +308,7 @@ const CONTACT_SELECT = `SELECT c.*, EXISTS (
 ) AS actor_blocked FROM federation_contacts c`;
 
 type InviteRow = {
+  purpose: "private" | "approach";
   invite_id: string;
   owner_uid: number;
   token_hash: string;
@@ -549,7 +551,7 @@ export class FederationStore {
   outstandingInviteCount(ownerUid: number, now = Date.now()): number {
     return this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM federation_invites
-       WHERE owner_uid = ? AND state = 'issued' AND expires_at > ?`,
+       WHERE owner_uid = ? AND state = 'issued' AND purpose = 'private' AND expires_at > ?`,
       ownerUid,
       now,
     ).one().count;
@@ -568,6 +570,7 @@ export class FederationStore {
   }
 
   createInvite(input: {
+    purpose?: "private" | "approach";
     ownerUid: number;
     tokenHash: string;
     issuingShipId: string;
@@ -580,8 +583,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_invites
        (invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin,
-        state, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?)`,
+        state, expires_at, created_at, purpose)
+       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?)`,
       inviteId,
       input.ownerUid,
       input.tokenHash,
@@ -589,6 +592,7 @@ export class FederationStore {
       input.issuingOrigin,
       input.expiresAtMs,
       now,
+      input.purpose ?? "private",
     );
     return this.inviteByTokenHash(input.tokenHash)!;
   }
@@ -731,7 +735,7 @@ export class FederationStore {
     const values = includeTerminal ? [ownerUid] : [ownerUid, now];
     return this.sql.exec<InviteRow>(
       `SELECT * FROM federation_invites
-       WHERE owner_uid = ? ${terminal}
+       WHERE owner_uid = ? AND purpose = 'private' ${terminal}
        ORDER BY created_at DESC`,
       ...values,
     ).toArray().map(inviteFromRow);
@@ -1885,6 +1889,7 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
 function inviteFromRow(row: InviteRow): FederationInviteRecord {
   const base: FederationInviteBase = {
     inviteId: row.invite_id,
+    purpose: row.purpose,
     ownerUid: row.owner_uid,
     tokenHash: row.token_hash,
     issuingShipId: row.issuing_ship_id,

@@ -190,6 +190,14 @@ export class ConversationRegistry {
     ).toArray().map(toSummary);
   }
 
+  discardContactIntake(id: string, ownerUid: number): void {
+    const conversation = this.get(id);
+    if (!conversation) return;
+    if (conversation.ownerUid !== ownerUid || conversation.kind !== "contact" || conversation.handlerPid) throw new Error("Conversation is not a message request");
+    this.sql.exec("DELETE FROM conversation_members WHERE conversation_id = ?", id);
+    this.sql.exec("DELETE FROM conversations WHERE conversation_id = ?", id);
+  }
+
   setHandler(id: string, handlerPid: string): void {
     const current = this.get(id);
     if (!current) throw new Error("Conversation does not exist");

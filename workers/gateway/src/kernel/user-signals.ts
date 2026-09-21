@@ -24,6 +24,7 @@ export const USER_CONNECTION_SIGNALS = [
   "ledger.changed",
   "contact.changed",
   "profile.changed",
+  "approach.changed",
   "contact.invite.changed",
   "contact.request.changed",
   "r12y.changed",

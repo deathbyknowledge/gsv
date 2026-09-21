@@ -428,6 +428,37 @@ describe("cross-GSV federation integration", () => {
     expect((await second.contact.list({ includeRevoked: true })).contacts[0]?.state).toBe("revoked");
     expect(messagesWithText(await second.conversation.history({ conversationId: secondContact.conversationId }), messageArgs.text)).toHaveLength(1);
   });
+  it("opens a published profile, requests a conversation, and preserves the first message through acceptance", async () => {
+    for (const client of [first, second]) {
+      const contacts = (await client.contact.list({ includeRevoked: true })).contacts;
+      for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
+    }
+    const initial = (await second.profile.get({})).profile;
+    const draft = { alias: "public-second", displayName: "Second person", about: "Message me about GSV", contactPolicy: "requests" as const, representation: "human" as const };
+    const saved = (await second.profile.update({ expectedRevision: initial.revision, draft })).profile;
+    await second.profile.publish({ expectedRevision: saved.revision });
+    await expect.poll(async () => (await second.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
+    const profile = (await first.profile.resolve({ url: new URL("/@public-second", secondOrigin).href })).profile;
+    const input = { profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision,
+      displayName: "First person", text: "An intentional first-contact message", idempotencyKey: "integration-approach" };
+    const sent = (await first.approach.create(input)).approach;
+    expect((await first.approach.create(input)).approach.id).toBe(sent.id);
+    await expect.poll(async () => (await second.approach.list({ direction: "incoming" })).approaches[0]?.state, { timeout: 20_000 }).toBe("pending");
+    const received = (await second.approach.list({ direction: "incoming" })).approaches[0];
+    const before = await second.conversation.history({ conversationId: received.conversationId });
+    expect(messagesWithText(before, input.text)).toHaveLength(1);
+    expect(before.messages.find((message) => message.text === input.text)?.social?.provenance.kind).toBe("human");
+    expect((await second.conversation.get({ conversationId: received.conversationId })).conversation.handlerPid).toBeUndefined();
+    await second.approach.decide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" });
+    await expect.poll(async () => (await first.approach.get({ approachId: sent.id })).approach.connection, { timeout: 20_000 }).toBe("connected");
+    const connected = (await second.approach.get({ approachId: received.id })).approach;
+    expect(connected.contactId).toBeDefined();
+    expect(connected.conversationId).toBe(received.conversationId);
+    expect(messagesWithText(await second.conversation.history({ conversationId: received.conversationId }), input.text)).toHaveLength(1);
+    const reply = await second.contact.send({ contactId: connected.contactId!, text: "Welcome to the conversation", idempotencyKey: "integration-approach-reply" });
+    await expect.poll(async () => (await second.contact.delivery.get({ deliveryId: reply.deliveryId })).delivery?.state, { timeout: 20_000 }).toBe("delivered");
+    expect(messagesWithText(await first.conversation.history({ conversationId: sent.conversationId }), "Welcome to the conversation")).toHaveLength(1);
+  });
 });
 
 function loopbackOrigin(value: URL): URL {

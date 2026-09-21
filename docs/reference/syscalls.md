@@ -648,6 +648,39 @@ the model. It does not change the message origin, reply endpoint, process defaul
 or syscall permissions. Omission does not inherit an earlier message's selection.
 Changing the selection changes the conversation message's idempotency payload.
 
+## Message requests: `approach.*`
+
+These operations require the directly signed-in human. A request sends one
+bounded plain-text message to an explicitly resolved public profile. Receiving
+it creates no Process or promise. Acceptance permits that conversation; saving
+the person and allowing Ship assistance remain separate decisions.
+
+```ts
+{
+  "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
+  "approach.get": { args: ApproachGetArgs; result: ApproachResult };
+  "approach.list": { args: ApproachListArgs; result: ApproachListResult };
+  "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
+  "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
+}
+```
+
+Creation binds the reviewed profile URL, actor and publication revision, explicit
+sender display name, text and idempotency key. Retrying the same key cannot
+change the first message. List pages select incoming or outgoing requests and
+use the returned `(createdAtMs, id)` cursor. Decisions (`accept`, `decline`,
+`withdraw`) require the displayed revision. Block uses `contact.block.set` for
+the pinned actor. Private setup material never appears in these results.
+
+`delivery` describes first-message receipt; `connection` describes pairing.
+`received` does not mean read or accepted. `connecting` and `failed` preserve
+uncertain setup, with explicit retry where the local participant owns recovery.
+An unknown sender cannot attach resources or send another message before
+acceptance. Pending requests expire after 30 days; an already started acceptance
+has an additional eight-day recovery window. Declined, withdrawn, blocked and
+expired requests retain their unaccepted history for eight days, then remove its
+local message and search rows. Accepted or previously established history remains.
+
 ## Public Profiles: `profile.*`
 
 Public profiles are independent of login names and start unpublished. Get, edit,

@@ -97,6 +97,7 @@ import { KERNEL_V056_SEPARATE_SOCIAL_ATTENTION } from "./v056_separate_social_at
 import { KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS } from "./v057_contact_preferences_and_blocks";
 import { KERNEL_V058_PUBLIC_PROFILES } from "./v058_public_profiles";
 import { KERNEL_V059_FIRST_CONTACT_REQUESTS } from "./v059_first_contact_requests";
+import { KERNEL_V060_BOUND_APPROACH_INVITES } from "./v060_bound_approach_invites";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -161,6 +162,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS,
   KERNEL_V058_PUBLIC_PROFILES,
   KERNEL_V059_FIRST_CONTACT_REQUESTS,
+  KERNEL_V060_BOUND_APPROACH_INVITES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

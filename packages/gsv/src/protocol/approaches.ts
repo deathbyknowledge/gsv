@@ -20,6 +20,8 @@ export type ApproachSummary = {
   updatedAtMs: number;
   expiresAtMs: number;
   acceptedAtMs?: number;
+  contactId?: string;
+  connection?: "connecting" | "connected" | "failed";
 };
 
 export type ApproachContent = {
@@ -67,6 +69,40 @@ export type ApproachConfirmation = {
   signature: string;
 };
 
+/** A durable outcome, verified with the already pinned peer key. No expiring discovery document. */
+export type ApproachReceipt = {
+  version: 2;
+  domain: "gsv-federation/2/approach-receipt";
+  reference: ApproachRef;
+  recipient: ActorRef;
+  fingerprint: string;
+  signature: string;
+};
+
+export type ApproachClaimReceipt = {
+  version: 2;
+  domain: "gsv-federation/2/approach-claimed";
+  reference: ApproachRef;
+  recipient: ActorRef;
+  attemptId: string;
+  generation: string;
+  threadId: string;
+  signature: string;
+};
+
+export type ApproachConnectedReceipt = Omit<ApproachClaimReceipt, "domain" | "threadId"> & {
+  domain: "gsv-federation/2/approach-connected";
+};
+
+export type ApproachWithdrawal = {
+  version: 2;
+  domain: "gsv-federation/2/approach-withdrawal";
+  document: FederationShipDocumentV2;
+  reference: ApproachRef;
+  recipient: ActorRef;
+  signature: string;
+};
+
 const opaqueId = z.string().check(z.minLength(1), z.maxLength(128));
 const timestamp = z.int().check(z.positive());
 const signature = z.string().check(z.minLength(1), z.maxLength(512));
@@ -100,3 +136,24 @@ export const approachConfirmationSchema = z.strictObject({
   document: federationShipDocumentV2Schema, reference: approachRefSchema,
   recipient: actorRefSchema, generation: opaqueId, attemptId: opaqueId, signature,
 }) satisfies z.ZodMiniType<ApproachConfirmation>;
+
+export const approachReceiptSchema = z.strictObject({
+  version: z.literal(2), domain: z.literal("gsv-federation/2/approach-receipt"),
+  reference: approachRefSchema, recipient: actorRefSchema,
+  fingerprint: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)), signature,
+}) satisfies z.ZodMiniType<ApproachReceipt>;
+
+const claimOutcome = {
+  version: z.literal(2), reference: approachRefSchema, recipient: actorRefSchema,
+  attemptId: opaqueId, generation: opaqueId, signature,
+};
+export const approachClaimReceiptSchema = z.strictObject({
+  ...claimOutcome, domain: z.literal("gsv-federation/2/approach-claimed"), threadId: opaqueId,
+}) satisfies z.ZodMiniType<ApproachClaimReceipt>;
+export const approachConnectedReceiptSchema = z.strictObject({
+  ...claimOutcome, domain: z.literal("gsv-federation/2/approach-connected"),
+}) satisfies z.ZodMiniType<ApproachConnectedReceipt>;
+export const approachWithdrawalSchema = z.strictObject({
+  version: z.literal(2), domain: z.literal("gsv-federation/2/approach-withdrawal"),
+  document: federationShipDocumentV2Schema, reference: approachRefSchema, recipient: actorRefSchema, signature,
+}) satisfies z.ZodMiniType<ApproachWithdrawal>;

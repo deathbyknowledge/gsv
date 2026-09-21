@@ -5,6 +5,13 @@ const PENDING_STATES = "('preparing', 'pending', 'accepting')";
 export const APPROACH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
 export const APPROACH_RECEIPT_MS = 8 * 24 * 60 * 60_000;
 
+export class ApproachAdmissionError extends Error {
+  constructor(readonly reason: "collision" | "capacity" | "blocked", message: string) {
+    super(message);
+    this.name = "ApproachAdmissionError";
+  }
+}
+
 type ApproachRow = {
   approach_id: string; owner_uid: number; direction: ApproachSummary["direction"];
   origin_ship_id: string; origin_subject_id: string; origin_id: string;
@@ -38,6 +45,9 @@ export type ApproachRecord = {
   pairingAttemptId: string | null;
   generation: string | null;
   claimReceipt: JsonObject | null;
+  attempts: number;
+  nextAttemptAt: number | null;
+  cleanupAt: number | null;
 };
 
 export type PrepareApproach = {
@@ -80,7 +90,7 @@ export class ApproachStore {
         || input.content.createdAtMs > now + 5 * 60_000 || !input.content.text.trim()) throw new Error("Message request content or expiry is invalid");
       const bytes = new TextEncoder().encode(input.content.text).length;
       if (bytes > 32_768) throw new Error("Message request exceeds the text limit");
-      if (this.unresolved(input.ownerUid, input.peer)) throw new Error("A message request is already pending for this person");
+      if (this.unresolved(input.ownerUid, input.peer)) throw new ApproachAdmissionError("collision", "A message request is already pending for this person");
       this.requireCapacity(input.ownerUid, input.direction, bytes);
       admit();
       const { text, ...metadata } = input.content;
@@ -128,6 +138,112 @@ export class ApproachStore {
   boundInvitation(inviteId: string): ApproachRecord | null {
     const row = this.sql.exec<ApproachRow>("SELECT * FROM social_approaches WHERE setup_invite_id = ?", inviteId).toArray()[0];
     return row ? record(row) : null;
+  }
+
+  forConversation(conversationId: string): ApproachRecord | null {
+    const row = this.sql.exec<ApproachRow>("SELECT * FROM social_approaches WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1", conversationId).toArray()[0];
+    return row ? record(row) : null;
+  }
+
+  bindInvitation(id: string, inviteId: string): void {
+    this.sql.exec("UPDATE social_approaches SET setup_invite_id = ? WHERE approach_id = ? AND direction = 'outgoing' AND state = 'preparing'", inviteId, id);
+  }
+
+  pendingConnection(contactId: string, generation: string): boolean {
+    return this.sql.exec(`SELECT 1 FROM social_approaches WHERE contact_id = ? AND contact_generation = ?
+      AND direction = 'outgoing' AND state = 'accepting'`, contactId, generation).toArray().length > 0;
+  }
+
+  nextWake(now = Date.now()): number | null {
+    const row = this.sql.exec<{ due: number | null }>(`SELECT MIN(due) AS due FROM (
+      SELECT next_attempt_at AS due FROM social_approaches WHERE next_attempt_at IS NOT NULL
+      UNION ALL SELECT expires_at + CASE WHEN state = 'accepting' THEN ${APPROACH_RECEIPT_MS} ELSE 0 END FROM social_approaches WHERE state IN ${PENDING_STATES} AND accepted_at IS NULL
+      UNION ALL SELECT cleanup_at FROM social_approaches WHERE cleanup_at IS NOT NULL
+    )`).one();
+    return row.due === null ? null : Math.max(now + 10, row.due);
+  }
+
+  due(now = Date.now()): ApproachRecord[] {
+    return this.sql.exec<ApproachRow>(`SELECT * FROM social_approaches WHERE
+      next_attempt_at <= ? OR (expires_at + CASE WHEN state = 'accepting' THEN ${APPROACH_RECEIPT_MS} ELSE 0 END <= ? AND state IN ${PENDING_STATES} AND accepted_at IS NULL)
+      OR cleanup_at <= ? ORDER BY COALESCE(next_attempt_at, cleanup_at, expires_at), approach_id LIMIT 20`, now, now, now).toArray().map(record);
+  }
+
+  retry(id: string, ownerUid: number, expectedRevision: number, now = Date.now()): ApproachRecord {
+    const current = this.owned(id, ownerUid);
+    this.requireUnblocked(ownerUid, current.summary.peer);
+    const retryDeadline = current.summary.expiresAtMs + (current.summary.state === "accepting" ? APPROACH_RECEIPT_MS : 0);
+    if (current.summary.revision !== expectedRevision || retryDeadline <= now
+      || !["preparing", "pending", "accepting", "accepted"].includes(current.summary.state)) throw new Error("Message request changed; reload before retrying");
+    if (current.summary.direction === "incoming" && current.summary.state === "pending") throw new Error("This request is waiting for your decision");
+    if (current.summary.direction === "outgoing" && (current.summary.state === "accepting" || current.summary.delivery === "received")) throw new Error("This request is waiting for the other person");
+    if (current.summary.state === "accepted" && current.nextAttemptAt === null && current.attempts === 0) throw new Error("This connection is already complete");
+    this.sql.exec("UPDATE social_approaches SET attempts = 0, next_attempt_at = ?, updated_at = ? WHERE approach_id = ?", now, now, id);
+    return this.get(id)!;
+  }
+
+  deliveryReceived(id: string, expectedRevision: number): void {
+    this.sql.exec(`UPDATE social_approaches SET delivery_state = 'received', next_attempt_at = NULL, pending_text = NULL,
+      pending_text_bytes = 0, updated_at = ? WHERE approach_id = ? AND revision = ?`, Date.now(), id, expectedRevision);
+  }
+
+  defer(id: string, expectedRevision: number, terminal: boolean, now = Date.now()): void {
+    const current = this.get(id);
+    if (!current || current.summary.revision !== expectedRevision) return;
+    const exhausted = terminal || current.attempts >= 11;
+    const next = exhausted ? null : now + Math.min(30 * 60_000, 1000 * 2 ** Math.min(current.attempts, 11));
+    this.sql.exec(`UPDATE social_approaches SET attempts = ?, next_attempt_at = ?,
+      delivery_state = CASE WHEN delivery_state = 'received' THEN delivery_state ELSE ? END,
+      cleanup_at = CASE WHEN cleanup_at <= ? THEN ? ELSE cleanup_at END,
+      updated_at = ? WHERE approach_id = ? AND revision = ?`, terminal ? 12 : current.attempts + 1, next, exhausted ? "failed" : "queued",
+    now, now + 3_600_000, now, id, expectedRevision);
+  }
+
+  commitClaim(id: string, attemptId: string, generation: string, receipt: JsonObject, now = Date.now()): ApproachRecord {
+    const current = this.get(id);
+    if (!current) throw new Error("Message request not found");
+    this.requireUnblocked(current.ownerUid, current.summary.peer);
+    if (current.generation) {
+      if (current.generation !== generation || current.pairingAttemptId !== attemptId || !["accepting", "accepted"].includes(current.summary.state)) throw new Error("Message request pairing changed");
+      return current;
+    }
+    const claimDeadline = current.summary.expiresAtMs + (current.summary.direction === "incoming" ? APPROACH_RECEIPT_MS : 0);
+    if (claimDeadline <= now || !["pending", "accepting"].includes(current.summary.state)) throw new Error("Message request is no longer available");
+    if (current.summary.direction === "incoming" && current.pairingAttemptId !== attemptId) throw new Error("Message request acceptance changed");
+    this.sql.exec(`UPDATE social_approaches SET state = ?, revision = revision + 1, pairing_attempt_id = ?,
+      contact_generation = ?, claim_receipt_json = ?, accepted_at = ?, setup_token = NULL,
+      pending_text = NULL, pending_text_bytes = 0, delivery_state = 'received', attempts = 0,
+      next_attempt_at = ?, cleanup_at = NULL, updated_at = ? WHERE approach_id = ?`,
+    current.summary.direction === "incoming" ? "accepted" : "accepting", attemptId, generation, JSON.stringify(receipt), now,
+    current.summary.direction === "incoming" ? now : null, now, id);
+    return this.get(id)!;
+  }
+
+  confirmed(id: string, generation: string, now = Date.now()): void {
+    const current = this.get(id);
+    if (!current || current.generation !== generation || !["accepting", "accepted"].includes(current.summary.state)) throw new Error("Message request pairing changed");
+    this.sql.exec(`UPDATE social_approaches SET state = 'accepted',
+      revision = revision + CASE WHEN state = 'accepted' THEN 0 ELSE 1 END,
+      next_attempt_at = NULL, attempts = 0, cleanup_at = COALESCE(cleanup_at, ?), updated_at = ? WHERE approach_id = ?`, now + APPROACH_RECEIPT_MS, now, id);
+  }
+
+  expire(id: string, now = Date.now()): ApproachRecord | null {
+    this.sql.exec(`UPDATE social_approaches SET state = 'expired', revision = revision + 1,
+      setup_token = NULL, pending_text = NULL, pending_text_bytes = 0, next_attempt_at = NULL,
+      cleanup_at = ?, updated_at = ? WHERE approach_id = ? AND expires_at + CASE WHEN state = 'accepting' THEN ${APPROACH_RECEIPT_MS} ELSE 0 END <= ?
+      AND state IN ${PENDING_STATES} AND accepted_at IS NULL`, now + APPROACH_RECEIPT_MS, now, id, now);
+    return this.get(id);
+  }
+
+  removeSettled(id: string, now = Date.now()): void {
+    this.sql.exec("DELETE FROM social_approaches WHERE approach_id = ? AND cleanup_at <= ?", id, now);
+  }
+
+  withdrawnRemotely(id: string, now = Date.now()): void {
+    this.sql.exec(`UPDATE social_approaches SET state = 'withdrawn', revision = revision + 1,
+      setup_token = NULL, pending_text = NULL, pending_text_bytes = 0, next_attempt_at = NULL,
+      cleanup_at = ?, updated_at = ? WHERE approach_id = ? AND direction = 'incoming'
+      AND state IN ${PENDING_STATES} AND accepted_at IS NULL`, now + APPROACH_RECEIPT_MS, now, id);
   }
 
   unresolved(ownerUid: number, actor: ActorRef): ApproachRecord | null {
@@ -185,7 +301,8 @@ export class ApproachStore {
       }
       this.sql.exec(`UPDATE social_approaches SET state = ?, revision = revision + 1,
         setup_token = NULL, pending_text = NULL, pending_text_bytes = 0,
-        next_attempt_at = NULL, cleanup_at = ?, updated_at = ? WHERE approach_id = ?`, decision, now + APPROACH_RECEIPT_MS, now, id);
+        next_attempt_at = ?, cleanup_at = ?, updated_at = ? WHERE approach_id = ?`, decision,
+      decision === "withdrawn" ? now : null, now + APPROACH_RECEIPT_MS, now, id);
       return this.get(id)!;
     });
   }
@@ -197,7 +314,7 @@ export class ApproachStore {
       AND state IN ('preparing', 'pending', 'accepting', 'accepted')`, ownerUid, actor.shipId, actor.subjectId).toArray();
     this.sql.exec(`UPDATE social_approaches SET state = 'blocked', revision = revision + 1,
       setup_token = NULL, pending_text = NULL, pending_text_bytes = 0, next_attempt_at = NULL,
-      cleanup_at = CASE WHEN accepted_at IS NULL THEN ? ELSE NULL END, updated_at = ?
+      cleanup_at = ?, updated_at = ?
       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
       AND state IN ('preparing', 'pending', 'accepting', 'accepted')`, now + APPROACH_RECEIPT_MS, now, ownerUid, actor.shipId, actor.subjectId);
     return invitations.flatMap((entry) => entry.setup_invite_id ? [entry.setup_invite_id] : []);
@@ -205,7 +322,7 @@ export class ApproachStore {
 
   private requireUnblocked(ownerUid: number, actor: ActorRef): void {
     const blocked = this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId).toArray().length > 0;
-    if (blocked) throw new Error("Message requests are unavailable for this person");
+    if (blocked) throw new ApproachAdmissionError("blocked", "Message requests are unavailable for this person");
   }
 
   private requireCapacity(ownerUid: number, direction: ApproachSummary["direction"], bytes: number): void {
@@ -217,7 +334,7 @@ export class ApproachStore {
     if (counts.pending >= (direction === "incoming" ? 1000 : 500)
       || counts.owner_pending >= (direction === "incoming" ? 250 : 100)
       || counts.total >= 20_000 || counts.owner_total >= 5_000 || counts.bytes + bytes > 64 * 1024 * 1024) {
-      throw new Error("Message request capacity reached");
+      throw new ApproachAdmissionError("capacity", "Message request capacity reached");
     }
   }
 }
@@ -231,6 +348,10 @@ function summary(row: ApproachRow): ApproachSummary {
     createdAtMs: row.created_at, updatedAtMs: row.updated_at, expiresAtMs: row.expires_at,
   };
   if (row.accepted_at !== null) result.acceptedAtMs = row.accepted_at;
+  if (row.contact_generation !== null) result.contactId = row.contact_id;
+  if (row.state === "accepting" || row.state === "accepted") {
+    result.connection = row.attempts >= 12 ? "failed" : row.state === "accepting" || row.next_attempt_at !== null ? "connecting" : "connected";
+  }
   return result;
 }
 
@@ -243,5 +364,6 @@ function record(row: ApproachRow): ApproachRecord {
     setupToken: row.setup_token, setupTokenHash: row.setup_token_hash, setupInviteId: row.setup_invite_id,
     pairingAttemptId: row.pairing_attempt_id, generation: row.contact_generation,
     claimReceipt: row.claim_receipt_json ? jsonObjectSchema.parse(JSON.parse(row.claim_receipt_json)) : null,
+    attempts: row.attempts, nextAttemptAt: row.next_attempt_at, cleanupAt: row.cleanup_at,
   };
 }

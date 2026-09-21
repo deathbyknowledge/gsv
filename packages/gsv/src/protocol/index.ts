@@ -27,6 +27,7 @@ export type * from "./syscalls/mail";
 export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";
 export * from "./syscalls/profile";
+export * from "./syscalls/approach";
 export * from "./social";
 export * from "./approaches";
 export type * from "./syscalls/map";

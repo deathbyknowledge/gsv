@@ -117,6 +117,7 @@ import {
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
 import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -697,6 +698,21 @@ async function dispatchKernel(
 
       case "profile.get":
         data = handleProfileGet(ctx);
+        break;
+      case "approach.create":
+        data = await handleApproachCreate(frame.args, ctx);
+        break;
+      case "approach.get":
+        data = handleApproachGet(frame.args, ctx);
+        break;
+      case "approach.list":
+        data = handleApproachList(frame.args, ctx);
+        break;
+      case "approach.decide":
+        data = await handleApproachDecide(frame.args, ctx);
+        break;
+      case "approach.retry":
+        data = await handleApproachRetry(frame.args, ctx);
         break;
       case "profile.update":
         data = handleProfileUpdate(frame.args, ctx);

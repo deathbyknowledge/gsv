@@ -24,6 +24,43 @@ function message(sequence: number) {
 }
 
 describe("Conversation Durable Object", () => {
+  it("discards only unaccepted intake history and keeps a durable fence against late appends", async () => {
+    const stub = conversation("intake-retention");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:expired" });
+    await stub.append(message(1));
+    expect((await stub.search({ query: "message" })).matches).toHaveLength(1);
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await evictDurableObject(stub);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append(message(1)))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.initialize({ ownerUid: 1000, kind: "contact" }))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "message" }))).rejects.toThrow("expired");
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
+        expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).one().count).toBe(0);
+      }
+    });
+
+    const accepted = conversation("accepted-intake");
+    await accepted.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:accepted" });
+    await accepted.append(message(1));
+    await accepted.initialize({ ownerUid: 1000, kind: "contact" });
+    await expect(runInDurableObject(accepted, (instance: Conversation) => instance.discardIntake({ ownerUid: 1000, id: "approach:accepted" }))).rejects.toThrow("not an unaccepted");
+    expect((await accepted.history()).messages).toHaveLength(1);
+  });
+
+  it("measures the bounded first-message index and metadata footprint", async () => {
+    const stub = conversation("intake-capacity");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:capacity" });
+    const measurement = await runInDurableObject(stub, async (instance: Conversation, state) => {
+      const before = state.storage.sql.databaseSize;
+      await instance.append({ ...message(1), text: "request detail ".repeat(2184).slice(0, 32_768) });
+      return { before, after: state.storage.sql.databaseSize };
+    });
+    expect(measurement.after - measurement.before).toBeLessThan(256 * 1024);
+    console.info("first-contact Conversation capacity (fixture bytes)", measurement);
+  });
+
   it("stores canonical messages idempotently and rejects changed replays", async () => {
     const stub = conversation("append");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });

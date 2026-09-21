@@ -114,6 +114,7 @@ import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
 import { ApproachStore } from "./approach-store";
 import { processProfilePublication, profileOwnerActive } from "./profiles";
+import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
 import {
@@ -225,6 +226,7 @@ type KernelTask =
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
   | { callback: "onProfilePublication"; payload: number }
+  | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
       payload: { contactId: string; contactGeneration: string; deliveryId: string };
@@ -278,6 +280,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
   z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
   z.object({ callback: z.literal("onProfilePublication"), payload: z.number().int().min(1000) }),
+  z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -574,6 +577,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       for (const ownerUid of this.profiles.pendingOwners()) {
         await this.scheduleProfilePublication(ownerUid);
       }
+      await this.scheduleApproachMaintenance();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -691,6 +695,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async scheduleProfilePublication(ownerUid: number): Promise<void> {
     await this.schedule(new Date(Date.now() + 10), "onProfilePublication", ownerUid, { idempotent: true });
+  }
+
+  async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("approach-maintenance-schedule", async () => {
+      const due = this.approaches.nextWake();
+      if (due === null) return;
+      const existing = await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+    });
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
@@ -844,6 +859,19 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onFederationDelivery":
         await this.federationRuntime.onFederationDelivery(task.payload);
         return;
+      case "onApproachMaintenance": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        try {
+          await this.federationRuntime.coordinateFederationContact("approach-maintenance-run", () => processApproachMaintenance(this.buildKernelContext({})));
+        } finally {
+          await this.scheduleApproachMaintenance(task.id);
+        }
+        return;
+      }
       case "onFederationInbox":
         await this.federationRuntime.onFederationInbox(task.payload);
         return;
@@ -1480,6 +1508,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       profiles: this.profiles,
       approaches: this.approaches,
       scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
+      scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
       connection: options.connection ?? null,
       peer: options.peer,
       processId: options.processId,
