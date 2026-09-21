@@ -2,7 +2,7 @@ import { ContactConversation, type ContactComposerProps } from "./ContactConvers
 import { ContactRequests } from "./ContactRequests";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useState } from "preact/hooks";
-import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ContactInviteCreateResult, type ContactListResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -15,8 +15,28 @@ export function useFleetContacts(account: ConsoleAccount | undefined) {
   return useQuery({
     queryKey: CONTACTS_KEY,
     enabled: connected && !!account && canConfigure(account, "contact.list"),
-    queryFn: async () => (await client.contact.list({ includeRevoked: true })).contacts,
+    queryFn: () => client.contact.list({ includeRevoked: true }),
   });
+}
+
+export function ContactAttentionNotice({ notice, account }: {
+  notice: NonNullable<ContactListResult["attentionNotice"]>;
+  account: ConsoleAccount | undefined;
+}) {
+  const { client, connected } = useGateway();
+  const cache = useQueryClient();
+  const dismiss = useMutation({
+    mutationFn: () => client.contact.notice.dismiss({}),
+    onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }, { cancelRefetch: false }),
+  });
+  return <div class="fleet-place-form" role="status">
+    <p>Contact messages now arrive in your inbox. Ship joins when you ask; receiving a message or adding a contact no longer starts agent work. Existing commitments continue.</p>
+    <details><summary>Previous preferences</summary>
+      <p class="note">Review incoming messages automatically: {notice.previousReceived ? "on" : "off"}. Learn about new contacts automatically: {notice.previousContactAdded ? "on" : "off"}.</p>
+    </details>
+    <button type="button" class="fleet-text-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>got it</button>
+    {dismiss.error && <p class="error" role="alert">{dismiss.error.message}</p>}
+  </div>;
 }
 
 export function AddContact({ account, onClose, onAdded }: {

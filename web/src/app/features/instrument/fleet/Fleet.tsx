@@ -6,7 +6,7 @@ import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
-import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
+import { AddContact, ContactAttentionNotice, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -128,7 +128,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
   const [workPanel, setWorkPanel] = useState<"new" | "sources" | null>(null);
 
   const contactsQuery = useFleetContacts(viewer);
-  const contacts = contactsQuery.data ?? [];
+  const contacts = contactsQuery.data?.contacts ?? [];
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
@@ -455,6 +455,7 @@ export function Fleet({ initialReference, onZen, onCommand, onDirtyChange }: Fle
               <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
             </h2>
             {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
+            {contactsQuery.data?.attentionNotice && <ContactAttentionNotice notice={contactsQuery.data.attentionNotice} account={viewer} />}
             {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
               : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
               : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>

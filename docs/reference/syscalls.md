@@ -656,7 +656,8 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
-| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. Returns any pending social-attention upgrade notice with the preserved previous preferences. |
+| `contact.notice.dismiss` | Lets the signed-in human dismiss their own attention upgrade notice; does not change existing commitments or automation authority. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
@@ -776,8 +777,9 @@ type ContactSyscalls = {
   };
   "contact.list": {
     args: { includeRevoked?: boolean };
-    result: { contacts: ContactSummary[] };
+    result: { contacts: ContactSummary[]; attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean } };
   };
+  "contact.notice.dismiss": { args: {}; result: {} };
   "contact.alias.set": {
     args: { contactId: string; alias: string | null };
     result: { contact: ContactSummary };
@@ -1152,8 +1154,6 @@ type ResponsibilitySourcePolicy =
   | {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1222,8 +1222,6 @@ type ResponsibilitySyscalls = {
     args: {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";

@@ -27,6 +27,7 @@ import {
   handleContactAliasSet,
   handleContactInviteCancel,
   handleContactInviteAccept,
+  handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestUpdate,
   handleContactResourceRead,
@@ -76,6 +77,17 @@ describe("federation outbound boundary", () => {
       .rejects.toThrow("This participant cannot change");
     expect(enqueue).not.toHaveBeenCalled();
     expect(updateRequest).not.toHaveBeenCalled();
+  });
+
+  it("lets only the signed-in human dismiss their own social upgrade notice", () => {
+    const dismissAttentionNotice = vi.fn(() => true);
+    const broadcastToUserUid = vi.fn();
+    const ctx = focusedContext({ federation: focusedFixture({ dismissAttentionNotice }), broadcastToUserUid });
+    expect(() => handleContactNoticeDismiss({ ...ctx, processId: "proc:ship" })).toThrow("Only a signed-in human");
+    expect(dismissAttentionNotice).not.toHaveBeenCalled();
+    expect(handleContactNoticeDismiss(ctx)).toEqual({});
+    expect(dismissAttentionNotice).toHaveBeenCalledExactlyOnceWith(OWNER.uid);
+    expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.changed");
   });
 
   it("notifies the owner after a saved alias change, but not for a no-op or failed write", () => {

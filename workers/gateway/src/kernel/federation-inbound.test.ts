@@ -31,7 +31,6 @@ import type { FederationContactRecord, FederationStore } from "./federation-stor
 import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
-import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import { syncFederationRequestResponsibility } from "./federation/requests";
 
 const OWNER: ProcessIdentity = {
@@ -51,7 +50,6 @@ type KernelInternals = {
   federation: FederationStore;
   procs: ProcessRegistry;
   responsibilities: ResponsibilityStore;
-  responsibilitySources: ResponsibilitySourcePolicyStore;
   pendingFederationInbound: Map<string, Promise<unknown>>;
   coordinateFederationContact: <Value>(
     contactId: string,
@@ -101,7 +99,6 @@ describe("federation inbound boundary", () => {
         interactive: true,
         isPersonalController: true,
       });
-      internal.responsibilitySources.set(OWNER.uid, "federation.received", false);
       const subject = internal.federation.ensureSubject(OWNER.uid, OWNER.username, 1_000);
       const activated = internal.federation.activateContact({
         ownerUid: OWNER.uid,
@@ -241,7 +238,6 @@ describe("federation inbound boundary", () => {
 
     const control = await runInDurableObject(kernel, (instance: Kernel) => {
       instance.auth.addUser({ username: "control", uid: 1001, gid: 1001, gecos: "Control", home: "/home/control", shell: "/bin/init" });
-      instance.responsibilitySources.set(1001, "federation.received", false);
       const subject = instance.federation.ensureSubject(1001, "Control");
       return { subject, contact: instance.federation.activateContact({ ownerUid: 1001, remoteShipId: REMOTE_SHIP_ID,
         remoteSubject: contact.remoteSubject, remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
@@ -798,13 +794,6 @@ describe("federation inbound boundary", () => {
   });
 
   it.each([false, true])("keeps one responsibility through the complete request lifecycle after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
     const requestId = "request:stable-responsibility";
     await seedOutgoingRequest(requestId, true);
     if (removed) await runInDurableObject(kernel, removeOwner);
@@ -856,12 +845,11 @@ describe("federation inbound boundary", () => {
     ]);
   });
 
-  it.each([false, true])("controls missing request responsibility creation after a source toggle and removal=%s", async (removed) => {
+  it.each([false, true])("does not infer a local commitment from remote updates after removal=%s", async (removed) => {
     const requestId = "request:source-toggle";
     await seedOutgoingRequest(requestId, false);
     await runInDurableObject(kernel, async (instance: Kernel) => {
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
-      instance.responsibilitySources.set(OWNER.uid, "federation.received", true);
       if (removed) await removeOwner(instance);
     });
 
@@ -882,24 +870,13 @@ describe("federation inbound boundary", () => {
         expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId))
           .toMatchObject({ state: "committed" });
         const responsibilities = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
-        expect(responsibilities).toHaveLength(removed ? 0 : 1);
-        if (!removed) expect(responsibilities[0]).toMatchObject({
-          details: { state, revision: index + 2 },
-          state: state === "completed" ? "resolved" : "active",
-        });
+        expect(responsibilities).toHaveLength(0);
       });
     }
     expect(messages).toHaveLength(3);
   });
 
-  it("keeps exact contact content in Conversation history rather than responsibility details", async () => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
+  it("stores incoming contact text without admitting Ship work", async () => {
     const text = "Private instructions that belong only in Contact history";
     const envelope = await signedEnvelope({
       kind: "message",
@@ -916,39 +893,12 @@ describe("federation inbound boundary", () => {
         includeTerminal: true,
       }).records[0]
     ));
-    expect(responsibility?.details).toMatchObject({
-      eventType: "federation.message.received",
-      contactId: contact.id,
-      conversationId: contact.conversationId,
-      deliveryId: "delivery:private",
-      resourceCount: 0,
-      contentTrust: "untrusted",
-    });
-    expect(responsibility?.title).toMatch(/^Review contact message .* with the owner$/);
-    expect(responsibility?.details).not.toHaveProperty("text");
-    expect(responsibility?.details).not.toHaveProperty("resources");
-    expect(JSON.stringify(responsibility)).not.toContain(text);
+    expect(responsibility).toBeUndefined();
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("cancels the request responsibility on revocation after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
-    const requestDelivery = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: "request:revoked-responsibility",
-        kind: "task",
-        title: "Work that becomes impossible after revocation",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:request-before-revoke");
-    expect((await deliver(requestDelivery)).status).toBe(200);
+    await seedOutgoingRequest("request:revoked-responsibility", true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
     const revocation = await signedEnvelope({
@@ -977,7 +927,7 @@ describe("federation inbound boundary", () => {
         ),
       };
     });
-    expect(state.newRevocationResponsibilities).toBe(removed ? 0 : 1);
+    expect(state.newRevocationResponsibilities).toBe(0);
     expect(state.request).toMatchObject({ state: "cancelled", revision: 2 });
     expect(state.responsibility).toMatchObject({
       state: "cancelled",
@@ -988,7 +938,7 @@ describe("federation inbound boundary", () => {
       },
     });
     expect(state.transitions).toEqual([
-      expect.objectContaining({ kind: "created", afterState: "open" }),
+      expect.objectContaining({ kind: "created", afterState: "waiting" }),
       expect.objectContaining({ kind: "cancelled", afterState: "cancelled" }),
     ]);
   });

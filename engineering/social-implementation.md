@@ -50,6 +50,7 @@ It does not end this branch's scope or authorize an intermediate merge.
   capacity assessment before enabling public admission.
 - Explicit attention-policy migration for existing contacts. Preserve existing
   admitted responsibilities/promises and make the change visible to the owner.
+  Implemented in v056; CI and acceptance remain required.
 
 These belong to the relevant owning batch. Do not bypass them with UI-only
 checks, a model verdict, or a new bespoke authorization mechanism.
@@ -131,3 +132,13 @@ signed inbound identity checks, and two-space replies. CI and human acceptance
 are still required. Relationship policy and v2 work operations remain unfinished
 parts of batch 2. See `docs/architecture/social-federation.md` for version and
 egress decisions.
+
+The attention cutover removes automatic Ship work from pairing, incoming
+messages/offers and remote revocation. Local work offers and explicit acceptance
+retain responsibility tracking; inbound updates advance only already admitted
+work. V056 preserves old global social-source preferences in an owner-specific
+notice and leaves the responsibility ledger unchanged. The obsolete global
+source producers and controls are removed; later scoped assistance will own
+its own admission. Fleet displays the notice with a human-only dismissal.
+Migration and inbound regression cases plus the two-space trial cover the new
+behavior. No local validation was run.

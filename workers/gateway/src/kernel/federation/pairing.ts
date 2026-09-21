@@ -7,19 +7,12 @@ import type {
   FederationPairingAttemptRecord,
   FederationStore,
 } from "../federation-store";
-import {
-  recordContactAddedResponsibility,
-  type ContactInviteDirection,
-} from "../lifecycle-responsibilities";
 import { cancelRequestResponsibilities } from "./requests";
 
 export function activateFederationContact(
-  input: Parameters<FederationStore["activateContact"]>[0] & {
-    inviteDirection: ContactInviteDirection;
-  },
+  activation: Parameters<FederationStore["activateContact"]>[0],
   ctx: KernelContext,
 ): FederationContactRecord {
-  const { inviteDirection, ...activation } = input;
   const existing = ctx.federation.getByRemote(
     activation.ownerUid,
     activation.remoteShipId,
@@ -36,7 +29,6 @@ export function activateFederationContact(
     activation.now ?? Date.now(),
     ctx,
   );
-  recordContactAddedResponsibility(contact, inviteDirection, ctx);
   return contact;
 }
 

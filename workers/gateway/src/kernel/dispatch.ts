@@ -158,6 +158,7 @@ import {
   handleContactInviteList,
   handleContactDeliveryGet,
   handleContactList,
+  handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
@@ -706,6 +707,9 @@ async function dispatchKernel(
         break;
       case "contact.list":
         data = handleContactList(frame.args, ctx);
+        break;
+      case "contact.notice.dismiss":
+        data = handleContactNoticeDismiss(ctx);
         break;
       case "contact.alias.set":
         data = handleContactAliasSet(frame.args, ctx);

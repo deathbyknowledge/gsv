@@ -31,6 +31,14 @@ disable new admissions; readers and retained v2 records cannot be downgraded.
 
 ## Messages and receipts
 
+Contact Conversations have no Process handler. Pairing, message receipt, new
+work offers and remote revocation do not admit Ship work. A local work offer or
+explicit acceptance creates a responsibility; remote state updates continue to
+advance existing commitments. V056 retains the previous global attention
+settings for an upgrade notice while retiring those implicit producers. It does
+not remove existing responsibilities. Scoped assistance is a separate admission
+path and remains under implementation.
+
 V2 message and receipt signatures include distinct `gsv-federation/2/delivery`
 and `gsv-federation/2/receipt` domains. Payloads require their origin actor,
 origin message ID, thread and submission provenance. The sender derives human

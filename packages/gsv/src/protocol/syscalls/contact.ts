@@ -136,7 +136,11 @@ export type ContactListArgs = {
 
 export type ContactListResult = {
   contacts: ContactSummary[];
+  attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean };
 };
+
+export type ContactNoticeDismissArgs = Record<string, never>;
+export type ContactNoticeDismissResult = Record<string, never>;
 
 export type ContactAliasSetArgs = {
   contactId: string;

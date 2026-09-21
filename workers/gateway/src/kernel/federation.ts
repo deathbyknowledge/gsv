@@ -15,6 +15,7 @@ import type {
   ContactDeliveryGetResult,
   ContactListArgs,
   ContactListResult,
+  ContactNoticeDismissResult,
   ContactRequestCreateArgs,
   ContactRequestCreateResult,
   ContactRequestListArgs,
@@ -460,7 +461,6 @@ export async function handleContactInviteAccept(
     );
     const activated = activateFederationContact({
       ownerUid,
-      inviteDirection: "incoming",
       generation: accepted.generation,
       remoteShipId: accepted.document.shipId,
       remoteSubject: accepted.subject,
@@ -499,7 +499,15 @@ export function handleContactList(
   const ownerUid = requireContactCaller(ctx, false);
   return {
     contacts: ctx.federation.list(ownerUid, args.includeRevoked ?? false).map(contactSummary),
+    attentionNotice: ctx.federation.attentionNotice(ownerUid),
   };
+}
+
+export function handleContactNoticeDismiss(ctx: KernelContext): ContactNoticeDismissResult {
+  if (ctx.processId || !ctx.connection) throw new Error("Only a signed-in human can dismiss this notice");
+  const ownerUid = requireContactCaller(ctx, true);
+  if (ctx.federation.dismissAttentionNotice(ownerUid)) ctx.broadcastToUserUid(ownerUid, "contact.changed");
+  return {};
 }
 
 export function handleContactAliasSet(
@@ -899,8 +907,7 @@ export async function handleContactRequestUpdate(
       conversationId: contact.conversationId,
       deliveryId,
       remoteInput: false,
-      createAllowed: current.direction === "outgoing"
-        || ctx.responsibilitySources.isEnabled(ownerUid, "federation.received"),
+      createAllowed: current.direction === "outgoing" || args.state === "accepted" || args.state === "active",
       now,
     }, ctx);
     ctx.federation.enqueue({
@@ -1471,7 +1478,6 @@ async function acceptRemoteInvite(
     );
     const activated = activateFederationContact({
       ownerUid: currentInvite.ownerUid,
-      inviteDirection: "outgoing",
       generation,
       remoteShipId: input.document.shipId,
       remoteSubject,
@@ -1779,20 +1785,6 @@ async function commitInboundDelivery(
         );
       });
       if (contact.state !== "revoked") ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
-      if (!ctx.auth.isAccountDisabled(contact.ownerUid)) {
-        createFederationResponsibility({
-          ownerUid: contact.ownerUid,
-          title: `Review contact change ${contact.id}`,
-          details: {
-            eventType: "federation.contact.revoked",
-            contactId: contact.id,
-            deliveryId: inbox.deliveryId,
-            remoteDisplayName: contactDisplayName(contact),
-          },
-          dedupeKey: `federation.contact.revoked:${contact.id}:${contact.generation}`,
-          deliveryId: inbox.deliveryId,
-        }, ctx);
-      }
       await ctx.reconcileResponsibilityWake(contact.ownerUid);
   }
 }
@@ -1852,27 +1844,7 @@ async function commitInboundMessage(
   });
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
   if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
-  if (ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received")) {
-    createFederationResponsibility({
-      ownerUid: contact.ownerUid,
-      title: `Review contact message ${messageId} with the owner`,
-      details: {
-        eventType: "federation.message.received",
-        contactId: contact.id,
-        contactGeneration: contact.generation,
-        conversationId: conversation.id,
-        messageId,
-        deliveryId: inbox.deliveryId,
-        remoteDisplayName: contactDisplayName(contact),
-        resourceCount: media?.length ?? 0,
-        contentTrust: "untrusted",
-      },
-      dedupeKey: `federation.message:${contact.id}:${contact.generation}:${inbox.deliveryId}`,
-      deliveryId: inbox.deliveryId,
-      conversationId: conversation.id,
-    }, ctx);
-    await ctx.reconcileResponsibilityWake(contact.ownerUid);
-  }
+
 }
 
 async function commitInboundRequest(
@@ -1920,10 +1892,7 @@ async function commitInboundRequest(
         conversationId: conversation.id,
         deliveryId: inbox.deliveryId,
         remoteInput: true,
-        createAllowed: ctx.responsibilitySources.isEnabled(
-          contact.ownerUid,
-          "federation.received",
-        ),
+        createAllowed: false,
         now: inbox.receivedAtMs,
       }, ctx);
       return created;
@@ -2006,8 +1975,7 @@ async function commitInboundRequestUpdate(
       conversationId: contact.conversationId,
       deliveryId: inbox.deliveryId,
       remoteInput: true,
-      createAllowed: !ctx.auth.isAccountDisabled(contact.ownerUid)
-        && ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received"),
+      createAllowed: false,
       now: receivedAtMs,
     }, ctx);
     return next;

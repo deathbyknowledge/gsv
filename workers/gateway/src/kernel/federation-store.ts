@@ -946,6 +946,18 @@ export class FederationStore {
     ).toArray().map(contactFromRow);
   }
 
+  attentionNotice(ownerUid: number): { previousContactAdded: boolean; previousReceived: boolean } | undefined {
+    const row = this.sql.exec<{ previous_contact_added: number; previous_received: number }>(
+      "SELECT previous_contact_added, previous_received FROM federation_attention_notices WHERE owner_uid = ? AND dismissed_at IS NULL",
+      ownerUid,
+    ).toArray()[0];
+    return row ? { previousContactAdded: row.previous_contact_added === 1, previousReceived: row.previous_received === 1 } : undefined;
+  }
+
+  dismissAttentionNotice(ownerUid: number): boolean {
+    return this.sql.exec("UPDATE federation_attention_notices SET dismissed_at = ? WHERE owner_uid = ? AND dismissed_at IS NULL", Date.now(), ownerUid).rowsWritten > 0;
+  }
+
   setAlias(
     contactId: string,
     ownerUid: number,
