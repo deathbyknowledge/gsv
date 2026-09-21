@@ -1,7 +1,7 @@
 # GSV gesture helper
 
 The `gestures` package builds the experimental `gsv-vision` local hand-control
-helper. It is a separate Rust process that owns the camera, native Rust/tract
+helper. It is a separate Rust process that owns the camera, native LiteRT/XNNPACK
 inference, temporal gesture policy, and optional diagnostic window. Camera
 pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
@@ -16,12 +16,19 @@ share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
 The runtime is one Rust executable with two verified TFLite models embedded
-from the pinned Gesture Recognizer bundle. tract executes palm and hand-landmark
-inference, then GSV's authored Rust recognizer maps landmark geometry into its
-small pose vocabulary. Python, Java, Bazel, and MediaPipe native code are not
-build or runtime dependencies.
+from the pinned Gesture Recognizer bundle. LiteRT 2.2.0 executes palm and
+hand-landmark inference through its CPU interpreter and XNNPACK delegate, then
+GSV's authored Rust recognizer maps landmark geometry into its small pose
+vocabulary. The runtime is statically linked; no additional inference library
+or model download is needed when running the helper. Python, Java, Bazel, and
+MediaPipe native code are not build or runtime dependencies.
 
 ## Build and run locally
+
+Building requires CMake 3.22+, a C++20 compiler and Git. The first build fetches
+checksum-pinned LiteRT/TensorFlow source archives and the dependencies selected
+by LiteRT; subsequent builds reuse Cargo's native build cache. Model files are
+already checked in and are never downloaded by the build.
 
 From the repository root:
 
@@ -154,4 +161,4 @@ Library/model/backend paths and native diagnostics are not printed.
 The artifact and parity contract lives in
 [`scripts/vision-native/README.md`](../../../scripts/vision-native/README.md).
 The Linux/macOS host distribution and macOS development bundle carry the model
-license and provenance beside the executable.
+license, provenance and native runtime notices beside the executable.

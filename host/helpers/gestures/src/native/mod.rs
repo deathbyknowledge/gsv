@@ -1,5 +1,5 @@
-mod depthwise;
 mod geometry;
+mod litert;
 mod models;
 pub(crate) mod runtime;
 

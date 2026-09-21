@@ -50,10 +50,12 @@ struct BenchmarkReport {
     working_tree_dirty: bool,
     rustc_version: String,
     inference_threads: usize,
-    depthwise_kernel: &'static str,
+    landmark_threads: usize,
+    backend: &'static str,
     system: SystemReport,
     warmup_iterations: usize,
     measured_iterations: usize,
+    first_model_load_us: u64,
     model_load: Statistics,
     scenarios: Vec<ScenarioReport>,
     model_profiles: Vec<ModelProfileReport>,
@@ -214,15 +216,17 @@ fn benchmarks_native_pipeline() {
             frame: load_frame(&fixture_root.join(fixture.name), index as u64),
         })
         .collect();
+    let (first_model_load_us, model_load) = benchmark_model_load(&models);
     let (two_hand_frame, two_hand_rects) =
         compose_tracked_frames(&models, &fixtures[3].frame, &fixtures[2].frame);
-    let model_load = benchmark_model_load(&models);
 
     let mut timestamp_ms = 0_i64;
     let full_detection = benchmark_detection(&models, &fixtures, &mut timestamp_ms);
     let continuous_tracking = benchmark_tracking(&models, &fixtures[3], &mut timestamp_ms);
     let two_hand_tracking =
         benchmark_two_hand_tracking(&models, &two_hand_frame, &two_hand_rects, &mut timestamp_ms);
+    let two_hand_inference =
+        benchmark_two_hand_inference(&models, &two_hand_frame, &two_hand_rects, &mut timestamp_ms);
     let profiling_models = Models::load(&models).expect("native profiling models");
     let palm_frame = &fixtures[3].frame;
     let palm_input = sample_rgb(
@@ -243,12 +247,13 @@ fn benchmarks_native_pipeline() {
     .map(model_profile_report)
     .collect();
     let report = BenchmarkReport {
-        schema_version: 4,
+        schema_version: 5,
         git_revision: benchmark_environment("GSV_VISION_BENCHMARK_REVISION", "unknown"),
         working_tree_dirty: benchmark_environment("GSV_VISION_BENCHMARK_DIRTY", "false") == "true",
         rustc_version: benchmark_environment("GSV_VISION_BENCHMARK_RUSTC", "unknown"),
         inference_threads: super::models::configured_inference_threads(),
-        depthwise_kernel: super::models::selected_depthwise_kernel(),
+        landmark_threads: profiling_models.landmark_threads(),
+        backend: "litert-2.2.0-xnnpack",
         system: SystemReport {
             operating_system: std::env::consts::OS,
             architecture: std::env::consts::ARCH,
@@ -257,8 +262,14 @@ fn benchmarks_native_pipeline() {
         },
         warmup_iterations: WARMUP_ITERATIONS,
         measured_iterations: MEASURED_ITERATIONS,
+        first_model_load_us,
         model_load,
-        scenarios: vec![full_detection, continuous_tracking, two_hand_tracking],
+        scenarios: vec![
+            full_detection,
+            continuous_tracking,
+            two_hand_tracking,
+            two_hand_inference,
+        ],
         model_profiles,
     };
     let encoded = serde_json::to_string_pretty(&report).expect("serialized benchmark report");
@@ -274,7 +285,11 @@ fn benchmarks_native_pipeline() {
     }
 }
 
-fn benchmark_model_load(models: &runtime::ModelData) -> Statistics {
+fn benchmark_model_load(models: &runtime::ModelData) -> (u64, Statistics) {
+    let started = Instant::now();
+    let first = Models::load(models).expect("first model load in this process");
+    let first_model_load_us = duration_us(started.elapsed());
+    drop(first);
     for _ in 0..MODEL_LOAD_WARMUP_ITERATIONS {
         Models::load(models).expect("native model load warmup");
     }
@@ -285,7 +300,7 @@ fn benchmark_model_load(models: &runtime::ModelData) -> Statistics {
             started.elapsed()
         })
         .collect::<Vec<_>>();
-    statistics(&samples)
+    (first_model_load_us, statistics(&samples))
 }
 
 fn benchmark_detection(
@@ -358,6 +373,69 @@ fn benchmark_two_hand_tracking(
         "twoHandProcessing",
         "Two known hand regions without repeating full-frame palm discovery",
     )
+}
+
+fn benchmark_two_hand_inference(
+    models: &runtime::ModelData,
+    frame: &FrameView,
+    tracked_rects: &[Rect],
+    timestamp_ms: &mut i64,
+) -> ScenarioReport {
+    let mut recognizer = GestureRecognizer::load(models).expect("native recognizer");
+    let mut samples = SampleSet::new(MEASURED_ITERATIONS);
+    for iteration in 0..WARMUP_ITERATIONS + MEASURED_ITERATIONS {
+        recognizer.clear_tracking();
+        let (total, timings) =
+            recognize_two_hands(&mut recognizer, frame, tracked_rects, timestamp_ms);
+        assert_eq!(timings.executions(RecognitionStage::LandmarkInference), 2);
+        if iteration >= WARMUP_ITERATIONS {
+            samples.push(total, &timings);
+        }
+    }
+    samples.report(
+        "twoHandInference",
+        "Two known hand regions with fresh landmark inference on every frame",
+    )
+}
+
+#[test]
+#[ignore = "run with scripts/vision-native/parity.sh"]
+fn matches_mediapipe_two_hands_after_tracking_loss() {
+    let root = PathBuf::from(
+        std::env::var_os("GSV_VISION_PARITY_FIXTURES").expect("parity fixture directory"),
+    );
+    let models = runtime::embedded_models();
+    let left = load_frame(&root.join("victory.jpg"), 0);
+    let right = load_frame(&root.join("thumb_up.jpg"), 1);
+    let (frame, rects) = compose_tracked_frames(&models, &left, &right);
+    let mut recognizer = GestureRecognizer::load(&models).expect("recognizer");
+    recognizer.set_tracked_rects(&rects);
+    let (first, timings) = recognizer.recognize_profiled(&frame, 1).expect("two hands");
+    assert_eq!(first.hands.len(), 2);
+    assert_eq!(timings.executions(RecognitionStage::LandmarkInference), 2);
+
+    let blank = FrameView {
+        rgb: Arc::from(vec![0; frame.rgb.len()]),
+        ..frame.clone()
+    };
+    for timestamp in [101, 401, 701] {
+        assert!(recognizer
+            .recognize(&blank, timestamp)
+            .expect("tracking loss")
+            .hands
+            .is_empty());
+    }
+    assert!(recognizer.tracked_hands.is_empty());
+    let recovered = recognizer.recognize(&frame, 1001).expect("reacquisition");
+    assert_eq!(recovered.hands.len(), 2);
+    for expected in &first.hands {
+        assert!(recovered.hands.iter().any(|hand| {
+            hand.pose == expected.pose
+                && hand.handedness == expected.handedness
+                && (hand.landmarks[0].x - expected.landmarks[0].x).abs() < 0.04
+                && (hand.landmarks[0].y - expected.landmarks[0].y).abs() < 0.04
+        }));
+    }
 }
 
 fn recognize_fixture(

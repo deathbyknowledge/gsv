@@ -581,6 +581,7 @@ main() {
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
+        "gsv-vision-THIRD_PARTY.md"
     )
     TARGETS=(
         "gsv"
@@ -591,8 +592,9 @@ main() {
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
+        "gsv-vision-THIRD_PARTY.md"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0)
+    EXECUTABLES=(1 1 1 1 1 0 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"

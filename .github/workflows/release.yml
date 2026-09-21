@@ -208,6 +208,17 @@ jobs:
           cargo build --locked --release --target ${{ matrix.target }}
           --package desktop --package transcriber --package gestures
 
+      - name: Test gesture helper for this release target
+        working-directory: host
+        run: >-
+          cargo test --locked --release --target ${{ matrix.target }}
+          --package gestures --package gesture-protocol
+
+      - name: Check gesture fixture parity
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: scripts/vision-native/parity.sh
+
       - name: Stage Desktop
         shell: bash
         run: |
@@ -220,6 +231,7 @@ jobs:
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
             cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
             cp host/helpers/gestures/models/PROVENANCE.md release/gsv-vision-PROVENANCE.md
+            cp host/helpers/gestures/THIRD_PARTY.md release/gsv-vision-THIRD_PARTY.md
           fi
 
       - name: Upload Desktop
@@ -346,7 +358,8 @@ jobs:
             release/gsv-vision-darwin-*
           chmod -x release/gsv-transcribe-THIRD_PARTY.md \
             release/gsv-vision-LICENSE.apache-2.0 \
-            release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-PROVENANCE.md \
+            release/gsv-vision-THIRD_PARTY.md
 
           # Include install script
           cp install.sh release/
@@ -504,6 +517,7 @@ jobs:
             release/gsv-vision-darwin-arm64
             release/gsv-vision-LICENSE.apache-2.0
             release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-THIRD_PARTY.md
             release/gsv-cloudflare-*.tar.gz
             release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt

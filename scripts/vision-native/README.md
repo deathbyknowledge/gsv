@@ -1,78 +1,113 @@
 # Native gesture models
 
-`gsv-vision` implements the complete gesture pipeline in Rust. tract executes
-the two TFLite palm and hand-landmark models; GSV's authored pose recognizer
-maps their geometry into the local control vocabulary. It does not build or
-load MediaPipe, TensorFlow, Python, Java, or Bazel.
+`gsv-vision` owns camera capture, tracking, authored poses and temporal controls
+in Rust. LiteRT 2.2.0's CPU interpreter executes its two TFLite models through an
+explicit XNNPACK delegate. Model loading requires both graphs to be fully
+delegated to XNNPACK.
+
+## Build and distribution
 
 The checksum-pinned models live in normal Git under
-`host/helpers/gestures/models/` and are embedded in `gsv-vision`. Build the
-normal host workspace without a model preparation step or network access:
+`host/helpers/gestures/models/` and are embedded in `gsv-vision`. Build from the
+host workspace:
 
 ```bash
 cd host
-cargo build --workspace
+cargo build --package gestures
 ```
 
-The gesture crate's build script verifies both files by size and SHA-256 before
-the compiler embeds them. They add roughly 7.8 MB to the helper and do not need
-to be copied beside it at runtime. Their Apache 2.0 license and exact source,
-bundle checksum, extracted checksums, and update procedure live beside the
-weights.
+CMake 3.22+, a C++20 compiler and Git are required. The first build fetches
+checksum-pinned LiteRT and TensorFlow source archives and their upstream
+dependencies. Cargo's native build directory caches those sources and objects.
+There is no model preparation step or Python, Java, Bazel or MediaPipe runtime.
 
-Maintainers can reproduce or deliberately update the vendored files with:
+The C++ bridge, CPU interpreter, XNNPACK and supporting libraries are combined
+into a static archive and linked into the helper. Runtime needs only the
+platform's normal system libraries. Release downloads remain Linux x64,
+Linux ARM64, macOS Intel and macOS Apple Silicon. XNNPACK selects CPU kernels
+at runtime; do not build distributable binaries with `-march=native` or
+`-C target-cpu=native`. macOS helper builds default to the application's macOS
+12.0 deployment baseline. Linux release builds use Ubuntu 22.04.
+
+Each landmark interpreter owns reusable input/output buffers. Two hand workers
+use separate interpreters and divide the CPU budget between them. Palm inference
+runs in a separate, sequential stage with the full budget. Normal recognition
+uses up to four inference threads in total; one-hand inference uses one landmark
+interpreter's share. The same mutex protects an interpreter when called outside
+the hand pool. No native pointer, model diagnostic or image data crosses IPC.
+
+The build script verifies the models by size and SHA-256 before embedding them.
+They add roughly 7.8 MB to the executable. Their Apache 2.0 license and exact
+provenance live beside the weights. Native dependency notices are in
+`host/helpers/gestures/THIRD_PARTY.md`; release assets, the host installer and
+the macOS bundle carry those notices with the models' license and provenance.
+
+Maintainers can deliberately update the vendored models with:
 
 ```bash
 ./scripts/vision-native/update-models.sh
 ```
 
 That script downloads the official Gesture Recognizer float16 v1 bundle,
-verifies its SHA-256, extracts only the palm and hand-landmark detectors, and
+verifies its SHA-256, extracts the palm and hand-landmark detectors, and
 verifies both outputs before replacing the checked-in files. Ordinary builds,
-tests, benchmarks, and packages never invoke it.
+tests, benchmarks, and packages never invoke it. A runtime dependency update
+also requires reviewing the native source pins and regenerating its notices.
 
-Run the reference parity test with:
+## Validation
+
+Ordinary gesture tests verify complete XNNPACK delegation, every model output
+against a synthetic LiteRT reference at one, two and four threads, invalid
+model/tensor rejection, and independent state under concurrent inference.
+The executable test copies the helper to an empty installation directory and
+checks its handshake and shutdown with a cleared environment, without opening
+a camera. The native CI and release matrices run tests on all four targets.
+
+Run the public-image parity tests with:
 
 ```bash
 ./scripts/vision-native/parity.sh
 ```
 
-That test downloads four checksum-pinned official fixture images and checks the
-Rust pipeline's handedness and wrist coordinates against the outputs of the same
-landmark model through MediaPipe Tasks. It also verifies that authored fist and
-sequential one- and two-finger poses remain actionable while a thumbs-up remains
-unassigned. MediaPipe supplies the landmark golden reference only; it is not
-installed or executed by the test.
+They download four checksum-pinned official fixture images and check handedness,
+wrist coordinates, authored poses and actionability against the existing
+MediaPipe Tasks reference. A composite frame also exercises two simultaneous
+hands, tracking loss and reacquisition. MediaPipe supplies golden landmarks;
+it is not installed or executed by these tests.
 
-Measure the optimized native pipeline with:
+The synthetic model reference provenance and regeneration command are in
+`host/helpers/gestures/native/testdata/README.md`. Those tests need no network
+or Python after native build dependencies are cached.
+
+## Benchmark
 
 ```bash
 ./scripts/vision-native/benchmark.sh
 ```
 
 The benchmark warms the models, then measures full palm discovery, continuous
-one-hand tracking, and processing two known hand regions over checksum-pinned
-images. It reports overall throughput plus per-stage minimum, median, p95,
-maximum, mean latency, and execution count. The machine-readable JSON is
-written to the ignored `host/target/vision-native/benchmark/latest.json`; pass
-another path as the first argument to retain named runs. Image decoding, model
-loading, and report serialization are outside the scenario intervals. Model
-initialization is measured separately after one warmup load.
-The report also profiles the optimized Tract graphs for the palm and landmark
-models, grouping time by operation and retaining the twenty hottest graph
-nodes. Operator profiling runs after the scenario measurements so its timers do
-not distort the pipeline results.
-Production recognition uses a compile-time no-op profiler, so stage measurement
-adds no runtime timers to normal builds.
+one-hand tracking, two known hand regions with tracking reuse, and fresh
+two-hand landmark inference on every frame. The last scenario asserts two
+landmark executions per sample, so cached observations cannot hide inference
+cost. Image decoding and model loading are outside scenario intervals; model
+initialization is measured separately after one warmup load. The first model
+load in the benchmark process is recorded separately; it does not imply cold
+operating-system page caches.
 
-Native inference uses up to four worker threads. For controlled benchmark
-experiments only, `GSV_VISION_BENCHMARK_THREADS=1` (or another bounded count)
-overrides that selection and is recorded in the report.
+JSON output defaults to the ignored
+`host/target/vision-native/benchmark/latest.json`; pass another path as the
+first argument to retain a run. Schema 5 records the backend, total inference
+budget, threads per landmark interpreter, and per-stage latency and execution
+counts. Separate XNNPACK operator profiling retains the twenty hottest
+operators without double-counting their enclosing delegate event. These
+profilers are attached only by tests; production does not collect timings
+inside the models.
 
-Eligible float32 NHWC depthwise convolutions use the native channel-SIMD
-kernel; all other operations remain in tract. The report records the selected
-depthwise kernel. Set `GSV_VISION_BENCHMARK_DEPTHWISE=tract` when running the
-benchmark to produce a stock-tract comparison without changing production.
-The upstream TFLite graph is intentionally embedded because it
-preserves this NHWC execution shape; alternative deployment formats must clear
-the same parity, size, loading, and inference benchmarks before replacing it.
+For controlled experiments, `GSV_VISION_BENCHMARK_THREADS=1` (or another bounded
+count) overrides the CPU budget in test builds. Keep CPU affinity, inputs and
+sample counts matched when comparing results.
+
+The [inference investigation](INFERENCE.md) records native measurements,
+browser compatibility checks using the same model files, and speech
+acceleration findings. Complete browser capture, tracking and speech pipelines
+still need implementation and validation.
