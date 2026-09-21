@@ -226,6 +226,7 @@ type KernelTask =
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
   | { callback: "onProfilePublication"; payload: number }
+  | { callback: "onConversationAttention"; payload: "digest" }
   | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
