@@ -86,8 +86,20 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
 
 function listContacts(args: string[], ctx: KernelContext): ExecResult {
   requireCommandCapability(ctx, "contact.list");
-  const flags = parseOnlyFlags(args, new Set(["--all", "--json"]));
-  const result = handleContactList({ includeRevoked: flags.has("--all") }, ctx);
+  const flags = new Set<string>();
+  let after: string | undefined;
+  let query: string | undefined;
+  let limit = 50;
+  for (let index = 0; index < args.length; index++) {
+    const flag = args[index];
+    if (["--all", "--json", "--saved"].includes(flag)) { flags.add(flag); continue; }
+    const value = requireShellOptionValue(args[++index], flag);
+    if (flag === "--after") after = value;
+    else if (flag === "--query") query = value;
+    else if (flag === "--limit") limit = Number(value);
+    else throw new Error(`Unexpected contact list option: ${flag}`);
+  }
+  const result = handleContactList({ includeRevoked: flags.has("--all"), saved: flags.has("--saved") ? true : undefined, after, query, limit }, ctx);
   if (flags.has("--json")) return json(result);
   const lines = ["CONTACT\tSTATE\tNAME\tSHIP"];
   for (const contact of result.contacts) {
@@ -99,6 +111,7 @@ function listContacts(args: string[], ctx: KernelContext): ExecResult {
     ].join("\t"));
   }
   if (result.contacts.length === 0) lines.push("(none)");
+  if (result.next) lines.push(`More contacts: repeat with --after ${result.next}`);
   return completed(`${lines.join("\n")}\n`);
 }
 
@@ -278,7 +291,7 @@ function contactUsage(): string {
   return [
     "Usage:",
     "  contact identity",
-    "  contact list [--all] [--json]",
+    "  contact list [--all] [--saved] [--query TEXT] [--after ID] [--limit N] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create [--expires DURATION]",
     "  contact invite accept CODE",

@@ -76,7 +76,7 @@ export type ContactPreferencesUpdateArgs = {
   patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "notifications">>;
 };
 export type ContactPreferencesUpdateResult = { contact: ContactSummary };
-export type ContactBlock = { actor: ActorRef; createdAtMs: number };
+export type ContactBlock = { actor: ActorRef; createdAtMs: number; displayName?: string; origin?: string };
 export type ContactBlockSetArgs = { actor: ActorRef; blocked: boolean };
 export type ContactBlockSetResult = { block: ContactBlock | null };
 export type ContactBlockListArgs = { cursor?: ActorRef; limit?: number };
@@ -158,10 +158,17 @@ export type ContactInviteCancelResult = {
 
 export type ContactListArgs = {
   includeRevoked?: boolean;
+  saved?: boolean;
+  query?: string;
+  after?: string;
+  limit?: number;
+  ids?: string[];
+  actor?: ActorRef;
 };
 
 export type ContactListResult = {
   contacts: ContactSummary[];
+  next?: string;
   attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean };
 };
 

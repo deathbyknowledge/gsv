@@ -1,19 +1,19 @@
-import type { ApproachCreateArgs, ApproachSummary, ContactSummary } from "@humansandmachines/gsv/protocol";
-import { useMutation } from "@tanstack/preact-query";
+import type { ApproachCreateArgs, ApproachSummary } from "@humansandmachines/gsv/protocol";
+import { useMutation, useQuery } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { INSTRUMENT_CONTACTS_KEY } from "../wire/queryKeys";
 import { approachSendIntent, type ApproachDraft } from "./peopleModel";
 
-export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
+export function NewConversation({ account, draft, onChange, onSent, onBusy, onOpen, onInvitation }: {
   account: ConsoleAccount | undefined;
   draft: ApproachDraft;
   onChange: (value: ApproachDraft) => void;
   onSent: (request: ApproachSummary) => void;
   onBusy: (busy: boolean) => void;
-  contacts: ContactSummary[];
   onOpen: (contactId: string) => void;
   onInvitation: () => void;
 }) {
@@ -35,12 +35,17 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   const busy = resolve.isPending || send.isPending;
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
   const profile = draft.profile;
-  const existing = profile ? contacts.find((contact) => contact.state === "active" && contact.remoteShipId === profile.actor.shipId && contact.remoteSubject.id === profile.actor.subjectId) : undefined;
+  const known = useQuery({
+    queryKey: [...INSTRUMENT_CONTACTS_KEY, "actor", profile?.actor],
+    enabled: connected && !!profile && !!account && canConfigure(account, "contact.list"),
+    queryFn: () => client.contact.list({ actor: profile!.actor, limit: 1 }),
+  });
+  const existing = known.data?.contacts[0];
   const canResolve = connected && !!account && canConfigure(account, "profile.resolve");
   const canSend = connected && !!account && canConfigure(account, "approach.create");
   const bytes = new TextEncoder().encode(draft.text.trim()).length;
   const valid = !!draft.displayName.trim() && !!draft.text.trim() && bytes <= 32_768;
-  const error = resolve.error ?? send.error;
+  const error = resolve.error ?? send.error ?? known.error;
 
   return <section class="people-compose" aria-labelledby="new-conversation-title">
     <div class="people-kicker">New conversation</div><h1 id="new-conversation-title">Who would you like to talk to?</h1>
@@ -60,7 +65,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
         <p class="people-note">{profile.representation === "human-and-ship" ? "They may reply personally or through their Ship. Messages show who sent them." : "A personal profile."}</p>
       </div>
-      {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>open your conversation</button>
+      {known.isFetching ? <LoadingState>Checking your existing conversation…</LoadingState> : existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>open your conversation</button>
         : profile.contactPolicy !== "requests" ? <p class="people-note">{profile.contactPolicy === "invitation" ? "This person connects by private invitation." : "This person is not receiving new message requests."}</p>
         : <form class="people-form" onSubmit={(event) => {
           event.preventDefault();

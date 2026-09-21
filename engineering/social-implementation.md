@@ -236,3 +236,18 @@ CI also found missing inbox syscall documentation signatures, justification
 comments and a tab-attention fixture race; this slice addresses those findings.
 The first-contact test harness fix still needs a Gateway run beyond the protocol
 contract check. All unimplemented agreed batches remain in scope.
+
+Profile images are implemented in source as private bounded PNG uploads, browser
+crop/export, explicit draft inclusion and revision-bound publication. Image R2
+reads recheck current publication; withdrawn images stop serving before physical
+cleanup. V063 owns reference-aware cleanup and upload reservations. CI first
+caught the SDK treating binary syscalls as JSON convenience methods; the streaming
+interface correction is in `25e27795`. The eviction hang also exposed uncollected
+body-read deadline timers, addressed at their owning network boundary in
+`610fb1dc`; the next CI must confirm recovery.
+
+The address-book slice adds owner-indexed keyset pages and local name/origin
+filtering to `contact.list`, exact identity/ID lookup, a paged People address book
+and an explicit blocked-identities screen. V064 retains human-readable private
+block labels after request cleanup. Shell history now resolves the exact contact
+rather than searching a potentially incomplete list. This slice still needs CI.

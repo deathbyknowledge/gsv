@@ -334,6 +334,7 @@ function makeContext(options?: {
     ),
     federation: focusedFixture<KernelContext["federation"]>({
       list: vi.fn(() => []),
+      listPage: vi.fn(() => ({ contacts: [] })),
       attentionNotice: vi.fn(() => undefined),
       ...options?.federation,
     }),
@@ -2827,7 +2828,7 @@ describe("fs copy", () => {
     }));
     const ctx = makeContext({
       capabilities: ["shell.exec", "fs.copy"],
-      federation: { list: vi.fn(() => [contact]) },
+      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
     });
 
     const result = await handleShellExec({
@@ -4217,10 +4218,10 @@ describe("native administration shell commands", () => {
 
   it("lists trusted GSV contacts as first-class message destinations", async () => {
     const contact = { ...makeContact(), localAlias: "Alice" };
-    const list = vi.fn(() => [contact]);
+    const listPage = vi.fn(() => ({ contacts: [contact] }));
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list"],
-      federation: { list },
+      federation: { listPage },
     });
 
     const destinations = await handleShellExec({ input: "message destinations --json" }, ctx);
@@ -4240,7 +4241,7 @@ describe("native administration shell commands", () => {
     expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
-    expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
+    expect(listPage).toHaveBeenCalledWith(IDENTITY.uid, expect.objectContaining({ includeRevoked: false, limit: 50 }));
   });
 
   it("lets the canonical Ship set a local Contact alias", async () => {
@@ -4360,7 +4361,7 @@ describe("native administration shell commands", () => {
     });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.history"],
-      federation: { list: vi.fn(() => [contact]) },
+      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
       procs: {
         get: vi.fn(() => makeProcess({
           processId: "proc:ship",
@@ -4394,7 +4395,7 @@ describe("native administration shell commands", () => {
     getConversationByIdMock.mockReturnValue({ search });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.search"],
-      federation: { list: vi.fn(() => [contact]) },
+      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
       processId: null,
     });
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({

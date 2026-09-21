@@ -150,7 +150,7 @@ function resolveMessageConversation(target: string, ctx: KernelContext): string 
   const id = target.trim();
   if (!id.startsWith("contact:")) return id;
   requireCommandCapability(ctx, "contact.list");
-  const contact = handleContactList({ includeRevoked: true }, ctx).contacts.find((contact) => contact.id === id);
+  const contact = handleContactList({ includeRevoked: true, ids: [id], limit: 1 }, ctx).contacts[0];
   if (!contact) throw new Error(`Contact not found: ${id}`);
   return contact.conversationId;
 }
@@ -354,9 +354,10 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
         includeOffline: flags.has("--all"),
       })
     : [];
-  const contacts = canListContacts
-    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx).contacts
-    : [];
+  const contactPage = canListContacts
+    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx)
+    : { contacts: [] };
+  const contacts = contactPage.contacts;
   const destinations = [
     ...adapters.map((entry) => ({
       id: entry.id,
@@ -374,7 +375,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
     })),
   ];
   if (flags.has("--json")) {
-    return completed(`${JSON.stringify({ destinations }, null, 2)}\n`);
+    return completed(`${JSON.stringify({ destinations, ...(contactPage.next ? { nextContactsAfter: contactPage.next } : undefined) }, null, 2)}\n`);
   }
   const lines = ["DESTINATION\tSTATE\tLABEL"];
   for (const destination of destinations) {
@@ -387,6 +388,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
   if (destinations.length === 0) {
     lines.push("(none)");
   }
+  if (contactPage.next) lines.push(`More contacts: contact list --after ${contactPage.next}`);
   return completed(`${lines.join("\n")}\n`);
 }
 

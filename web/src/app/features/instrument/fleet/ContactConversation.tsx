@@ -1,4 +1,4 @@
-import { MAX_FEDERATION_MESSAGE_RESOURCES, type ContactSummary, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
+import { MAX_FEDERATION_MESSAGE_RESOURCES, MAX_FEDERATION_MESSAGE_RESOURCE_BYTES, type ContactSummary, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
 import { useInfiniteQuery, useQueries } from "@tanstack/preact-query";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -88,8 +88,8 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
     if (draft.media.length + files.length > MAX_FEDERATION_MESSAGE_RESOURCES) {
       onDraft({ error: `A message can include up to ${MAX_FEDERATION_MESSAGE_RESOURCES} attachments.` }); return;
     }
-    if (draft.media.reduce((bytes, file) => bytes + file.body.size, 0) + files.reduce((bytes, file) => bytes + file.size, 0) > 100 * 1024 * 1024) {
-      onDraft({ error: "Keep the total attachments in one message under 100 MB." }); return;
+    if (draft.media.reduce((bytes, file) => bytes + file.body.size, 0) + files.reduce((bytes, file) => bytes + file.size, 0) > MAX_FEDERATION_MESSAGE_RESOURCE_BYTES) {
+      onDraft({ error: "Keep the total attachments in one message under 48 MiB." }); return;
     }
     onDraft({ media: [...draft.media, ...files.map(zenAttachment)], error: null, status: null });
   };

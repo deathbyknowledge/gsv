@@ -44,6 +44,37 @@ function activateContact(store: FederationStore) {
 }
 
 describe("FederationStore", () => {
+  it("pages and filters the owning address book without exposing foreign contacts", async () => {
+    await withStore((store) => {
+      const base = activateContact(store);
+      const contacts = [base, ...Array.from({ length: 5 }, (_, index) => store.activateContact({
+        ownerUid: base.ownerUid, remoteShipId: `ship:peer-${index}`,
+        remoteSubject: { id: `subject:peer-${index}`, displayName: `Person ${index}` },
+        remoteOrigin: `https://peer-${index}.example`, remotePublicKey: PUBLIC_KEY,
+        sharedSecret: "secret", generation: `generation:${index}`, threadId: `thread:${index}`,
+      }))];
+      const foreign = store.activateContact({
+        ownerUid: 2000, remoteShipId: base.remoteShipId, remoteSubject: base.remoteSubject,
+        remoteOrigin: base.remoteOrigin, remotePublicKey: PUBLIC_KEY, sharedSecret: "other", generation: "generation:other", threadId: "thread:other",
+      });
+      let after: string | undefined;
+      const ids: string[] = [];
+      do {
+        const page = store.listPage(base.ownerUid, { after, limit: 2 });
+        expect(page.contacts.length).toBeLessThanOrEqual(2);
+        ids.push(...page.contacts.map((contact) => contact.id)); after = page.next;
+      } while (after);
+      expect(ids).toEqual(contacts.map((contact) => contact.id).sort());
+      store.setAlias(contacts[3].id, base.ownerUid, "100% local friend");
+      expect(store.listPage(base.ownerUid, { query: "% local", limit: 2 }).contacts.map((contact) => contact.id)).toEqual([contacts[3].id]);
+      expect(store.listPage(base.ownerUid, { ids: [foreign.id, contacts[4].id], limit: 2 }).contacts.map((contact) => contact.id)).toEqual([contacts[4].id]);
+      expect(store.listPage(base.ownerUid, { actor: { shipId: base.remoteShipId, subjectId: base.remoteSubject.id }, limit: 1 }).contacts[0]?.id).toBe(base.id);
+      store.updatePreferences(base.ownerUid, { contactId: base.id, expectedRevision: base.preferences.revision, patch: { saved: false } });
+      expect(store.listPage(base.ownerUid, { saved: false, limit: 10 }).contacts.map((contact) => contact.id)).toEqual([base.id]);
+      expect(store.listPage(base.ownerUid, { ids: [], limit: 10 }).contacts).toEqual([]);
+    });
+  });
+
   it("preserves private preferences across re-pairing and rejects stale or foreign edits", async () => {
     await withStore((store) => {
       const contact = activateContact(store);
@@ -85,7 +116,7 @@ describe("FederationStore", () => {
       store.setActorBlock(contact.ownerUid, another, true, 30);
       store.setActorBlock(2000, actor, true, 40);
       const page = store.listActorBlocks(contact.ownerUid, 1);
-      expect(page.blocks).toEqual([{ actor, createdAtMs: 10 }]);
+      expect(page.blocks).toEqual([{ actor, createdAtMs: 10, displayName: contact.remoteSubject.displayName, origin: contact.remoteOrigin }]);
       expect(store.listActorBlocks(contact.ownerUid, 1, page.nextCursor)).toEqual({ blocks: [{ actor: another, createdAtMs: 30 }] });
       store.setActorBlock(contact.ownerUid, actor, false);
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: false });

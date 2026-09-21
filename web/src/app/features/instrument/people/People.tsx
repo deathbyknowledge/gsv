@@ -1,22 +1,24 @@
-import { contactDisplayName, type ApproachListArgs, type ApproachSummary, type ConversationInboxArgs } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { contactDisplayName, type ApproachListArgs, type ApproachSummary, type ConversationInboxArgs, type ContactListArgs } from "@humansandmachines/gsv/protocol";
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { AddContact, ContactAttentionNotice, ContactInspector, useFleetContacts } from "../fleet/Contacts";
+import { AddContact, ContactAttentionNotice, ContactInspector } from "../fleet/Contacts";
 import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "../fleet/useContactDrafts";
 import { canConfigure } from "../settings/settingsModel";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_INBOX_KEY } from "../wire/queryKeys";
 import { NewConversation } from "./NewConversation";
+import { BlockedPeople } from "./BlockedPeople";
 import { MessageRequest } from "./MessageRequest";
 import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
 import "../fleet/fleet.css";
 import "./people.css";
 
 type PeopleView = "inbox" | "requests" | "contacts";
-type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" } | null;
+type Selection = { kind: "contact" | "request"; id: string } | { kind: "compose" | "invitation" | "blocked" } | null;
+const NO_CONTACT_CURSOR: ContactListArgs["after"] = undefined;
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 
@@ -30,6 +32,8 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
   const [history, setHistory] = useState(false);
   const [archived, setArchived] = useState(false);
   const [filter, setFilter] = useState("");
+  const [contactFilter, setContactFilter] = useState("");
+  useEffect(() => { const timer = setTimeout(() => setContactFilter(filter.trim()), 180); return () => clearTimeout(timer); }, [filter]);
   const [busy, setBusy] = useState(false);
   const [contactDirty, setContactDirty] = useState(false);
   const detail = useRef<HTMLElement>(null);
@@ -42,8 +46,13 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
   const accounts = useQuery({ queryKey: ["fleet", "accounts"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
   const human = !!account && account.uid >= 1000;
-  const contactsQuery = useFleetContacts(human ? account : undefined);
-  const contacts = contactsQuery.data?.contacts ?? [];
+  const addressBook = useInfiniteQuery({
+    queryKey: [...INSTRUMENT_CONTACTS_KEY, "address-book", contactFilter],
+    enabled: connected && human && view === "contacts" && canConfigure(account!, "contact.list"),
+    initialPageParam: NO_CONTACT_CURSOR,
+    queryFn: ({ pageParam }) => client.contact.list({ saved: true, includeRevoked: true, query: contactFilter, after: pageParam, limit: 40 }),
+    getNextPageParam: (page) => page.next,
+  });
   const inbox = useInfiniteQuery({
     queryKey: [...INSTRUMENT_INBOX_KEY, archived],
     enabled: connected && human && canConfigure(account!, "conversation.inbox"),
@@ -53,6 +62,22 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
   });
   const inboxItems = inbox.data?.pages.flatMap((page) => page.entries) ?? [];
   const inboxByContact = new Map(inboxItems.map((entry) => [entry.contactId, entry]));
+  const contactIds = [...new Set([...inboxItems.map((entry) => entry.contactId), ...(selection?.kind === "contact" ? [selection.id] : [])])].sort();
+  const chunks = Array.from({ length: Math.max(1, Math.ceil(contactIds.length / 100)) }, (_, index) => contactIds.slice(index * 100, index * 100 + 100));
+  const contactDetails = useQueries({ queries: chunks.map((ids) => ({
+    queryKey: [...INSTRUMENT_CONTACTS_KEY, "by-id", ids],
+    enabled: connected && human && canConfigure(account!, "contact.list"),
+    queryFn: () => client.contact.list({ ids, includeRevoked: true, limit: 100 }),
+  })) });
+  const contacts = [...new Map([
+    ...(addressBook.data?.pages.flatMap((page) => page.contacts) ?? []),
+    ...contactDetails.flatMap((page) => page.data?.contacts ?? []),
+  ].map((contact) => [contact.id, contact])).values()];
+  const contactsQuery = {
+    data: contactDetails[0]?.data || addressBook.data ? { contacts, attentionNotice: contactDetails[0]?.data?.attentionNotice ?? addressBook.data?.pages[0]?.attentionNotice } : undefined,
+    isFetching: addressBook.isFetching || contactDetails.some((page) => page.isFetching),
+    error: addressBook.error ?? contactDetails.find((page) => page.error)?.error,
+  };
   const requests = useInfiniteQuery({
     queryKey: [...INSTRUMENT_APPROACHES_KEY, "list", direction, history],
     enabled: connected && human && canConfigure(account!, "approach.list"),
@@ -66,8 +91,9 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
     queryFn: async () => (await client.approach.get({ approachId: requestId! })).approach,
   });
   const selectedContact = selection?.kind === "contact" ? contacts.find((contact) => contact.id === selection.id) : undefined;
-  const visible = contacts.filter((contact) => (view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
-    && `${contactDisplayName(contact)} ${contact.remoteSubject.displayName} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
+  const listedContacts = view === "contacts" ? addressBook.data?.pages.flatMap((page) => page.contacts) ?? [] : contacts;
+  const visible = listedContacts.filter((contact) => (view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
+    && (view === "contacts" || `${contactDisplayName(contact)} ${contact.remoteSubject.displayName} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())))
     .sort((a, b) => view === "contacts" ? contactDisplayName(a).localeCompare(contactDisplayName(b)) : (inboxByContact.get(b.id)?.conversation.updatedAt ?? 0) - (inboxByContact.get(a.id)?.conversation.updatedAt ?? 0));
   const items = requests.data?.pages.flatMap((page) => page.approaches) ?? [];
   useLayoutEffect(() => { if (selection) detail.current?.focus({ preventScroll: true }); }, [selection]);
@@ -102,18 +128,20 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
         {view === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">This account cannot read the inbox.</p>}
         {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">This account cannot read contacts.</p>}
         <div class="people-list-tools"><input class="people-filter" aria-label={view === "contacts" ? "Find a contact" : "Find a conversation"} value={filter} placeholder={view === "contacts" ? "Find a contact…" : "Filter loaded conversations…"} onInput={(event) => setFilter(event.currentTarget.value)} />{view === "inbox" && <label class="people-check"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.currentTarget.checked)} />archive</label>}</div>
-        {(contactsQuery.isFetching && !contactsQuery.data || view === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">Loading conversations…</LoadingState>}
+        {(view === "contacts" && addressBook.isFetching && !addressBook.data || view === "inbox" && (contactsQuery.isFetching && !contactsQuery.data || inbox.isFetching && !inbox.data)) && <LoadingState variant="panel">Loading conversations…</LoadingState>}
         {view === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
-        {contactsQuery.data && (view === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{filter ? "No matching people." : view === "contacts" ? "Your address book starts here." : archived ? "No archived conversations." : "A conversation starts with a hello."}</p><span>{filter ? "Try their name or space address." : "Use a profile address to reach someone you choose."}</span></div>}
+        {contactsQuery.data && (view === "contacts" ? addressBook.data : inbox.data) && !visible.length && <div class="people-empty-list"><p>{filter ? "No matching people." : view === "contacts" ? "Your address book starts here." : archived ? "No archived conversations." : "A conversation starts with a hello."}</p><span>{filter ? "Try their name or space address." : "Use a profile address to reach someone you choose."}</span></div>}
         <ul class="people-rows">{visible.map((contact) => <li key={contact.id}><button class={`people-row${selectedContact?.id === contact.id ? " is-selected" : ""}${view === "inbox" && inboxByContact.get(contact.id)?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={selectedContact?.id === contact.id ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{view === "inbox" && inboxByContact.get(contact.id)?.unread && <span class="people-unread" aria-label="Unread" />}</span><time>{new Date(inboxByContact.get(contact.id)?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{inboxPreview(contact, view === "inbox" ? inboxByContact.get(contact.id) : undefined)}</span></button></li>)}</ul>
+        {view === "contacts" && addressBook.hasNextPage && <button class="people-action people-more" disabled={addressBook.isFetchingNextPage} onClick={() => void addressBook.fetchNextPage()}>{addressBook.isFetchingNextPage ? "loading…" : "more contacts"}</button>}
         {view === "inbox" && inbox.hasNextPage && <button class="people-action people-more" disabled={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>{inbox.isFetchingNextPage ? "loading…" : "earlier conversations"}</button>}
       </>}
-      <footer class="people-list-footer"><button class="people-action" disabled={busy} onClick={onProfile}>your public profile</button>{!connected && <span role="status">reconnecting…</span>}</footer>
+      <footer class="people-list-footer"><button class="people-action" disabled={busy} onClick={onProfile}>your public profile</button><button class="people-action" disabled={busy} onClick={() => setSelection({ kind: "blocked" })}>blocked people</button>{!connected && <span role="status">reconnecting…</span>}</footer>
     </aside>
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label="Selected conversation">
       {selection && <button class="people-action people-back" disabled={busy} onClick={() => setSelection(null)}>← back to {view}</button>}
-      {selection?.kind === "compose" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact} onInvitation={() => setSelection({ kind: "invitation" })} />
+      {selection?.kind === "compose" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} onOpen={openContact} onInvitation={() => setSelection({ kind: "invitation" })} />
+        : selection?.kind === "blocked" ? <BlockedPeople account={account} />
         : selection?.kind === "invitation" ? <AddContact account={account} onClose={() => setSelection(null)} onAdded={openContact} />
         : selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={view === "contacts" ? "details" : "messages"} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
         : requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={openContact} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">Opening request…</LoadingState>

@@ -49,6 +49,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   bodyToBytes,
+  actorRefSchema,
   contactDisplayName,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
@@ -512,8 +513,14 @@ export function handleContactList(
   ctx: KernelContext,
 ): ContactListResult {
   const ownerUid = requireContactCaller(ctx, false);
+  const input = z.object({
+    includeRevoked: z.boolean().optional(), saved: z.boolean().optional(), query: z.string().trim().max(160).optional(),
+    after: z.string().max(256).optional(), limit: z.number().int().min(1).max(100).default(50),
+    ids: z.array(z.string().min(1).max(256)).max(100).optional(), actor: z.optional(actorRefSchema),
+  }).strict().parse(args);
+  const page = ctx.federation.listPage(ownerUid, input);
   return {
-    contacts: ctx.federation.list(ownerUid, args.includeRevoked ?? false).map(contactSummary),
+    ...page, contacts: page.contacts.map(contactSummary),
     attentionNotice: ctx.federation.attentionNotice(ownerUid),
   };
 }

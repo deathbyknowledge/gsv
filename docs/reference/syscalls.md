@@ -765,7 +765,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
-| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. Returns any pending social-attention upgrade notice with the preserved previous preferences. |
+| `contact.list` | Pages the caller's contacts (default 50, maximum 100), ordered by stable contact ID. `after` resumes a page, `query` filters local names and origins, `saved` filters address-book membership; `ids` (up to 100) and `actor` resolve exact owned identities. `includeRevoked` includes terminal relationships. Returns any pending social-attention upgrade notice with the preserved previous preferences. |
 | `contact.notice.dismiss` | Lets the signed-in human dismiss their own attention upgrade notice; does not change existing commitments or automation authority. |
 | `contact.preferences.update` | Human-only change to saved, muted and notification preferences with a required policy revision. Does not revoke communication or grant agent authority. |
 | `contact.block.set` | Human-only block/unblock by pinned actor. Blocking atomically revokes transport, grants and queued deliveries; unblocking does not reconnect. |
@@ -890,8 +890,8 @@ type ContactSyscalls = {
     result: { invite: ContactInviteSummary };
   };
   "contact.list": {
-    args: { includeRevoked?: boolean };
-    result: { contacts: ContactSummary[]; attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean } };
+    args: { includeRevoked?: boolean; saved?: boolean; query?: string; after?: string; limit?: number; ids?: string[]; actor?: ActorRef };
+    result: { contacts: ContactSummary[]; next?: string; attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean } };
   };
   "contact.notice.dismiss": { args: {}; result: {} };
   "contact.preferences.update": {
