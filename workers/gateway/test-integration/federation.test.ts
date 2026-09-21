@@ -229,9 +229,9 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(messagesWithText(firstHistory, messageArgs.text)).toHaveLength(1);
     expect(messagesWithText(secondHistory, messageArgs.text)).toHaveLength(1);
-    const firstOrigin = messagesWithText(firstHistory, messageArgs.text)[0]?.social;
-    expect(firstOrigin?.provenance).toEqual({ kind: "human" });
-    expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstOrigin);
+    const firstMessageMetadata = messagesWithText(firstHistory, messageArgs.text)[0]?.social;
+    expect(firstMessageMetadata?.provenance).toEqual({ kind: "human" });
+    expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstMessageMetadata);
     expect(firstHistory.conversation.handlerPid).toBeUndefined();
     expect(secondHistory.conversation.handlerPid).toBeUndefined();
     expect(messagesWithText(secondHistory, messageArgs.text)[0]).toMatchObject({
@@ -247,22 +247,22 @@ describe("cross-GSV federation integration", () => {
       },
     });
 
-    if (!firstOrigin) throw new Error("V2 message is missing its origin reference");
+    if (!firstMessageMetadata) throw new Error("V2 message is missing its origin reference");
     const replyArgs: ContactSendArgs = {
       contactId: secondContact.id,
       text: "Reply from the second Ship",
-      replyTo: firstOrigin.reference,
+      replyTo: firstMessageMetadata.reference,
       idempotencyKey: "integration-reply-second-to-first",
     };
     await waitForDelivery(second, replyArgs);
     const replyHistory = await waitForMessage(first, firstContact.conversationId, replyArgs.text);
     expect(messagesWithText(replyHistory, replyArgs.text)[0]?.social).toMatchObject({
       provenance: { kind: "human" },
-      replyTo: firstOrigin.reference,
+      replyTo: firstMessageMetadata.reference,
     });
     await expect(second.contact.send({
       ...replyArgs,
-      replyTo: { ...firstOrigin.reference, messageId: "message:outside-this-conversation" },
+      replyTo: { ...firstMessageMetadata.reference, messageId: "message:outside-this-conversation" },
       idempotencyKey: "integration-invalid-reply",
     })).rejects.toThrow("Reply must reference a message in this contact conversation");
 
