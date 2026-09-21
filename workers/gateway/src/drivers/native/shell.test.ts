@@ -4394,12 +4394,13 @@ describe("native administration shell commands", () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.search"],
       federation: { list: vi.fn(() => [contact]) },
+      processId: null,
     });
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({
       get: vi.fn(() => ({ id: contact.conversationId, kind: "contact", ownerUid: IDENTITY.uid, title: null, latestSequence: 4, createdAt: 1, updatedAt: 1 })),
     });
     const result = await handleShellExec({ input: `message search --with ${contact.id} --query 'password recovery' --limit 3` }, ctx);
-    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result, result.stderr).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("coverage=building");
     expect(result.stdout).toContain("Results do not cover the complete conversation text.");
     expect(search).toHaveBeenCalledExactlyOnceWith({ query: "password recovery", beforeSequence: undefined, limit: 3 });

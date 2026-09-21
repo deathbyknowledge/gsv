@@ -112,7 +112,7 @@ describe("Conversation Durable Object", () => {
     expect(second.nextBeforeSequence).toBeUndefined();
     expect((await stub.search({ query: "recovery OR unrelated" })).matches).toEqual([]);
     expect((await stub.search({ query: 'recovery " OR unrelated' })).matches).toEqual([]);
-    await expect(stub.search({ query: "recovery", limit: 51 })).rejects.toThrow("between 1 and 50");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "recovery", limit: 51 }))).rejects.toThrow("between 1 and 50");
   });
 
   it("keeps canonical appends available when the derived search index reaches its budget", async () => {
