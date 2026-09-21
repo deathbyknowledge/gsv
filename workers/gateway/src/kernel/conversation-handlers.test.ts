@@ -70,6 +70,7 @@ function context(ownerUid = 1000): KernelContext {
       get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
       list: vi.fn(() => [SHIP]),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     },
     runRoutes: {
       setConnectionRoute: vi.fn(),

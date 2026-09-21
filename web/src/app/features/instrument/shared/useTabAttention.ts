@@ -9,7 +9,11 @@ import { badgeIcon, createTabAttention, type TabAttention } from "./tabAttention
 
 /* the part of a committed message the tab signal reads: which message it is, and which process wrote it */
 const committedMessageSchema = z.object({
-  message: z.object({ id: z.string(), author: z.object({ kind: z.literal("process"), pid: z.string() }) }),
+  message: z.object({ id: z.string(), author: z.union([
+    z.object({ kind: z.literal("process"), pid: z.string() }),
+    z.object({ kind: z.literal("contact") }),
+  ]) }),
+  attention: z.enum(["notify", "digest", "quiet"]).optional(),
 });
 
 /**
@@ -50,11 +54,14 @@ export function useTabAttention(): void {
   }, []);
 
   useEffect(() => {
-    if (!connected || shipPid === null) return;
+    if (!connected) return;
     return client.onSignal((signal, payload) => {
       if (signal !== "message.committed") return;
       const committed = committedMessageSchema.safeParse(payload);
-      if (!committed.success || committed.data.message.author.pid !== shipPid) return;
+      if (!committed.success) return;
+      const author = committed.data.message.author;
+      // People messages additionally use the Kernel's private attention policy.
+      if (author.kind === "contact" ? committed.data.attention !== "notify" : author.pid !== shipPid) return;
       attention.current?.arrived(committed.data.message.id);
     });
   }, [client, connected, shipPid]);

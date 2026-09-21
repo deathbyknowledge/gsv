@@ -80,3 +80,17 @@
 .people-access { margin: auto; padding: calc(var(--instrument-header-height) + 32px) 24px 32px; max-width: 60ch; font: 16px/1.6 var(--gsv-font-prose); }
 .people-access h1 { color: var(--text-title); font-size: 25px; }
 .people-access-note { padding-inline: 20px; }
+
+.people-unread { display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.people-row.is-unread .people-row-preview { color: var(--text); }
+.people-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; font-size: 10px; }
+.people-view-controls .error { flex-basis: 100%; }
+
+.people-relationship { margin-block: 20px; padding-block: 18px; border-block: 1px solid var(--border); }
+.people-relationship h4 { margin: 0 0 18px; color: var(--text-title); font: 500 18px/1.4 var(--gsv-font-prose); }
+.people-setting { display: flex; gap: 12px; margin-block: 18px; align-items: start; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); }
+.people-setting input { margin-top: 5px; accent-color: var(--accent); }
+.people-setting small { display: block; color: var(--text-dim); font-size: 13px; }
+.people-notifications { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--text); font: 15px/1.5 var(--gsv-font-prose); }
+.people-notifications select { background: var(--panel-2); border: 1px solid var(--border); padding: 8px; color: var(--text); font: 13px/1.5 var(--gsv-font-prose); }
+.people-block-control { padding-top: 16px; border-top: 1px solid var(--border); margin-top: 16px; }

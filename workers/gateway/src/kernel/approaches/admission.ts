@@ -196,7 +196,7 @@ export async function appendApproachMessage(id: string, ctx: KernelContext): Pro
     createdAt: metadata.createdAtMs,
   });
   ctx.approaches.messageCommitted(id, message.message.sequence);
-  ctx.conversations.recordSequence(conversation.id, message.message.sequence);
+  ctx.conversations.recordContactMessage(message.message, true);
   if (message.created) {
     ctx.broadcastToUserUid(record.ownerUid, "message.committed", { message: message.message, directed: false });
     ctx.broadcastToUserUid(record.ownerUid, "conversation.changed", { conversationId: conversation.id, latestSequence: message.message.sequence });

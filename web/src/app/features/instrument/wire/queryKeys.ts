@@ -22,3 +22,6 @@ export const instrumentContactRequestsKey = (contactId: string) => ["instrument"
 export const INSTRUMENT_RESPONSIBILITIES_KEY = ["instrument", "responsibilities"] as const;
 export const INSTRUMENT_ROUTINES_KEY = ["instrument", "routines"] as const;
 export const INSTRUMENT_SOURCES_KEY = ["instrument", "responsibility-sources"] as const;
+
+export const INSTRUMENT_INBOX_KEY = ["instrument", "inbox"] as const;
+export const conversationViewKey = (id: string) => ["instrument", "conversation-view", id] as const;

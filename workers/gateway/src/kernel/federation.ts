@@ -1870,8 +1870,8 @@ async function commitInboundMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId: inbox.deliveryId },
     createdAt: inbox.receivedAtMs,
   });
-  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 
 }
 
@@ -2227,8 +2227,8 @@ async function commitLocalOutboxMessage(
     createdAt: local.createdAtMs,
   });
   ctx.federation.markLocalMessageCommitted(outbox.deliveryId, appended.message.sequence);
-  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
 async function ensureContactConversation(
@@ -2267,8 +2267,8 @@ async function appendContactSystemMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId },
     createdAt,
   });
-  ctx.conversations.recordSequence(conversationId, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
 function createFederationResponsibility(input: {
@@ -2381,12 +2381,15 @@ function contactAuthor(contact: FederationContactRecord): ConversationMessageAut
 }
 
 function broadcastCommittedMessage(
-  ownerUid: number,
+  contact: FederationContactRecord,
   message: ConversationMessage,
   ctx: KernelContext,
 ): void {
-  ctx.broadcastToUserUid(ownerUid, "message.committed", { message, directed: false });
-  ctx.broadcastToUserUid(ownerUid, "conversation.changed", {
+  const current = ctx.federation.get(contact.id);
+  const attention = message.author.kind === "contact" && current?.state === "active" && !current.blocked && !current.preferences.muted
+    ? current.preferences.notifications : "quiet";
+  ctx.broadcastToUserUid(contact.ownerUid, "message.committed", { message, directed: false, attention });
+  ctx.broadcastToUserUid(contact.ownerUid, "conversation.changed", {
     conversationId: message.conversationId,
     latestSequence: message.sequence,
   });

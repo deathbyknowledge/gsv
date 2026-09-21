@@ -84,6 +84,10 @@ export async function handleConversationHistory(
     beforeSequence: args.beforeSequence,
     limit: args.limit,
   });
+  const latest = history.messages.at(-1);
+  if (conversation.kind === "contact" && latest?.sequence === history.latestSequence) {
+    ctx.conversations.recordContactMessage(latest, true);
+  }
   if (history.latestSequence > conversation.latestSequence) {
     ctx.conversations.recordSequence(conversation.id, history.latestSequence);
   }

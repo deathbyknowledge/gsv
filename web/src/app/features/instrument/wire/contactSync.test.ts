@@ -54,6 +54,18 @@ describe("contact change notifications", () => {
 
 
 describe("contact detail notifications", () => {
+  it("does not reread message history when only private read position changes", async () => {
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cleanup.push(() => cache.clear());
+    const key = [...instrumentContactConversationKey("one"), "history", null];
+    cache.setQueryData(key, ["message"]);
+    const load = vi.fn(async () => ["message"]);
+    const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
+    cleanup.push(observer.subscribe(() => undefined));
+    await syncContactDetailSignal(cache, "conversation.changed", { conversationId: "one", viewOnly: true });
+    expect(load).not.toHaveBeenCalled();
+    expect(cache.getQueryState(key)?.isInvalidated).toBe(false);
+  });
   it("refreshes a paginated history beneath its conversation key", async () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     cleanup.push(() => cache.clear());

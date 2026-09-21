@@ -6,6 +6,8 @@ import { contactDisplayName, type ContactInviteCreateResult, type ContactListRes
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { RelationshipPreferences } from "../people/RelationshipPreferences";
+import { ConversationViewControls } from "../people/ConversationViewControls";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "../shared/SetupCommand";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
@@ -136,7 +138,8 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, ini
 
   return <section class="fleet-connection" aria-label="Contact details">
     <h3>{contactDisplayName(contact)}</h3>
-    <div class="sub">contact · {contact.state}</div>
+    <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
+    <ConversationViewControls conversationId={contact.conversationId} account={account} />
     <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
     {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
@@ -146,6 +149,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, ini
       <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
       <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
     </form>
+    <RelationshipPreferences contact={contact} account={account} />
     {contact.state === "active" && <div class="fleet-place-form">
       {confirm ? <>
         <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>

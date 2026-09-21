@@ -117,6 +117,7 @@ import {
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
 import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
 import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
@@ -375,6 +376,15 @@ async function dispatchKernel(
         break;
       case "conversation.forProcess":
         data = await handleConversationForProcess(frame.args, ctx);
+        break;
+      case "conversation.inbox":
+        data = handleConversationInbox(frame.args, ctx);
+        break;
+      case "conversation.view.get":
+        data = handleConversationViewGet(frame.args, ctx);
+        break;
+      case "conversation.view.update":
+        data = handleConversationViewUpdate(frame.args, ctx);
         break;
       case "conversation.list":
         data = await handleConversationList(ctx);

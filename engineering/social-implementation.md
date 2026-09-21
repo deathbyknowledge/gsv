@@ -28,8 +28,8 @@ or deploy merely because an intermediate batch is ready.
 | --- | --- | --- | --- |
 | 1. Federation correctness | Enforce participant roles on local and inbound work-request actions; expose failed/unsettled exchanges accurately; preserve existing delivery and resource fences. | Kernel federation handlers/store, protocol and affected clients | Implemented; awaiting CI and human validation |
 | 2. Shared contracts and storage | Versioned federation, trusted human/Process provenance, stable message/reply references, relationship policy, numbered migrations, and contact Conversations with no Process handler. | SDK/protocol, Kernel, Conversation storage | In progress |
-| 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Profile publication/editor in source; media and first contact pending |
-| 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Pending |
+| 3. Profiles and first contact | Explicitly published `/@username` profiles, authenticated bounded text approaches, durable accept/decline/block, peer-bound pairing and preserved first messages. | Gateway routing, Kernel identity/admission/pairing, web | Text profiles, bound first contact and People request UI in source; avatar media pending |
+| 4. Everyday communication | Contacts/inbox, messages/resources/replies, private read position, mute/archive/report, truthful delivery/retry, and owner-initiated Ship help. | Kernel/Conversation, shared web services and Instrument | Private inbox/read/archive and policy controls in source; delivery/replies/report/assistance still in progress |
 | 5. Shared relationship context | Consented shared connections, attributed recommendations/advisories, selected local subscriptions, withdrawals and deliberate introductions. | Kernel policy and bounded projections, protocol, web | Pending |
 | 6. Private message search | Search one selected conversation, including indexed archived text, with current authorization and visible historical coverage. Whole-inbox search is deferred. | Existing Conversation SQLite/FTS5 and maintenance, Kernel authorization | Implemented; CI passed at 8ac2eb6b; human trial pending |
 | 7. Scoped assistance | Generic Process scope/context propagation, exact approved drafts, optional bounded support helpers, resource/recipient enforcement through all syscall presentations and descendants. | Kernel authority, Process context/execution, protocol, web | Pending |
@@ -213,3 +213,13 @@ owner-scoped request records, private setup material, idempotent append recovery
 and revisioned decisions. No public approach endpoint or syscall is enabled by
 this storage slice. Claim/confirmation execution, cleanup, capacity measurements
 and the user flow are still required before public admission.
+
+People is now a dedicated `/people` view with profile-to-compose handoff,
+separate received/sent requests, mobile list/detail navigation, and preserved
+drafts. Its first source commit `6ebad100` passed workspace and lint CI; Gateway
+checks are still running. V061 adds private inbox/read/archive state to Kernel
+storage and bounded previews from committed messages. The reading pane marks
+visible messages only. Contact controls separate saving, mute, notification
+policy, block and revoke. Digest delivery, optimistic contact sends, reply UI,
+reporting, address-book pagination and the remaining batches are not yet done.
+No local validation or browser trial was run.

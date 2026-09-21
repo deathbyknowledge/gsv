@@ -2220,3 +2220,15 @@ type SchedulerSyscalls = {
 - [Routing Reference](./routing.md)
 - [WebSocket Protocol](./websocket-protocol.md)
 - [Architecture Overview](../architecture/)
+
+### Private inbox views
+
+`conversation.inbox` pages the signed-in human's established contact threads
+from Kernel SQLite. `conversation.view.get` reads one thread's private view;
+`conversation.view.update` advances its read position or changes archive state.
+These direct-human operations do not create a Process or send a read receipt.
+Read position merges monotonically. Archiving requires the displayed revision;
+new messages invalidate an older archive decision. Muted threads stay archived.
+The list retains bounded committed-message previews, so loading it does not fan
+out to Conversation objects. Existing conversations migrate at their previous
+latest sequence rather than declaring their entire history unread.

@@ -10,6 +10,7 @@ import { instrumentContactConversationKey } from "../wire/queryKeys";
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";
 import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
+import { useConversationReadPosition } from "../people/useConversationReadPosition";
 import { ConversationSearch } from "./ConversationSearch";
 
 const NO_SEQUENCE: number | null = null;
@@ -47,6 +48,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
     getNextPageParam: (page) => page.hasMore ? page.messages[0]?.sequence : undefined,
   });
   const messages = history.data?.pages.slice().reverse().flatMap((page) => page.messages) ?? [];
+  useConversationReadPosition(contact.conversationId, scroll, messages.at(-1)?.sequence ?? 0, !!account && account.uid >= 1000 && canConfigure(account, "conversation.view.update"));
   const followLatest = () => {
     if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   };
@@ -86,7 +88,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
       {history.isPending && connected && <LoadingState variant="panel">Loading messages…</LoadingState>}
       {history.error && <p class="error" role="alert">{history.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
       {history.data && messages.length === 0 && <p class="note">No messages yet.</p>}
-      {messages.map((message) => <article key={message.id} class={`fleet-contact-message${message.sequence === focusSequence ? " fleet-contact-message-focused" : ""}`}>
+      {messages.map((message) => <article key={message.id} data-message-sequence={message.sequence} class={`fleet-contact-message${message.sequence === focusSequence ? " fleet-contact-message-focused" : ""}`}>
         <header><span>{message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "Ship" : "you"}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}

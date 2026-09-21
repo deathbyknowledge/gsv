@@ -89,6 +89,49 @@ export type ConversationForProcessResult = { conversation: ConversationSummary }
 export type ConversationListArgs = Record<string, never>;
 export type ConversationListResult = { conversations: ConversationSummary[] };
 
+export type ConversationView = {
+  readThroughSequence: number;
+  archived: boolean;
+  revision: number;
+};
+
+export type ConversationPreview = Pick<ConversationMessage, "id" | "sequence" | "author" | "createdAt"> & {
+  text: string;
+  attachmentCount: number;
+  provenance?: SocialMessageMetadata["provenance"];
+};
+
+export type ConversationInboxEntry = {
+  conversation: ConversationSummary;
+  contactId: string;
+  view: ConversationView;
+  unread: boolean;
+  latestIncomingSequence: number;
+  preview: ConversationPreview | null;
+};
+
+export type ConversationInboxArgs = {
+  archived?: boolean;
+  before?: { updatedAt: number; conversationId: string };
+  limit?: number;
+};
+export type ConversationInboxResult = {
+  entries: ConversationInboxEntry[];
+  next?: { updatedAt: number; conversationId: string };
+};
+
+export type ConversationViewGetArgs = { conversationId: string };
+export type ConversationViewGetResult = { entry: ConversationInboxEntry };
+
+export type ConversationViewUpdateArgs = {
+  conversationId: string;
+  readThroughSequence?: number;
+  archived?: boolean;
+  /** Required for an archive change; read position always merges monotonically. */
+  expectedRevision?: number;
+};
+export type ConversationViewUpdateResult = { entry: ConversationInboxEntry };
+
 export type ConversationHistoryArgs = {
   conversationId: string;
   beforeSequence?: number;
@@ -170,6 +213,8 @@ export type ConversationMessageDeltaSignal = ConversationMessageStartedSignal & 
 export type ConversationMessageCommittedSignal = {
   message: ConversationMessage;
   directed: boolean;
+  /** Private human attention policy, derived locally rather than supplied by a peer. */
+  attention?: "notify" | "digest" | "quiet";
 };
 
 export type ConversationMessageAbortedSignal = ConversationMessageStartedSignal & {
@@ -177,6 +222,7 @@ export type ConversationMessageAbortedSignal = ConversationMessageStartedSignal 
 };
 
 export type ConversationChangedSignal = {
+  viewOnly?: boolean;
   conversationId: string;
   latestSequence: number;
 };
