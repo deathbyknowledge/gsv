@@ -1,14 +1,14 @@
 import { z } from "zod/mini";
-import { bodyFromBytes, bodyToBytes, profileAvatarSchema, type BinaryBody, type ProfileAvatar, type ProfileAvatarReadArgs, type ProfileAvatarReadResult, type ProfileAvatarUploadResult } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, profileAvatarSchema, type BinaryBody, type ProfileAvatar, type ProfileAvatarReadArgs, type ProfileAvatarReadResult, type ProfileAvatarUploadResult } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import { requireContactHuman } from "./federation/authority";
+import { readFederationBody } from "./federation/http";
 import { MAX_PROFILE_IMAGE_BYTES, profilePngDimensions } from "./profile-png";
 
 export async function handleProfileAvatarUpload(ctx: KernelContext, body?: BinaryBody): Promise<ProfileAvatarUploadResult> {
   const ownerUid = requireContactHuman(ctx);
   if (!body) throw new Error("An image body is required");
-  const signal = AbortSignal.any([AbortSignal.timeout(10_000), ...(ctx.requestSignal ? [ctx.requestSignal] : [])]);
-  const bytes = await bodyToBytes(body, MAX_PROFILE_IMAGE_BYTES, signal);
+  const bytes = await readFederationBody(body, MAX_PROFILE_IMAGE_BYTES, ctx.requestSignal);
   const dimensions = profilePngDimensions(bytes);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -41,7 +41,7 @@ export async function handleProfileAvatarRead(args: ProfileAvatarReadArgs, ctx: 
   if (image?.state !== "ready") throw new Error("Profile image is unavailable");
   const object = await ctx.env.STORAGE.get(image.object_key);
   if (!object) throw new Error("Profile image is unavailable");
-  const bytes = await bodyToBytes({ stream: object.body, length: object.size }, MAX_PROFILE_IMAGE_BYTES, ctx.requestSignal);
+  const bytes = await readFederationBody({ stream: object.body, length: object.size }, MAX_PROFILE_IMAGE_BYTES, ctx.requestSignal);
   requireContactHuman(ctx);
   const current = ctx.profiles.image(ownerUid, sha256);
   if (current?.reservation !== image.reservation || current.state !== "ready") throw new Error("Profile image is unavailable");

@@ -1,18 +1,44 @@
-import type { JsonValue } from "@humansandmachines/gsv/protocol";
+import type { BinaryBody, JsonValue } from "@humansandmachines/gsv/protocol";
 import { bodyToBytes, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { FederationHttpError } from "./errors";
 import type { KernelContext } from "../context";
 
 export const MAX_PUBLIC_JSON_BYTES = 128 * 1024;
 
+export async function readFederationBody(body: BinaryBody, limit: number, signal?: AbortSignal, timeoutMs = 10_000): Promise<Uint8Array> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(new Error("Federation body read timed out")), timeoutMs);
+  try {
+    return await bodyToBytes(body, limit, signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal);
+  } finally { clearTimeout(timer); }
+}
+
 export async function fetchFederation(url: string, init: RequestInit, ctx: KernelContext, timeoutMs = 30_000): Promise<Response> {
   const localOrigin = ctx.installationIdentity?.canonicalOrigin;
   const allowLocal = ctx.env.GSV_FEDERATION_LOCAL_DEVELOPMENT === "1"
     && !!localOrigin && isLoopbackHost(new URL(localOrigin).hostname);
   assertFederationDestination(url, allowLocal);
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
-  return fetch(url, { ...init, redirect: "manual", signal });
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(new Error("Federation request timed out")), timeoutMs);
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout.signal]) : timeout.signal;
+  let response: Response;
+  try { response = await fetch(url, { ...init, redirect: "manual", signal }); }
+  catch (error) { clearTimeout(timer); throw error; }
+  if (!response.body) { clearTimeout(timer); return response; }
+  const reader = response.body.getReader();
+  let finished = false;
+  const finish = () => { if (finished) return; finished = true; clearTimeout(timer); reader.releaseLock(); };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const part = await reader.read();
+        if (part.done) { finish(); controller.close(); }
+        else controller.enqueue(part.value);
+      } catch (error) { finish(); controller.error(error); }
+    },
+    async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
+  }, { highWaterMark: 0 });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 export async function fetchFederationJson(url: string, init: RequestInit, ctx: KernelContext): Promise<JsonValue> {

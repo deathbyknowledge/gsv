@@ -126,7 +126,7 @@ import {
 } from "./federation/pairing";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
-import { fetchFederation, fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
+import { fetchFederation, fetchFederationJson as fetchJson, readFederationBody, MAX_PUBLIC_JSON_BYTES } from "./federation/http";
 import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
 import {
   assertDeliveryReplay,
@@ -1244,7 +1244,7 @@ export async function handleFederationHttpRequest(
     if (url.pathname === SHIP_DOCUMENT_V2_PATH && (request.method === "GET" || request.method === "POST")) {
       if (request.body) {
         try {
-          await bodyToBytes({ stream: request.body }, 0, AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]));
+          await readFederationBody({ stream: request.body }, 0, request.signal, 5_000);
         } catch {
           throw new PublicFederationError(400, "Ship discovery accepts no request body");
         }
@@ -2556,13 +2556,14 @@ function inviteAcceptResponseUnsigned(value: InviteAcceptResponse): InviteAccept
 async function readBoundedJson(request: Request): Promise<JsonValue> {
   const contentLength = request.headers.get("content-length");
   if (contentLength && Number(contentLength) > MAX_PUBLIC_JSON_BYTES) {
+    await request.body?.cancel().catch(() => {});
     throw new PublicFederationError(413, "Federation request body is too large");
   }
   if (!request.body) throw new PublicFederationError(400, "Federation request body is missing");
-  const bytes = await bodyToBytes(
+  const bytes = await readFederationBody(
     { stream: request.body, length: contentLength ? Number(contentLength) : undefined },
     MAX_PUBLIC_JSON_BYTES,
-    AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
+    request.signal,
   );
   try {
     return jsonValueSchema.parse(JSON.parse(decoder.decode(bytes)));

@@ -1,6 +1,7 @@
-import { bodyFromBytes, bodyToBytes, publicProfileAliasSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, publicProfileAliasSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
 import type { PublicProfileLocator, PublicProfileProjection } from "./kernel/profile-store";
 import { sha256Base64Url } from "./kernel/federation-crypto";
+import { readFederationBody } from "./kernel/federation/http";
 import { renderPublicProfile } from "../../../web/src/public/profile";
 
 const SUBJECT_PATH = "/_gsv/federation/v2/subjects/";
@@ -44,7 +45,7 @@ export async function servePublicProfileRequest(
     if (image?.avatar.sha256 !== path.avatarSha256) return unavailable();
     const object = await storage.get(image.key);
     if (!object) return unavailable();
-    const bytes = await bodyToBytes({ stream: object.body, length: object.size }, 262_144, AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]));
+    const bytes = await readFederationBody({ stream: object.body, length: object.size }, 262_144, request.signal);
     const current = await resolve(path.locator);
     if (current?.image?.key !== image.key || current.image.avatar.sha256 !== path.avatarSha256 || bytes.byteLength !== image.avatar.size) return unavailable();
     const headers = {
