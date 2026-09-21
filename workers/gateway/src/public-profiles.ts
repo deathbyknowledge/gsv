@@ -1,5 +1,6 @@
 import { publicProfileAliasSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
 import type { PublicProfileLocator, PublicProfileProjection } from "./kernel/profile-store";
+import { sha256Base64Url } from "./kernel/federation-crypto";
 import { renderPublicProfile } from "../../../web/src/public/profile";
 
 const SUBJECT_PATH = "/_gsv/federation/v2/subjects/";
@@ -39,10 +40,11 @@ export async function servePublicProfileRequest(
   }
   const source = await object.text();
   const profile = publicProfileSchema.parse(JSON.parse(source));
+  const json = path.json || (request.headers.get("accept") ?? "").split(",").some((entry) => entry.trim().split(";")[0] === "application/json");
+  const body = json ? source : renderPublicProfile(profile);
+  const etag = `"${await sha256Base64Url(body)}"`;
   const current = await resolve(path.locator);
   if (!current || current.key !== projection.key || current.revision !== profile.revision || current.alias !== profile.alias) return unavailable();
-  const json = path.json || (request.headers.get("accept") ?? "").split(",").some((entry) => entry.trim().split(";")[0] === "application/json");
-  const etag = `${object.httpEtag.slice(0, -1)}-${json ? "json" : "html"}"`;
   const headers = new Headers({
     "content-type": json ? "application/json; charset=utf-8" : "text/html; charset=utf-8",
     "cache-control": "public, max-age=0, must-revalidate", vary: "Accept", etag,
@@ -51,7 +53,7 @@ export async function servePublicProfileRequest(
     "x-robots-tag": "noindex, nofollow",
   });
   if (request.headers.get("if-none-match")?.split(",").map((entry) => entry.trim()).includes(etag)) return new Response(null, { status: 304, headers });
-  return new Response(request.method === "HEAD" ? null : json ? source : renderPublicProfile(profile), { headers });
+  return new Response(request.method === "HEAD" ? null : body, { headers });
 }
 
 function unavailable(): Response {

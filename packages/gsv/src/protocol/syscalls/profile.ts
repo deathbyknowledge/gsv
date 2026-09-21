@@ -42,16 +42,16 @@ export type ProfileResolveArgs = { url: string };
 export type ProfileResolveResult = { profile: PublicProfile };
 
 export const publicProfileAliasSchema = z.string().check(z.regex(/^[a-z][a-z0-9_-]{1,31}$/));
-const profileShape = {
+const profileFields = {
   alias: publicProfileAliasSchema,
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   about: z.string().check(z.maxLength(2_048)),
   contactPolicy: z.enum(["requests", "invitation", "closed"]),
   representation: z.enum(["human", "human-and-ship"]),
 };
-export const profileFieldsSchema = z.strictObject(profileShape) satisfies z.ZodMiniType<ProfileFields>;
+export const profileFieldsSchema = z.strictObject(profileFields) satisfies z.ZodMiniType<ProfileFields>;
 export const publicProfileSchema = z.strictObject({
-  ...profileShape,
+  ...profileFields,
   version: z.literal(2), domain: z.literal("gsv-federation/2/profile"),
   actor: actorRefSchema, publicKey: federationPublicKeySchema,
   origin: z.string().check(z.maxLength(2_048)), url: z.string().check(z.maxLength(2_048)),

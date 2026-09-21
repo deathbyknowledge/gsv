@@ -144,6 +144,7 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
 describe("ConnectionRuntime contact notifications", () => {
   it.each([
     ["contact.changed", "contact.list"],
+    ["profile.changed", "profile.get"],
     ["r12y.changed", "r12y.list"],
     ["r12y.source.changed", "r12y.source.list"],
     ["sched.changed", "sched.list"],

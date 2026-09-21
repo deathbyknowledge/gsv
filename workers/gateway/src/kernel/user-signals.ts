@@ -23,6 +23,7 @@ export const USER_CONNECTION_SIGNALS = [
   "mcp.changed",
   "ledger.changed",
   "contact.changed",
+  "profile.changed",
   "contact.invite.changed",
   "contact.request.changed",
   "r12y.changed",

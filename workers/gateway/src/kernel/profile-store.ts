@@ -24,12 +24,14 @@ export class ProfileStore {
 
   get(ownerUid: number, origin: string): ProfileState | null {
     const row = this.row(ownerUid);
-    return row ? {
+    if (!row) return null;
+    const state: ProfileState = {
       revision: row.revision, draft: profileFieldsSchema.parse(JSON.parse(row.draft_json)),
-      ...(row.published_alias && row.published_revision ? { published: { url: `${origin}/@${row.published_alias}`, revision: row.published_revision } } : {}),
       publishing: row.pending_revision !== null,
       publicationFailed: row.publication_failed === 1,
-    } : null;
+    };
+    if (row.published_alias && row.published_revision) state.published = { url: `${origin}/@${row.published_alias}`, revision: row.published_revision };
+    return state;
   }
 
   update(ownerUid: number, subjectId: string, expectedRevision: number, draft: ProfileFields): void {
