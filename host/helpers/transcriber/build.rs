@@ -26,7 +26,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let directory = PathBuf::from(String::from_utf8(output.stdout)?.trim()).join("lib/darwin");
     if !directory.join("libclang_rt.osx.a").is_file() {
-        let message = format!("Apple compiler runtime is missing from {}", directory.display());
+        let message = format!(
+            "Apple compiler runtime is missing from {}",
+            directory.display()
+        );
         return Err(message.into());
     }
     println!("cargo:rustc-link-search=native={}", directory.display());
