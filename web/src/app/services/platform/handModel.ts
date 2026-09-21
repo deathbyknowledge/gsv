@@ -3,7 +3,7 @@ import type { AsciiMaterial, AsciiMesh } from "../../components/ui/asciiMesh";
 type Vector = [number, number, number];
 type Tube = { offset: number; rings: number; radius: number; length: number; joints: readonly [number, number]; thumb: boolean };
 type Finger = Tube & { base: Vector; splay: number; flex: number };
-export type HandModel = { mesh: AsciiMesh; pose: (mask: number, extension: number, mirror: boolean) => void };
+export type HandModel = { mesh: AsciiMesh; pose: (mask: number, extension: number, hand: "left" | "right") => void };
 
 const SIDES = 12;
 const SKIN: AsciiMaterial = { albedo: 0.98, emission: 0 };
@@ -200,7 +200,7 @@ export function createHandModel(): HandModel {
     }
   };
 
-  return { mesh, pose(mask, extension, mirror) {
+  return { mesh, pose(mask, extension, hand) {
     let grip = 0;
     for (let finger = 0; finger < fingers.length; finger++) grip += (1 - (mask & (1 << (finger + 1)) ? extension : 0)) / 4;
     // Both palm surfaces and their normals are prepared once; cupping adds no tessellation per frame.
@@ -244,7 +244,8 @@ export function createHandModel(): HandModel {
       points.push(points[joint].map((value, axis) => value + direction[axis] * lengths[joint]) as Vector);
     }
     digit(thumb, points, [0, ...thumb.joints, 1], undefined, -0.48 + open * 0.18);
-    if (mirror) {
+    // The base mesh is a palm-facing left hand; reflect it to make a right hand.
+    if (hand === "right") {
       for (let index = 0; index < mesh.vertices.length; index += 6) {
         mesh.vertices[index] *= -1;
         mesh.vertices[index + 3] *= -1;

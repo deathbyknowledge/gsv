@@ -54,7 +54,7 @@ export const GestureIllustration = memo(function GestureIllustration({ lesson, l
           frameRate={GESTURE_FRAME_RATE} fontSize={5.5} className="native-gesture-animation" />
       </div>
       <figcaption>
-        <span>{(lesson === "scroll" || lesson === "roles") ? "control hand · action hand" : lesson === 0 ? "both hands" : "action hand"} · drag to turn</span>
+        <span>{(lesson === "scroll" || lesson === "roles") ? "right action · left control" : lesson === 0 ? "both hands" : "right action hand"} · drag to turn</span>
         <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? "Play gesture demonstration" : "Pause gesture demonstration"}>{paused ? "play" : "pause"}</button>
       </figcaption>
     </figure>;

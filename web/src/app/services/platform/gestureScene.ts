@@ -39,13 +39,13 @@ function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt:
   const paired = lesson === 0 || lesson === "scroll" || lesson === "roles";
   const unit = paired ? 6.8 : 8.2;
   const cosine = Math.cos(yaw), sine = Math.sin(yaw);
-  const pivotX = paired ? 0 : 0.45;
+  const pivotX = paired ? 0 : -0.45;
   const orbit = (x: number, y: number): [number, number, number] => [
     pivotX + (x - pivotX) * cosine, y, -(x - pivotX) * sine,
   ];
-  const hand = (x: number, y: number, mirror: boolean, fingers: number, open: number) => {
-    handModel.pose(fingers, open, mirror);
-    const direction = mirror ? -1 : 1;
+  const hand = (x: number, y: number, side: "left" | "right", fingers: number, open: number) => {
+    handModel.pose(fingers, open, side);
+    const direction = side === "right" ? -1 : 1;
     const orientation = rotationMatrix((-0.30 + open * 0.12) * direction, 0, 0);
     const rotation = orientation.slice();
     // Apply the same parent yaw to the hand's orientation and its position.
@@ -57,25 +57,25 @@ function drawFrame(lesson: GestureLesson, mask: number, extension: number, tilt:
     raster.mesh(handModel.mesh, rotation, unit, 0, 1, orbit(x, y));
   };
   if (lesson === "scroll") {
-    // Mirrored view: control palm on the left, action fist on the right.
+    // Facing the viewer: right action fist on the left, left control palm on the right.
     for (let step = 1; step < 16; step++) {
       const t = step / 16;
-      const [x, y, z] = orbit(-4.3 + t * 8.6, 0.5 - tilt + t * tilt * 2);
+      const [x, y, z] = orbit(-4.3 + t * 8.6, 0.5 + tilt - t * tilt * 2);
       const perspective = 1 + z * PERSPECTIVE;
       raster.splat(raster.width / 2 + x * unit * 11 / 7 * perspective, raster.height / 2 + y * unit * perspective, z, 0.25, 0.65);
     }
-    hand(-4.3, 0.5 - tilt, true, 31, 1);
-    hand(4.3, 0.5 + tilt, false, 0, 0);
+    hand(-4.3, 0.5 + tilt, "right", 0, 0);
+    hand(4.3, 0.5 - tilt, "left", 31, 1);
   } else if (lesson === "roles") {
-    hand(-4.3, 0.5, true, 31, 1);
-    hand(4.3, 0.5, false, 2, extension);
+    hand(-4.3, 0.5, "right", 2, extension);
+    hand(4.3, 0.5, "left", 31, 1);
   } else if (lesson === "rest") {
-    hand(0.45, 0.5, false, 0, 0);
+    hand(pivotX, 0.5, "right", 0, 0);
   } else if (lesson === 0) {
-    hand(-4.3, 0.5, true, 31, extension);
-    hand(4.3, 0.5, false, 31, extension);
+    hand(-4.3, 0.5, "right", 31, extension);
+    hand(4.3, 0.5, "left", 31, extension);
   } else {
-    hand(0.45, 0.5, false, mask, extension);
+    hand(pivotX, 0.5, "right", mask, extension);
   }
   return raster.frame(palette);
 }

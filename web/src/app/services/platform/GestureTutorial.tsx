@@ -162,7 +162,7 @@ export function GestureTutorial({ scope, onClose }: { scope: string; onClose(): 
         <p>{lesson.instruction}</p>
         <p class="native-panel-footnote">{lesson.hint}</p>
         {step === 0 ? <>
-          <div class="native-role-key"><span>left <b>control</b></span><span>right <b>action</b></span></div>
+          <div class="native-role-key"><span>right <b>action</b></span><span>left <b>control</b></span></div>
           <p class="native-panel-footnote">Start practice enables the camera. From there, the steps advance hands-free. Closing the guide stops camera and microphone.</p>
           <InputSoundSettings />
         </> : <>
