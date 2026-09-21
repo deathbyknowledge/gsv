@@ -40,7 +40,7 @@ export class ProcessMaterialsBackend implements MountBackend {
       size, mtime: new Date(this.scope.createdAtMs), uid: this.scope.ownerUid, gid: this.scope.ownerUid,
       identity: `${this.scope.id}:${normalized}`, contentType: "text/plain; charset=utf-8" };
   }
-  async lstat(path: string): Promise<ExtendedMountStat> { return this.stat(path); }
+  async lstat(path: string): Promise<ExtendedMountStat> { return await this.stat(path); }
   async exists(path: string): Promise<boolean> {
     this.assertCurrent();
     const normalized = normalizePath(path);

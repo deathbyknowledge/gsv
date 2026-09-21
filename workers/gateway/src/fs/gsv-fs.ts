@@ -254,7 +254,7 @@ export class GsvFs implements IFileSystem {
 
   async readdir(path: string): Promise<string[]> {
     const normalized = normalizePath(path);
-    if (this.isolatedBackend) return this.isolatedBackend.readdir(normalized);
+    if (this.isolatedBackend) return await this.isolatedBackend.readdir(normalized);
 
     if (normalized === "/") {
       return this.readdirRoot();

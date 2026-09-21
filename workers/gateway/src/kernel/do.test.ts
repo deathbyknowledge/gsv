@@ -3207,7 +3207,7 @@ describe("Kernel process device requests", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel() as {
       env: Record<string, never>;
-      procs: { getIdentity: ReturnType<typeof vi.fn> };
+      procs: { getIdentity: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
       auth: { getPasswdByUid: ReturnType<typeof vi.fn> };
       targets: {
@@ -3238,7 +3238,7 @@ describe("Kernel process device requests", () => {
       ): Promise<KernelTestValue>;
     };
     kernel.env = {};
-    kernel.procs = { getIdentity: vi.fn(() => ({
+    kernel.procs = { get: vi.fn(() => null), getIdentity: vi.fn(() => ({
       uid: 0,
       gid: 0,
       gids: [0],
