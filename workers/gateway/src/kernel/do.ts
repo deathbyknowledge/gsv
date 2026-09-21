@@ -112,6 +112,7 @@ import {
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { ApproachStore } from "./approach-store";
 import { processProfilePublication, profileOwnerActive } from "./profiles";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
@@ -420,6 +421,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
+  readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
@@ -513,6 +515,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
+    this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
     this.oauth = new OAuthStore(sql);
@@ -1475,6 +1478,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federation: this.federation,
       federationIdentity: this.federationIdentity,
       profiles: this.profiles,
+      approaches: this.approaches,
       scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
       connection: options.connection ?? null,
       peer: options.peer,

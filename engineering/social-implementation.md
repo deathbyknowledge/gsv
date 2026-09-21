@@ -190,3 +190,18 @@ edits, late publication after unpublish, storage failure/retry, alias ownership,
 HTML escaping, conditional responses and two-space resolution. This new slice
 still requires CI. Public images and first-contact handoff/intake remain part of
 batch 3; inbox, v2 work operations, shared context and assistance remain in scope.
+
+Profile CI at `f2bce8a0` passed all 2,333 gateway unit tests and workspace checks.
+Lint requested clearer schema naming/optional-property construction; integration
+typechecking found a missing SDK namespace declaration. `f2b0f483` and
+`6e9e7fc1` fix those and include capability-gated publication notifications.
+The complete new profile integration flow still awaits a passing CI run.
+
+The first-contact contract now lives in `docs/architecture/social-approaches.md`.
+It reuses invitation derivation and receipts with an exact peer/approach-bound
+claim signature and durable confirmation before the issuer dispatches messages.
+The storage slice defines strict envelope contracts and v059's bounded,
+owner-scoped request records, private setup material, idempotent append recovery
+and revisioned decisions. No public approach endpoint or syscall is enabled by
+this storage slice. Claim/confirmation execution, cleanup, capacity measurements
+and the user flow are still required before public admission.

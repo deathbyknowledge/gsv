@@ -25,6 +25,9 @@ export async function handleContactBlockSet(args: ContactBlockSetArgs, ctx: Kern
   const result = await ctx.coordinateFederationContact(contact?.id ?? `pairing:${ownerUid}:${actor.shipId}:${actor.subjectId}`, () => ctx.federation.transaction(() => {
     const outcome = ctx.federation.setActorBlock(ownerUid, actor, blocked);
     if (blocked) {
+      for (const inviteId of ctx.approaches.blockForActor(ownerUid, actor)) {
+        if (ctx.federation.invite(inviteId)?.state === "issued") ctx.federation.cancelInvite(inviteId, ownerUid);
+      }
       const current = ctx.federation.getByRemote(ownerUid, actor.shipId, actor.subjectId);
       if (current?.state === "active") {
         const now = Date.now();

@@ -28,6 +28,7 @@ export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";
 export * from "./syscalls/profile";
 export * from "./social";
+export * from "./approaches";
 export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";
