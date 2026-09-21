@@ -466,3 +466,36 @@ fresh report and investigate the remaining drawing/presentation path. This is
 an isolation aid, not a verified performance fix or a product appearance change.
 The desktop frontend and native executable compile successfully. The current
 window was left untouched; this comparison still needs a human pass after reopen.
+
+## Human comparison: dark decorations on and off
+
+The tester supplied two reports from the comparison build. Both use dark mode,
+69 loaded moments, a 2560×1440 viewport at pixel ratio 1, and 150% layout zoom.
+The combined removal hides stars and overlays and disables UI text/box shadows;
+the normal condition enables the ordinary effects with the redundant multiply
+blend already removed.
+
+| Metric | Combined removal | Normal effects |
+| --- | ---: | ---: |
+| Navigation samples | 42 | 59 |
+| Key dispatch p95 | 1 ms | 1 ms |
+| Navigation → next-frame callback median | 8 ms | 158 ms |
+| Navigation → next-frame callback p95 | 15 ms | 315 ms |
+| Navigation → next-frame callback maximum | 16 ms | 333 ms |
+| Navigation handler p95 | 2 ms | 3 ms |
+| Preact update work p95 | 1 ms | 2 ms |
+
+This is strong evidence that the decorations or work they trigger account for
+the regression. The measured navigation handler and Preact update work remain
+small, while the next rendering callback is substantially delayed. The report
+does not identify an individual effect, distinguish painting from compositor
+scheduling, or measure completed presentation. Hiding stars also stops their
+animation loop, so this comparison alone cannot separate its JavaScript work
+from its drawing cost. Work samples and input samples are not paired counts.
+Neither report includes typing; the normal condition has one prompt-click
+sample at 436 ms to the next callback, without an off-condition counterpart.
+
+The next requested human comparison is **No star glow**, which retains the star
+positions, glyph updates, overlays and UI shadows while removing the star text
+shadow. It runs in the same app session without a rebuild or restart. Further
+individual comparisons remain available if that does not recover responsiveness.
