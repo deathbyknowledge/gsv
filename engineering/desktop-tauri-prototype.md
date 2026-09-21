@@ -185,3 +185,34 @@ The prototype strip is outside Instrument's theme. It must set its own foregroun
 and background colors; relying on inherited text color left its actions dark on
 the dark page. F8 also opens the timing report directly, including while the
 prompt is focused, without inserting text or changing the active space.
+
+## First timing report: keyboard scheduling
+
+The human report at 200% layout zoom contained 200 keyboard samples: 4 ms p95
+dispatch, 74 ms p95 to the next animation callback, and a 347 ms maximum. The
+smaller typing sample (12 events) reached that callback within 14 ms; the two
+prompt clicks took 8 ms. Instrument and its scaled layer both occupied the full
+2102 by 2076 available rectangle; the scaled layer's layout dimensions were
+1051 by 1038, consistent with 200% layout zoom. These numbers support investigating
+the keyboard path, but do not separate JavaScript work from rendering/scheduling
+or establish when the custom caret reached the display. The original keyboard
+bucket included all key presses, not just browsing.
+
+Zen still rebuilt every message's surrounding UI on each browse selection, even
+though text and receipts were individually memoized. Message content now reuses
+its complete virtual-node subtree while its inputs are unchanged; the browse
+cursor and focus decoration remain independent. Content, activity, approval,
+outbox, animation and attribution changes retain their existing update paths.
+
+Scroll ownership stays in `useZenScroll`. It refreshes its node index when the
+transcript changes, resolves selected and anchored rows by identity, and finds
+the first visible row with a binary search over transcript order. Row geometry
+is read when needed rather than cached across resizing, streaming or expansion.
+This replaces repeated DOM queries and linear geometry scans per navigation.
+
+The timing report now includes a separate j/k browse category alongside the
+original aggregate keyboard category. It retains only the category and timings,
+never individual keys or text. The next human pass should compare j/k at the
+same zoom and window size, including long messages, older-page loading, expanded
+receipts and returning from the prompt. Source inspection and compilation do not
+establish a latency improvement; a fresh report is still needed.

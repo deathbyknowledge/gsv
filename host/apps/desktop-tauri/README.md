@@ -131,6 +131,12 @@ includes dispatch and next-frame delays plus window/layout dimensions; no keys,
 draft text, gateway address or conversation content. Opening the panel does not
 start a sampling or rendering loop.
 
+The **j/k navigation** row separates browse-key samples from the aggregate
+keyboard row, which also includes typing and other shortcuts. Compare at the
+same zoom and window size. Include moving across long messages, opening and
+closing receipts, loading earlier messages, and leaving the prompt with Escape;
+the reading position and browse cursor should remain stable.
+
 The same input timings remain available in the webview inspector:
 
 ```js

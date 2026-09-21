@@ -58,9 +58,9 @@ export function InputTimingPanel() {
       <p>Clear samples, close this panel, then use j/k, click the prompt and type without sending. Reopen it to read the result.</p>
       <table>
         <thead><tr><th>Input</th><th>Samples</th><th>Dispatch p95</th><th>Next frame p95</th><th>Next frame max</th></tr></thead>
-        <tbody>{(["keyboard", "typing", "promptClick"] as const).map((kind) => {
+        <tbody>{(["keyboard", "navigation", "typing", "promptClick"] as const).map((kind) => {
           const sample = report.input[kind];
-          return <tr key={kind}><th>{kind === "promptClick" ? "prompt click" : kind}</th><td>{sample?.count ?? 0}</td>
+          return <tr key={kind}><th>{kind === "promptClick" ? "prompt click" : kind === "navigation" ? "j/k navigation" : kind}</th><td>{sample?.count ?? 0}</td>
             <td>{sample ? `${sample.dispatchP95Ms} ms` : "—"}</td>
             <td>{sample ? `${sample.nextFrameP95Ms} ms` : "—"}</td>
             <td>{sample ? `${sample.nextFrameMaxMs} ms` : "—"}</td></tr>;

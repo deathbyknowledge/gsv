@@ -1,5 +1,5 @@
 type Sample = { dispatch: number; frame: number };
-type InputKind = "keyboard" | "typing" | "promptClick";
+type InputKind = "keyboard" | "navigation" | "typing" | "promptClick";
 type TimingSummary = { count: number; dispatchP95Ms: number; nextFrameP95Ms: number; nextFrameMaxMs: number } | null;
 
 declare global {
@@ -10,8 +10,8 @@ declare global {
 
 /** Bounded, local timing data for the prototype's human acceptance pass; no keys, text or targets. */
 export function installInputTiming(): void {
-  const samples: Record<InputKind, Sample[]> = { keyboard: [], typing: [], promptClick: [] };
-  const pending: { kind: InputKind; started: number; dispatch: number }[] = [];
+  const samples: Record<InputKind, Sample[]> = { keyboard: [], navigation: [], typing: [], promptClick: [] };
+  const pending: { kind: InputKind; navigation: boolean; started: number; dispatch: number }[] = [];
   let frame = 0;
   const collect = (event: Event) => {
     if (event.type === "pointerdown" && !(event.target instanceof Element && event.target.matches(".prompt-line textarea"))) return;
@@ -19,15 +19,25 @@ export function installInputTiming(): void {
     const started = event.timeStamp;
     if (started < 0 || started > now || pending.length >= 64) return;
     const kind = event.type === "input" ? "typing" : event.type === "pointerdown" ? "promptClick" : "keyboard";
-    pending.push({ kind, started, dispatch: now - started });
+    const navigation = event instanceof KeyboardEvent && !event.isComposing
+      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+      && (event.key === "j" || event.key === "k")
+      && !(event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)))
+      && document.querySelector(".zen.is-browse") !== null
+      && document.querySelector(".desktop-timings") === null;
+    pending.push({ kind, navigation, started, dispatch: now - started });
     if (frame) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
       const now = performance.now();
       for (const sample of pending.splice(0)) {
-        const list = samples[sample.kind];
-        list.push({ dispatch: sample.dispatch, frame: now - sample.started });
-        if (list.length > 200) list.shift();
+        const value = { dispatch: sample.dispatch, frame: now - sample.started };
+        const kinds: InputKind[] = sample.navigation ? [sample.kind, "navigation"] : [sample.kind];
+        for (const kind of kinds) {
+          const list = samples[kind];
+          list.push(value);
+          if (list.length > 200) list.shift();
+        }
       }
     });
   };
@@ -40,7 +50,7 @@ export function installInputTiming(): void {
     return { count: list.length, dispatchP95Ms: round(dispatch[index]), nextFrameP95Ms: round(frames[index]), nextFrameMaxMs: round(frames.at(-1)!) };
   };
   window.gsvInputTiming = {
-    read: () => ({ keyboard: summary(samples.keyboard), typing: summary(samples.typing), promptClick: summary(samples.promptClick) }),
+    read: () => ({ keyboard: summary(samples.keyboard), navigation: summary(samples.navigation), typing: summary(samples.typing), promptClick: summary(samples.promptClick) }),
     reset: () => { for (const list of Object.values(samples)) list.length = 0; pending.length = 0; },
   };
   document.addEventListener("keydown", collect, { capture: true, passive: true });

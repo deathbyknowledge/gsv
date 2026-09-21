@@ -586,14 +586,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   }, [moments, settling, tick]);
   /* the first ready render happens before the cascade is set; nothing shows in it, so no frame ever holds the transcript unsettled */
   const cascadeUnset = ready && seenMomentsRef.current === null && !reducedMotion();
-  /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
-  const settleProgress = (moment: Moment): number | null => {
-    const startedAt = settling.get(moment.id);
-    if (startedAt === undefined) return null;
-    const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
-    if (progress >= 1) return null;
-    return Math.max(0, progress);
-  };
 
   const latest = moments[moments.length - 1];
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
@@ -816,13 +808,105 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     [onFleet],
   );
 
+  // Moving the browse cursor changes row decoration, not the message, receipt or attachment content.
+  const messageBodies = useMemo(() => {
+    if (!ready) return [];
+    /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
+    const settleProgress = (moment: Moment): number | null => {
+      const startedAt = settling.get(moment.id);
+      if (startedAt === undefined) return null;
+      const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
+      if (progress >= 1) return null;
+      return Math.max(0, progress);
+    };
+    return moments.map((moment, index) => {
+      if (moment.role === "note") return null;
+      const isLatest = index === moments.length - 1;
+      const receipt = receipts.get(moment.id);
+      return <>
+        {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
+          {moment.role === "human" ? who : "ship"}
+          {moment.outgoing && moment.outgoing.status !== "failed" ? (
+            <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
+              <Spinner size={14} />
+            </span>
+          ) : null}
+          {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
+        </div> : null}
+        {moment.activities
+          .filter((activity) => activity.you)
+          .map((activity) => (
+            <ActivityLine
+              key={activity.key}
+              activity={activity}
+              who={who}
+              places={places}
+              open={openActivities.has(activity.key)}
+              onToggle={toggleActivity}
+              onFleet={onFleet}
+            />
+          ))}
+        {receipt?.anchorId === moment.id ? (
+          <Receipt
+            receipt={receipt}
+            who={who}
+            places={places}
+            collections={memoryCollections.data ?? EMPTY_COLLECTIONS}
+            onMemory={onMemory}
+            onFleet={onFleet}
+            open={openActivities.has(receipt.key)}
+            expanded={openActivities.has(receipt.key) ? openActivities : EMPTY_EXPANDED}
+            onToggleDetail={toggleActivity}
+            waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
+              && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
+          />
+        ) : null}
+        {moment.role === "human" ? (
+          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
+        ) : moment.text ? (
+          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
+        ) : moment.thinking || moment.streaming ? (
+          <div class="text"><ThinkingMark tick={tick} /></div>
+        ) : null}
+        {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+        {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
+          <ul class="zen-draft-attachments" aria-label="Message attachments">
+            {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
+          </ul>
+        ) : null}
+        {moment.outgoing?.status === "uploading" ? (
+          <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
+        ) : moment.outgoing?.status === "failed" ? (
+          <div class="zen-send-actions">
+            <span class="is-err" role="alert">{moment.outgoing.error}</span>
+            <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
+            <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
+          </div>
+        ) : null}
+        {isLatest && pendingHil ? (
+          <ApprovalCard
+            request={pendingHil}
+            who={who}
+            place={placeLabel(pendingHil.target, places)}
+            onInspect={() => {
+              if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+            }}
+            onDecide={(decision) => void decide(decision)}
+          />
+        ) : null}
+      </>;
+    });
+  }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
+
   /* the status line */
   const activeRun = connected ? runtime.activeRunId : null;
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
-  const latestMessageIndex = moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
+  const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
+    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
       <span>Could not load your conversation: {conversation.historyError.message}</span>
@@ -870,8 +954,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 <button type="button" onClick={scrolling.readOlder}>retry</button>
               </div>}
               {moments.map((moment, index) => {
-                const isLatest = index === moments.length - 1;
-                const receipt = receipts.get(moment.id);
                 const settleStart = settling.get(moment.id);
                 const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
                 const materialising = !cascadeUnset && settleStart !== undefined && !pending;
@@ -897,76 +979,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 }
                 return (
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
-                    {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-                      {moment.role === "human" ? who : "ship"}
-                      {moment.outgoing && moment.outgoing.status !== "failed" ? (
-                        <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
-                          <Spinner size={14} />
-                        </span>
-                      ) : null}
-                      {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
-                    </div> : null}
-                    {moment.activities
-                      .filter((activity) => activity.you)
-                      .map((activity) => (
-                        <ActivityLine
-                          key={activity.key}
-                          activity={activity}
-                          who={who}
-                          places={places}
-                          open={openActivities.has(activity.key)}
-                          onToggle={toggleActivity}
-                          onFleet={onFleet}
-                        />
-                      ))}
-                    {receipt?.anchorId === moment.id ? (
-                      <Receipt
-                        receipt={receipt}
-                        who={who}
-                        places={places}
-                        collections={memoryCollections.data ?? EMPTY_COLLECTIONS}
-                        onMemory={onMemory}
-                        onFleet={onFleet}
-                        open={openActivities.has(receipt.key)}
-                        expanded={openActivities.has(receipt.key) ? openActivities : EMPTY_EXPANDED}
-                        onToggleDetail={toggleActivity}
-                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
-                          && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
-                      />
-                    ) : null}
-                    {moment.role === "human" ? (
-                      <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
-                    ) : moment.text ? (
-                      <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
-                    ) : moment.thinking || moment.streaming ? (
-                      <div class="text"><ThinkingMark tick={tick} /></div>
-                    ) : null}
-                    {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
-                    {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
-                      <ul class="zen-draft-attachments" aria-label="Message attachments">
-                        {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
-                      </ul>
-                    ) : null}
-                    {moment.outgoing?.status === "uploading" ? (
-                      <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
-                    ) : moment.outgoing?.status === "failed" ? (
-                      <div class="zen-send-actions">
-                        <span class="is-err" role="alert">{moment.outgoing.error}</span>
-                        <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
-                        <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
-                      </div>
-                    ) : null}
-                    {isLatest && pendingHil ? (
-                      <ApprovalCard
-                        request={pendingHil}
-                        who={who}
-                        place={placeLabel(pendingHil.target, places)}
-                        onInspect={() => {
-                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                        }}
-                        onDecide={(decision) => void decide(decision)}
-                      />
-                    ) : null}
+                    {messageBodies[index]}
                   </div>
                 );
               })}
