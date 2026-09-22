@@ -10,9 +10,9 @@ on:
       - 'host/crates/desktop-native/**'
       - 'host/crates/gesture-protocol/**'
       - 'host/helpers/**'
-      - 'web/src/desktop/**'
-      - 'web/src/app/services/platform/**'
-      - 'web/vite.desktop.config.ts'
+      - 'web/**'
+      - 'packages/gsv/**'
+      - 'package*.json'
 
 permissions:
   contents: read
