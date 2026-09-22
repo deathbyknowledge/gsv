@@ -202,6 +202,54 @@ describe("shared Workers AI inference", () => {
     },
   );
 
+  it.each([
+    ["@cf/deepseek-ai/deepseek-v4-flash-0731", false],
+    ["@cf/google/gemma-4-26b-a4b-it", true],
+    ["@cf/test/unknown-capabilities", false],
+  ] as const)("honors image support for user and tool history on %s", async (modelId, supportsImages) => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "c3ludGhldGljLWltYWdl" };
+    const input: ManagedInferenceRequest = {
+      ...REQUEST,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Image description: a green square." }, image], timestamp: 1 },
+        {
+          role: "assistant", api: "gsv-inference", provider: "gsv", model: "gsv/default",
+          content: [{ type: "toolCall", id: "call_read", name: "read", arguments: { path: "/image.png" } }],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse", timestamp: 2,
+        },
+        {
+          role: "toolResult", toolCallId: "call_read", toolName: "read", isError: false, timestamp: 3,
+          content: [{ type: "text", text: "Image description: the same green square." }, image],
+        },
+      ],
+    };
+    const original = structuredClone(input);
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async () => completionResponse(modelId));
+    const generation = createWorkersAiGeneration(input, testBinding(run).binding);
+
+    expect((await generation.result({ ...ROUTING, models: [{ ...SECOND_MODEL, modelId }] })).stopReason)
+      .toBe("stop");
+    expect(run).toHaveBeenCalledOnce();
+    const body = await new Request(...run.mock.calls[0]).text();
+    expect(body).toContain("Image description: a green square.");
+    expect(body).toContain("Image description: the same green square.");
+    expect(JSON.parse(body)).toMatchObject({ messages: expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", tool_calls: [expect.objectContaining({ id: "call_read" })] }),
+      expect.objectContaining({ role: "tool", tool_call_id: "call_read" }),
+    ]) });
+    if (supportsImages) {
+      expect(body.match(/"type":"image_url"/g)).toHaveLength(2);
+      expect(body).toContain(image.data);
+    } else {
+      expect(body).not.toContain("image_url");
+      expect(body).not.toContain(image.data);
+      expect(body).toContain("model does not support images");
+    }
+    expect(input).toEqual(original);
+  });
+
   it("captures content-free diagnostics for provider HTTP failures", async () => {
     const run = vi.fn(async () => new Response(JSON.stringify({
       error: { message: "provider-specific private detail" },

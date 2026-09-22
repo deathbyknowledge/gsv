@@ -510,7 +510,7 @@ function workersAiModel(
     baseUrl: AI_GATEWAY_COMPAT_URL,
     reasoning: routing.reasoning,
     thinkingLevelMap: catalogModel?.thinkingLevelMap,
-    input: ["text", "image"],
+    input: catalogModel?.input ?? ["text"],
     cost: {
       input: routing.inputNanoUsdPerToken / 1_000,
       output: routing.outputNanoUsdPerToken / 1_000,
