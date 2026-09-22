@@ -186,17 +186,17 @@ async handleSysConnect(
 
     if (outcome.newMachine) {
       await recordMachineAddedResponsibility(outcome.newMachine, ctx);
+      const platform = outcome.newMachine.platform.trim().toLowerCase();
+      const isBrowser = platform === "browser"
+        || platform === "browser-extension"
+        || outcome.newMachine.target_id.startsWith("browser:");
       emitTelemetry(this.host.bindings, {
         installationId: this.host.installationId,
         component: "gateway",
         event: {
           stream: "product",
           name: "target.connected",
-          properties: {
-            targetKind: outcome.newMachine.platform.toLowerCase().includes("browser")
-              ? "browser"
-              : "machine",
-          },
+          properties: { targetKind: isBrowser ? "browser" : "machine" },
         },
       });
     }

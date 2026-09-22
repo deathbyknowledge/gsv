@@ -16,6 +16,7 @@ import { jsonObjectSchema, type JsonObject } from "@humansandmachines/gsv/protoc
 import { z } from "zod";
 import type { KernelContext } from "../context";
 import { principalOf } from "../context";
+import { emitIntegrationConnected, type IntegrationTelemetryScope } from "../integration-telemetry";
 import type {
   OAuthAccountRecord,
   OAuthConnectionKind,
@@ -377,6 +378,12 @@ export async function handleSysOAuthDevicePoll(
     fetcher,
   );
   const now = Date.now();
+  const firstConnection = ctx.oauth.findAccountByIdentity(
+    flow.uid,
+    flow.kind,
+    flow.provider,
+    flow.accountKey,
+  ) === null;
   const account = ctx.oauth.upsertAccount({
     uid: flow.uid,
     kind: flow.kind,
@@ -393,6 +400,12 @@ export async function handleSysOAuthDevicePoll(
     metadata: deviceAccountMetadata(now, token.accountId),
   });
   ctx.oauth.deleteFlow(flow.flowId);
+  if (firstConnection) {
+    emitIntegrationConnected(
+      { env: ctx.env, installationId: ctx.installationId },
+      { kind: flow.kind, provider: flow.provider },
+    );
+  }
   return {
     status: "complete",
     account: summarizeAccount(account),
@@ -442,6 +455,7 @@ export async function completeOAuthCallback(
   input: OAuthCallbackInput,
   oauth: OAuthStore,
   fetcher: typeof fetch = fetch,
+  telemetry?: IntegrationTelemetryScope,
 ): Promise<OAuthCallbackResult> {
   const state = input.state?.trim();
   if (!state) {
@@ -477,6 +491,12 @@ export async function completeOAuthCallback(
   }
 
   const now = Date.now();
+  const firstConnection = oauth.findAccountByIdentity(
+    flow.uid,
+    flow.kind,
+    flow.provider,
+    flow.accountKey,
+  ) === null;
   const account = oauth.upsertAccount({
     uid: flow.uid,
     kind: flow.kind,
@@ -495,6 +515,9 @@ export async function completeOAuthCallback(
     },
   });
   oauth.deleteFlow(flow.flowId);
+  if (firstConnection && telemetry) {
+    emitIntegrationConnected(telemetry, { kind: flow.kind, provider: flow.provider });
+  }
   return { ok: true, account: summarizeAccount(account) };
 }
 

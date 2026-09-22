@@ -39,11 +39,13 @@ type SdkMcpServerRow = {
 function makeContext(
   uid: number,
   mcpServers: FakeMcpServers,
-  options: { ownerUid?: number; processId?: string } = {},
+  options: { ownerUid?: number; processId?: string; telemetry?: boolean } = {},
 ): KernelContext {
   const ownerUid = options.ownerUid ?? uid;
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
+    installationId: "inst_test",
+    env: options.telemetry ? { GSV_TELEMETRY_ENABLED: "1" } : {},
     peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
@@ -183,6 +185,41 @@ describe("sys.mcp handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       (mcpServers.upsert as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
     );
+  });
+
+  it("emits content-free integration telemetry once a new MCP server is stored", async () => {
+    const ctx = makeContext(1000, mcpServers, { telemetry: true });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await handleSysMcpAdd({
+        name: "Notion (work)",
+        url: "https://mcp.notion.com/team/private/mcp",
+      }, ctx);
+
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({
+        installationId: "inst_test",
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "integration.connected",
+          properties: { integrationKind: "mcp", provider: "notion" },
+        },
+      }));
+      const serialized = JSON.stringify(log.mock.calls);
+      expect(serialized).not.toContain("mcp.notion.com");
+      expect(serialized).not.toContain("private");
+      expect(serialized).not.toContain("Notion (work)");
+
+      await handleSysMcpAdd({
+        name: "Notion (work)",
+        url: "https://mcp.notion.com/team/private/mcp",
+      }, ctx);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("deduplicates MCP adds by caller, name, and URL", async () => {
