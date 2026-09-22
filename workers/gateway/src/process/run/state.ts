@@ -52,6 +52,7 @@ const aiConfigFallbackSchema = z.object({
   ...aiRuntimeSchemaFields,
 });
 const aiConfigResultSchema = z.object({
+  scope: z.object({ id: z.string(), revision: z.number().int() }).optional(),
   owner: processIdentitySchema.nullable().optional(),
   executor: aiTextExecutorSchema,
   ...aiRuntimeSchemaFields,

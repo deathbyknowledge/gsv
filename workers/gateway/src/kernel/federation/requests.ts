@@ -4,6 +4,7 @@ import type {
   FederationRequestDelivery,
   JsonObject,
 } from "@humansandmachines/gsv/protocol";
+import { contactRequestTransitions, projectWork } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord } from "../federation-store";
 
@@ -19,8 +20,19 @@ export function syncFederationRequestResponsibility(input: {
   const dedupeKey = `federation.request:${input.contact.id}:${input.request.id}`;
   const existing = ctx.responsibilities.getByDedupeKey(input.contact.ownerUid, dedupeKey);
   if (!existing && !input.createAllowed) return;
+  const work = input.request.work ? projectWork(input.request.work) : null;
   const state = responsibilityState(input.request);
-  const blocker = state === "waiting" ? "Awaiting the contact's response" : undefined;
+  const blocker = state === "waiting"
+    ? input.request.exchange?.state === "failed"
+      ? "The request update was not confirmed by the contact; the exchange is unsettled"
+      : input.request.exchange?.state === "pending"
+        ? "Awaiting delivery confirmation from the contact"
+        : work?.status === "withdrawn" || work?.status === "stop_requested"
+          ? "A stop was requested; awaiting the performer's cancellation or result report"
+          : work?.outcome === "disputed" ? "The requester disputed the reported result"
+            : work?.state === "completed" && input.request.direction === "outgoing" ? "The requester needs to review the reported result"
+              : "Awaiting the contact's response"
+    : undefined;
   const resolution = state === "resolved" || state === "cancelled"
     ? {
         requestState: input.request.state,
@@ -39,6 +51,8 @@ export function syncFederationRequestResponsibility(input: {
     requestTitle: input.request.title,
     state: input.request.state,
     revision: input.request.revision,
+    exchangeState: input.request.exchange?.state ?? "unconfirmed",
+    ...(work ? { workStatus: work.status, outcomeReview: work.outcome } : undefined),
     remoteDisplayName: input.contact.remoteSubject.displayName,
     contentTrust: input.remoteInput ? "untrusted" : "local",
     ...(input.deliveryId ? { latestDeliveryId: input.deliveryId } : undefined),
@@ -137,30 +151,36 @@ export function requestWireRecord(
 }
 
 export function assertRequestTransition(
-  from: ContactRequestState,
+  request: ContactRequestRecord,
   to: ContactRequestState,
 ): void {
-  if (!isRequestTransitionAllowed(from, to)) {
-    throw new Error(`Contact request cannot change from ${from} to ${to}`);
+  if (!isRequestTransitionAllowed(request, to, "local")) {
+    throw new Error(`This participant cannot change a contact request from ${request.state} to ${to}`);
+  }
+  if (request.exchange?.state === "pending" || request.exchange?.state === "failed") {
+    throw new Error("The previous contact request update has not been confirmed");
   }
 }
 
 export function isRequestTransitionAllowed(
-  from: ContactRequestState,
+  request: Pick<ContactRequestRecord, "direction" | "state">,
   to: ContactRequestState,
+  source: "local" | "remote",
 ): boolean {
-  const allowed = {
-    offered: ["accepted", "rejected", "cancelled"],
-    accepted: ["active", "completed", "cancelled"],
-    active: ["completed", "cancelled"],
-    rejected: [],
-    completed: [],
-    cancelled: [],
-  } as const satisfies Record<ContactRequestState, readonly ContactRequestState[]>;
-  return allowed[from].some((candidate) => candidate === to);
+  const requester = (request.direction === "outgoing") === (source === "local");
+  return contactRequestTransitions(request.state, requester ? "requester" : "performer")
+    .some((candidate) => candidate === to);
 }
 
 function responsibilityState(request: ContactRequestRecord) {
+  if (request.work) {
+    const work = projectWork(request.work);
+    if (work.status === "withdrawn" || work.status === "stop_requested"
+      || work.state === "completed" && work.outcome !== "acknowledged") return "waiting";
+  }
+  if (request.exchange?.state === "failed") return "waiting";
+  if (request.exchange?.state === "pending"
+    && ["rejected", "completed", "cancelled"].includes(request.state)) return "waiting";
   if (request.state === "offered") {
     return request.direction === "outgoing" ? "waiting" : "open";
   }

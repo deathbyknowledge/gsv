@@ -1,3 +1,4 @@
+import { processScopeMessages } from "./process-scope-runtime";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -111,6 +112,15 @@ import {
   recordAdapterStatusTransition,
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
+import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { SharedContextStore } from "./shared-context-store";
+import { assertScopedRequest, scopedCapabilities } from "./process-scope";
+import { stopScopedProcesses } from "./process-scope-handlers";
+import { processSharedContext } from "./shared-context";
+import { ApproachStore } from "./approach-store";
+import { processProfilePublication, profileOwnerActive } from "./profiles";
+import { processApproachMaintenance } from "./approaches/runtime";
+import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
 import {
   handleFederationHttpRequest,
@@ -220,6 +230,12 @@ type KernelTask =
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
+  | { callback: "onProfilePublication"; payload: number }
+  | { callback: "onConversationAttention"; payload: "digest" }
+  | { callback: "onSharedContext"; payload: "context" }
+  | { callback: "onProcessScopeExpiry"; payload: string }
+  | { callback: "onProcessScopeMessages"; payload: "messages" }
+  | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
       payload: { contactId: string; contactGeneration: string; deliveryId: string };
@@ -272,6 +288,12 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
   z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
+  z.object({ callback: z.literal("onProfilePublication"), payload: z.number().int().min(1000) }),
+  z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
+  z.object({ callback: z.literal("onConversationAttention"), payload: z.literal("digest") }),
+  z.object({ callback: z.literal("onSharedContext"), payload: z.literal("context") }),
+  z.object({ callback: z.literal("onProcessScopeExpiry"), payload: z.string() }),
+  z.object({ callback: z.literal("onProcessScopeMessages"), payload: z.literal("messages") }),
   z.object({
     callback: z.literal("onFederationInbox"),
     payload: z.object({
@@ -414,6 +436,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
+  readonly profiles: ProfileStore;
+  readonly sharedContext: SharedContextStore;
+  readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
@@ -506,6 +531,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
+    this.profiles = new ProfileStore(ctx.storage);
+    this.sharedContext = new SharedContextStore(ctx.storage);
+    this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
     this.oauth = new OAuthStore(sql);
@@ -561,6 +589,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
           true,
         );
       }
+      for (const ownerUid of this.profiles.pendingOwners()) {
+        await this.scheduleProfilePublication(ownerUid);
+      }
+      await this.scheduleApproachMaintenance();
+      await this.scheduleConversationAttention();
+      await this.scheduleSharedContext();
+      await this.scheduleProcessScopeMessages();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -665,6 +700,78 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity ?? null;
+  }
+
+  async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
+    this.retirement.assertActive();
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return null;
+    this.retirement.assertActive();
+    const projection = this.profiles.published(locator);
+    return projection && profileOwnerActive(projection.ownerUid, this.buildKernelContext({})) ? projection : null;
+  }
+
+  async scheduleProfilePublication(ownerUid: number, runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact(`profile-schedule:${ownerUid}`, async () => {
+      const maintenance = this.profiles.nextMaintenance(ownerUid);
+      if (maintenance === null) return;
+      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), maintenance);
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
+    });
+  }
+
+  async scheduleProcessScopeMessages(runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("scoped-message-schedule", async () => {
+      const next = this.procs.scopes.automation.nextDue();
+      if (next === null) return;
+      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), next);
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onProcessScopeMessages", "messages", options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onProcessScopeMessages", "messages", options);
+    });
+  }
+
+  async scheduleConversationAttention(runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("conversation-attention-schedule", async () => {
+      const next = this.conversations.attention.nextDigestAt();
+      if (next === null) return;
+      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), next);
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onConversationAttention", "digest", options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onConversationAttention", "digest", options);
+    });
+  }
+
+  async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("approach-maintenance-schedule", async () => {
+      const due = this.approaches.nextWake();
+      if (due === null) return;
+      const existing = await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+    });
+  }
+
+  async scheduleSharedContext(runningTaskId?: string, retryAt = 0): Promise<void> {
+    await this.federationRuntime.coordinateFederationContact("shared-context-schedule", async () => {
+      const next = this.sharedContext.nextDue();
+      if (next === null) return;
+      const due = Math.max(next, retryAt, Date.now() + (runningTaskId ? 1000 : 10));
+      const options = { idempotent: true, excludeTaskId: runningTaskId };
+      const existing = await this.schedule(new Date(due), "onSharedContext", "context", options);
+      if (existing.time * 1000 <= due + 1000) return;
+      await this.cancelSchedule(existing.id);
+      await this.schedule(new Date(due), "onSharedContext", "context", options);
+    });
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
@@ -818,9 +925,75 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onFederationDelivery":
         await this.federationRuntime.onFederationDelivery(task.payload);
         return;
+      case "onConversationAttention": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onConversationAttention", "digest", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        const owners = this.federation.transaction(() => this.conversations.attention.announceDue());
+        for (const ownerUid of owners) this.connectionRuntime.broadcastToUserUid(ownerUid, "conversation.attention.changed", { digestId: task.id });
+        await this.scheduleConversationAttention(task.id);
+        return;
+      }
+      case "onSharedContext": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onSharedContext", "context", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        let retryAt = 0;
+        try {
+          await this.federationRuntime.coordinateFederationContact("shared-context-run", () => processSharedContext(this.buildKernelContext({})));
+        } catch {
+          retryAt = Date.now() + 60_000;
+        } finally {
+          await this.scheduleSharedContext(task.id, retryAt);
+        }
+        return;
+      }
+      case "onProcessScopeMessages": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onProcessScopeMessages", "messages", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        try {
+          await this.federationRuntime.coordinateFederationContact("scoped-message-run", () => processScopeMessages(this.buildKernelContext({})));
+        } finally {
+          await this.scheduleProcessScopeMessages(task.id);
+        }
+        return;
+      }
+      case "onProcessScopeExpiry":
+        await stopScopedProcesses(task.payload, this.buildKernelContext({}));
+        return;
+      case "onApproachMaintenance": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        try {
+          await this.federationRuntime.coordinateFederationContact("approach-maintenance-run", () => processApproachMaintenance(this.buildKernelContext({})));
+        } finally {
+          await this.scheduleApproachMaintenance(task.id);
+        }
+        return;
+      }
       case "onFederationInbox":
         await this.federationRuntime.onFederationInbox(task.payload);
         return;
+      case "onProfilePublication": {
+        const gate = await this.onboarding.managedWorkGate();
+        if (!gate.allowed) {
+          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onProfilePublication", task.payload, { idempotent: true, excludeTaskId: task.id });
+          return;
+        }
+        await this.federationRuntime.coordinateFederationContact(`profile:${task.payload}`, () => processProfilePublication(task.payload, this.buildKernelContext({})));
+        await this.scheduleProfilePublication(task.payload, task.id);
+        return;
+      }
       case "onProcessDeliveryNotice":
         await this.adapterDelivery.onProcessDeliveryNotice(task.payload);
         return;
@@ -1350,7 +1523,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         installationId: this.installationId,
         processId,
         identity,
-        calls: this.caps.resolve(identity.gids),
+        calls: this.procs.get(processId)?.scopeId
+          ? scopedCapabilities(this.caps.resolve(identity.gids))
+          : this.caps.resolve(identity.gids),
       }),
       processId,
       processRunId,
@@ -1439,9 +1614,25 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       federationIdentity: this.federationIdentity,
+      profiles: this.profiles,
+      sharedContext: this.sharedContext,
+      scheduleSharedContext: () => this.scheduleSharedContext(),
+      scheduleProcessScopeMessages: () => this.scheduleProcessScopeMessages(),
+      scheduleProcessScopeExpiry: async (scopeId, expiresAtMs) => {
+        const existing = await this.schedule(new Date(expiresAtMs), "onProcessScopeExpiry", scopeId, { idempotent: true });
+        if (existing.time * 1000 > expiresAtMs + 1000) {
+          await this.cancelSchedule(existing.id);
+          await this.schedule(new Date(expiresAtMs), "onProcessScopeExpiry", scopeId, { idempotent: true });
+        }
+      },
+      approaches: this.approaches,
+      scheduleProfilePublication: this.scheduleProfilePublication.bind(this),
+      scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
+      scheduleConversationAttention: () => this.scheduleConversationAttention(),
       connection: options.connection ?? null,
       peer: options.peer,
       processId: options.processId,
+      processScopeId: options.processId ? this.procs.get(options.processId)?.scopeId : undefined,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
@@ -1539,6 +1730,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     // The ledger line is written after the grant decision, with every client-controlled field capped by size;
     // a denied call is recorded with its arguments and closed as denied.
     this.recordLedgerDispatch(inputFrame, ctx, origin);
+    try {
+      assertScopedRequest(inputFrame, ctx);
+    } catch (error) {
+      const denied = rejectBeforeDispatch(inputFrame, 403, error instanceof Error ? error.message : "Process scope denied this request");
+      this.completeLedger(denied);
+      return denied;
+    }
     if (!allowed) {
       const denied = rejectBeforeDispatch(inputFrame, 403, `Permission denied: ${inputFrame.call}`);
       this.completeLedger(denied);

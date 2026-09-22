@@ -32,6 +32,7 @@ import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
+import { ScopedWork, useScopedWork } from "./ScopedWork";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
@@ -65,6 +66,7 @@ import {
 import "./zen.css";
 
 export type ZenProps = {
+  onPeople?: (contactId: string, pid: string) => void;
   onMemory?: (page?: MemoryPageRef) => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (reference?: FleetReference) => void;
@@ -301,7 +303,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, onPeople, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -318,6 +320,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const [note, setNote] = useState<string | null>(null);
   const pid = useZenProcess(pidProp, setNote);
+  const scopedWork = useScopedWork(pidProp);
+  const restricted = !!scopedWork.scope;
+  const workBlocked = scopedWork.checking || scopedWork.ended || scopedWork.exhausted;
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const outbox = useChatOutbox(conversation.acceptMessage);
@@ -350,11 +355,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
-    if (pickerQuery === null) return [];
+    if (pickerQuery === null || restricted || scopedWork.checking) return [];
     const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
     const needle = pickerQuery.toLowerCase();
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
-  }, [pickerQuery, places]);
+  }, [pickerQuery, places, restricted, scopedWork.checking]);
   const onPromptInput = useCallback((value: string) => {
     setDraftText(value);
     const match = value.match(/^@(\S*)$/);
@@ -380,11 +385,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* a press anywhere else closes the picker; the picker itself and the chip that opens it do not */
   useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
+    if (restricted) return { id: "materials", label: "reviewed material", online: true };
     const id = where ?? CLOUD_PLACE_ID;
     if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
     const place = places.find((entry) => entry.id === id);
     return { id, label: place?.label ?? id, online: place?.online ?? false };
-  }, [places, where]);
+  }, [places, where, restricted]);
   const onPromptKey = useCallback(
     (event: KeyboardEvent): boolean => {
       if (pickerQuery === null || pickerPlaces.length === 0) return false;
@@ -421,7 +427,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
     queryFn: () => loadConsoleTargets(client),
-    enabled: connected,
+    enabled: connected && !restricted && !scopedWork.checking,
   });
   useEffect(() => {
     if (!targetsQuery.data) return;
@@ -607,27 +613,29 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the prompt */
   const addFiles = useCallback((files: File[]) => {
+    if (restricted || scopedWork.checking) { setNote("Start a fresh helper from People to review and share different files."); return; }
     const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
     setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
     promptRef.current?.focus();
-  }, []);
+  }, [restricted, scopedWork.checking]);
   const say = useCallback(
     (text: string) => {
+      if (workBlocked) { setNote("This helper cannot take more work. Check its access above."); return false; }
       if (!pid) {
         setNote("Your ship is still starting.");
         return false;
       }
       const accepted = outbox.send({
         pid, conversationId: conversation.conversation?.id, message: text,
-        media: [...attachments], selectedTarget: where ?? defaultPlace(places),
+        media: restricted ? [] : [...attachments], selectedTarget: restricted ? undefined : where ?? defaultPlace(places),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where, restricted, workBlocked],
   );
 
   const runDirectly = useCallback(
@@ -646,9 +654,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const onSubmit = useCallback(
     (raw: string) => {
       if (outbox.sending) return false;
+      if (workBlocked) return false;
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
+      if (restricted) return raw.trim() ? say(raw) : false;
       const intent = parsePromptInput(raw);
       if (!intent) return attachments.length > 0 ? say("") : false;
       if (intent.kind === "switch") {
@@ -664,7 +674,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       return say(intent.text);
     },
-    [attachments.length, outbox.sending, places, runDirectly, say],
+    [attachments.length, outbox.sending, places, runDirectly, say, restricted, workBlocked],
   );
 
   const onHistory = useCallback(
@@ -827,7 +837,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const empty = ready && moments.length === 0 && pid !== null;
 
   return (
-    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
+    <main class={`zen${pidProp && (scopedWork.checking || restricted) ? " has-scoped-work" : ""}${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -837,6 +847,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false); addFiles(files);
       }}>
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
+      {pidProp && <ScopedWork work={scopedWork} pid={pidProp} onPeople={onPeople} />}
 
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
@@ -1018,11 +1029,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             onFocusChange={onPromptFocus}
             onInput={onPromptInput}
             onKeyIntercept={onPromptKey}
-            onPlace={openPicker}
+            onPlace={restricted || scopedWork.checking ? undefined : openPicker}
             place={currentPlace}
-            dir="~"
+            dir={restricted ? "/materials" : "~"}
             placeholder={
-              pendingHil
+              restricted ? "Follow up privately with this helper" : pendingHil
                 ? "answer the approval first"
                 : !promptFocused
                   ? "Start typing, or click here to write"
@@ -1030,19 +1041,20 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                     ? "Ask in plain words, or start with $ to run a command yourself"
                     : `Ask in plain words; ${currentPlace.label} will run it when it's back`
             }
-            disabled={!connected || !pid}
+            disabled={!connected || !pid || workBlocked}
             onSubmit={onSubmit}
             allowEmpty={attachments.length > 0}
+            commands={!restricted && !scopedWork.checking}
             onFiles={addFiles}
             onHistory={onHistory}
           />
-          <div class="zen-compose-actions">
+          {!restricted && !scopedWork.checking && <div class="zen-compose-actions">
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
-          </div>
+          </div>}
         </div>
       </div>
     </main>

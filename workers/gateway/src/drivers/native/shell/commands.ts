@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
+import { currentProcessScope } from "../../../kernel/process-scope";
 import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -108,6 +109,9 @@ export function buildCustomCommands(
     wiki,
     flynn,
   ];
-  discovery.registerCommands(nativeCommands);
-  return nativeCommands;
+  const commands = currentProcessScope(ctx)
+    ? [...coreCommands, ls, stat, dd, codemode, proc, r12y, llm, message, yieldRun]
+    : nativeCommands;
+  discovery.registerCommands(commands);
+  return commands;
 }

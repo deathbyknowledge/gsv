@@ -37,6 +37,7 @@ import type {
 } from "./do-shared";
 import type { Kernel } from "./do";
 import { notifyProcessChanged } from "./process-notifications";
+import { currentProcessScope } from "./process-scope";
 import {
   adapterTypingActivity,
 } from "./do-shared";
@@ -335,6 +336,8 @@ async commitProcessMessage(
   ): Promise<ConversationMessage> {
     const process = this.host.procs.get(processId);
     if (!process) throw new Error("Unknown process");
+    const scopedContext = process.scopeId ? this.host.buildProcessContext(processId) : null;
+    if (scopedContext) currentProcessScope(scopedContext);
     if (!args.runId) {
       throw new Error("Message runId is invalid");
     }
@@ -388,6 +391,7 @@ async commitProcessMessage(
       createdAt: Date.now(),
     };
     if (args.media?.length) appendInput.media = args.media;
+    if (scopedContext) currentProcessScope(scopedContext);
     const appended = await stub.append(appendInput);
     const { message } = appended;
     this.host.conversations.recordSequence(conversation.id, message.sequence);

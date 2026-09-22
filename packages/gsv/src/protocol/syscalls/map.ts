@@ -1,3 +1,6 @@
+import type { ContactContextListArgs, ContactContextListResult, ContactContextSourcesArgs, ContactContextSourcesResult, ContactContextSubscribeArgs, ContactContextSubscribeResult, ContactContextSyncArgs, ContactContextSyncResult, ContactContextPublicationsArgs, ContactContextPublicationsResult, ContactContextPublishArgs, ContactContextPublishResult, ContactContextWithdrawArgs, ContactContextWithdrawResult, ContactContextConsentArgs, ContactContextConsentResult } from "../shared-context";
+import type { ContactDraftCreateArgs, ContactDraftResult, ContactDraftGetArgs, ContactDraftListArgs, ContactDraftListResult, ContactDraftDecisionArgs } from "../contact-draft";
+import type { ProcScopeGetArgs, ProcScopeGetResult, ProcScopeRevokeArgs, ProcScopeRevokeResult } from "../process-scope";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -257,10 +260,19 @@ import type {
   MailStatusResult,
 } from "./mail";
 import type {
+  ConversationAttentionListArgs, ConversationAttentionListResult, ConversationAttentionDismissArgs, ConversationAttentionDismissResult,
+  ConversationInboxArgs,
+  ConversationInboxResult,
+  ConversationViewGetArgs,
+  ConversationViewGetResult,
+  ConversationViewUpdateArgs,
+  ConversationViewUpdateResult,
   ConversationForProcessArgs,
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipArgs,
   ConversationShipResult,
   ConversationListArgs,
@@ -283,10 +295,23 @@ import type {
   ContactInviteCreateResult,
   ContactInviteListArgs,
   ContactInviteListResult,
+  ContactDeliveryListArgs,
+  ContactDeliveryListResult,
+  ContactDeliveryRetryArgs,
+  ContactDeliveryRetryResult,
   ContactDeliveryGetArgs,
   ContactDeliveryGetResult,
   ContactListArgs,
   ContactListResult,
+  ContactNoticeDismissArgs,
+  ContactNoticeDismissResult,
+  ContactPreferencesUpdateArgs,
+  ContactPreferencesUpdateResult,
+  ContactBlockSetArgs,
+  ContactBlockSetResult,
+  ContactBlockListArgs,
+  ContactBlockListResult,
+  ContactRequestActArgs,
   ContactRequestCreateArgs,
   ContactRequestCreateResult,
   ContactRequestListArgs,
@@ -298,8 +323,28 @@ import type {
   ContactSendArgs,
   ContactSendResult,
 } from "./contact";
+import type {
+  ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
+  ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
+  ProfileResolveArgs, ProfileResolveResult,
+  ProfileAvatarUploadArgs, ProfileAvatarUploadResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
+} from "./profile";
+import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
+  "contact.draft.create": { args: ContactDraftCreateArgs; result: ContactDraftResult };
+  "contact.draft.get": { args: ContactDraftGetArgs; result: ContactDraftResult };
+  "contact.draft.list": { args: ContactDraftListArgs; result: ContactDraftListResult };
+  "contact.draft.approve": { args: ContactDraftDecisionArgs; result: ContactDraftResult };
+  "contact.draft.discard": { args: ContactDraftDecisionArgs; result: ContactDraftResult };
+  "contact.context.list": { args: ContactContextListArgs; result: ContactContextListResult };
+  "contact.context.sources": { args: ContactContextSourcesArgs; result: ContactContextSourcesResult };
+  "contact.context.subscribe": { args: ContactContextSubscribeArgs; result: ContactContextSubscribeResult };
+  "contact.context.sync": { args: ContactContextSyncArgs; result: ContactContextSyncResult };
+  "contact.context.publications": { args: ContactContextPublicationsArgs; result: ContactContextPublicationsResult };
+  "contact.context.publish": { args: ContactContextPublishArgs; result: ContactContextPublishResult };
+  "contact.context.withdraw": { args: ContactContextWithdrawArgs; result: ContactContextWithdrawResult };
+  "contact.context.consent": { args: ContactContextConsentArgs; result: ContactContextConsentResult };
   "fs.read": { args: FsReadArgs; result: FsReadResult };
   "fs.write": { args: FsWriteArgs; result: FsWriteResult };
   "fs.edit": { args: FsEditArgs; result: FsEditResult };
@@ -323,10 +368,30 @@ export type SyscallDomains = {
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
+  "conversation.attention.list": { args: ConversationAttentionListArgs; result: ConversationAttentionListResult };
+  "conversation.attention.dismiss": { args: ConversationAttentionDismissArgs; result: ConversationAttentionDismissResult };
+  "conversation.inbox": { args: ConversationInboxArgs; result: ConversationInboxResult };
+  "conversation.view.get": { args: ConversationViewGetArgs; result: ConversationViewGetResult };
+  "conversation.view.update": { args: ConversationViewUpdateArgs; result: ConversationViewUpdateResult };
   "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
   "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
+  "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
+  "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
+  "profile.avatar.upload": { args: ProfileAvatarUploadArgs; result: ProfileAvatarUploadResult };
+  "profile.avatar.read": { args: ProfileAvatarReadArgs; result: ProfileAvatarReadResult };
+  "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };
+  "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
+  "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
+  "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+
+  "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
+  "approach.get": { args: ApproachGetArgs; result: ApproachResult };
+  "approach.list": { args: ApproachListArgs; result: ApproachListResult };
+  "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
+  "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
 
   "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
@@ -334,15 +399,24 @@ export type SyscallDomains = {
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
   "contact.invite.cancel": { args: ContactInviteCancelArgs; result: ContactInviteCancelResult };
   "contact.list": { args: ContactListArgs; result: ContactListResult };
+  "contact.notice.dismiss": { args: ContactNoticeDismissArgs; result: ContactNoticeDismissResult };
+  "contact.preferences.update": { args: ContactPreferencesUpdateArgs; result: ContactPreferencesUpdateResult };
+  "contact.block.set": { args: ContactBlockSetArgs; result: ContactBlockSetResult };
+  "contact.block.list": { args: ContactBlockListArgs; result: ContactBlockListResult };
   "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
   "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
   "contact.send": { args: ContactSendArgs; result: ContactSendResult };
+  "contact.delivery.list": { args: ContactDeliveryListArgs; result: ContactDeliveryListResult };
+  "contact.delivery.retry": { args: ContactDeliveryRetryArgs; result: ContactDeliveryRetryResult };
   "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };
   "contact.request.list": { args: ContactRequestListArgs; result: ContactRequestListResult };
   "contact.request.create": { args: ContactRequestCreateArgs; result: ContactRequestCreateResult };
+  "contact.request.act": { args: ContactRequestActArgs; result: ContactRequestUpdateResult };
   "contact.request.update": { args: ContactRequestUpdateArgs; result: ContactRequestUpdateResult };
 
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
+  "proc.scope.get": { args: ProcScopeGetArgs; result: ProcScopeGetResult };
+  "proc.scope.revoke": { args: ProcScopeRevokeArgs; result: ProcScopeRevokeResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
   "proc.observe": { args: ProcObserveArgs; result: ProcObserveResult };

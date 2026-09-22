@@ -63,6 +63,21 @@ const OWNER_IDENTITY: ProcessIdentity = {
 };
 
 describe("assembleSystemPrompt", () => {
+  it("does not read account or owner standing context for a scoped Process", async () => {
+    const input: PromptAssemblyInput = {
+      config: { ...CONFIG, scope: { id: "scope:test", revision: 1 }, skillIndex: [], skillIndexMode: "off" },
+      identity: IDENTITY, ownerIdentity: OWNER_IDENTITY, targets: [], mcpServers: [], r12y: "",
+      runtime: { date: "2026-09-21", timezone: "UTC" },
+      storage: {
+        async get() { throw new Error("Private storage must not be read"); },
+        async list() { throw new Error("Private storage must not be listed"); },
+      },
+      ripgit: { async readPath() { throw new Error("Private account repository must not be read"); } },
+    };
+    const result = await assembleSystemPromptSnapshot(input);
+    expect(result.sources.every((source) => source.provider === "system.context")).toBe(true);
+    expect(result.prompt).not.toContain("device-management");
+  });
   it("preserves provider order and skips empty sections", async () => {
     const providers: PromptContextProvider[] = [
       {

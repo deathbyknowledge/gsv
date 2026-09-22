@@ -1,6 +1,6 @@
 # GSV App Surface Design
 
-GSV's web UI is Instrument: Zen, Fleet, Memory and Settings share one shell. These surfaces should make important state and actions obvious, avoid generic dashboard behavior, and expose raw data only for a specific inspection or recovery job. The native Desktop client is a separate surface.
+GSV's web UI is Instrument: Zen, People, Fleet, Memory and Settings share one shell. These surfaces should make important state and actions obvious, avoid generic dashboard behavior, and expose raw data only for a specific inspection or recovery job. The native Desktop client is a separate surface.
 
 ## Start With The App Job
 
@@ -16,7 +16,8 @@ If you cannot state the app's job clearly, stop and design first.
 
 Examples:
 - `Zen` owns conversation, messages, run activity, approvals and direct shell commands
-- `Fleet` owns places, processes, contacts, responsibilities, routines, the ledger and files
+- `Fleet` owns places, processes, responsibilities, routines, the ledger and files
+- `People` owns intentional communication, message requests, the inbox and saved contacts
 - `Memory` owns reading, finding, creating and correcting pages
 - `Settings` owns model preferences, instructions, permissions, connections and timezone
 

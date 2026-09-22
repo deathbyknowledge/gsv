@@ -5,7 +5,11 @@ import type {
   ConversationMessageOrigin,
   MessageAttachment,
   ResourceBlock,
+  SocialMessageMetadata,
+  OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
+import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
+import { ConversationSearchStore } from "./search";
 
 type MetaRow = {
   conversation_id: string;
@@ -21,6 +25,7 @@ type MessageRow = {
   author_json: string;
   text: string;
   selected_target: string | null;
+  social_json: string | null;
   media_json: string | null;
   origin_json: string;
   process_id: string | null;
@@ -34,6 +39,7 @@ export type ConversationAppendInput = {
   author: ConversationMessageAuthor;
   text: string;
   selectedTarget?: string;
+  social?: SocialMessageMetadata;
   media?: ResourceBlock[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -58,7 +64,11 @@ export type ConversationArchiveSegment = {
 };
 
 export class ConversationStore {
-  constructor(private readonly sql: SqlStorage) {}
+  readonly search: ConversationSearchStore;
+
+  constructor(private readonly sql: SqlStorage) {
+    this.search = new ConversationSearchStore(sql);
+  }
 
   initialize(conversationId: string, ownerUid: number, kind: ConversationKind): MetaRow {
     this.sql.exec(
@@ -110,14 +120,15 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
-       (message_id, idempotency_key, author_json, text, selected_target, media_json, origin_json,
+       (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, origin_json,
         process_id, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.messageId,
       input.idempotencyKey,
       JSON.stringify(input.author),
       input.text,
       input.selectedTarget ?? null,
+      input.social ? JSON.stringify(input.social) : null,
       input.media?.length ? JSON.stringify(input.media) : null,
       JSON.stringify(input.origin),
       input.processId ?? null,
@@ -132,6 +143,14 @@ export class ConversationStore {
       throw new Error("Conversation message idempotency key was reused");
     }
     const message = toMessage(meta.conversation_id, row);
+    this.search.index(message);
+    if (input.social) {
+      this.sql.exec(`INSERT INTO message_origins
+        (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      input.social.reference.actor.shipId, input.social.reference.actor.subjectId,
+      input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
+    }
     this.sql.exec(
       `INSERT INTO message_receipts
        (idempotency_key, message_id, sequence, payload_hash, created_at)
@@ -172,6 +191,15 @@ export class ConversationStore {
     return row ? toMessage(meta.conversation_id, row) : null;
   }
 
+  resolveOrigin(reference: OriginMessageRef, threadId: string): { messageId: string; sequence: number } | null {
+    const row = this.sql.exec<{ message_id: string; sequence: number }>(
+      `SELECT message_id, sequence FROM message_origins
+       WHERE ship_id = ? AND subject_id = ? AND origin_message_id = ? AND thread_id = ?`,
+      reference.actor.shipId, reference.actor.subjectId, reference.messageId, threadId,
+    ).toArray()[0];
+    return row ? { messageId: row.message_id, sequence: row.sequence } : null;
+  }
+
   listHot(beforeSequence: number, limit: number): ConversationMessage[] {
     const meta = this.requireMeta();
     return this.sql.exec<MessageRow>(
@@ -208,7 +236,7 @@ export class ConversationStore {
     ).toArray().map((row) => toMessage(meta.conversation_id, row));
   }
 
-  archiveSegmentsBefore(beforeSequence: number): ConversationArchiveSegment[] {
+  archiveSegmentsBefore(beforeSequence: number, limit = Number.MAX_SAFE_INTEGER): ConversationArchiveSegment[] {
     return this.sql.exec<{
       segment_id: string;
       from_sequence: number;
@@ -220,8 +248,9 @@ export class ConversationStore {
     }>(
       `SELECT * FROM archive_segments
        WHERE from_sequence < ?
-       ORDER BY to_sequence DESC`,
+       ORDER BY to_sequence DESC LIMIT ?`,
       beforeSequence,
+      limit,
     ).toArray().map((row) => ({
       segmentId: row.segment_id,
       fromSequence: row.from_sequence,
@@ -312,5 +341,6 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
   if (row.process_id) message.processId = row.process_id;
   if (row.selected_target !== null) message.selectedTarget = row.selected_target;
   if (row.run_id) message.runId = row.run_id;
+  if (row.social_json) message.social = socialMessageMetadataSchema.parse(JSON.parse(row.social_json));
   return message;
 }

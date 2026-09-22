@@ -4,6 +4,7 @@ import type {
   SysTargetSummary,
 } from "@humansandmachines/gsv/protocol";
 import { hasCapability } from "./capabilities";
+import { currentProcessScope } from "./process-scope";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
@@ -50,6 +51,7 @@ export function listVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): TargetDescriptor[] {
+  if (currentProcessScope(ctx)) return [];
   const identity = principalOf(ctx)?.account;
   if (!identity) {
     return [];
@@ -72,6 +74,7 @@ export async function discoverVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): Promise<TargetDiscovery> {
+  if (currentProcessScope(ctx)) return { targets: [], complete: true };
   const discovery = await discoverVisibleAdapterTargets(ctx, options);
   return {
     targets: [...listVisibleTargets(ctx, options), ...discovery.targets],
@@ -84,6 +87,7 @@ export function getVisibleTarget(
   targetId: string,
   options: TargetListOptions = {},
 ): TargetDescriptor | null {
+  if (currentProcessScope(ctx)) return null;
   const identity = principalOf(ctx)?.account;
   if (!identity || !ctx.targets.canAccess(targetId, identity.uid, identity.gids)) {
     return null;
@@ -102,6 +106,7 @@ export async function resolveVisibleTarget(
   targetId: string,
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor | null> {
+  if (currentProcessScope(ctx)) return null;
   return getVisibleTarget(ctx, targetId, options)
     ?? (await discoverVisibleAdapterTargets(ctx, options)).targets.find(
       (target) => target.targetId === targetId,

@@ -1,22 +1,37 @@
+import { ContactAssistance } from "./ContactAssistance";
 import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
 import { ContactRequests } from "./ContactRequests";
+import { ContactContext } from "./SharedContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useEffect, useState } from "preact/hooks";
-import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
+import { useCallback, useEffect, useState } from "preact/hooks";
+import { contactDisplayName, type ContactInviteCreateResult, type ContactListResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { RelationshipPreferences } from "./RelationshipPreferences";
+import { ConversationViewControls } from "./ConversationViewControls";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "../shared/SetupCommand";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
 
-export function useFleetContacts(account: ConsoleAccount | undefined) {
+export function ContactAttentionNotice({ notice, account }: {
+  notice: NonNullable<ContactListResult["attentionNotice"]>;
+  account: ConsoleAccount | undefined;
+}) {
   const { client, connected } = useGateway();
-  return useQuery({
-    queryKey: CONTACTS_KEY,
-    enabled: connected && !!account && canConfigure(account, "contact.list"),
-    queryFn: async () => (await client.contact.list({ includeRevoked: true })).contacts,
+  const cache = useQueryClient();
+  const dismiss = useMutation({
+    mutationFn: () => client.contact.notice.dismiss({}),
+    onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }, { cancelRefetch: false }),
   });
+  return <div class="fleet-place-form" role="status">
+    <p>Contact messages now arrive in your inbox. Ship joins when you ask; receiving a message or adding a contact no longer starts agent work. Existing commitments continue.</p>
+    <details><summary>Previous preferences</summary>
+      <p class="note">Review incoming messages automatically: {notice.previousReceived ? "on" : "off"}. Learn about new contacts automatically: {notice.previousContactAdded ? "on" : "off"}.</p>
+    </details>
+    <button type="button" class="fleet-text-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>got it</button>
+    {dismiss.error && <p class="error" role="alert">{dismiss.error.message}</p>}
+  </div>;
 }
 
 export function AddContact({ account, onClose, onAdded }: {
@@ -66,7 +81,7 @@ export function AddContact({ account, onClose, onAdded }: {
     <div class="fleet-place-form">
       <h4>Invite someone</h4>
       {issued ? <>
-        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted. Your new contact is in Fleet.</p>
+        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted. Your conversation is ready in People.</p>
           : currentInvite?.state === "expired" || currentInvite?.state === "cancelled" ? <p class="note" role="status">This invitation has {currentInvite.state === "expired" ? "expired" : "been cancelled"}.</p>
           : <>
             <p class="note">Share this one-use code with them. It expires {new Date(issued.expiresAtMs).toLocaleString()}.</p>
@@ -95,8 +110,11 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests">(draft.text || draft.media.length ? "messages" : "details");
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, initialHelperPid, onWorkDirty, onOpenContact, onOpenHelper }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" | "help"; initialHelperPid?: string }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests" | "help">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
+  const [helperPid, setHelperPid] = useState<string | null>(initialHelperPid ?? null);
+  const [workDirty, setWorkDirty] = useState(false);
+  const workChanged = useCallback((dirty: boolean) => { setWorkDirty(dirty); onWorkDirty(dirty); }, [onWorkDirty]);
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";
@@ -116,16 +134,20 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
 
   return <section class="fleet-connection" aria-label="Contact details">
     <h3>{contactDisplayName(contact)}</h3>
-    <div class="sub">contact · {contact.state}</div>
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
-      : section === "requests" ? <ContactRequests contact={contact} account={account} />
+    <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
+    <ConversationViewControls conversationId={contact.conversationId} account={account} />
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests", "help"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard these unsent changes?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name === "help" ? "Ship help" : name}</button>)}</nav>
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} onWorkDirty={workChanged} onOpenContact={onOpenContact} onOpenHelper={(pid) => { setHelperPid(pid); setSection("help"); }} />
+      : section === "help" && account ? <ContactAssistance key={contact.id} contact={contact} account={account} initialPid={helperPid} onDirty={workChanged} onOpenWork={onOpenHelper} onMessages={() => setSection("messages")} />
+      : section === "requests" ? <ContactRequests contact={contact} account={account} onDirty={workChanged} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
     <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); if (allowed("contact.alias.set") && !pending) save.mutate(alias.trim()); }}>
       <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
       <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
     </form>
+    <RelationshipPreferences contact={contact} account={account} />
+    <ContactContext contact={contact} account={account} onDirty={workChanged} onOpen={onOpenContact} />
     {contact.state === "active" && <div class="fleet-place-form">
       {confirm ? <>
         <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>

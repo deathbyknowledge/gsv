@@ -16,6 +16,7 @@ import {
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import { requirePrincipal } from "../../kernel/context";
+import { currentProcessScope, scopedResource } from "../../kernel/process-scope";
 import type { FrameBody, ResponseOkFrame } from "../../protocol/frames";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
@@ -1006,6 +1007,10 @@ function assertCanAccessCopyEndpoint(
   ctx: KernelContext,
   access: "source" | "destination",
 ): void {
+  if (currentProcessScope(ctx) && endpoint.target !== "gsv") {
+    if (access !== "source") throw new Error("Helper filesystem grants are read-only");
+    scopedResource(ctx, endpoint.target, endpoint.path);
+  }
   if (endpoint.target === "gsv") {
     return;
   }

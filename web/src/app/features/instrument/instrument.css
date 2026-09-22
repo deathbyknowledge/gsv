@@ -434,3 +434,5 @@
   .instrument-help dl { grid-template-columns: minmax(0, 1fr); }
   .instrument-help dd { margin-bottom: 8px; }
 }
+
+.instrument-attention-count { color: var(--accent); font-size: 10px; margin-left: 5px; font-variant-numeric: tabular-nums; }

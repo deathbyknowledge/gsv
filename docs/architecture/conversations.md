@@ -23,6 +23,11 @@ The Kernel owns the conversation directory and membership:
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
   members. Current authorization remains owner-scoped, while the membership schema can represent
   later multi-user and multi-Process conversations.
+- **Contact** is an owner-scoped conversation with a pinned remote actor. It has no Process handler.
+  `contact.send` delivers to that actor; `conversation.send` rejects contact threads so a message
+  intended for another person cannot become local Ship input. Text delivery and incoming resource
+  references do not create a Process. Explicit outbound attachments retain their revisions through
+  the existing personal archive owner without admitting an inference run.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
@@ -133,10 +138,33 @@ Process history keeps its existing lifecycle and archive policy. Conversation hi
 activity can therefore rotate independently without conflating what the user saw with how the work
 was performed.
 
+## Private text search
+
+Each Conversation owns its derived FTS5 index in the same SQLite database.
+Append and indexing commit together; archiving never removes index rows.
+Historical backfill starts when search is first used and advances in batches of
+100 messages through the Conversation's alarm. A durable cursor commits with
+each batch, and an archive read verifies the existing checksum before indexing.
+Queries never scan R2, index attachments or call external search services.
+
+The index admits up to 100,000 messages and 64 MiB of source text per conversation;
+each message contributes at most its first 16,384 UTF-16 code units. These are
+source budgets, not a claim about the exact FTS disk size. Reaching a budget
+preserves message admission and reports limited coverage. Long-text truncation,
+omitted messages, pending historical indexing and archive failures remain visible
+in search results. Canonical history stays available independently.
+
+The Kernel authorizes the chosen conversation before and after the RPC. Search
+returns local message IDs/sequences, plain excerpts and a newest-first cursor;
+opening a result uses the ordinary authorized history path. The canonical Ship
+may read/search with its capability; other Processes remain denied until an
+explicit scope is implemented. There is no account-wide index or query fan-out.
+
 ## Authorization
 
-Public `conversation.*` syscalls require a direct authenticated user client. Process callers cannot
-append user messages, read a user's canonical conversation through those syscalls, or recursively
+Public conversation mutations require a direct authenticated user client. The owner's canonical
+Ship may read history and search with the corresponding capability. Other Process callers cannot
+read these conversations without a separately scoped admission or append human messages or recursively
 admit themselves. Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 

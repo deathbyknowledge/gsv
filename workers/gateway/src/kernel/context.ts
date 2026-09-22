@@ -8,7 +8,7 @@
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
-  FederationDeliveryReceipt,
+  FederationTransportReceipt,
   JsonObject,
   JsonValue,
   PeerPrincipalKind,
@@ -39,6 +39,9 @@ import type { ResponsibilityStore } from "./responsibility-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
 import type { FederationIdentity } from "./federation-crypto";
+import type { ProfileStore } from "./profile-store";
+import type { SharedContextStore } from "./shared-context-store";
+import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -75,9 +78,20 @@ export type KernelContext = {
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
+  profiles: ProfileStore;
+  sharedContext: SharedContextStore;
+  scheduleSharedContext: () => Promise<void>;
+  scheduleProcessScopeExpiry: (scopeId: string, expiresAtMs: number) => Promise<void>;
+  scheduleProcessScopeMessages: () => Promise<void>;
+  approaches: ApproachStore;
+  scheduleProfilePublication: (ownerUid: number) => Promise<void>;
+  scheduleApproachMaintenance: () => Promise<void>;
+  scheduleConversationAttention: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   processId?: string;
+  /** Captured only from the trusted registry; keeps late calls restricted after deletion. */
+  processScopeId?: string;
   processRunId?: string;
   requestId?: string;
   requestSignal?: AbortSignal;
@@ -118,8 +132,8 @@ export type KernelContext = {
   ) => Promise<void>;
   coordinateFederationInbound: (
     key: string,
-    operation: () => Promise<FederationDeliveryReceipt>,
-  ) => Promise<FederationDeliveryReceipt>;
+    operation: () => Promise<FederationTransportReceipt>,
+  ) => Promise<FederationTransportReceipt>;
   coordinateFederationContact: <Value>(
     contactId: string,
     operation: () => Value | Promise<Value>,

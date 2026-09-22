@@ -16,6 +16,7 @@ import type {
 import type { TestHarness } from "wrangler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import { profileImageFixture } from "../src/test-support/profile-image";
 
 const FIRST_USER = "federation-first";
 const SECOND_USER = "federation-second";
@@ -64,6 +65,39 @@ describe("cross-GSV federation integration", () => {
     ]);
   });
 
+  it("publishes one approved profile and resolves it from an independently routed space", async () => {
+    expect((await first.profile.get({})).profile.published).toBeUndefined();
+    const bytes = profileImageFixture();
+    const uploaded = await first.request("profile.avatar.upload", {}, { body: bodyFromBytes(bytes) });
+    const draft = { alias: "public-first", displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const, avatar: uploaded.data.avatar };
+    await first.profile.update({ expectedRevision: 0, draft });
+    const url = new URL("/@public-first", firstOrigin).href;
+    const privatePage = await fetch(url);
+    expect(privatePage.status).toBe(404);
+    await privatePage.arrayBuffer();
+    await first.profile.publish({ expectedRevision: 1 });
+    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
+    const remote = await second.profile.resolve({ url });
+    expect(remote.profile).toMatchObject({ alias: draft.alias, about: draft.about, origin: firstOrigin.origin, revision: 1 });
+    expect(remote.profile).not.toHaveProperty("ownerUid");
+    expect(remote.profile).not.toHaveProperty("username");
+    const image = await second.request("profile.avatar.read", { sha256: uploaded.data.avatar.sha256, profileUrl: url });
+    expect(image.body).toBeDefined();
+    expect(await bodyToBytes(image.body!)).toEqual(bytes);
+    expect((await second.profile.get({})).profile.published).toBeUndefined();
+    const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
+    const document = await fetch(subjectUrl);
+    expect(await document.json()).toEqual(remote.profile);
+    await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
+    expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
+    await first.profile.unpublish({ expectedRevision: 2 });
+    await expect(second.profile.resolve({ url })).rejects.toThrow("404");
+    await expect(second.request("profile.avatar.read", { sha256: uploaded.data.avatar.sha256, profileUrl: url })).rejects.toThrow("404");
+    const unavailableSubject = await fetch(subjectUrl);
+    expect(unavailableSubject.status).toBe(404);
+    await unavailableSubject.arrayBuffer();
+  });
+
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
     const firstRequestSignals: (JsonValue | undefined)[] = [];
     const secondRequestSignals: (JsonValue | undefined)[] = [];
@@ -87,6 +121,8 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(firstDiscovery.status).toBe(200);
     expect(secondDiscovery.status).toBe(200);
+    const versionedDiscovery = await fetch(new URL("/.well-known/gsv/federation/v2/ship", firstOrigin), { method: "POST" });
+    expect(versionedDiscovery.status).toBe(200);
     const invalidAcceptance = await fetch(
       new URL("/_gsv/federation/v1/invites/accept", firstOrigin),
       {
@@ -130,28 +166,8 @@ describe("cross-GSV federation integration", () => {
       contactAddedResponsibilities(first),
       contactAddedResponsibilities(second),
     ]);
-    expect(initialInviterResponsibilities).toEqual([
-      expect.objectContaining({
-        details: expect.objectContaining({
-          eventType: "contact.added",
-          contactGeneration: accepted.contact.generation,
-          displayName: SECOND_USER,
-          inviteDirection: "outgoing",
-          contentTrust: "untrusted",
-        }),
-      }),
-    ]);
-    expect(initialAccepterResponsibilities).toEqual([
-      expect.objectContaining({
-        details: expect.objectContaining({
-          eventType: "contact.added",
-          contactGeneration: accepted.contact.generation,
-          displayName: FIRST_USER,
-          inviteDirection: "incoming",
-          contentTrust: "untrusted",
-        }),
-      }),
-    ]);
+    expect(initialInviterResponsibilities).toEqual([]);
+    expect(initialAccepterResponsibilities).toEqual([]);
     const replacementInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
     const replacement = await second.contact.invite.accept({ code: replacementInvite.code });
     expect(replacement.contact.generation).not.toBe(accepted.contact.generation);
@@ -160,24 +176,8 @@ describe("cross-GSV federation integration", () => {
         contactAddedResponsibilities(first),
         contactAddedResponsibilities(second),
       ]);
-    expect(replacementInviterResponsibilities).toHaveLength(2);
-    expect(replacementInviterResponsibilities).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        details: expect.objectContaining({
-          contactGeneration: replacement.contact.generation,
-          inviteDirection: "outgoing",
-        }),
-      }),
-    ]));
-    expect(replacementAccepterResponsibilities).toHaveLength(2);
-    expect(replacementAccepterResponsibilities).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        details: expect.objectContaining({
-          contactGeneration: replacement.contact.generation,
-          inviteDirection: "incoming",
-        }),
-      }),
-    ]));
+    expect(replacementInviterResponsibilities).toEqual([]);
+    expect(replacementAccepterResponsibilities).toEqual([]);
     await expect(second.contact.invite.accept({ code: invite.code }))
       .rejects.toThrow("pairing attempt was superseded");
     const currentContacts = await second.contact.list({});
@@ -229,6 +229,14 @@ describe("cross-GSV federation integration", () => {
     ]);
     expect(messagesWithText(firstHistory, messageArgs.text)).toHaveLength(1);
     expect(messagesWithText(secondHistory, messageArgs.text)).toHaveLength(1);
+    const firstMessageMetadata = messagesWithText(firstHistory, messageArgs.text)[0]?.social;
+    expect(firstMessageMetadata?.provenance).toEqual({ kind: "human" });
+    expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstMessageMetadata);
+    expect(firstHistory.conversation.handlerPid).toBeUndefined();
+    expect(secondHistory.conversation.handlerPid).toBeUndefined();
+    const searched = await second.conversation.search({ conversationId: secondContact.conversationId, query: "hello first" });
+    expect(searched.matches.map((match) => match.messageId)).toEqual([messagesWithText(secondHistory, messageArgs.text)[0].id]);
+    expect(searched.coverage.state).toBe("complete");
     expect(messagesWithText(secondHistory, messageArgs.text)[0]).toMatchObject({
       author: {
         kind: "contact",
@@ -242,6 +250,25 @@ describe("cross-GSV federation integration", () => {
       },
     });
 
+    if (!firstMessageMetadata) throw new Error("V2 message is missing its origin reference");
+    const replyArgs: ContactSendArgs = {
+      contactId: secondContact.id,
+      text: "Reply from the second Ship",
+      replyTo: firstMessageMetadata.reference,
+      idempotencyKey: "integration-reply-second-to-first",
+    };
+    await waitForDelivery(second, replyArgs);
+    const replyHistory = await waitForMessage(first, firstContact.conversationId, replyArgs.text);
+    expect(messagesWithText(replyHistory, replyArgs.text)[0]?.social).toMatchObject({
+      provenance: { kind: "human" },
+      replyTo: firstMessageMetadata.reference,
+    });
+    await expect(second.contact.send({
+      ...replyArgs,
+      replyTo: { ...firstMessageMetadata.reference, messageId: "message:outside-this-conversation" },
+      idempotencyKey: "integration-invalid-reply",
+    })).rejects.toThrow("Reply must reference a message in this contact conversation");
+
     const outgoing = await first.contact.request.create({
       contactId: firstContact.id,
       kind: "review",
@@ -254,18 +281,19 @@ describe("cross-GSV federation integration", () => {
       title: outgoing.request.title,
       state: "offered",
     });
-    await second.contact.request.update({
+    await second.contact.request.act({
       requestId: incoming.id,
       expectedRevision: incoming.revision,
-      state: "accepted",
-      details: { reviewer: "Second Ship" },
+      action: "accept",
+      note: "Reviewed by the second Ship",
       idempotencyKey: "integration-request-second-accepts",
     });
     const acceptedAtFirst = await waitForRequest(first, {
       id: outgoing.request.id,
       state: "accepted",
     });
-    expect(acceptedAtFirst.details).toEqual({ reviewer: "Second Ship" });
+    expect(acceptedAtFirst.details).toEqual({ document: "engineering/rfcs/0001-cross-gsv-federation.md" });
+    expect(acceptedAtFirst.work?.performer[0]).toMatchObject({ action: "accept", note: "Reviewed by the second Ship" });
 
     const reverse = await second.contact.request.create({
       contactId: secondContact.id,
@@ -278,30 +306,37 @@ describe("cross-GSV federation integration", () => {
       title: reverse.request.title,
       state: "offered",
     });
-    const reverseAccepted = await first.contact.request.update({
+    const reverseAccepted = await first.contact.request.act({
       requestId: reverseIncoming.id,
-      state: "accepted",
+      expectedRevision: reverseIncoming.revision,
+      action: "accept",
       idempotencyKey: "integration-request-first-accepts",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "accepted" });
-    await first.contact.request.update({
+    await waitForRequest(first, { id: reverseIncoming.id, state: "accepted", exchange: { state: "acknowledged" } });
+    await first.contact.request.act({
       requestId: reverseIncoming.id,
       expectedRevision: reverseAccepted.request.revision,
-      state: "completed",
+      action: "complete",
       idempotencyKey: "integration-request-first-completes",
     });
     await waitForRequest(second, { id: reverse.request.id, state: "completed" });
+    await waitForRequest(first, { id: reverseIncoming.id, state: "completed", exchange: { state: "acknowledged" } });
 
-    await expect.poll(() => firstRequestSignals.length).toBe(5);
-    await expect.poll(() => secondRequestSignals.length).toBe(5);
-    expect(firstRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: firstContact.id })));
-    expect(secondRequestSignals).toEqual(Array.from({ length: 5 }, () => ({ contactId: secondContact.id })));
-    await expect(first.contact.request.update({
+    await expect.poll(() => firstRequestSignals.length).toBeGreaterThanOrEqual(5);
+    await expect.poll(() => secondRequestSignals.length).toBeGreaterThanOrEqual(5);
+    for (const signal of firstRequestSignals) expect(signal).toMatchObject({ contactId: firstContact.id });
+    for (const signal of secondRequestSignals) expect(signal).toMatchObject({ contactId: secondContact.id });
+    const completed = await waitForRequest(second, { id: reverse.request.id, state: "completed" });
+    await second.contact.request.act({ requestId: completed.id, expectedRevision: completed.revision, action: "acknowledge", idempotencyKey: "integration-acknowledge-result" });
+    await expect.poll(async () => (await first.contact.request.list({ contactId: firstContact.id, includeTerminal: true })).requests.find((request) => request.id === reverseIncoming.id)?.work?.requester.at(-1)?.action).toBe("acknowledge");
+    const firstRequestSignalCount = firstRequestSignals.length;
+    await expect(first.contact.request.act({
       requestId: reverseIncoming.id,
       expectedRevision: 1,
-      state: "active",
-    })).rejects.toThrow("revision changed");
-    expect(firstRequestSignals).toHaveLength(5);
+      action: "start",
+    })).rejects.toThrow("Work request changed");
+    expect(firstRequestSignals).toHaveLength(firstRequestSignalCount);
 
     const resourceBytes = Uint8Array.from([
       137, 80, 78, 71, 13, 10, 26, 10,
@@ -345,20 +380,8 @@ describe("cross-GSV federation integration", () => {
       throw new Error("Contact message returned no resource reference");
     }
     expect(receivedResource.ref.target).toBe(secondContact.id);
-    const responsibility = await poll(async () => {
-      const listed = await second.r12y.list({ limit: 500 });
-      return listed.responsibilities.find((record) => (
-        record.details?.deliveryId === resourceDelivery.deliveryId
-      )) ?? null;
-    }, "federation responsibility");
-    expect(responsibility.details).toMatchObject({
-      eventType: "federation.message.received",
-      conversationId: secondContact.conversationId,
-      resourceCount: 1,
-      contentTrust: "untrusted",
-    });
-    expect(responsibility.details).not.toHaveProperty("text");
-    expect(responsibility.details).not.toHaveProperty("resources");
+    const responsibilities = await second.r12y.list({ limit: 500 });
+    expect(responsibilities.responsibilities.some((record) => record.details?.deliveryId === resourceDelivery.deliveryId)).toBe(false);
     const streamed = await second.request("fs.transfer.send", {
       target: receivedResource.ref.target,
       path: receivedResource.ref.path,
@@ -398,6 +421,57 @@ describe("cross-GSV federation integration", () => {
       path: receivedResource.ref.path,
       revision: receivedResource.ref.revision,
     })).rejects.toThrow(/no longer active|not found/i);
+
+    const reconnectInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    const reconnected = (await second.contact.invite.accept({ code: reconnectInvite.code })).contact;
+    expect(reconnected.conversationId).toBe(secondContact.conversationId);
+    const preferences = await second.contact.preferences.update({
+      contactId: reconnected.id, expectedRevision: reconnected.preferences!.revision,
+      patch: { saved: false, muted: true },
+    });
+    expect(preferences.contact).toMatchObject({ state: "active", preferences: { saved: false, muted: true } });
+    const actor = { shipId: reconnected.remoteShipId, subjectId: reconnected.remoteSubject.id };
+    await second.contact.block.set({ actor, blocked: true });
+    expect((await second.contact.block.list({})).blocks).toEqual([expect.objectContaining({ actor })]);
+    expect((await second.contact.list({ includeRevoked: true })).contacts[0]).toMatchObject({ state: "revoked", blocked: true });
+    const blockedInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await expect(second.contact.invite.accept({ code: blockedInvite.code })).rejects.toThrow("pairing is unavailable");
+    await second.contact.block.set({ actor, blocked: false });
+    expect((await second.contact.list({ includeRevoked: true })).contacts[0]?.state).toBe("revoked");
+    expect(messagesWithText(await second.conversation.history({ conversationId: secondContact.conversationId }), messageArgs.text)).toHaveLength(1);
+  });
+  it("opens a published profile, requests a conversation, and preserves the first message through acceptance", async () => {
+    for (const client of [first, second]) {
+      const contacts = (await client.contact.list({ includeRevoked: true })).contacts;
+      for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
+    }
+    const initial = (await second.profile.get({})).profile;
+    const draft = { alias: "public-second", displayName: "Second person", about: "Message me about GSV", contactPolicy: "requests" as const, representation: "human" as const };
+    const saved = (await second.profile.update({ expectedRevision: initial.revision, draft })).profile;
+    await second.profile.publish({ expectedRevision: saved.revision });
+    await expect.poll(async () => (await second.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
+    const profile = (await first.profile.resolve({ url: new URL("/@public-second", secondOrigin).href })).profile;
+    const input = { profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision,
+      displayName: "First person", text: "An intentional first-contact message", idempotencyKey: "integration-approach" };
+    const sent = (await first.approach.create(input)).approach;
+    expect((await first.approach.create(input)).approach.id).toBe(sent.id);
+    await expect.poll(async () => (await second.approach.list({ direction: "incoming" })).approaches[0]?.state, { timeout: 20_000 }).toBe("pending");
+    const received = (await second.approach.list({ direction: "incoming" })).approaches[0];
+    expect((await second.approach.list({ direction: "incoming", status: "active", limit: 1 })).total).toBe(1);
+    const before = await second.conversation.history({ conversationId: received.conversationId });
+    expect(messagesWithText(before, input.text)).toHaveLength(1);
+    expect(before.messages.find((message) => message.text === input.text)?.social?.provenance.kind).toBe("human");
+    expect(before.conversation.handlerPid).toBeUndefined();
+    await second.approach.decide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" });
+    await expect.poll(async () => (await first.approach.get({ approachId: sent.id })).approach.connection, { timeout: 20_000 }).toBe("connected");
+    await expect.poll(async () => (await second.approach.list({ direction: "incoming", status: "active", limit: 1 })).total, { timeout: 20_000 }).toBe(0);
+    const connected = (await second.approach.get({ approachId: received.id })).approach;
+    expect(connected.contactId).toBeDefined();
+    expect(connected.conversationId).toBe(received.conversationId);
+    expect(messagesWithText(await second.conversation.history({ conversationId: received.conversationId }), input.text)).toHaveLength(1);
+    const reply = await second.contact.send({ contactId: connected.contactId!, text: "Welcome to the conversation", idempotencyKey: "integration-approach-reply" });
+    await expect.poll(async () => (await second.contact.delivery.get({ deliveryId: reply.deliveryId })).delivery?.state, { timeout: 20_000 }).toBe("delivered");
+    expect(messagesWithText(await first.conversation.history({ conversationId: sent.conversationId }), "Welcome to the conversation")).toHaveLength(1);
   });
 });
 
@@ -470,7 +544,7 @@ function messagesWithText(history: ConversationHistoryResult, text: string) {
 
 async function waitForRequest(
   client: GSVClient,
-  expected: Partial<Pick<ContactRequestRecord, "id" | "direction" | "title" | "state">>,
+  expected: Partial<Pick<ContactRequestRecord, "id" | "direction" | "title" | "state" | "exchange">>,
 ): Promise<ContactRequestRecord> {
   return await poll(async () => {
     const result = await client.contact.request.list({ includeTerminal: true });
@@ -479,6 +553,7 @@ async function waitForRequest(
       && (!expected.direction || request.direction === expected.direction)
       && (!expected.title || request.title === expected.title)
       && (!expected.state || request.state === expected.state)
+      && (!expected.exchange || request.exchange?.state === expected.exchange.state)
     )) ?? null;
   }, `contact request ${JSON.stringify(expected)}`);
 }

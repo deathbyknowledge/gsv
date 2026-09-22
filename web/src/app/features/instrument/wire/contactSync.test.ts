@@ -1,4 +1,4 @@
-import { instrumentContactConversationKey, instrumentContactRequestsKey } from "./queryKeys";
+import { instrumentContactConversationKey, instrumentContactRequestsKey, INSTRUMENT_ATTENTION_KEY } from "./queryKeys";
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../../testing/testHarness";
@@ -19,6 +19,16 @@ function setup(initial: string[] | undefined, load: () => Promise<string[]>) {
 }
 
 describe("contact change notifications", () => {
+  it("invalidates filtered pages and exact identity lookups after a policy or alias change", async () => {
+    const cache = new QueryClient();
+    cleanup.push(() => cache.clear());
+    const keys = [[...KEY, "address-book", "Alice"], [...KEY, "by-id", ["contact:alice"]], [...KEY, "blocked"]];
+    for (const key of keys) cache.setQueryData(key, []);
+    cache.setQueryData(INVITES, []);
+    await refreshContactQuery(cache, KEY);
+    for (const key of keys) expect(cache.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(cache.getQueryState(INVITES)?.isInvalidated).toBe(false);
+  });
   it("refreshes only the affected list", async () => {
     const load = vi.fn(async () => ["new contact"]);
     const { cache } = setup([], load);
@@ -54,6 +64,33 @@ describe("contact change notifications", () => {
 
 
 describe("contact detail notifications", () => {
+  it("does not reread message history when only private read position changes", async () => {
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cleanup.push(() => cache.clear());
+    const key = [...instrumentContactConversationKey("one"), "history", null];
+    cache.setQueryData(key, ["message"]);
+    const attention = [...INSTRUMENT_ATTENTION_KEY, "summary"];
+    cache.setQueryData(attention, { readyCount: 1 });
+    const load = vi.fn(async () => ["message"]);
+    const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
+    cleanup.push(observer.subscribe(() => undefined));
+    await syncContactDetailSignal(cache, "conversation.changed", { conversationId: "one", viewOnly: true });
+    expect(load).not.toHaveBeenCalled();
+    expect(cache.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(cache.getQueryState(attention)?.isInvalidated).toBe(true);
+  });
+  it("refreshes a paginated history beneath its conversation key", async () => {
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    cleanup.push(() => cache.clear());
+    const key = [...instrumentContactConversationKey("one"), "history", null];
+    cache.setQueryData(key, ["old"]);
+    const load = vi.fn(async () => ["new"]);
+    const observer = new QueryObserver(cache, { queryKey: key, queryFn: load });
+    cleanup.push(observer.subscribe(() => undefined));
+    await syncContactDetailSignal(cache, "conversation.changed", { conversationId: "one" });
+    expect(load).toHaveBeenCalledOnce();
+    expect(cache.getQueryData(key)).toEqual(["new"]);
+  });
   it.each([
     ["conversation.changed", instrumentContactConversationKey("one"), { conversationId: "one", latestSequence: 2 }],
     ["contact.request.changed", instrumentContactRequestsKey("one"), { contactId: "one" }],

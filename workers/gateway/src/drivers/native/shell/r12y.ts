@@ -291,8 +291,6 @@ function requireSourceId(
 ): ResponsibilityConfigurableSourcePolicyId {
   switch (value) {
     case "mail.received":
-    case "federation.received":
-    case "contact.added":
     case "machine.added":
     case "adapter.connected":
     case "adapter.auth_required":

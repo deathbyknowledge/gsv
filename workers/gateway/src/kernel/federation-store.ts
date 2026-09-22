@@ -1,11 +1,22 @@
+import { ContactDraftStore } from "./contact-draft-store";
 import type {
+  ActorRef,
+  WorkRecord,
+  ContactBlock,
+  ContactBlockListResult,
+  ContactListArgs,
+  ContactPreferences,
+  ContactPreferencesUpdateArgs,
+  ContactRequestExchange,
   ContactRequestRecord,
   ContactRequestState,
   ContactState,
   ContactSummary,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
-  FederationDeliveryPayload,
+  FederationTransportPayload,
+  FederationFeature,
+  SocialMessageMetadata,
   FederationPublicKey,
   FederationResourceDescriptor,
   FederationSubject,
@@ -13,21 +24,41 @@ import type {
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
+  projectWork,
+  workRecordSchema,
   federationDeliveryPayloadSchema,
+  federationDeliveryPayloadV2Schema,
+  federationFeatureSchema,
+  socialMessageMetadataSchema,
   federationPublicKeySchema,
   jsonObjectSchema,
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { ContextPublications } from "./shared-context-publications";
+import { ContextSources } from "./shared-context-sources";
 
 export type FederationContactRecord = ContactSummary & {
+  preferences: ContactPreferences;
+  blocked: boolean;
   remotePublicKey: FederationPublicKey;
   sharedSecret: string;
   threadId: string;
 };
 
+type ActorBlockChange = { block: ContactBlock | null; changed: boolean };
+type ContactPage = { contacts: FederationContactRecord[]; next?: string };
+
+export class FederationActorBlockedError extends Error {
+  constructor() {
+    super("Contact pairing is unavailable");
+    this.name = "FederationActorBlockedError";
+  }
+}
+
 type FederationInviteBase = {
   inviteId: string;
+  purpose: "private" | "approach";
   ownerUid: number;
   tokenHash: string;
   issuingShipId: string;
@@ -77,6 +108,7 @@ export type FederationPairingAttemptRecord = FederationPairingAttemptBase & (
 export type FederationOutboxLocalMessage = {
   messageId: string;
   text: string;
+  social?: SocialMessageMetadata;
   media?: ResourceBlock[];
   author: ConversationMessageAuthor;
   origin: ConversationMessageOrigin;
@@ -95,12 +127,15 @@ export type FederationMessagePreparation = {
 };
 
 type FederationOutboxBase = {
+  retryable: boolean;
+  retryEpoch: number;
   deliveryId: string;
   ownerUid: number;
   contactId: string;
   contactGeneration: string;
   idempotencyKey: string;
   fingerprint: string;
+  wireVersion: 1 | 2;
   attemptCount: number;
   nextAttemptAtMs?: number;
   lastError?: string;
@@ -115,7 +150,7 @@ export type FederationPreparingOutboxRecord = FederationOutboxBase & {
 
 export type FederationReadyOutboxRecord = FederationOutboxBase & {
   state: "pending" | "delivered" | "terminal";
-  payload: FederationDeliveryPayload;
+  payload: FederationTransportPayload;
   localMessage?: FederationOutboxLocalMessage;
   localSequence?: number;
   deliveredAtMs?: number;
@@ -138,7 +173,8 @@ export type FederationInboxRecord = {
   contactGeneration: string;
   deliveryId: string;
   payloadHash: string;
-  payload: FederationDeliveryPayload;
+  payload: FederationTransportPayload;
+  wireVersion: 1 | 2;
   state: "received" | "committed" | "rejected";
   response?: JsonObject;
   lastError?: string;
@@ -229,6 +265,7 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
 const federationOutboxLocalMessageSchema = z.strictObject({
   messageId: z.string(),
   text: z.string(),
+  social: z.optional(socialMessageMetadataSchema),
   media: z.array(resourceBlockSchema).optional(),
   author: conversationMessageAuthorSchema,
   origin: conversationMessageOriginSchema,
@@ -265,9 +302,23 @@ type ContactRow = {
   revoked_at: number | null;
   last_received_at: number | null;
   last_delivered_at: number | null;
+  protocol_version: 1 | 2;
+  protocol_features_json: string;
+  protocol_checked_at: number | null;
+  saved: number;
+  muted: number;
+  notification_policy: ContactPreferences["notifications"];
+  policy_revision: number;
+  actor_blocked: number;
 };
 
+const CONTACT_SELECT = `SELECT c.*, EXISTS (
+  SELECT 1 FROM federation_actor_blocks b
+  WHERE b.owner_uid = c.owner_uid AND b.ship_id = c.remote_ship_id AND b.subject_id = c.remote_subject_id
+) AS actor_blocked FROM federation_contacts c`;
+
 type InviteRow = {
+  purpose: "private" | "approach";
   invite_id: string;
   owner_uid: number;
   token_hash: string;
@@ -304,7 +355,10 @@ type PairingAttemptRow = {
 };
 
 type OutboxRow = {
+  retryable: number;
+  retry_epoch: number;
   delivery_id: string;
+  wire_version: 1 | 2;
   owner_uid: number;
   contact_id: string;
   contact_generation: string;
@@ -328,6 +382,7 @@ type InboxRow = {
   contact_id: string;
   contact_generation: string;
   delivery_id: string;
+  wire_version: 1 | 2;
   payload_hash: string;
   payload_json: string;
   state: FederationInboxRecord["state"];
@@ -339,6 +394,7 @@ type InboxRow = {
 };
 
 type RequestRow = {
+  work_json: string | null;
   request_id: string;
   remote_request_id: string | null;
   contact_id: string;
@@ -349,15 +405,21 @@ type RequestRow = {
   details_json: string | null;
   state: ContactRequestState;
   revision: number;
+  exchange_state: ContactRequestExchange["state"];
+  exchange_delivery_id: string | null;
+  exchange_error: string | null;
+  exchange_source: "local" | "remote" | null;
   created_at: number;
   updated_at: number;
 };
 
 export class FederationStore {
+  readonly drafts: ContactDraftStore;
   private readonly sql: SqlStorage;
 
   constructor(private readonly storage: DurableObjectStorage) {
     this.sql = storage.sql;
+    this.drafts = new ContactDraftStore(storage.sql);
   }
 
   transaction<Value>(callback: () => Value): Value {
@@ -504,7 +566,7 @@ export class FederationStore {
   outstandingInviteCount(ownerUid: number, now = Date.now()): number {
     return this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM federation_invites
-       WHERE owner_uid = ? AND state = 'issued' AND expires_at > ?`,
+       WHERE owner_uid = ? AND state = 'issued' AND purpose = 'private' AND expires_at > ?`,
       ownerUid,
       now,
     ).one().count;
@@ -523,6 +585,7 @@ export class FederationStore {
   }
 
   createInvite(input: {
+    purpose?: "private" | "approach";
     ownerUid: number;
     tokenHash: string;
     issuingShipId: string;
@@ -535,8 +598,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_invites
        (invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin,
-        state, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?)`,
+        state, expires_at, created_at, purpose)
+       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?)`,
       inviteId,
       input.ownerUid,
       input.tokenHash,
@@ -544,6 +607,7 @@ export class FederationStore {
       input.issuingOrigin,
       input.expiresAtMs,
       now,
+      input.purpose ?? "private",
     );
     return this.inviteByTokenHash(input.tokenHash)!;
   }
@@ -575,6 +639,9 @@ export class FederationStore {
     remotePublicKey: FederationPublicKey;
     now?: number;
   }): FederationPairingAttemptRecord {
+    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubjectId })) {
+      throw new FederationActorBlockedError();
+    }
     const existing = this.pairingAttempt(input.tokenHash);
     if (existing) {
       if (
@@ -683,7 +750,7 @@ export class FederationStore {
     const values = includeTerminal ? [ownerUid] : [ownerUid, now];
     return this.sql.exec<InviteRow>(
       `SELECT * FROM federation_invites
-       WHERE owner_uid = ? ${terminal}
+       WHERE owner_uid = ? AND purpose = 'private' ${terminal}
        ORDER BY created_at DESC`,
       ...values,
     ).toArray().map(inviteFromRow);
@@ -724,8 +791,12 @@ export class FederationStore {
     pairingAttemptTokenHash?: string;
     preferredContactId?: string;
     preferredConversationId?: string;
+    saved?: boolean;
     now?: number;
   }): FederationContactRecord {
+    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubject.id })) {
+      throw new FederationActorBlockedError();
+    }
     const now = input.now ?? Date.now();
     const existing = this.getByRemote(
       input.ownerUid,
@@ -752,9 +823,12 @@ export class FederationStore {
     );
     if (existing) {
       if (existing.generation !== input.generation) {
+        new ContextPublications(this.sql).retireConnections(existing.id, existing.generation, now);
+        new ContextSources(this.storage).retireContact(existing.id);
         this.sql.exec(
           `UPDATE federation_requests SET
-             state = 'cancelled', revision = revision + 1, updated_at = ?
+             state = CASE WHEN work_json IS NULL THEN 'cancelled' ELSE state END, revision = revision + 1, updated_at = ?,
+             exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
            WHERE contact_id = ? AND contact_generation <> ?
              AND state NOT IN ('rejected', 'completed', 'cancelled')`,
           now,
@@ -804,7 +878,7 @@ export class FederationStore {
         `UPDATE federation_contacts SET
            state = 'active', generation = ?, remote_display_name = ?, remote_origin = ?,
            remote_public_key_json = ?, shared_secret = ?, thread_id = ?, updated_at = ?,
-           revoked_at = NULL
+           revoked_at = NULL, protocol_checked_at = NULL, protocol_version = 1, protocol_features_json = '[]'
          WHERE contact_id = ?`,
         input.generation,
         input.remoteSubject.displayName,
@@ -824,8 +898,8 @@ export class FederationStore {
          contact_id, owner_uid, state, generation, remote_ship_id,
          remote_subject_id, remote_display_name, remote_origin,
          remote_public_key_json, shared_secret, conversation_id, thread_id,
-         created_at, updated_at
-       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         created_at, updated_at, saved
+       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       contactId,
       input.ownerUid,
       input.generation,
@@ -839,6 +913,7 @@ export class FederationStore {
       input.threadId,
       now,
       now,
+      input.saved === false ? 0 : 1,
     );
     return this.get(contactId)!;
   }
@@ -876,7 +951,7 @@ export class FederationStore {
 
   get(contactId: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      "SELECT * FROM federation_contacts WHERE contact_id = ? LIMIT 1",
+      `${CONTACT_SELECT} WHERE c.contact_id = ? LIMIT 1`,
       contactId,
     ).toArray()[0];
     return row ? contactFromRow(row) : null;
@@ -888,8 +963,8 @@ export class FederationStore {
     remoteSubjectId: string,
   ): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `SELECT * FROM federation_contacts
-       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
+      `${CONTACT_SELECT}
+       WHERE c.owner_uid = ? AND c.remote_ship_id = ? AND c.remote_subject_id = ?
        LIMIT 1`,
       ownerUid,
       remoteShipId,
@@ -904,8 +979,7 @@ export class FederationStore {
     localSubjectId: string,
   ): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `SELECT c.*
-       FROM federation_contacts c
+      `${CONTACT_SELECT}
        JOIN federation_subjects s ON s.owner_uid = c.owner_uid
        WHERE c.remote_ship_id = ? AND c.remote_subject_id = ? AND s.subject_id = ?
        LIMIT 1`,
@@ -919,11 +993,99 @@ export class FederationStore {
   list(ownerUid: number, includeRevoked = false): FederationContactRecord[] {
     const condition = includeRevoked ? "" : "AND state = 'active'";
     return this.sql.exec<ContactRow>(
-      `SELECT * FROM federation_contacts
-       WHERE owner_uid = ? ${condition}
+      `${CONTACT_SELECT}
+       WHERE c.owner_uid = ? ${condition}
        ORDER BY updated_at DESC, created_at DESC`,
       ownerUid,
     ).toArray().map(contactFromRow);
+  }
+
+  listPage(ownerUid: number, input: ContactListArgs & { limit: number }): ContactPage {
+    const clauses = ["c.owner_uid = ?"];
+    const bindings: (string | number)[] = [ownerUid];
+    if (!input.includeRevoked) clauses.push("c.state = 'active'");
+    if (input.saved !== undefined) { clauses.push("c.saved = ?"); bindings.push(input.saved ? 1 : 0); }
+    if (input.query) {
+      clauses.push("instr(lower(COALESCE(c.local_alias, '') || ' ' || c.remote_display_name || ' ' || c.remote_origin), lower(?)) > 0");
+      bindings.push(input.query);
+    }
+    if (input.after) { clauses.push("c.contact_id > ?"); bindings.push(input.after); }
+    if (input.ids) {
+      if (!input.ids.length) return { contacts: [] };
+      clauses.push(`c.contact_id IN (${input.ids.map(() => "?").join(",")})`); bindings.push(...input.ids);
+    }
+    if (input.actor) { clauses.push("c.remote_ship_id = ? AND c.remote_subject_id = ?"); bindings.push(input.actor.shipId, input.actor.subjectId); }
+    const rows = this.sql.exec<ContactRow>(`${CONTACT_SELECT} WHERE ${clauses.join(" AND ")} ORDER BY c.contact_id LIMIT ?`, ...bindings, input.limit + 1).toArray();
+    const contacts = rows.slice(0, input.limit).map(contactFromRow);
+    return { contacts, ...(rows.length > input.limit ? { next: contacts[contacts.length - 1].id } : undefined) };
+  }
+
+  updatePreferences(ownerUid: number, input: ContactPreferencesUpdateArgs): FederationContactRecord {
+    const current = this.get(input.contactId);
+    if (!current || current.ownerUid !== ownerUid) throw new Error("Contact not found");
+    if (current.preferences.revision !== input.expectedRevision) throw new Error("Contact preferences changed; reload before saving");
+    const next = {
+      saved: input.patch.saved ?? current.preferences.saved,
+      muted: input.patch.muted ?? current.preferences.muted,
+      notifications: input.patch.notifications ?? current.preferences.notifications,
+    };
+    if (next.saved === current.preferences.saved && next.muted === current.preferences.muted && next.notifications === current.preferences.notifications) return current;
+    this.sql.exec(`UPDATE federation_contacts SET saved = ?, muted = ?, notification_policy = ?, policy_revision = policy_revision + 1
+      WHERE contact_id = ? AND owner_uid = ? AND policy_revision = ?`,
+    next.saved ? 1 : 0, next.muted ? 1 : 0, next.notifications, current.id, ownerUid, input.expectedRevision);
+    return this.get(current.id)!;
+  }
+
+  isActorBlocked(ownerUid: number, actor: ActorRef): boolean {
+    return this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId).toArray().length > 0;
+  }
+
+  setActorBlock(ownerUid: number, actor: ActorRef, blocked: boolean, now = Date.now()): ActorBlockChange {
+    const existing = this.sql.exec<{ created_at: number }>(
+      "SELECT created_at FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId,
+    ).toArray()[0];
+    if (blocked === Boolean(existing)) return { block: existing ? { actor, createdAtMs: existing.created_at } : null, changed: false };
+    if (blocked) {
+      const counts = this.sql.exec<{ owner_count: number; installation_count: number }>(
+        "SELECT COUNT(*) AS installation_count, COALESCE(SUM(owner_uid = ?), 0) AS owner_count FROM federation_actor_blocks", ownerUid,
+      ).one();
+      if (counts.owner_count >= 10_000 || counts.installation_count >= 20_000) throw new Error("Blocked actor capacity reached");
+      const identity = this.sql.exec<{ display_name: string; origin: string }>(`SELECT COALESCE(local_alias, remote_display_name) AS display_name, remote_origin AS origin
+        FROM federation_contacts WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
+        UNION ALL SELECT remote_display_name, remote_origin FROM social_approaches WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ? LIMIT 1`,
+      ownerUid, actor.shipId, actor.subjectId, ownerUid, actor.shipId, actor.subjectId).toArray()[0];
+      this.sql.exec("INSERT INTO federation_actor_blocks (owner_uid, ship_id, subject_id, created_at, display_name, origin) VALUES (?, ?, ?, ?, ?, ?)", ownerUid, actor.shipId, actor.subjectId, now, identity?.display_name ?? null, identity?.origin ?? null);
+      this.sql.exec(`UPDATE federation_pairing_attempts SET state = 'terminal', terminal_reason = 'actor-blocked', updated_at = ?
+        WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ? AND state = 'pending'`, now, ownerUid, actor.shipId, actor.subjectId);
+    } else {
+      this.sql.exec("DELETE FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId);
+    }
+    this.sql.exec(`UPDATE federation_contacts SET policy_revision = policy_revision + 1
+      WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?`, ownerUid, actor.shipId, actor.subjectId);
+    return { block: blocked ? { actor, createdAtMs: now } : null, changed: true };
+  }
+
+  listActorBlocks(ownerUid: number, limit: number, cursor?: ActorRef): ContactBlockListResult {
+    const rows = this.sql.exec<{ ship_id: string; subject_id: string; created_at: number; display_name: string | null; origin: string | null }>(
+      `SELECT ship_id, subject_id, created_at, display_name, origin FROM federation_actor_blocks WHERE owner_uid = ?
+       ${cursor ? "AND (ship_id, subject_id) > (?, ?)" : ""} ORDER BY ship_id, subject_id LIMIT ?`,
+      ownerUid, ...(cursor ? [cursor.shipId, cursor.subjectId] : []), limit + 1,
+    ).toArray();
+    const blocks = rows.slice(0, limit).map((row) => ({ actor: { shipId: row.ship_id, subjectId: row.subject_id }, createdAtMs: row.created_at,
+      ...(row.display_name ? { displayName: row.display_name } : undefined), ...(row.origin ? { origin: row.origin } : undefined) }));
+    return { blocks, ...(rows.length > limit ? { nextCursor: blocks[blocks.length - 1].actor } : undefined) };
+  }
+
+  attentionNotice(ownerUid: number): { previousContactAdded: boolean; previousReceived: boolean } | undefined {
+    const row = this.sql.exec<{ previous_contact_added: number; previous_received: number }>(
+      "SELECT previous_contact_added, previous_received FROM federation_attention_notices WHERE owner_uid = ? AND dismissed_at IS NULL",
+      ownerUid,
+    ).toArray()[0];
+    return row ? { previousContactAdded: row.previous_contact_added === 1, previousReceived: row.previous_received === 1 } : undefined;
+  }
+
+  dismissAttentionNotice(ownerUid: number): boolean {
+    return this.sql.exec("UPDATE federation_attention_notices SET dismissed_at = ? WHERE owner_uid = ? AND dismissed_at IS NULL", Date.now(), ownerUid).rowsWritten > 0;
   }
 
   setAlias(
@@ -957,6 +1119,8 @@ export class FederationStore {
     );
     const contact = this.get(contactId);
     if (!contact || contact.ownerUid !== ownerUid) throw new Error(`Contact not found: ${contactId}`);
+    new ContextPublications(this.sql).retireConnections(contactId, contact.generation, now);
+    new ContextSources(this.storage).retireContact(contactId);
     this.sql.exec(
       `UPDATE federation_pairing_attempts SET
          state = 'terminal', terminal_reason = 'contact-revoked', updated_at = ?
@@ -970,7 +1134,8 @@ export class FederationStore {
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
-         state = 'cancelled', revision = revision + 1, updated_at = ?
+         state = CASE WHEN work_json IS NULL THEN 'cancelled' ELSE state END, revision = revision + 1, updated_at = ?,
+         exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
        WHERE contact_id = ?
          AND contact_generation = ?
          AND state NOT IN ('rejected', 'completed', 'cancelled')`,
@@ -1018,6 +1183,17 @@ export class FederationStore {
     return cursor.rowsWritten > 0;
   }
 
+  setProtocol(contactId: string, generation: string, protocol: {
+    version: 1 | 2; features: FederationFeature[]; checkedAtMs: number;
+  }): FederationContactRecord {
+    const updated = this.sql.exec(`UPDATE federation_contacts
+      SET protocol_version = ?, protocol_features_json = ?, protocol_checked_at = ?
+      WHERE contact_id = ? AND generation = ? AND state = 'active'`,
+    protocol.version, JSON.stringify(protocol.features), protocol.checkedAtMs, contactId, generation);
+    if (updated.rowsWritten === 0) throw new Error("Contact generation changed during protocol negotiation");
+    return this.get(contactId)!;
+  }
+
   enqueue(input: {
     deliveryId: string;
     ownerUid: number;
@@ -1025,7 +1201,8 @@ export class FederationStore {
     contactGeneration: string;
     idempotencyKey: string;
     fingerprint: string;
-    payload: FederationDeliveryPayload;
+    payload: FederationTransportPayload;
+    wireVersion?: 1 | 2;
     localMessage?: FederationOutboxLocalMessage;
     now?: number;
   }): FederationEnqueueResult {
@@ -1048,8 +1225,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, payload_json, local_message_json, state, next_attempt_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+         created_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1061,6 +1238,7 @@ export class FederationStore {
       now,
       now,
       now,
+      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || !isReadyFederationOutbox(record)) {
@@ -1077,6 +1255,7 @@ export class FederationStore {
     idempotencyKey: string;
     fingerprint: string;
     preparation: FederationMessagePreparation;
+    wireVersion?: 1 | 2;
     now?: number;
   }): FederationPrepareResult {
     const now = input.now ?? Date.now();
@@ -1098,8 +1277,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, preparation_json, resource_count, state, next_attempt_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?)`,
+         created_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1111,6 +1290,7 @@ export class FederationStore {
       now,
       now,
       now,
+      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || record.state !== "preparing") {
@@ -1122,7 +1302,7 @@ export class FederationStore {
   completeMessagePreparation(input: {
     deliveryId: string;
     contactGeneration: string;
-    payload: Extract<FederationDeliveryPayload, { kind: "message" }>;
+    payload: Extract<FederationTransportPayload, { kind: "message" }>;
     localMessage: FederationOutboxLocalMessage;
     now?: number;
   }): FederationReadyOutboxRecord {
@@ -1227,12 +1407,13 @@ export class FederationStore {
     deliveryId: string,
     contactGeneration: string,
     now = Date.now(),
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = 'delivered', delivered_at = ?, next_attempt_at = NULL,
          last_error = NULL, updated_at = ?
-       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ?
+       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ? AND retry_epoch = ?
          AND EXISTS (
            SELECT 1 FROM federation_contacts
            WHERE contact_id = federation_outbox.contact_id AND generation = ?
@@ -1241,6 +1422,7 @@ export class FederationStore {
       now,
       deliveryId,
       contactGeneration,
+      retryEpoch,
       contactGeneration,
     );
     return cursor.rowsWritten > 0;
@@ -1254,13 +1436,15 @@ export class FederationStore {
     nextAttemptAtMs: number | null,
     terminal: boolean,
     now = Date.now(),
+    retryable = false,
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = ?, attempt_count = attempt_count + 1, next_attempt_at = ?,
          resource_count = CASE WHEN ? THEN 0 ELSE resource_count END,
-         last_error = ?, updated_at = ?
-       WHERE delivery_id = ? AND state = ? AND contact_generation = ?`,
+         last_error = ?, updated_at = ?, retryable = ?
+       WHERE delivery_id = ? AND state = ? AND contact_generation = ? AND retry_epoch = ?`,
       terminal
         ? expectedState === "preparing" ? "preparation_failed" : "terminal"
         : expectedState,
@@ -1268,11 +1452,34 @@ export class FederationStore {
       terminal ? 1 : 0,
       error,
       now,
+      Number(terminal && retryable),
       deliveryId,
       expectedState,
       contactGeneration,
+      retryEpoch,
     );
     return cursor.rowsWritten > 0;
+  }
+
+  listDeliveries(ownerUid: number, contactId: string, ids: readonly string[], sequences: readonly number[] = []): FederationOutboxRecord[] {
+    if (!ids.length && !sequences.length) return [];
+    return this.sql.exec<OutboxRow>(
+      `SELECT * FROM federation_outbox WHERE owner_uid = ? AND contact_id = ?
+       AND (delivery_id IN (${ids.map(() => "?").join(",")}) OR local_sequence IN (${sequences.map(() => "?").join(",")}))`, ownerUid, contactId, ...ids, ...sequences,
+    ).toArray().map(outboxFromRow);
+  }
+
+  retryDelivery(record: FederationOutboxRecord, now = Date.now()): FederationOutboxRecord {
+    const updated = this.sql.exec(
+      `UPDATE federation_outbox SET state = CASE WHEN state = 'preparation_failed' THEN 'preparing' ELSE 'pending' END,
+        attempt_count = 0, next_attempt_at = ?, last_error = NULL, updated_at = ?, retryable = 0, retry_epoch = retry_epoch + 1,
+        resource_count = CASE WHEN state = 'preparation_failed' THEN json_array_length(preparation_json, '$.resources') ELSE resource_count END
+       WHERE delivery_id = ? AND owner_uid = ? AND contact_generation = ? AND updated_at = ?
+       AND retryable = 1 AND state IN ('preparation_failed', 'terminal')`,
+      now, now, record.deliveryId, record.ownerUid, record.contactGeneration, record.updatedAtMs,
+    );
+    if (!updated.rowsWritten) throw new Error("Delivery changed; review its current state before retrying");
+    return this.outbox(record.deliveryId)!;
   }
 
   terminatePendingForRevokedContact(
@@ -1315,12 +1522,13 @@ export class FederationStore {
     contactGeneration: string;
     deliveryId: string;
     payloadHash: string;
-    payload: FederationDeliveryPayload;
+    payload: FederationTransportPayload;
+    wireVersion?: 1 | 2;
     now?: number;
   }): FederationReceiveResult {
     const existing = this.inbox(input.contactId, input.contactGeneration, input.deliveryId);
     if (existing) {
-      if (existing.payloadHash !== input.payloadHash) {
+      if (existing.payloadHash !== input.payloadHash || existing.wireVersion !== (input.wireVersion ?? 1)) {
         throw new Error("Federation delivery id was reused with a different payload");
       }
       return { record: existing, created: false };
@@ -1329,8 +1537,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_inbox (
          contact_id, contact_generation, delivery_id, payload_hash, payload_json,
-         state, received_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?)`,
+         state, received_at, updated_at, wire_version
+       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?, ?)`,
       input.contactId,
       input.contactGeneration,
       input.deliveryId,
@@ -1338,6 +1546,7 @@ export class FederationStore {
       JSON.stringify(input.payload),
       now,
       now,
+      input.wireVersion ?? 1,
     );
     return {
       record: this.inbox(input.contactId, input.contactGeneration, input.deliveryId)!,
@@ -1570,8 +1779,9 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_requests (
          request_id, remote_request_id, contact_id, contact_generation, direction,
-         kind, title, details_json, state, revision, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         kind, title, details_json, state, revision, created_at, updated_at,
+         exchange_state, exchange_delivery_id, exchange_error, exchange_source, work_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.remoteId ?? null,
       input.contactId,
@@ -1583,6 +1793,11 @@ export class FederationStore {
       input.state,
       input.createdAtMs,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
+      input.work ? JSON.stringify(input.work) : null,
     );
     return this.request(input.id)!;
   }
@@ -1637,6 +1852,44 @@ export class FederationStore {
     return row ? requestFromRow(row) : null;
   }
 
+  requestForWork(contactId: string, generation: string, wireId: string, direction: "incoming" | "outgoing"): ContactRequestRecord | null {
+    const row = this.sql.exec<RequestRow>(
+      `SELECT * FROM federation_requests WHERE contact_id = ? AND contact_generation = ? AND direction = ?
+       AND ${direction === "incoming" ? "remote_request_id" : "request_id"} = ? LIMIT 1`,
+      contactId, generation, direction, wireId,
+    ).toArray()[0];
+    return row ? requestFromRow(row) : null;
+  }
+
+  writeWork(requestId: string, work: WorkRecord, now: number, exchange?: ContactRequestExchange): ContactRequestRecord {
+    const current = this.request(requestId);
+    if (!current?.work) throw new Error("Request does not use participant work streams");
+    if (JSON.stringify(current.work.offer) !== JSON.stringify(work.offer)) throw new FederationRequestIdentityConflictError();
+    const revision = 1 + work.requester.length + work.performer.length;
+    this.sql.exec(`UPDATE federation_requests SET work_json = ?, state = ?, revision = ?, updated_at = ?,
+      exchange_state = ?, exchange_delivery_id = ?, exchange_error = ?, exchange_source = ? WHERE request_id = ?`,
+      JSON.stringify(work), projectWork(work).state, revision, now,
+      (exchange ?? current.exchange)?.state ?? "unconfirmed", (exchange ?? current.exchange)?.deliveryId ?? null,
+      (exchange ?? current.exchange)?.lastError ?? null, (exchange ?? current.exchange)?.source ?? null, requestId);
+    return this.request(requestId)!;
+  }
+
+  settleRequestDelivery(record: FederationReadyOutboxRecord): ContactRequestRecord | null {
+    const state = record.state === "delivered" ? "acknowledged"
+      : record.state === "terminal" ? "failed" : "pending";
+    const row = this.sql.exec<RequestRow>(
+      `UPDATE federation_requests SET exchange_state = ?, exchange_error = ?
+       WHERE exchange_source = 'local' AND exchange_delivery_id = ? AND contact_id = ? AND contact_generation = ?
+       RETURNING *`,
+      state,
+      record.lastError ?? null,
+      record.deliveryId,
+      record.contactId,
+      record.contactGeneration,
+    ).toArray()[0];
+    return row ? requestFromRow(row) : null;
+  }
+
   listRequests(
     ownerUid: number,
     contactId?: string,
@@ -1649,7 +1902,7 @@ export class FederationStore {
       values.push(contactId);
     }
     if (!includeTerminal) {
-      conditions.push("r.state NOT IN ('rejected', 'completed', 'cancelled')");
+      conditions.push("(r.state NOT IN ('rejected', 'completed', 'cancelled') OR r.exchange_state IN ('pending', 'failed') OR (r.work_json IS NOT NULL AND r.state = 'completed' AND json_extract(r.work_json, '$.requester[#-1].action') IS NOT 'acknowledge'))");
     }
     return this.sql.exec<RequestRow>(
       `SELECT r.* FROM federation_requests r
@@ -1664,6 +1917,7 @@ export class FederationStore {
     requestId: string;
     expectedRevision: number;
     state: ContactRequestState;
+    exchange?: ContactRequestExchange;
     details?: JsonObject;
     updatedAtMs: number;
   }): ContactRequestRecord {
@@ -1675,11 +1929,16 @@ export class FederationStore {
     this.sql.exec(
       `UPDATE federation_requests SET
          state = ?, details_json = COALESCE(?, details_json),
-         revision = revision + 1, updated_at = ?
+         revision = revision + 1, updated_at = ?,
+         exchange_state = ?, exchange_delivery_id = ?, exchange_error = ?, exchange_source = ?
        WHERE request_id = ? AND revision = ?`,
       input.state,
       input.details ? JSON.stringify(input.details) : null,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
       input.requestId,
       input.expectedRevision,
     );
@@ -1699,11 +1958,20 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
       displayName: row.remote_display_name,
     },
     remoteOrigin: row.remote_origin,
+    preferences: { saved: row.saved === 1, muted: row.muted === 1, notifications: row.notification_policy, revision: row.policy_revision },
+    blocked: row.actor_blocked === 1,
     ...(row.local_alias !== null ? { localAlias: row.local_alias } : undefined),
     remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),
     sharedSecret: row.shared_secret,
     conversationId: row.conversation_id,
     threadId: row.thread_id,
+    ...(row.protocol_checked_at !== null ? {
+      protocol: {
+        version: row.protocol_version,
+        features: z.array(federationFeatureSchema).parse(JSON.parse(row.protocol_features_json)),
+        checkedAtMs: row.protocol_checked_at,
+      },
+    } : undefined),
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
     ...(row.revoked_at !== null ? { revokedAtMs: row.revoked_at } : undefined),
@@ -1715,6 +1983,7 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
 function inviteFromRow(row: InviteRow): FederationInviteRecord {
   const base: FederationInviteBase = {
     inviteId: row.invite_id,
+    purpose: row.purpose,
     ownerUid: row.owner_uid,
     tokenHash: row.token_hash,
     issuingShipId: row.issuing_ship_id,
@@ -1782,7 +2051,10 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
 
 function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   const base = {
+    retryable: row.retryable === 1,
+    retryEpoch: row.retry_epoch,
     deliveryId: row.delivery_id,
+    wireVersion: row.wire_version,
     ownerUid: row.owner_uid,
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
@@ -1810,7 +2082,7 @@ function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   return {
     ...base,
     state: row.state,
-    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
+    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
     ...(row.local_message_json
       ? { localMessage: federationOutboxLocalMessageSchema.parse(JSON.parse(row.local_message_json)) }
       : undefined),
@@ -1824,8 +2096,9 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
     deliveryId: row.delivery_id,
+    wireVersion: row.wire_version,
     payloadHash: row.payload_hash,
-    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
+    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
     state: row.state,
     ...(row.response_json
       ? { response: jsonObjectSchema.parse(JSON.parse(row.response_json)) }
@@ -1839,6 +2112,7 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
 
 function requestFromRow(row: RequestRow): ContactRequestRecord {
   return {
+    ...(row.work_json ? { work: workRecordSchema.parse(JSON.parse(row.work_json)) } : undefined),
     id: row.request_id,
     ...(row.remote_request_id ? { remoteId: row.remote_request_id } : undefined),
     contactId: row.contact_id,
@@ -1851,6 +2125,12 @@ function requestFromRow(row: RequestRow): ContactRequestRecord {
       : undefined),
     state: row.state,
     revision: row.revision,
+    exchange: {
+      state: row.exchange_state,
+      ...(row.exchange_source ? { source: row.exchange_source } : undefined),
+      ...(row.exchange_delivery_id ? { deliveryId: row.exchange_delivery_id } : undefined),
+      ...(row.exchange_error ? { lastError: row.exchange_error } : undefined),
+    },
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
   };

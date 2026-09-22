@@ -8,12 +8,14 @@ import type {
   BinaryBody,
   ConversationMessage,
   ResourceBlock,
+  OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
 import {
   bundleAdapterMedia,
   cancelBinaryBody,
   contactDisplayName,
   inferFsContentType,
+  originMessageRefSchema,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
@@ -27,7 +29,7 @@ import {
   handleContactList,
   handleContactSend,
 } from "../../../kernel/federation";
-import { handleConversationHistory } from "../../../kernel/conversation-handlers";
+import { handleConversationHistory, handleConversationSearch } from "../../../kernel/conversation-handlers";
 import {
   type VisibleAdapterMessageDestination,
   adapterMessageDestinationId,
@@ -90,6 +92,8 @@ async function runMessageCommand(
       return attachToReply(rest, shellCtx, fs, ctx);
     case "history":
       return await showMessageHistory(rest, ctx);
+    case "search":
+      return await searchMessages(rest, ctx);
     case "delivery":
       return showMessageDelivery(rest, ctx);
     case "send":
@@ -123,14 +127,7 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
     }
   }
   if (!target) throw new Error("message history requires --with CONTACT_OR_CONVERSATION");
-  let conversationId = target.trim();
-  if (conversationId.startsWith("contact:")) {
-    requireCommandCapability(ctx, "contact.list");
-    const contact = handleContactList({ includeRevoked: true }, ctx).contacts
-      .find(({ id }) => id === conversationId);
-    if (!contact) throw new Error(`Contact not found: ${conversationId}`);
-    conversationId = contact.conversationId;
-  }
+  const conversationId = resolveMessageConversation(target, ctx);
   const result = await handleConversationHistory({
     conversationId,
     limit,
@@ -149,6 +146,46 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
   if (result.messages.length === 0) lines.push("(no messages)");
   lines.push("");
   return completed(lines.join("\n"));
+}
+
+function resolveMessageConversation(target: string, ctx: KernelContext): string {
+  const id = target.trim();
+  if (!id.startsWith("contact:")) return id;
+  requireCommandCapability(ctx, "contact.list");
+  const contact = handleContactList({ includeRevoked: true, ids: [id], limit: 1 }, ctx).contacts[0];
+  if (!contact) throw new Error(`Contact not found: ${id}`);
+  return contact.conversationId;
+}
+
+async function searchMessages(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  requireCommandCapability(ctx, "conversation.search");
+  let target: string | undefined;
+  let query: string | undefined;
+  let beforeSequence: number | undefined;
+  let limit = 25;
+  let outputJson = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--json") { outputJson = true; continue; }
+    const value = requireShellOptionValue(args[++index], option);
+    if (option === "--with") target = value;
+    else if (option === "--query") query = value;
+    else if (option === "--before") beforeSequence = parsePositiveInteger(value, option);
+    else if (option === "--limit") limit = parsePositiveInteger(value, option);
+    else throw new Error(`unexpected search option: ${option}`);
+  }
+  if (!target || !query) throw new Error("message search requires --with CONTACT_OR_CONVERSATION --query TEXT");
+  const result = await handleConversationSearch({ conversationId: resolveMessageConversation(target, ctx), query, beforeSequence, limit }, ctx);
+  if (outputJson) return completed(`${JSON.stringify(result, null, 2)}\n`);
+  return completed([
+    `conversation=${result.conversationId}`,
+    `coverage=${result.coverage.state}`,
+    ...(result.coverage.state !== "complete" ? ["Results do not cover the complete conversation text."] : []),
+    ...(result.nextBeforeSequence ? [`next_before=${result.nextBeforeSequence}`] : []),
+    ...result.matches.map((match) => `#${match.sequence} ${new Date(match.createdAt).toISOString()} ${match.messageId}\n${match.excerpt}`),
+    ...(result.matches.length ? [] : ["(no matches in indexed text)"]),
+    "",
+  ].join("\n"));
 }
 
 function showMessageDelivery(args: string[], ctx: KernelContext): ExecResult {
@@ -319,9 +356,10 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
         includeOffline: flags.has("--all"),
       })
     : [];
-  const contacts = canListContacts
-    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx).contacts
-    : [];
+  const contactPage = canListContacts
+    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx)
+    : { contacts: [] };
+  const contacts = contactPage.contacts;
   const destinations = [
     ...adapters.map((entry) => ({
       id: entry.id,
@@ -339,7 +377,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
     })),
   ];
   if (flags.has("--json")) {
-    return completed(`${JSON.stringify({ destinations }, null, 2)}\n`);
+    return completed(`${JSON.stringify({ destinations, ...(contactPage.next ? { nextContactsAfter: contactPage.next } : undefined) }, null, 2)}\n`);
   }
   const lines = ["DESTINATION\tSTATE\tLABEL"];
   for (const destination of destinations) {
@@ -352,6 +390,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
   if (destinations.length === 0) {
     lines.push("(none)");
   }
+  if (contactPage.next) lines.push(`More contacts: contact list --after ${contactPage.next}`);
   return completed(`${lines.join("\n")}\n`);
 }
 
@@ -553,6 +592,7 @@ async function sendMessage(
   const attachmentPaths: string[] = [];
   let attachmentMime: string | undefined;
   let requestedDeliveryId: string | undefined;
+  let replyTo: OriginMessageRef | undefined;
   let also = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -580,6 +620,11 @@ async function sendMessage(
     if (current === "--delivery-id") {
       index += 1;
       requestedDeliveryId = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--reply-to") {
+      index += 1;
+      replyTo = originMessageRefSchema.parse(JSON.parse(requireShellOptionValue(args[index], current)));
       continue;
     }
     if (current === "--also") {
@@ -632,6 +677,7 @@ async function sendMessage(
       text: text?.trim() ?? "",
       ...(media ? { media } : undefined),
       ...(requestedDeliveryId ? { idempotencyKey: requestedDeliveryId } : undefined),
+      ...(replyTo ? { replyTo } : undefined),
     }, ctx);
     const delivered = contactResult.state === "delivered";
     return completed([
@@ -646,6 +692,7 @@ async function sendMessage(
     ].join("\n"));
   }
 
+  if (replyTo) throw new Error("--reply-to applies only to contact destinations");
   requireCommandCapability(ctx, "adapter.send");
 
   const destination = (await resolveVisibleAdapterMessageDestination(
@@ -934,9 +981,10 @@ function messageUsage(): string {
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
     "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "  message search --with CONTACT_OR_CONVERSATION --query TEXT [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
-    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
+    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--reply-to ORIGIN_JSON] [--also]",
     "",
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
     "Run `yield` when work is complete, or append `&& yield` to the message block header.",

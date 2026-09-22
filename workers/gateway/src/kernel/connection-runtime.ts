@@ -279,7 +279,7 @@ async handleSysConnect(
       sendFrameToProcess(this.host.installationId, proc.processId, {
         type: "sig",
         signal: "identity.changed",
-        payload: { identity: fresh },
+        payload: { identity: this.host.procs.getIdentity(proc.processId)! },
       }).catch((err) => {
         console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
       });
@@ -315,7 +315,12 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     };
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
+      : signal === "contact.delivery.changed" ? "contact.delivery.list"
+      : signal === "profile.changed" ? "profile.get"
+      : signal === "contact.context.changed" ? "contact.context.list"
+      : signal === "approach.changed" ? "approach.list"
       : signal === "contact.invite.changed" ? "contact.invite.list"
+      : signal === "conversation.attention.changed" ? "conversation.attention.list"
       : signal === "contact.request.changed" ? "contact.request.list"
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"

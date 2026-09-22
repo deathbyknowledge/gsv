@@ -50,6 +50,7 @@ import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isFederationPublicPath } from "./kernel/federation";
+import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 import type { GatewayEnv } from "./runtime-env";
 
 export { Kernel } from "./kernel/do";
@@ -70,6 +71,7 @@ export default {
     const gitMatch = matchGitPath(url);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
     const federationPath = isFederationPublicPath(url.pathname);
+    const profilePath = matchPublicProfilePath(url.pathname);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
     )
@@ -78,7 +80,8 @@ export default {
       && url.pathname !== "/ws"
       && url.pathname !== "/oauth/callback"
       && url.pathname !== "/.well-known/oauth-client/gsv.json"
-      && !federationPath;
+      && !federationPath
+      && !profilePath;
 
     const route = await resolveInstallationRoute(request, {
       allowProvisioning: websocketRequest || browserAssetRequest,
@@ -112,6 +115,12 @@ export default {
     } catch {
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
+    }
+
+    if (profilePath) {
+      return servePublicProfileRequest(request, profilePath,
+        createInstallationStorage(env.STORAGE, route.identity.installationId),
+        (locator) => kernelDO.getPublicProfileProjection(locator));
     }
 
     if (federationPath) {

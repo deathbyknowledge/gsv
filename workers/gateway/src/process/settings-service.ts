@@ -55,6 +55,7 @@ export class ProcessSettingsService {
     const error = args.ai && processAiConfigInputError(args.ai);
     if (error) throw new Error(error);
     return this.host.ctx.storage.transactionSync(() => {
+      if (args.ifUninitialized && this.initialized) return { ok: true };
       if (args.ai) {
         const config = createProcessAiConfig(args.ai);
         if (config) this.host.store.state.setAiConfig(config);

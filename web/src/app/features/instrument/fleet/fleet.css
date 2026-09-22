@@ -392,6 +392,14 @@
 .fleet-contact-message header { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--faint); }
 .fleet-contact-message header span { color: var(--label); text-transform: uppercase; letter-spacing: .12em; }
 .fleet-contact-message p { white-space: pre-wrap; font: 14px/1.65 var(--gsv-font-prose); margin: 10px 0; }
+.fleet-contact-message-focused { background: var(--selected); box-shadow: inset 2px 0 var(--accent); padding: 8px 12px; }
+.fleet-conversation-search { flex-shrink: 0; max-height: 42vh; overflow-y: auto; border-bottom: 1px solid var(--border); padding: 0 0 10px; }
+.fleet-conversation-search summary { cursor: pointer; color: var(--text-dim); font-size: 12px; }
+.fleet-conversation-search-results { list-style: none; padding: 0; margin: 8px 0; }
+.fleet-conversation-search-results button { display: flex; width: 100%; gap: 12px; text-align: left; border: 0; border-bottom: 1px solid var(--border); padding: 10px 0; background: none; color: var(--text); font: 13px/1.5 var(--gsv-font-prose); cursor: pointer; }
+.fleet-conversation-search-results button:hover { background: var(--hover); }
+.fleet-conversation-search-results time { flex-shrink: 0; color: var(--faint); font-size: 11px; }
+.fleet-conversation-search-results span { overflow-wrap: anywhere; }
 .fleet-contact-conversation .fleet-actions .note { margin: 0; }
 .fleet-contact-conversation .zen-draft-attachments { margin-top: 12px; }
 .fleet-contact-request { padding: 16px 0; border-bottom: 1px solid var(--border); }

@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
+import type { SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
 import { getConversationById } from "../shared/utils";
 
 function conversation(name: string) {
@@ -23,6 +24,43 @@ function message(sequence: number) {
 }
 
 describe("Conversation Durable Object", () => {
+  it("discards only unaccepted intake history and keeps a durable fence against late appends", async () => {
+    const stub = conversation("intake-retention");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:expired" });
+    await stub.append(message(1));
+    expect((await stub.search({ query: "message" })).matches).toHaveLength(1);
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await evictDurableObject(stub);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append(message(1)))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.initialize({ ownerUid: 1000, kind: "contact" }))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "message" }))).rejects.toThrow("expired");
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
+        expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).one().count).toBe(0);
+      }
+    });
+
+    const accepted = conversation("accepted-intake");
+    await accepted.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:accepted" });
+    await accepted.append(message(1));
+    await accepted.initialize({ ownerUid: 1000, kind: "contact" });
+    await expect(runInDurableObject(accepted, (instance: Conversation) => instance.discardIntake({ ownerUid: 1000, id: "approach:accepted" }))).rejects.toThrow("not an unaccepted");
+    expect((await accepted.history()).messages).toHaveLength(1);
+  });
+
+  it("measures the bounded first-message index and metadata footprint", async () => {
+    const stub = conversation("intake-capacity");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:capacity" });
+    const measurement = await runInDurableObject(stub, async (instance: Conversation, state) => {
+      const before = state.storage.sql.databaseSize;
+      await instance.append({ ...message(1), text: "request detail ".repeat(2184).slice(0, 32_768) });
+      return { before, after: state.storage.sql.databaseSize };
+    });
+    expect(measurement.after - measurement.before).toBeLessThan(256 * 1024);
+    console.info("first-contact Conversation capacity (fixture bytes)", measurement);
+  });
+
   it("stores canonical messages idempotently and rejects changed replays", async () => {
     const stub = conversation("append");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
@@ -47,9 +85,13 @@ describe("Conversation Durable Object", () => {
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const social: SocialMessageMetadata = {
+      threadId: "thread:one", reference: { actor: { shipId: "ship:one", subjectId: "subject:one" }, messageId: "origin:one" },
+      provenance: { kind: "human" },
+    };
     await runInDurableObject(stub, async (instance: Conversation) => {
       for (let index = 1; index <= 1_001; index += 1) {
-        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined, social: index === 1 ? social : undefined });
       }
     });
     await stub.compact();
@@ -61,11 +103,68 @@ describe("Conversation Durable Object", () => {
     expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
     expect(archived.messages[0]?.selectedTarget).toBe("macbook");
     expect(archived.messages[1]?.selectedTarget).toBeUndefined();
-    expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
+    expect(archived.messages[0]?.social).toEqual(social);
+    expect(await stub.resolveOrigin(social.reference, social.threadId)).toEqual({ messageId: "msg:1", sequence: 1 });
+    expect(await stub.resolveOrigin(social.reference, "thread:other")).toBeNull();
+    const found = await stub.search({ query: "message 1" });
+    expect(found.matches.map((match) => match.messageId)).toEqual(["msg:1"]);
+    expect(found.coverage.state).toBe("complete");
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook", social })).toEqual({
       message: archived.messages[0],
       created: false,
     });
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({
+      ...message(1), selectedTarget: "macbook", social: { ...social, provenance: { kind: "process", processId: "proc:forged" } },
+    }))).rejects.toThrow("idempotency key payload changed");
+
+    await runInDurableObject(stub, (instance: Conversation) => {
+      instance.ctx.storage.sql.exec("DELETE FROM message_search");
+      instance.ctx.storage.sql.exec(`UPDATE message_search_state SET backfill_before = 1002,
+        indexed_messages = 0, indexed_bytes = 0, truncated_messages = 0, omitted_messages = 0, capacity_reached = 0`);
+    });
+    await evictDurableObject(stub);
+    const rebuilding = await stub.search({ query: "message 1" });
+    expect(rebuilding.matches).toEqual([]);
+    expect(rebuilding.coverage.state).toBe("building");
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let batch = 0; batch < 12; batch += 1) {
+        await instance.alarm();
+        await instance.ctx.storage.deleteAlarm();
+      }
+    });
+    const rebuilt = await stub.search({ query: "message 1" });
+    expect(rebuilt.matches).toEqual(found.matches);
+    expect(rebuilt.coverage).toMatchObject({ state: "complete", indexedMessages: 1001 });
   }, 30_000);
+
+  it("searches literal terms with stable pages and bounds without interpreting FTS operators", async () => {
+    const stub = conversation("search");
+    await stub.initialize({ ownerUid: 1000, kind: "contact" });
+    for (let index = 1; index <= 3; index += 1) await stub.append({ ...message(index), text: `Café recovery ${index}` });
+    await stub.append({ ...message(4), text: "unrelated" });
+    const first = await stub.search({ query: "cafe recovery", limit: 2 });
+    expect(first.matches.map((match) => match.sequence)).toEqual([3, 2]);
+    const second = await stub.search({ query: "cafe recovery", limit: 2, beforeSequence: first.nextBeforeSequence });
+    expect(second.matches.map((match) => match.sequence)).toEqual([1]);
+    expect(second.nextBeforeSequence).toBeUndefined();
+    expect((await stub.search({ query: "recovery OR unrelated" })).matches).toEqual([]);
+    expect((await stub.search({ query: 'recovery " OR unrelated' })).matches).toEqual([]);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "recovery", limit: 51 }))).rejects.toThrow("between 1 and 50");
+  });
+
+  it("keeps canonical appends available when the derived search index reaches its budget", async () => {
+    const stub = conversation("search-capacity");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await runInDurableObject(stub, (instance: Conversation) => {
+      instance.ctx.storage.sql.exec("UPDATE message_search_state SET indexed_bytes = ?", 64 * 1024 * 1024);
+    });
+    const appended = await stub.append(message(1));
+    expect(appended.created).toBe(true);
+    expect((await stub.history()).messages).toEqual([appended.message]);
+    expect(await stub.search({ query: "message" })).toMatchObject({ matches: [], coverage: { state: "limited", omittedMessages: 1 } });
+    await stub.append(message(1));
+    expect((await stub.search({ query: "message" })).coverage.omittedMessages).toBe(1);
+  });
 
   it("keeps legacy conversation-owned media readable", async () => {
     const stub = conversation("legacy-media");

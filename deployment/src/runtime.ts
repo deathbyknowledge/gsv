@@ -88,6 +88,9 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     if (!directory || !inferenceExecution) {
       throw new Error("GSV requires an installation directory and inference execution service. Use GsvDeployment or supply both services.");
     }
+    if ("GSV_FEDERATION_LOCAL_DEVELOPMENT" in (props.services.extraBindings ?? {})) {
+      throw new Error("Local federation is only available in the development configuration");
+    }
     const compatibility = props.compatibility ?? GSV_WORKER_COMPATIBILITY;
     const adapters = props.services?.adapters ?? [];
     for (const adapter of adapters) {
@@ -162,7 +165,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         name: props.names.gateway,
         main: props.paths.gatewayBundle,
         bundle: false,
-        compatibility,
+        compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
         workersDev: props.gatewayWorkersDev ?? false,
         observability: props.observability
           ?? (props.telemetry

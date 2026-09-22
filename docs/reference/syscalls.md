@@ -565,6 +565,7 @@ client; Process and adapter service callers use private Kernel-owned admission p
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.search` | Conversation DO through Kernel | Searches one authorized conversation with literal terms, newest-first pagination, plain-text excerpts and explicit historical coverage. Never searches attachments or calls an external provider. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -575,7 +576,7 @@ type ConversationSummary = {
   kind: ConversationKind;
   ownerUid: number;
   title: string | null;
-  handlerPid: string;
+  handlerPid?: string; // Required for ship, work and group; absent for contact threads.
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
@@ -590,6 +591,7 @@ type ConversationMessage = {
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
   selectedTarget?: string;
+  social?: SocialMessageMetadata;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -605,6 +607,26 @@ type ConversationSyscalls = {
     args: { pid: string };
     result: { conversation: ConversationSummary };
   };
+  "conversation.attention.list": {
+    args: { before?: { availableAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationAttentionEntry[]; readyCount: number; digestWaitingCount: number; nextDigestAt?: number; next?: { availableAt: number; conversationId: string } };
+  };
+  "conversation.attention.dismiss": {
+    args: { entries: { conversationId: string; throughSequence: number }[] };
+    result: Record<string, never>;
+  };
+  "conversation.inbox": {
+    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
+  };
+  "conversation.view.get": {
+    args: { conversationId: string };
+    result: { entry: ConversationInboxEntry };
+  };
+  "conversation.view.update": {
+    args: { conversationId: string; readThroughSequence?: number; archived?: boolean; expectedRevision?: number };
+    result: { entry: ConversationInboxEntry };
+  };
   "conversation.list": {
     args: Record<string, never>;
     result: { conversations: ConversationSummary[] };
@@ -612,6 +634,15 @@ type ConversationSyscalls = {
   "conversation.history": {
     args: { conversationId: string; beforeSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.search": {
+    args: { conversationId: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversationId: string;
+      matches: { messageId: string; sequence: number; excerpt: string; createdAt: number }[];
+      nextBeforeSequence?: number;
+      coverage: { state: "complete" | "building" | "limited" | "error"; indexedMessages: number; truncatedMessages: number; omittedMessages: number; historicalBeforeSequence: number; latestSequence: number };
+    };
   };
   "conversation.send": {
     args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
@@ -624,12 +655,127 @@ type ConversationSyscalls = {
 };
 ```
 
+`conversation.search` accepts 1–512 characters and up to 16 literal terms. Pages
+default to 25 matches and are capped at 50. `message search --with CONTACT_OR_CONVERSATION
+--query TEXT [--before SEQUENCE] [--limit N] [--json]` exposes the same contract.
+Search and history permit the owner's canonical Ship with the corresponding
+capability; other Processes require a separately scoped admission path.
+
 `conversation.send` and `proc.send` accept optional `selectedTarget` message context.
 The Kernel checks the caller's target visibility, including offline targets. The
 selection is stored with that message and rendered as `[Selected target: ID]` for
 the model. It does not change the message origin, reply endpoint, process defaults,
 or syscall permissions. Omission does not inherit an earlier message's selection.
 Changing the selection changes the conversation message's idempotency payload.
+
+## Message requests: `approach.*`
+
+These operations require the directly signed-in human. A request sends one
+bounded plain-text message to an explicitly resolved public profile. Receiving
+it creates no Process or promise. Acceptance permits that conversation; saving
+the person and allowing Ship assistance remain separate decisions.
+
+```ts
+{
+  "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
+  "approach.get": { args: ApproachGetArgs; result: ApproachResult };
+  "approach.list": { args: ApproachListArgs; result: ApproachListResult };
+  "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
+  "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
+}
+```
+
+Creation binds the reviewed profile URL, actor and publication revision, explicit
+sender display name, text and idempotency key. Retrying the same key cannot
+change the first message. List pages select incoming or outgoing requests and
+use the returned `(createdAtMs, id)` cursor. Decisions (`accept`, `decline`,
+`withdraw`) require the displayed revision. Block uses `contact.block.set` for
+the pinned actor. Private setup material never appears in these results.
+
+`approach.list` also returns `total` for the selected direction and active/history
+filter, independently of its page cursor. Clients can count incoming decisions
+without loading every request or any message history. `approach.changed` refreshes
+both that count and the list; declines remain private to the recipient.
+
+`delivery` describes first-message receipt; `connection` describes pairing.
+`received` does not mean read or accepted. `connecting` and `failed` preserve
+uncertain setup, with explicit retry where the local participant owns recovery.
+An unknown sender cannot attach resources or send another message before
+acceptance. Pending requests expire after 30 days; an already started acceptance
+has an additional eight-day recovery window. Declined, withdrawn, blocked and
+expired requests retain their unaccepted history for eight days, then remove its
+local message and search rows. Accepted or previously established history remains.
+
+## Public Profiles: `profile.*`
+
+Public profiles are independent of login names and start unpublished. Get, edit,
+publish and unpublish require a direct signed-in human account; a Ship cannot
+publish on its owner's behalf. The Kernel derives the owner and existing
+federated subject. `expectedRevision` prevents stale edits or publication.
+
+```ts
+{
+  "contact.context.list": { args: ContactContextListArgs; result: ContactContextListResult };
+  "contact.context.sources": { args: ContactContextSourcesArgs; result: ContactContextSourcesResult };
+  "contact.context.subscribe": { args: ContactContextSubscribeArgs; result: ContactContextSubscribeResult };
+  "contact.context.sync": { args: ContactContextSyncArgs; result: ContactContextSyncResult };
+  "contact.context.publications": { args: ContactContextPublicationsArgs; result: ContactContextPublicationsResult };
+  "contact.context.publish": { args: ContactContextPublishArgs; result: ContactContextPublishResult };
+  "contact.context.withdraw": { args: ContactContextWithdrawArgs; result: ContactContextWithdrawResult };
+  "contact.context.consent": { args: ContactContextConsentArgs; result: ContactContextConsentResult };
+
+  "profile.get": { args: {}; result: { profile: ProfileState } };
+  "profile.avatar.upload": { args: {}; result: { avatar: ProfileAvatar } };
+  "profile.avatar.read": { args: { sha256: string; profileUrl?: string }; result: { avatar: ProfileAvatar } };
+  "profile.update": { args: { expectedRevision: number; draft: ProfileFields }; result: { profile: ProfileState } };
+  "profile.publish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
+  "profile.unpublish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
+  "profile.resolve": { args: { url: string } | { contactId: string }; result: { profile: PublicProfile } };
+}
+```
+
+`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+(`requests`, `invitation`, `closed`) and `representation` (`human`, `human-and-ship`).
+An alias is 2–32 lowercase ASCII characters, begins with a letter, and then allows
+letters, digits, `_` and `-`. Display names allow 80 characters and about text
+2,048. Fields render as plain text. These choices do not grant agent authority.
+
+`ProfileState` includes the private draft/revision, optional published URL and
+revision, `publishing` and `publicationFailed`. Publication durably captures a
+signed snapshot before its R2 write; later draft edits do not alter that approval.
+The previous publication remains visible until its replacement commits. Retry
+the same revision after failure. Unpublishing immediately fences public serving
+and pending publication, while preserving existing conversations.
+
+An optional `avatar` is an owned image descriptor returned by
+`profile.avatar.upload`. Upload takes a binary body: static RGB/RGBA PNG, at most
+512×512 pixels and 256 KiB, without animation or embedded text metadata. The web
+editor crops and exports a fresh PNG locally. Uploading alone publishes nothing;
+save the descriptor in the draft, then publish that exact revision. The signed-in
+owner can preview it with `profile.avatar.read` (binary response body). Public
+image serving requires a currently published reference and rechecks publication
+after reading storage. Unreferenced uploads expire after 24 hours; each owner may
+retain eight images, with an installation ceiling of 2,048. Neither syscall
+accepts another account or a caller-chosen storage address.
+
+For an explicitly opened remote profile, `profile.avatar.read` takes its public
+`profileUrl` and expected image hash. It resolves the current signed publication,
+fetches only that publication's image through federation egress without redirects,
+and validates PNG dimensions, byte length and SHA-256 before returning the binary
+body. The browser can render a local blob URL without disclosing the viewer's IP
+or browser cookies to the remote space. Unpublished or replaced images cannot be
+read through an old profile descriptor.
+
+Image bytes are profile-owned R2 objects under the installation prefix at
+`social/avatars/<encoded subject>/<sha256>.png`. Kernel SQLite owns their metadata
+and publication/cleanup state. This storage is not mounted in the GSV filesystem;
+use the image syscall or currently published image URL to read it.
+
+`profile.resolve` fetches one explicitly chosen profile URL (or the published
+subject of one owned active contact) through public-only
+federation egress. It verifies the profile domain, address, key-derived actor and
+signature, and rejects disagreement with a pinned contact. It does not pair,
+send a request, save a contact or wake a Process.
 
 ## Contacts And Cross-GSV Requests: `contact.*`
 
@@ -655,14 +801,19 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
-| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.list` | Pages the caller's contacts (default 50, maximum 100), ordered by stable contact ID. `after` resumes a page, `query` filters local names and origins, `saved` filters address-book membership; `ids` (up to 100) and `actor` resolve exact owned identities. `includeRevoked` includes terminal relationships. Returns any pending social-attention upgrade notice with the preserved previous preferences. |
+| `contact.notice.dismiss` | Lets the signed-in human dismiss their own attention upgrade notice; does not change existing commitments or automation authority. |
+| `contact.preferences.update` | Human-only change to saved, muted and notification preferences with a required policy revision. Does not revoke communication or grant agent authority. |
+| `contact.block.set` | Human-only block/unblock by pinned actor. Blocking atomically revokes transport, grants and queued deliveries; unblocking does not reconnect. |
+| `contact.block.list` | Lists the caller's blocked actors using keyset pagination, with a default of 50 and maximum of 200 per page. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
-| `contact.request.update` | Applies a valid state transition using an optional expected revision for optimistic concurrency. |
+| `contact.request.act` | Records a v2 participant statement or reconciles the latest bounded stream. Withdrawal requests a stop; completion reports do not imply requester acknowledgement. |
+| `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
 
 `contact.send` reports `queued` when the sender has durably accepted the work
 and `delivered` only after the receiving Kernel has durably committed it. A
@@ -723,6 +874,9 @@ type ContactSummary = {
   remoteShipId: string;
   remoteSubject: FederationSubject;
   remoteOrigin: string;
+  protocol?: { version: 1 | 2; features: Array<"messages" | "approaches" | "work" | "context">; checkedAtMs: number };
+  preferences?: { saved: boolean; muted: boolean; notifications: "notify" | "digest" | "quiet"; revision: number };
+  blocked?: boolean;
   localAlias?: string;
   conversationId: string;
   createdAtMs: number;
@@ -742,6 +896,12 @@ type ContactRequestRecord = {
   details?: JsonObject;
   state: "offered" | "accepted" | "rejected" | "active" | "completed" | "cancelled";
   revision: number;
+  exchange?: {
+    state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+    source?: "local" | "remote";
+    deliveryId?: string;
+    lastError?: string;
+  };
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -767,8 +927,21 @@ type ContactSyscalls = {
     result: { invite: ContactInviteSummary };
   };
   "contact.list": {
-    args: { includeRevoked?: boolean };
-    result: { contacts: ContactSummary[] };
+    args: { includeRevoked?: boolean; saved?: boolean; query?: string; after?: string; limit?: number; ids?: string[]; actor?: ActorRef };
+    result: { contacts: ContactSummary[]; next?: string; attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean } };
+  };
+  "contact.notice.dismiss": { args: {}; result: {} };
+  "contact.preferences.update": {
+    args: { contactId: string; expectedRevision: number; patch: { saved?: boolean; muted?: boolean; notifications?: "notify" | "digest" | "quiet" } };
+    result: { contact: ContactSummary };
+  };
+  "contact.block.set": {
+    args: { actor: ActorRef; blocked: boolean };
+    result: { block: { actor: ActorRef; createdAtMs: number } | null };
+  };
+  "contact.block.list": {
+    args: { cursor?: ActorRef; limit?: number };
+    result: { blocks: { actor: ActorRef; createdAtMs: number }[]; nextCursor?: ActorRef };
   };
   "contact.alias.set": {
     args: { contactId: string; alias: string | null };
@@ -781,7 +954,9 @@ type ContactSyscalls = {
   "contact.send": {
     args: {
       contactId: string;
+      expectedGeneration?: string;
       text: string;
+      replyTo?: OriginMessageRef;
       media?: ResourceBlock[];
       idempotencyKey?: string;
     };
@@ -790,6 +965,14 @@ type ContactSyscalls = {
       conversationId: string;
       state: "queued" | "delivered" | "failed";
     };
+  };
+  "contact.delivery.list": {
+    args: { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+    result: { deliveries: ContactDeliveryStatus[] };
+  };
+  "contact.delivery.retry": {
+    args: { deliveryId: string; expectedUpdatedAtMs: number };
+    result: { deliveryId: string; conversationId: string; state: "queued" | "delivered" | "failed" };
   };
   "contact.delivery.get": {
     args: { deliveryId: string };
@@ -802,11 +985,16 @@ type ContactSyscalls = {
   "contact.request.create": {
     args: {
       contactId: string;
+      expectedGeneration?: string;
       kind: string;
       title: string;
       details?: JsonObject;
       idempotencyKey?: string;
     };
+    result: { request: ContactRequestRecord; deliveryId: string };
+  };
+  "contact.request.act": {
+    args: { requestId: string; expectedRevision: number; action: "withdraw" | "accept" | "reject" | "start" | "complete" | "cancel" | "acknowledge" | "dispute" | "reconcile"; note?: string; idempotencyKey?: string };
     result: { request: ContactRequestRecord; deliveryId: string };
   };
   "contact.request.update": {
@@ -962,13 +1150,22 @@ type ProcIpcCallResult =
 
 type ProcessSyscalls = {
   "proc.list": {
-    args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
+    args: { uid?: number; conversationId?: string };
+    result: { processes: Array<{ pid: string; scopeId?: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string } };
+    args: { idempotencyKey?: string; runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string }; scope?: ProcessScopePolicy };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
+  };
+
+  "proc.scope.get": {
+    args: { pid: string };
+    result: { scope: ProcessScope | null };
+  };
+  "proc.scope.revoke": {
+    args: { pid: string; expectedRevision: number };
+    result: { scope: ProcessScope };
   };
 
   "proc.observe": {
@@ -1143,8 +1340,6 @@ type ResponsibilitySourcePolicy =
   | {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1213,8 +1408,6 @@ type ResponsibilitySyscalls = {
     args: {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -2112,3 +2305,52 @@ type SchedulerSyscalls = {
 - [Routing Reference](./routing.md)
 - [WebSocket Protocol](./websocket-protocol.md)
 - [Architecture Overview](../architecture/)
+
+### Private inbox views
+
+`conversation.inbox` pages the signed-in human's established contact threads
+from Kernel SQLite. `conversation.view.get` reads one thread's private view;
+`conversation.view.update` advances its read position or changes archive state.
+These direct-human operations do not create a Process or send a read receipt.
+Read position merges monotonically. Archiving requires the displayed revision;
+new messages invalidate an older archive decision. Muted threads stay archived.
+The list retains bounded committed-message previews, so loading it does not fan
+out to Conversation objects. Existing conversations migrate at their previous
+latest sequence rather than declaring their entire history unread.
+
+`contact.delivery.list` reads up to 100 selected delivery identities or local
+message sequences for one owned contact. It never exposes another owner's
+outbox. `contact.delivery.retry` is a signed-in human decision to resume the
+same stored message, fingerprint and generation. Only recoverable failures
+within the original seven-day delivery window can resume. A retry epoch fences
+late outcomes from the previous attempt series; retries retain ordinary backlog
+and rate limits. Permanent peer refusal, a revoked generation or expiry cannot
+be bypassed. The retained delivery status includes optional `messageId`,
+`messageSequence` and `retryable`. Receipt retention remains eight days; a missing
+old receipt is not evidence of confirmed delivery or a read receipt.
+
+`conversation.attention.list` and `.dismiss` expose private, durable message alerts and daily digests to the signed-in human. Dismissing an exact covered sequence does not mark messages read or send a receipt. See [social attention](../architecture/social-attention.md).
+
+### Reviewed contact drafts
+
+`contact.draft.create` saves immutable `contactId`, `expectedGeneration`,
+`source: { conversationId, messageId, sequence }`, `text`, optional `media` and
+`replyTo`, plus an `idempotencyKey`. The source must be a committed private
+reply by a scoped helper for this contact. It returns `{ draft }` without sending.
+
+`contact.draft.get { draftId }` returns `{ draft }`.
+`contact.draft.list { contactId, after?, limit? }` returns `{ drafts, next? }`.
+`contact.draft.approve { draftId, expectedRevision }` submits that exact draft;
+`contact.draft.discard` takes the same arguments and discards an unsubmitted
+review. All require a direct human; approval also requires `contact.send`.
+An uncertain approval retries the original revision and content. Drafts last
+seven days, require federation v2 for approved attribution, and cannot be edited.
+See [reviewed replies](../architecture/social-drafts.md).
+
+```ts
+"contact.draft.create": { args: ContactDraftCreateArgs; result: ContactDraftResult };
+"contact.draft.get": { args: { draftId: string }; result: ContactDraftResult };
+"contact.draft.list": { args: { contactId: string; after?: string; limit?: number }; result: ContactDraftListResult };
+"contact.draft.approve": { args: { draftId: string; expectedRevision: number }; result: ContactDraftResult };
+"contact.draft.discard": { args: { draftId: string; expectedRevision: number }; result: ContactDraftResult };
+```

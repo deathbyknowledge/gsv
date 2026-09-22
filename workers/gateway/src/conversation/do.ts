@@ -5,8 +5,11 @@ import type {
   ConversationKind,
   ConversationMessage,
   ResourceBlock,
+  OriginMessageRef,
+  ConversationSearchArgs,
+  ConversationSearchResult,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
 import type { GatewayEnv } from "../runtime-env";
@@ -29,7 +32,11 @@ const MAX_HISTORY_LIMIT = 200;
 export type ConversationInitializeInput = {
   ownerUid: number;
   kind: ConversationKind;
+  intakeId?: string;
 };
+
+type ConversationIntake = { id: string; ownerUid: number; promoted: boolean; discarded: boolean };
+const INTAKE_KEY = "conversation:intake";
 
 export type ConversationHistoryInput = {
   beforeSequence?: number;
@@ -75,6 +82,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private get storage(): R2Bucket { return this.namedRuntime().storage; }
   private archiveTransition: Promise<void> = Promise.resolve();
   private appendTransition: Promise<void> = Promise.resolve();
+  private searchTransition: Promise<void> = Promise.resolve();
 
   constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
     super(state, env);
@@ -115,7 +123,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   async quiesceInstallationResource(input: InstallationDeletionRequest) {
     const record = this.retirement.begin(input);
     if (record.phase !== "quiescing") return record;
-    await Promise.allSettled([this.appendTransition, this.archiveTransition]);
+    await Promise.allSettled([this.appendTransition, this.archiveTransition, this.searchTransition]);
     await this.retirement.drain();
     if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
     return this.retirement.quiesced();
@@ -127,14 +135,52 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }
 
   initialize(input: ConversationInitializeInput): void {
-    this.retirement.assertActive();
+    this.assertAvailable();
     requireOwnerUid(input.ownerUid);
     requireConversationKind(input.kind);
-    this.store.initialize(this.conversationId, input.ownerUid, input.kind);
+    this.ctx.storage.transactionSync(() => {
+      const existing = this.store.meta();
+      this.store.initialize(this.conversationId, input.ownerUid, input.kind);
+      const intake = this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY);
+      if (!existing && input.intakeId) {
+        if (input.kind !== "contact") throw new Error("Only a contact conversation can hold a message request");
+        this.ctx.storage.kv.put(INTAKE_KEY, { id: input.intakeId, ownerUid: input.ownerUid, promoted: false, discarded: false });
+      } else if (intake && !input.intakeId && !intake.promoted) {
+        this.ctx.storage.kv.put(INTAKE_KEY, { ...intake, promoted: true });
+      } else if (intake && input.intakeId && intake.id !== input.intakeId) {
+        throw new Error("Conversation message request identity changed");
+      }
+    });
+  }
+
+  /** Only a never-accepted, single-message intake can be discarded. Keep its tombstone. */
+  async discardIntake(input: { id: string; ownerUid: number }): Promise<void> {
+    this.retirement.assertActive();
+    const saved = this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY);
+    const intake = saved ?? (!this.store.meta() ? { id: input.id, ownerUid: input.ownerUid, promoted: false, discarded: false } : null);
+    if (!intake || intake.id !== input.id || intake.ownerUid !== input.ownerUid || intake.promoted) {
+      throw new Error("Conversation is not an unaccepted message request");
+    }
+    if (this.store.latestSequence() > 1 || this.store.archiveSegmentsBefore(Number.MAX_SAFE_INTEGER, 1).length) {
+      throw new Error("Message request conversation contains established history");
+    }
+    this.ctx.storage.kv.put(INTAKE_KEY, { ...intake, discarded: true });
+    await Promise.allSettled([this.appendTransition, this.archiveTransition, this.searchTransition]);
+    this.ctx.storage.transactionSync(() => {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_search", "message_search_state"]) {
+        this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
+      }
+    });
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  private assertAvailable(): void {
+    this.retirement.assertActive();
+    if (this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) throw new Error("Message request history has expired");
   }
 
   async append(input: ConversationAppendRequest): Promise<ConversationAppendResult> {
-    this.retirement.assertActive();
+    this.assertAvailable();
     requireAppendInput(input);
     return this.withAppendLock(async () => {
       const media = await this.validateMessageMedia(input);
@@ -149,7 +195,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
       };
       const payloadHash = await hashAppendInput(canonical);
       const normalized: ConversationAppendInput = { ...canonical, payloadHash };
-      this.retirement.assertActive();
+      this.assertAvailable();
       const stored = this.ctx.storage.transactionSync(() => this.store.append(normalized));
       if (stored) {
         this.ctx.waitUntil(this.scheduleArchive());
@@ -172,6 +218,11 @@ export class Conversation extends DurableObject<GatewayEnv> {
       }
       return { message, created: false };
     });
+  }
+
+  resolveOrigin(reference: OriginMessageRef, threadId: string) {
+    this.assertAvailable();
+    return this.store.resolveOrigin(originMessageRefSchema.parse(reference), threadId);
   }
 
   async readMedia(input: { key: string }): Promise<ConversationMediaRead> {
@@ -228,8 +279,49 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }
 
   async compact(): Promise<void> {
-    this.retirement.assertActive();
+    this.assertAvailable();
     await this.scheduleArchive();
+  }
+
+  async search(input: Omit<ConversationSearchArgs, "conversationId">): Promise<ConversationSearchResult> {
+    this.assertAvailable();
+    const limit = input.limit ?? 25;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Conversation search limit must be between 1 and 50");
+    const latest = this.store.latestSequence();
+    const before = normalizeBeforeSequence(input.beforeSequence, latest + 1);
+    const result = this.store.search.search(input.query, before, limit);
+    if (this.store.search.needsBackfill() && await this.ctx.storage.getAlarm() === null) {
+      await this.ctx.storage.setAlarm(Date.now() + 100);
+    }
+    return { conversationId: this.conversationId, ...result, coverage: this.store.search.coverage(latest) };
+  }
+
+  async alarm(): Promise<void> {
+    if (this.retirement.state || this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) return;
+    this.searchTransition = this.backfillSearch();
+    await this.searchTransition;
+  }
+
+  private async backfillSearch(): Promise<void> {
+    if (!this.store.search.needsBackfill()) return;
+    try {
+      const before = this.store.search.state().backfill_before;
+      let messages = this.store.listHot(before, 100);
+      if (!messages.length) {
+        const segment = this.store.archiveSegmentsBefore(before, 1)[0];
+        if (segment) messages = (await this.readArchive(segment))
+          .filter((message) => message.sequence < before).slice(-100).reverse();
+      }
+      this.assertAvailable();
+      this.ctx.storage.transactionSync(() => {
+        for (const message of messages) this.store.search.index(message);
+        this.store.search.finishBatch(messages.length ? Math.min(...messages.map((message) => message.sequence)) : 1);
+      });
+      if (this.store.search.needsBackfill()) await this.ctx.storage.setAlarm(Date.now() + 1_000);
+    } catch (error) {
+      if (!this.retirement.state && !this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) this.store.search.failBackfill();
+      throw error;
+    }
   }
 
   private scheduleArchive(): Promise<void> {
@@ -246,7 +338,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
     });
     await previous;
     try {
-      this.retirement.assertActive();
+      this.assertAvailable();
       return await operation();
     } finally {
       release();
@@ -254,7 +346,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }
 
   private async archiveIfNeeded(): Promise<void> {
-    if (this.retirement.state) return;
+    if (this.retirement.state || this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) return;
     while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
       const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
       if (messages.length === 0) return;
@@ -370,6 +462,7 @@ function validateFederationResource(input: ResourceBlock, target: string): Resou
 function requireAppendInput(input: ConversationAppendRequest): void {
   requireNonempty(input.messageId, "messageId");
   requireNonempty(input.idempotencyKey, "idempotencyKey");
+  if (input.social) socialMessageMetadataSchema.parse(input.social);
   if (!input.text.trim() && !input.media?.length) {
     throw new Error("Conversation message requires text or media");
   }
@@ -386,6 +479,7 @@ async function hashAppendInput(
     author: input.author,
     text: input.text,
     selectedTarget: input.selectedTarget,
+    ...(input.social ? { social: input.social } : undefined),
     media: input.media ?? [],
     origin: input.origin,
     processId: input.processId ?? null,

@@ -10,6 +10,9 @@ export const INSTRUMENT_MEMORY_KEY = ["instrument", "memory"] as const;
 
 /** Contact lists are reread only after an owner-scoped change notification. */
 export const INSTRUMENT_CONTACTS_KEY = ["instrument", "contacts"] as const;
+export const INSTRUMENT_PROFILE_KEY = ["instrument", "profile"] as const;
+export const INSTRUMENT_SHARED_CONTEXT_KEY = ["instrument", "shared-context"] as const;
+export const INSTRUMENT_APPROACHES_KEY = ["instrument", "approaches"] as const;
 export const INSTRUMENT_CONTACT_INVITES_KEY = ["instrument", "contact-invites"] as const;
 
 export const INSTRUMENT_MESSENGERS_KEY = ["instrument", "messengers"] as const;
@@ -20,3 +23,8 @@ export const instrumentContactRequestsKey = (contactId: string) => ["instrument"
 export const INSTRUMENT_RESPONSIBILITIES_KEY = ["instrument", "responsibilities"] as const;
 export const INSTRUMENT_ROUTINES_KEY = ["instrument", "routines"] as const;
 export const INSTRUMENT_SOURCES_KEY = ["instrument", "responsibility-sources"] as const;
+
+export const INSTRUMENT_ATTENTION_KEY = ["instrument", "attention"] as const;
+export const INSTRUMENT_INBOX_KEY = ["instrument", "inbox"] as const;
+export const conversationViewKey = (id: string) => ["instrument", "conversation-view", id] as const;
+export const instrumentContactDeliveriesKey = (id: string) => ["instrument", "contact-deliveries", id] as const;

@@ -8,6 +8,7 @@
 
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
+import type { ProcessScopePolicy } from "../process-scope";
 import { jsonValueSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
 import type { ProcHistoryArchivedRecord, ProcHistoryRecord } from "../history";
@@ -39,6 +40,8 @@ export type ProcAiOptions = {
 };
 
 export type ProcSpawnArgs = {
+  /** Recover creation for seven days. Submit initial input separately with conversation.send. */
+  idempotencyKey?: string;
   /**
    * Account to run the process as a username or uid string. Defaults to the
    * caller's personal agent for a top-level process and the parent account for
@@ -54,6 +57,8 @@ export type ProcSpawnArgs = {
   cwd?: string;
   /** Initial process overrides, installed before its first task. Omitted fields inherit account defaults. */
   ai?: ProcAiOptions;
+  /** Direct humans may restrict a fresh process. Descendants inherit this immutable grant. */
+  scope?: ProcessScopePolicy;
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 
@@ -728,10 +733,13 @@ export type ProcResetResult =
 
 export type ProcListArgs = {
   uid?: number;
+  /** Only helpers whose immutable grant includes this owned conversation. */
+  conversationId?: string;
 };
 
 export type ProcListEntry = {
   pid: string;
+  scopeId?: string;
   /** Owning human account, independently of the process's run-as account. */
   uid: number;
   /** Username of the account the process runs as (its run-as identity). */
@@ -763,6 +771,8 @@ export type ProcUnobserveResult = { ok: true; pid: string; observing: boolean };
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
   identity: ProcessIdentity;
+  /** Kernel creation recovery must not reset an already initialized Process. */
+  ifUninitialized?: boolean;
   interactive?: boolean;
   /** Initial process label. */
   title?: string;

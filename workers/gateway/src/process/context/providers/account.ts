@@ -52,6 +52,7 @@ export async function collectAccountContext(
   root: AccountContextRoot,
   warningLabel: string,
 ): Promise<PromptSection[]> {
+  if (input.config.scope) return [];
   const sections: PromptSection[] = [];
   const contextRoot = {
     key: root,

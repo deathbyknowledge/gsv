@@ -6,6 +6,23 @@ import {
 } from "./do-test-harness";
 
 describe("proc.setidentity", () => {
+  it("does not overwrite a live Process when retrying creation", async () => {
+    const stub = await initProcess("mech-recovered-create", ROOT_IDENTITY);
+    await runInProcess(stub, (process) => {
+      process.store.state.setValue("taskTitle", "Owner's later title");
+      process.store.state.setAiConfig({ version: 2, reasoning: "high", updatedAt: 123 });
+    });
+    const response = await stub.recvFrame(makeReq("proc.setidentity", {
+      identity: { ...ROOT_IDENTITY, home: "/unexpected" }, ifUninitialized: true,
+      title: "Old creation title", ai: { reasoning: "off" },
+    }));
+    expect(response).toMatchObject({ ok: true, data: { ok: true } });
+    await runInProcess(stub, (process) => {
+      expect(process.identity.home).toBe(ROOT_IDENTITY.home);
+      expect(process.store.state.getValue("taskTitle")).toBe("Owner's later title");
+      expect(process.store.state.getAiConfig()).toEqual({ version: 2, reasoning: "high", updatedAt: 123 });
+    });
+  });
   it("derives pid and stores identity", async () => {
     const pid = "mech-setid-1";
     const stub = await initProcess(pid, ROOT_IDENTITY);

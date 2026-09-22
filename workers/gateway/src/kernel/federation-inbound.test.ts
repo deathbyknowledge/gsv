@@ -6,6 +6,8 @@ import {
   type ConversationMessage,
   type FederationDeliveryEnvelope,
   type FederationDeliveryPayload,
+  type FederationMessageDeliveryV2,
+  type FederationDeliveryEnvelopeV2,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type {
@@ -29,7 +31,7 @@ import type { FederationContactRecord, FederationStore } from "./federation-stor
 import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
-import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import { syncFederationRequestResponsibility } from "./federation/requests";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -48,7 +50,6 @@ type KernelInternals = {
   federation: FederationStore;
   procs: ProcessRegistry;
   responsibilities: ResponsibilityStore;
-  responsibilitySources: ResponsibilitySourcePolicyStore;
   pendingFederationInbound: Map<string, Promise<unknown>>;
   coordinateFederationContact: <Value>(
     contactId: string,
@@ -58,6 +59,7 @@ type KernelInternals = {
 
 describe("federation inbound boundary", () => {
   let kernel: DurableObjectStub<Kernel>;
+  let installationId: string;
   let contact: FederationContactRecord;
   let recipientSubjectId: string;
   let sharedSecret: string;
@@ -65,7 +67,7 @@ describe("federation inbound boundary", () => {
   let getConversationById: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const installationId = `inst_federation_inbound_${crypto.randomUUID()}`;
+    installationId = `inst_federation_inbound_${crypto.randomUUID()}`;
     kernel = await getKernelByInstallationId(env.KERNEL, installationId);
     sharedSecret = randomBase64Url(32);
     messages = [];
@@ -98,7 +100,6 @@ describe("federation inbound boundary", () => {
         interactive: true,
         isPersonalController: true,
       });
-      internal.responsibilitySources.set(OWNER.uid, "federation.received", false);
       const subject = internal.federation.ensureSubject(OWNER.uid, OWNER.username, 1_000);
       const activated = internal.federation.activateContact({
         ownerUid: OWNER.uid,
@@ -119,6 +120,69 @@ describe("federation inbound boundary", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("commits v2 provenance and replays a version-bound receipt without waking Ship", async () => {
+    getConversationById.mockRestore();
+    const payload: FederationMessageDeliveryV2 = {
+      kind: "message", messageId: "origin:v2", threadId: contact.threadId, text: "Written by my helper",
+      social: {
+        threadId: contact.threadId,
+        reference: { actor: { shipId: REMOTE_SHIP_ID, subjectId: REMOTE_SUBJECT_ID }, messageId: "origin:v2" },
+        provenance: { kind: "process", processId: "proc:remote-helper" },
+      },
+    };
+    const envelope = await signedV2Envelope(payload, "delivery:v2");
+    const response = await deliverV2(envelope);
+    expect(response.status).toBe(200);
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({ version: 2, domain: "gsv-federation/2/receipt", deliveryId: envelope.deliveryId });
+    expect(await (await deliverV2(envelope)).json()).toEqual(receipt);
+    const installationId = await runInDurableObject(kernel, (instance: Kernel) => instance.installationId);
+    const conversation = utils.getConversationById(installationId, contact.conversationId);
+    const history = await conversation.history();
+    expect(history.messages).toHaveLength(1);
+    expect(history.messages[0]?.social).toEqual(payload.social);
+    expect(await conversation.resolveOrigin(payload.social.reference, contact.threadId))
+      .toMatchObject({ messageId: history.messages[0]?.id, sequence: 1 });
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
+
+    const forged = await signedV2Envelope({ ...payload, social: {
+      ...payload.social, reference: { ...payload.social.reference, actor: { shipId: "ship:someone-else", subjectId: REMOTE_SUBJECT_ID } },
+    } }, "delivery:v2-forged");
+    const rejected = await deliverV2(forged);
+    expect(rejected.status).toBe(409);
+    await rejected.arrayBuffer();
+    expect((await conversation.history()).messages).toHaveLength(1);
+  });
+
+  it.each([
+    ["incoming", "offered", "accepted"],
+    ["incoming", "offered", "rejected"],
+    ["incoming", "accepted", "active"],
+    ["incoming", "active", "completed"],
+    ["incoming", "accepted", "cancelled"],
+    ["outgoing", "offered", "cancelled"],
+  ] as const)("rejects a signed remote %s action from %s to %s without creating a conversation", async (direction, state, next) => {
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      instance.federation.createRequest({
+        id: "request:local", remoteId: direction === "incoming" ? "request:remote" : undefined,
+        contactId: contact.id, contactGeneration: contact.generation, direction,
+        kind: "task", title: "Participant-owned work", state, createdAtMs: 1_000, updatedAtMs: 1_000,
+      });
+    });
+    const response = await deliver(await signedEnvelope({
+      kind: "request.update", requestId: direction === "incoming" ? "request:remote" : "request:local",
+      expectedRevision: 1, state: next,
+    }, "delivery:wrong-role"));
+    expect(response.status).toBe(409);
+    await response.arrayBuffer();
+    expect(getConversationById).not.toHaveBeenCalled();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
+    expect(messages).toEqual([]);
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      expect(instance.federation.request("request:local")).toMatchObject({ state, revision: 1 });
+    });
   });
 
   it("coordinates concurrent duplicates and replays their signed receipt", async () => {
@@ -142,6 +206,10 @@ describe("federation inbound boundary", () => {
     expect(await concurrent.json()).toEqual(await first.clone().json());
     expect(await replay.json()).toEqual(await first.json());
     expect(messages).toHaveLength(1);
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      expect(instance.conversations.get(contact.conversationId)?.handlerPid).toBeUndefined();
+    });
     expect(messages[0]).toMatchObject({
       text: "Hello from another Ship",
       author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
@@ -171,7 +239,6 @@ describe("federation inbound boundary", () => {
 
     const control = await runInDurableObject(kernel, (instance: Kernel) => {
       instance.auth.addUser({ username: "control", uid: 1001, gid: 1001, gecos: "Control", home: "/home/control", shell: "/bin/init" });
-      instance.responsibilitySources.set(1001, "federation.received", false);
       const subject = instance.federation.ensureSubject(1001, "Control");
       return { subject, contact: instance.federation.activateContact({ ownerUid: 1001, remoteShipId: REMOTE_SHIP_ID,
         remoteSubject: contact.remoteSubject, remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
@@ -500,7 +567,9 @@ describe("federation inbound boundary", () => {
   });
 
   it("recovers admitted request projections without a sender retry", async () => {
-    const localNow = 50_000;
+    // Keep the fixture's scheduled recovery ahead of workerd's real alarm clock;
+    // this test explicitly invokes recovery after eviction.
+    const localNow = Date.now() + 60_000;
     vi.spyOn(Date, "now").mockReturnValue(localNow);
     await runInDurableObject(kernel, (instance: Kernel) => {
       kernelInternals(instance).federation.createRequest({
@@ -728,25 +797,8 @@ describe("federation inbound boundary", () => {
   });
 
   it.each([false, true])("keeps one responsibility through the complete request lifecycle after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
     const requestId = "request:stable-responsibility";
-    const offered = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: requestId,
-        kind: "task",
-        title: "Keep one responsibility",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:request-lifecycle-offered");
-    expect((await deliver(offered)).status).toBe(200);
+    await seedOutgoingRequest(requestId, true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
     const states = ["accepted", "active", "completed"] as const;
@@ -789,29 +841,18 @@ describe("federation inbound boundary", () => {
       },
     });
     expect(result.transitions.map((transition) => transition.afterState)).toEqual([
-      "open",
+      "waiting",
       "active",
       "active",
       "resolved",
     ]);
   });
 
-  it.each([false, true])("controls missing request responsibility creation after a source toggle and removal=%s", async (removed) => {
+  it.each([false, true])("does not infer a local commitment from remote updates after removal=%s", async (removed) => {
     const requestId = "request:source-toggle";
-    const offered = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: requestId,
-        kind: "task",
-        title: "An existing request without a tracking responsibility",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:source-toggle-offered");
-    expect((await deliver(offered)).status).toBe(200);
+    await seedOutgoingRequest(requestId, false);
     await runInDurableObject(kernel, async (instance: Kernel) => {
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
-      instance.responsibilitySources.set(OWNER.uid, "federation.received", true);
       if (removed) await removeOwner(instance);
     });
 
@@ -832,24 +873,13 @@ describe("federation inbound boundary", () => {
         expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId))
           .toMatchObject({ state: "committed" });
         const responsibilities = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
-        expect(responsibilities).toHaveLength(removed ? 0 : 1);
-        if (!removed) expect(responsibilities[0]).toMatchObject({
-          details: { state, revision: index + 2 },
-          state: state === "completed" ? "resolved" : "active",
-        });
+        expect(responsibilities).toHaveLength(0);
       });
     }
-    expect(messages).toHaveLength(4);
+    expect(messages).toHaveLength(3);
   });
 
-  it("keeps exact contact content in Conversation history rather than responsibility details", async () => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
+  it("stores incoming contact text without admitting Ship work", async () => {
     const text = "Private instructions that belong only in Contact history";
     const envelope = await signedEnvelope({
       kind: "message",
@@ -866,39 +896,12 @@ describe("federation inbound boundary", () => {
         includeTerminal: true,
       }).records[0]
     ));
-    expect(responsibility?.details).toMatchObject({
-      eventType: "federation.message.received",
-      contactId: contact.id,
-      conversationId: contact.conversationId,
-      deliveryId: "delivery:private",
-      resourceCount: 0,
-      contentTrust: "untrusted",
-    });
-    expect(responsibility?.title).toMatch(/^Review contact message .* with the owner$/);
-    expect(responsibility?.details).not.toHaveProperty("text");
-    expect(responsibility?.details).not.toHaveProperty("resources");
-    expect(JSON.stringify(responsibility)).not.toContain(text);
+    expect(responsibility).toBeUndefined();
+    expect(vi.mocked(personalController.ensurePersonalController).mock.calls.filter((call) => call[1].installationId === installationId).length).toBe(0);
   });
 
   it.each([false, true])("cancels the request responsibility on revocation after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
-    const requestDelivery = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: "request:revoked-responsibility",
-        kind: "task",
-        title: "Work that becomes impossible after revocation",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:request-before-revoke");
-    expect((await deliver(requestDelivery)).status).toBe(200);
+    await seedOutgoingRequest("request:revoked-responsibility", true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
     const revocation = await signedEnvelope({
@@ -927,7 +930,7 @@ describe("federation inbound boundary", () => {
         ),
       };
     });
-    expect(state.newRevocationResponsibilities).toBe(removed ? 0 : 1);
+    expect(state.newRevocationResponsibilities).toBe(0);
     expect(state.request).toMatchObject({ state: "cancelled", revision: 2 });
     expect(state.responsibility).toMatchObject({
       state: "cancelled",
@@ -938,7 +941,7 @@ describe("federation inbound boundary", () => {
       },
     });
     expect(state.transitions).toEqual([
-      expect.objectContaining({ kind: "created", afterState: "open" }),
+      expect.objectContaining({ kind: "created", afterState: "waiting" }),
       expect.objectContaining({ kind: "cancelled", afterState: "cancelled" }),
     ]);
   });
@@ -1061,6 +1064,35 @@ describe("federation inbound boundary", () => {
         jsonValueSchema.parse(unsigned),
       ),
     };
+  }
+
+  async function seedOutgoingRequest(requestId: string, tracked: boolean): Promise<void> {
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const now = Date.now();
+      const request = instance.federation.createRequest({
+        id: requestId, contactId: contact.id, contactGeneration: contact.generation,
+        direction: "outgoing", kind: "task", title: "Track work performed by the remote participant",
+        state: "offered", exchange: { state: "acknowledged", source: "local" }, createdAtMs: now, updatedAtMs: now,
+      });
+      if (tracked) syncFederationRequestResponsibility({
+        request, contact, conversationId: contact.conversationId, remoteInput: false, createAllowed: true, now,
+      }, instance.buildKernelContext({}));
+    });
+  }
+
+  async function signedV2Envelope(payload: FederationMessageDeliveryV2, deliveryId: string): Promise<FederationDeliveryEnvelopeV2> {
+    const unsigned = {
+      version: 2 as const, domain: "gsv-federation/2/delivery" as const, deliveryId,
+      senderShipId: REMOTE_SHIP_ID, senderSubjectId: REMOTE_SUBJECT_ID, recipientSubjectId,
+      generation: contact.generation, timestampMs: Date.now(), nonce: randomBase64Url(18), payload,
+    };
+    return { ...unsigned, signature: await signContactEnvelope(sharedSecret, jsonValueSchema.parse(unsigned)) };
+  }
+
+  async function deliverV2(envelope: FederationDeliveryEnvelopeV2): Promise<Response> {
+    return kernel.fetch(new Request("https://local.example/_gsv/federation/v2/deliver", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope),
+    }));
   }
 
   async function deliver(envelope: FederationDeliveryEnvelope): Promise<Response> {

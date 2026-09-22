@@ -1,3 +1,11 @@
+import { KERNEL_V066_CONVERSATION_ATTENTION } from "./v066_conversation_attention";
+import { KERNEL_V067_SELECTED_SHARED_CONTEXT } from "./v067_selected_shared_context";
+import { KERNEL_V068_PROCESS_SCOPES } from "./v068_process_scopes";
+import { KERNEL_V071_SCOPED_MESSAGE_ADMISSION } from "./v071_scoped_message_admission";
+import { KERNEL_V070_CONTACT_DRAFTS } from "./v070_contact_drafts";
+import { KERNEL_V069_PROCESS_SPAWN_RECEIPTS } from "./v069_process_spawn_receipts";
+import { KERNEL_V065_PARTICIPANT_WORK_STREAMS } from "./v065_participant_work_streams";
+import { KERNEL_V064_CONTACT_ADDRESS_BOOK } from "./v064_contact_address_book";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -90,6 +98,17 @@ import { KERNEL_V049_REMOVE_ACCOUNT_PASSKEYS } from "./v049_remove_account_passk
 import { KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS } from "./v050_retain_revoked_identity_links";
 import { KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY } from "./v051_continue_outbound_mail_recovery";
 import { KERNEL_V052_ADD_LEDGER_PURPOSE } from "./v052_add_ledger_purpose";
+import { KERNEL_V053_TRACK_REQUEST_EXCHANGES } from "./v053_track_request_exchanges";
+import { KERNEL_V054_DETACH_CONTACT_HANDLERS } from "./v054_detach_contact_handlers";
+import { KERNEL_V055_VERSION_FEDERATION_DELIVERY } from "./v055_version_federation_delivery";
+import { KERNEL_V056_SEPARATE_SOCIAL_ATTENTION } from "./v056_separate_social_attention";
+import { KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS } from "./v057_contact_preferences_and_blocks";
+import { KERNEL_V058_PUBLIC_PROFILES } from "./v058_public_profiles";
+import { KERNEL_V059_FIRST_CONTACT_REQUESTS } from "./v059_first_contact_requests";
+import { KERNEL_V063_PROFILE_IMAGES } from "./v063_profile_images";
+import { KERNEL_V062_RETRY_CONTACT_MESSAGES } from "./v062_retry_contact_messages";
+import { KERNEL_V061_PRIVATE_CONVERSATION_VIEWS } from "./v061_private_conversation_views";
+import { KERNEL_V060_BOUND_APPROACH_INVITES } from "./v060_bound_approach_invites";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -147,6 +166,25 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS,
   KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY,
   KERNEL_V052_ADD_LEDGER_PURPOSE,
+  KERNEL_V053_TRACK_REQUEST_EXCHANGES,
+  KERNEL_V054_DETACH_CONTACT_HANDLERS,
+  KERNEL_V055_VERSION_FEDERATION_DELIVERY,
+  KERNEL_V056_SEPARATE_SOCIAL_ATTENTION,
+  KERNEL_V057_CONTACT_PREFERENCES_AND_BLOCKS,
+  KERNEL_V058_PUBLIC_PROFILES,
+  KERNEL_V059_FIRST_CONTACT_REQUESTS,
+  KERNEL_V060_BOUND_APPROACH_INVITES,
+  KERNEL_V061_PRIVATE_CONVERSATION_VIEWS,
+  KERNEL_V062_RETRY_CONTACT_MESSAGES,
+  KERNEL_V063_PROFILE_IMAGES,
+  KERNEL_V064_CONTACT_ADDRESS_BOOK,
+  KERNEL_V065_PARTICIPANT_WORK_STREAMS,
+  KERNEL_V066_CONVERSATION_ATTENTION,
+  KERNEL_V067_SELECTED_SHARED_CONTEXT,
+  KERNEL_V068_PROCESS_SCOPES,
+  KERNEL_V069_PROCESS_SPAWN_RECEIPTS,
+  KERNEL_V070_CONTACT_DRAFTS,
+  KERNEL_V071_SCOPED_MESSAGE_ADMISSION,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

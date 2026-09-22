@@ -18,6 +18,7 @@ export type PromptLineProps = {
   disabled?: boolean;
   onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   allowEmpty?: boolean;
+  commands?: boolean;
   onFiles?: (files: File[]) => void;
   /** Called when the chip is pressed, to change the place. */
   onPlace?: () => void;
@@ -52,7 +53,7 @@ export type PromptLineHandle = {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, commands = true, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLSpanElement>(null);
@@ -129,7 +130,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const changed = (): void => {
     revision.current++;
     const value = read();
-    setCommand(value.startsWith("$"));
+    setCommand(commands && value.startsWith("$"));
     onInput?.(value);
     measure(true);
   };

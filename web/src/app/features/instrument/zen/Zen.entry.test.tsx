@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcessScope } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -22,6 +22,7 @@ let hasMore: boolean;
 let ownerUid: number;
 let gateway: string;
 let shipPid: string;
+let helperScope: ProcessScope | null;
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
@@ -47,6 +48,7 @@ beforeEach(() => {
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
+  helperScope = null;
   signals.clear();
   statuses.clear();
   send.mockReset();
@@ -67,6 +69,7 @@ beforeEach(() => {
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets: [] } };
+    if (call === "proc.scope.get") return { data: { scope: helperScope } };
     if (call === "sys.config.get") return { data: { entries: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
@@ -109,6 +112,29 @@ async function mountedZen(pid?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it("keeps helper follow-ups as private text without a target, files or direct shell execution", async () => {
+    helperScope = { id: "scope:one", ownerUid, rootPid: "helper", revision: 1, state: "active", createdAtMs: Date.now(),
+      policy: { conversations: [], resources: [], materials: [], expiresAtMs: Date.now() + 60_000,
+        budgets: { processes: 1, generations: 4, messages: 0 } }, used: { processes: 1, generations: 0, messages: 0 } };
+    send.mockResolvedValue({ message: message("user", "$ cat /private"), handlerPid: "helper", runId: "run:helper" });
+    const zen = await mountedZen("helper");
+    try {
+      const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
+      expect(prompt().onPlace).toBeUndefined();
+      expect(prompt().commands).toBe(false);
+      expect(prompt().place.label).toBe("reviewed material");
+      await act(() => { prompt().onFiles?.([]); });
+      expect(zen.text()).toContain("Start a fresh helper");
+      await act(() => { expect(prompt().onSubmit("$ cat /private")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      expect(send.mock.calls[0][0]).toMatchObject({ text: "$ cat /private" });
+      expect(send.mock.calls[0][0].selectedTarget).toBeUndefined();
+      helperScope = { ...helperScope, state: "revoked", revision: 2 };
+      await act(() => { for (const listener of signals) listener("proc.changed", { pid: "helper", changes: ["scope"] }); });
+      await vi.waitFor(() => expect(prompt().disabled).toBe(true));
+    } finally { await zen.unmount(); }
+  });
+
   it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
     const zen = await mountedZen();
     try {

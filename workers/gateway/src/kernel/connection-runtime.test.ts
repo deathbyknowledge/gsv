@@ -144,11 +144,14 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
 describe("ConnectionRuntime contact notifications", () => {
   it.each([
     ["contact.changed", "contact.list"],
+    ["profile.changed", "profile.get"],
+    ["contact.context.changed", "contact.context.list"],
     ["r12y.changed", "r12y.list"],
     ["r12y.source.changed", "r12y.source.list"],
     ["sched.changed", "sched.list"],
     ["contact.invite.changed", "contact.invite.list"],
     ["contact.request.changed", "contact.request.list"],
+    ["conversation.attention.changed", "conversation.attention.list"],
   ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {
     const socket = (uid = 1000, calls = [call], signals = [signal], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({
       step, protocol: 4,

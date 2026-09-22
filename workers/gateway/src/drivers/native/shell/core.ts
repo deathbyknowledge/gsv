@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
+import { currentProcessScope } from "../../../kernel/process-scope";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { renderManualPage } from "../man-pages";
 import {
@@ -106,7 +107,8 @@ export function buildCoreCommands(
       return { stdout: "PID\tSTATE\tLABEL\n", stderr: "", exitCode: 0 };
     }
 
-    const list = procs.list();
+    const scope = currentProcessScope(ctx);
+    const list = procs.list().filter((process) => !scope || process.scopeId === scope.id);
     const lines = ["PID\tSTATE\tLABEL"];
     for (const proc of list) {
       lines.push(`${proc.processId}\t${proc.state}\t${proc.label ?? ""}`);

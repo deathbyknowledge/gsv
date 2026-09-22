@@ -1629,7 +1629,9 @@ export class ProcessController {
           severity: "info",
           audience: "model",
         }
-      : {
+      : event.type === "social.message" ? {
+          kind: "social.message", payload: event.payload, severity: "info", audience: "model",
+        } : {
           kind: "adapter.work.returned",
           payload: { eventId, workPid: event.workPid },
           severity: "info",
@@ -1659,6 +1661,9 @@ export class ProcessController {
             distinctRun: true,
             runId,
             event: historyEvent,
+            kind: event.type,
+            dedupeId: event.type === "social.message" ? eventId : undefined,
+            provenance: event.type === "social.message" ? JSON.stringify({ source: "kernel", eventId, scopeId: event.payload.scopeId, conversationId: event.payload.conversationId }) : undefined,
           });
     if (!admission.ok) {
       throw new Error(admission.error);

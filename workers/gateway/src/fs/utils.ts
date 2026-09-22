@@ -57,3 +57,11 @@ export {
   inferFsContentType as inferContentType,
   isTextContentType,
 } from "@humansandmachines/gsv/protocol";
+
+export function matchPathGlob(pattern: string, path: string): boolean {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`(^|/)${escaped}$`).test(path);
+}

@@ -3,6 +3,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipResult,
   ConversationListResult,
   ConversationMediaReadArgs,
@@ -27,6 +29,7 @@ import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import { resolveSelectedMessageTarget } from "./targets";
+import { assertScopedConversation, assertScopedProcessInput, currentProcessScope } from "./process-scope";
 import * as z from "zod/mini";
 
 const conversationClientStateSchema = z.object({
@@ -82,6 +85,11 @@ export async function handleConversationHistory(
     beforeSequence: args.beforeSequence,
     limit: args.limit,
   });
+  ownedConversation(conversation.id, ctx);
+  const latest = history.messages.at(-1);
+  if (conversation.kind === "contact" && latest?.sequence === history.latestSequence) {
+    ctx.conversations.recordContactMessage(latest, true);
+  }
   if (history.latestSequence > conversation.latestSequence) {
     ctx.conversations.recordSequence(conversation.id, history.latestSequence);
   }
@@ -92,12 +100,26 @@ export async function handleConversationHistory(
   };
 }
 
+export async function handleConversationSearch(args: ConversationSearchArgs, ctx: KernelContext): Promise<ConversationSearchResult> {
+  requireConversationReader(ctx);
+  const conversation = ownedConversation(args?.conversationId, ctx);
+  const result = await getConversationById(ctx.installationId, conversation.id).search({
+    query: args.query, beforeSequence: args.beforeSequence, limit: args.limit,
+  });
+  requireConversationReader(ctx);
+  ownedConversation(conversation.id, ctx);
+  return result;
+}
+
 export async function handleConversationSend(
   args: ConversationSendArgs,
   ctx: KernelContext,
 ): Promise<ConversationSendResult> {
   requireConversationClient(ctx);
   const conversation = ownedConversation(args?.conversationId, ctx);
+  if (conversation.kind === "contact") {
+    throw new Error("Use contact.send to message a contact; conversation.send submits input to a local process");
+  }
   const text = args.text;
   if (!text.trim() && !(Array.isArray(args.media) && args.media.length > 0)) {
     throw new Error("conversation.send requires text or media");
@@ -109,6 +131,7 @@ export async function handleConversationSend(
   if (conversation.kind === "ship" && !handler.isPersonalController) {
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
+  assertScopedProcessInput(ctx, conversation.handlerPid, args);
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
   const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
@@ -122,6 +145,7 @@ export async function handleConversationSend(
     messageId,
   );
   ctx.requestSignal?.throwIfAborted();
+  assertScopedProcessInput(ctx, conversation.handlerPid, args);
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId,
     idempotencyKey,
@@ -175,6 +199,7 @@ export async function handleConversationSend(
   }
   let result: Extract<ProcSendResult, { ok: true }>;
   try {
+    assertScopedProcessInput(ctx, conversation.handlerPid, args);
     // SAFETY: The process RPC boundary returns a response frame for this request.
     const response = await sendFrameToProcess(
       ctx.installationId,
@@ -300,6 +325,7 @@ export function processMediaOwner(pid: string, process: {
 
 function ownedConversation(id: string | undefined, ctx: KernelContext): ConversationSummary {
   const conversationId = normalizeId(id, "conversationId");
+  assertScopedConversation(ctx, conversationId);
   const conversation = ctx.conversations.get(conversationId);
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (!conversation || (conversation.ownerUid !== ownerUid && principalOf(ctx)?.account.uid !== 0)) {
@@ -321,6 +347,7 @@ function requireConversationReader(ctx: KernelContext): number {
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (!ctx.processId) return ownerUid;
+  if (currentProcessScope(ctx)) return ownerUid;
   const process = ctx.procs.get(ctx.processId);
   if (process?.isPersonalController === true && process.ownerUid === ownerUid) {
     return ownerUid;

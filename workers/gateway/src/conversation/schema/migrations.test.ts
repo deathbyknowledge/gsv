@@ -13,11 +13,13 @@ describe("conversation schema upgrades", () => {
         "message", "receipt", JSON.stringify({ kind: "user", uid: 1000 }), "Original text", JSON.stringify({ kind: "client" }), 1);
       runConversationSqlMigrations(storage);
       const store = new ConversationStore(sql);
+      expect(store.search.coverage(1)).toMatchObject({ state: "building", indexedMessages: 0, historicalBeforeSequence: 2 });
       expect(store.messageAt(1)).toMatchObject({ id: "message", text: "Original text" });
       expect(store.messageAt(1)?.selectedTarget).toBeUndefined();
       const appended = store.append({ messageId: "selected", idempotencyKey: "selected", payloadHash: "fixture", text: "New text", selectedTarget: "macbook",
         author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 2 });
       expect(appended?.message.selectedTarget).toBe("macbook");
+      expect(store.search.search("New", 3, 10).matches.map((match) => match.messageId)).toEqual(["selected"]);
       runConversationSqlMigrations(storage);
       expect(store.messageAt(2)?.selectedTarget).toBe("macbook");
     });

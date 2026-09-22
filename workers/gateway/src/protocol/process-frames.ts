@@ -10,6 +10,7 @@ import type {
   ResponseErrEnvelope,
   TypedRequest,
   TypedResponseOk,
+  ScopedMessageEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, SignalFrame } from "./frames";
 
@@ -27,7 +28,8 @@ export type ProcessResponsibilityReadyRuntimeEvent = {
 
 export type ProcessRuntimeEvent =
   | ProcessAdapterWorkReturnedRuntimeEvent
-  | ProcessResponsibilityReadyRuntimeEvent;
+  | ProcessResponsibilityReadyRuntimeEvent
+  | { type: "social.message"; payload: ScopedMessageEventPayload };
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;

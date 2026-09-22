@@ -293,11 +293,19 @@ and each enabled Ship schedule must produce its due responsibility. These rows a
 Kernel-defined runtime guarantees rather than user-configurable automation.
 
 Configurable sources are Kernel-defined producers with per-owner enablement
-policies. Incoming mail, federation ingress, new contacts, new machines,
-connected adapters, and adapter authentication loss are enabled by default.
+policies. Incoming mail, new machines, connected adapters, and adapter
+authentication loss are enabled by default.
 Disabling a source does not discard its underlying state: the owning subsystem
 still records the event, but no responsibility is created and Ship is not woken
 for it.
+
+Contact pairing, incoming messages, offers, and revocation do not create new
+Ship responsibilities. Explicitly sending or accepting work creates the local
+commitment; subsequent remote updates continue to track that existing record.
+Migration v056 retires the former `contact.added` and `federation.received`
+source settings, preserves their previous values for an owner-visible notice,
+and leaves existing ledger records and transitions untouched. Any future
+automatic social assistance requires a separately scoped admission path.
 
 Recurring custom responsibilities are ordinary `every` or `cron` schedules whose
 target is `responsibility`. The Web responsibilities workspace presents three

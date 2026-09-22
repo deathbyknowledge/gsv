@@ -16,6 +16,7 @@ const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersona
 
 import {
   handleConversationHistory,
+  handleConversationSearch,
   handleConversationShip,
   handleConversationMediaRead,
   handleConversationSend,
@@ -69,6 +70,7 @@ function context(ownerUid = 1000): KernelContext {
       get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
       list: vi.fn(() => [SHIP]),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     },
     runRoutes: {
       setConnectionRoute: vi.fn(),
@@ -96,6 +98,28 @@ function canonicalMessage(input: any): ConversationMessage {
 }
 
 describe("conversation handlers", () => {
+  it("authorizes search before indexing and rechecks the owner after the result", async () => {
+    const args = { conversationId: SHIP.id, query: "private" };
+    await expect(handleConversationSearch(args, context(1002))).rejects.toThrow();
+    await expect(handleConversationSearch(args, { ...context(), processId: "proc:unscoped-helper" })).rejects.toThrow("signed-in human or their Ship");
+    expect(getConversationByIdMock).not.toHaveBeenCalled();
+    const ctx = context();
+    const search = vi.fn(async () => {
+      vi.mocked(ctx.conversations.get).mockReturnValue(null);
+      return { conversationId: SHIP.id, matches: [], coverage: { state: "complete", indexedMessages: 0, truncatedMessages: 0, omittedMessages: 0, historicalBeforeSequence: 1, latestSequence: 0 } };
+    });
+    getConversationByIdMock.mockReturnValue({ search });
+    await expect(handleConversationSearch(args, ctx)).rejects.toThrow();
+    expect(search).toHaveBeenCalledOnce();
+  });
+  it("does not turn a message to a contact into input for Ship, including a legacy handler record", async () => {
+    const ctx = context();
+    vi.mocked(ctx.conversations.get).mockReturnValue({ ...SHIP, kind: "contact" });
+    await expect(handleConversationSend({ conversationId: SHIP.id, text: "Hello Alice" }, ctx))
+      .rejects.toThrow("Use contact.send");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     getConversationByIdMock.mockReset();
     sendFrameToProcessMock.mockReset();

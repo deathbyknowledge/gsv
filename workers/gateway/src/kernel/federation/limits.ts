@@ -1,4 +1,4 @@
-import type { FederationDeliveryEnvelope } from "@humansandmachines/gsv/protocol";
+import type { FederationTransportPayload } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationRateLimit } from "../federation-store";
 import { PublicFederationError } from "./errors";
@@ -20,6 +20,7 @@ const MAX_DELIVERIES_PER_INSTALLATION_PER_MINUTE = 600;
 const MAX_ACTIVE_REQUESTS_PER_CONTACT = 100;
 const MAX_RETAINED_REQUESTS_PER_CONTACT = 5_000;
 const RATE_WINDOW_MS = 60_000;
+export const MAX_DELIVERY_AGE_MS = 7 * 24 * 60 * 60_000;
 export const RECEIPT_RETENTION_MS = 8 * 24 * 60 * 60_000;
 const REQUEST_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const RETENTION_PRUNE_BATCH = 1_000;
@@ -61,6 +62,7 @@ export function assertOutboundCapacity(
   contactId: string,
   ctx: KernelContext,
   now: number,
+  retained = false,
 ): void {
   if (
     ctx.federation.pendingOutboxCount({ contactId }) >= MAX_PENDING_OUTBOX_PER_CONTACT
@@ -69,6 +71,7 @@ export function assertOutboundCapacity(
   ) {
     throw new Error("Contact delivery backlog limit reached");
   }
+  if (retained) return;
   const cutoff = now - RECEIPT_RETENTION_MS;
   if (
     ctx.federation.retainedOutboxCount({ ownerUid, receiptCutoff: cutoff })
@@ -99,7 +102,7 @@ export function consumeOutboundDeliveryRate(
 
 export function assertInboundCapacity(
   contact: FederationContactRecord,
-  payload: FederationDeliveryEnvelope["payload"],
+  payload: FederationTransportPayload,
   ctx: KernelContext,
   now: number,
 ): void {

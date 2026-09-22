@@ -54,6 +54,7 @@ commands inspect and control the Kernel schedule records:
 ```bash
 proc self
 proc list
+proc scope [PID] [--json]
 proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--] [prompt]
 proc delegate [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--check-after 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
@@ -68,10 +69,11 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message search --with CONTACT_OR_CONVERSATION --query TEXT [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--reply-to ORIGIN_JSON] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -267,6 +269,12 @@ name; the remote Ship's authenticated identity remains visible and unchanged.
 never a recoverable code. `message history --with contact:...` reads the Contact
 conversation. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
+
+For a v2 conversation, `--reply-to` accepts the exact JSON origin reference
+shown in message history. A scoped helper must identify the message it answers;
+an automatic helper may answer only an incoming human message admitted to it.
+The Kernel bounds replies and derives the automatic reply's idempotency key.
+`proc scope` shows the helper's current access and remaining allowances.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

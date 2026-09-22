@@ -13,6 +13,8 @@
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
 import { ownerTimezone } from "./timezone";
+import { currentProcessScope, effectiveProcessCapabilities, scopedCapabilities } from "./process-scope";
+import { GSV_RUNTIME_FACTS, GSV_RUNTIME_CONTEXT, GSV_TARGET_CONTEXT, GSV_RESPONSIBILITY_CONTEXT, GSV_CONTEXT_DISCOVERY, GSV_PROCESS_ORCHESTRATION } from "../prompts/system";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
 import type { FrameBody } from "../protocol/frames";
@@ -155,7 +157,8 @@ export async function handleAiTools(
   ctx: KernelContext,
 ): Promise<AiToolsResult> {
   const identity = principalOf(ctx)!;
-  const capabilities = identity.calls;
+  const scope = currentProcessScope(ctx);
+  const capabilities = scope ? scopedCapabilities(identity.calls) : identity.calls;
   const canUseMcpTools = hasCapability(capabilities, "sys.mcp.list")
     && hasCapability(capabilities, "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
@@ -190,6 +193,11 @@ export async function handleAiContext(
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
+  const scope = currentProcessScope(ctx);
+  if (scope) return {
+    targets: [], mcpServers: [], systemContextFiles: isolatedSystemContextFiles(),
+    system: { timezone: ownerTimezone(config, resolveCallerOwnerUid(ctx)) }, skillIndex: [], skillIndexMode: "off",
+  };
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
@@ -224,7 +232,8 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
-  const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
+  const scope = currentProcessScope(ctx);
+  const builtinSkillsReady = scope ? Promise.resolve() : ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
@@ -239,7 +248,7 @@ export async function handleAiConfig(
   });
   const primary = textModels.primary;
 
-  const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
+  const systemContextFiles = scope ? isolatedSystemContextFiles() : listConfigContextFiles(config, "config/ai/context.d");
 
   // Persona and context come from the run-as account's home (the home.context
   // provider reads /home/<account>/context.d). Tool approval follows the same
@@ -257,7 +266,7 @@ export async function handleAiConfig(
   );
   const timezone = principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC";
   await builtinSkillsReady;
-  const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
+  const skillIndexMode = scope ? "off" : normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
     : await collectPromptSkillIndex(ctx).catch((error) => {
@@ -269,7 +278,7 @@ export async function handleAiConfig(
 
   const result: AiConfigResult = {
     owner,
-    executor: resolveAiTextExecutor(ctx),
+    executor: scope ? { kind: "kernel" } : resolveAiTextExecutor(ctx),
     provider: primary.provider,
     model: primary.model,
     apiKey: primary.apiKey,
@@ -286,7 +295,7 @@ export async function handleAiConfig(
     skillIndex,
     skillIndexMode,
     accountApprovalPolicy,
-    capabilities: [...(principalOf(ctx)?.calls ?? [])],
+    capabilities: scope ? scopedCapabilities(principalOf(ctx)?.calls ?? []) : [...(principalOf(ctx)?.calls ?? [])],
     maxContextBytes,
     generationTimeoutMs: primary.generationTimeoutMs,
     generationStreaming: primary.generationStreaming,
@@ -295,7 +304,16 @@ export async function handleAiConfig(
   if (primary.baseUrl) result.baseUrl = primary.baseUrl;
   if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
   if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
+  if (scope) result.scope = { id: scope.id, revision: scope.revision };
   return result;
+}
+
+function isolatedSystemContextFiles() {
+  return [
+    { name: "00-runtime.md", text: GSV_RUNTIME_FACTS }, { name: "01-gsv.md", text: GSV_RUNTIME_CONTEXT },
+    { name: "05-targets.md", text: GSV_TARGET_CONTEXT }, { name: "10-responsibilities.md", text: GSV_RESPONSIBILITY_CONTEXT },
+    { name: "20-discovery.md", text: GSV_CONTEXT_DISCOVERY }, { name: "30-process-orchestration.md", text: GSV_PROCESS_ORCHESTRATION },
+  ];
 }
 
 async function ensureBuiltinSkillsForPrompt(
@@ -322,6 +340,7 @@ export async function handleAiTextGenerate(
   transport?: NetFetchDeviceTransport,
 ): Promise<AiTextGenerateResult> {
   const input = args;
+  if (currentProcessScope(ctx) && input.config?.modelConfig) throw new Error("Helper inference must use the owner's configured model catalog");
   const target = normalizeOptionalString(input.target) ?? "gsv";
   if (target !== "gsv") {
     // TODO: implement device ai gen + routing.
@@ -329,6 +348,10 @@ export async function handleAiTextGenerate(
   }
 
   const config = await resolveAiTextGenerationConfig(input.config, ctx);
+  const scope = currentProcessScope(ctx);
+  if (scope) {
+    if (normalizeTarget(config.transportTarget) !== "gsv") throw new Error("Helper scope does not permit a connected machine model transport");
+  }
   const context = normalizeAiTextGenerationContext(input);
   const options = normalizeAiTextGenerateOptions(input.options);
   const transportTarget = normalizeTarget(config.transportTarget);
@@ -345,7 +368,12 @@ export async function handleAiTextGenerate(
     attribution,
   };
   if (options) generationRequest.options = options;
+  if (scope) {
+    if (!effectiveProcessCapabilities(ctx).includes("ai.text.generate")) throw new Error("Process scope denies ai.text.generate");
+    ctx.federation.transaction(() => ctx.procs.scopes.consume(scope.id, "generations", crypto.randomUUID(), scope.revision));
+  }
   const response = await createGenerationService(ctx.env).generate(generationRequest);
+  currentProcessScope(ctx);
   const text = extractGeneratedText(response);
   // SAFETY: The generation service and public AI protocol share the assistant-message contract.
   const message = response as AiAssistantMessage;

@@ -149,6 +149,8 @@ function makeProcess(
 
 function makeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    blocked: false,
     id: "contact:friend",
     ownerUid: IDENTITY.uid,
     state: "active",
@@ -332,6 +334,8 @@ function makeContext(options?: {
     ),
     federation: focusedFixture<KernelContext["federation"]>({
       list: vi.fn(() => []),
+      listPage: vi.fn(() => ({ contacts: [] })),
+      attentionNotice: vi.fn(() => undefined),
       ...options?.federation,
     }),
     conversations: focusedFixture<KernelContext["conversations"]>(
@@ -2824,7 +2828,7 @@ describe("fs copy", () => {
     }));
     const ctx = makeContext({
       capabilities: ["shell.exec", "fs.copy"],
-      federation: { list: vi.fn(() => [contact]) },
+      federation: { list: vi.fn(() => [contact]), listPage: vi.fn(() => ({ contacts: [contact] })) },
     });
 
     const result = await handleShellExec({
@@ -4214,10 +4218,10 @@ describe("native administration shell commands", () => {
 
   it("lists trusted GSV contacts as first-class message destinations", async () => {
     const contact = { ...makeContact(), localAlias: "Alice" };
-    const list = vi.fn(() => [contact]);
+    const listPage = vi.fn(() => ({ contacts: [contact] }));
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list"],
-      federation: { list },
+      federation: { listPage },
     });
 
     const destinations = await handleShellExec({ input: "message destinations --json" }, ctx);
@@ -4237,7 +4241,7 @@ describe("native administration shell commands", () => {
     expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
-    expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
+    expect(listPage).toHaveBeenCalledWith(IDENTITY.uid, expect.objectContaining({ includeRevoked: false, limit: 50 }));
   });
 
   it("lets the canonical Ship set a local Contact alias", async () => {
@@ -4357,7 +4361,7 @@ describe("native administration shell commands", () => {
     });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.history"],
-      federation: { list: vi.fn(() => [contact]) },
+      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
       procs: {
         get: vi.fn(() => makeProcess({
           processId: "proc:ship",
@@ -4369,6 +4373,7 @@ describe("native administration shell commands", () => {
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({
       get: vi.fn(() => conversation),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     });
 
     const history = await handleShellExec({
@@ -4378,6 +4383,32 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain(`conversation=${conversation.id}`);
     expect(history.stdout).toContain("Flynn (contact:friend)");
     expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("searches one owned Contact conversation and exposes incomplete history", async () => {
+    const contact = makeContact();
+    const search = vi.fn(async () => ({
+      conversationId: contact.conversationId,
+      matches: [{ messageId: "message:found", sequence: 3, excerpt: "password recovery", createdAt: 1 }],
+      coverage: { state: "building", indexedMessages: 1, truncatedMessages: 0, omittedMessages: 0, historicalBeforeSequence: 3, latestSequence: 4 },
+    }));
+    getConversationByIdMock.mockReturnValue({ search });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.list", "conversation.search"],
+      federation: { listPage: vi.fn(() => ({ contacts: [contact] })) },
+      processId: null,
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      get: vi.fn(() => ({ id: contact.conversationId, kind: "contact", ownerUid: IDENTITY.uid, title: null, latestSequence: 4, createdAt: 1, updatedAt: 1 })),
+    });
+    const result = await handleShellExec({ input: `message search --with ${contact.id} --query 'password recovery' --limit 3` }, ctx);
+    expect(result, result.stderr).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("coverage=building");
+    expect(result.stdout).toContain("Results do not cover the complete conversation text.");
+    expect(search).toHaveBeenCalledExactlyOnceWith({ query: "password recovery", beforeSequence: undefined, limit: 3 });
+    const denied = await handleShellExec({ input: "message search --with arbitrary --query private" }, makeContext({ capabilities: ["shell.exec"] }));
+    expect(denied.exitCode).toBe(1);
+    expect(search).toHaveBeenCalledOnce();
   });
 
   it("reports Contact delivery acceptance and later state separately", async () => {

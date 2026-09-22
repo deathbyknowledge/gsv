@@ -14,6 +14,7 @@ export const USER_PROCESS_SIGNALS = [
 export const USER_CONNECTION_SIGNALS = [
   ...USER_PROCESS_SIGNALS,
   "conversation.changed",
+  "conversation.attention.changed",
   "message.started",
   "message.delta",
   "message.committed",
@@ -23,6 +24,10 @@ export const USER_CONNECTION_SIGNALS = [
   "mcp.changed",
   "ledger.changed",
   "contact.changed",
+  "contact.delivery.changed",
+  "profile.changed",
+  "contact.context.changed",
+  "approach.changed",
   "contact.invite.changed",
   "contact.request.changed",
   "r12y.changed",

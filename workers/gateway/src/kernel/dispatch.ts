@@ -1,3 +1,5 @@
+import { handleContactDraftCreate, handleContactDraftGet, handleContactDraftList, handleContactDraftApprove, handleContactDraftDiscard } from "./contact-draft-handlers";
+import { handleContactContextList, handleContactContextSources, handleContactContextSubscribe, handleContactContextSync, handleContactContextPublications, handleContactContextPublish, handleContactContextWithdraw, handleContactContextConsent } from "./shared-context";
 /**
  * Kernel syscall dispatcher.
  *
@@ -19,6 +21,7 @@ import type {
 } from "../protocol/frames";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
+import { handleProcScopeGet, handleProcScopeRevoke } from "./process-scope-handlers";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
@@ -115,6 +118,11 @@ import {
   handleAdapterSend,
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
+import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
+import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import { handleProfileAvatarUpload, handleProfileAvatarRead } from "./profile-images";
+import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -144,6 +152,7 @@ import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
   handleConversationHistory,
+  handleConversationSearch,
   handleConversationShip,
   handleConversationList,
   handleConversationMediaRead,
@@ -157,7 +166,10 @@ import {
   handleContactInviteCreate,
   handleContactInviteList,
   handleContactDeliveryGet,
+  handleContactDeliveryList,
+  handleContactDeliveryRetry,
   handleContactList,
+  handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
@@ -167,6 +179,9 @@ import {
   handleContactSend,
   openContactResourceSource,
 } from "./federation";
+import { handleConversationAttentionList, handleConversationAttentionDismiss } from "./conversation-attention";
+import { handleContactRequestAct } from "./federation/work";
+
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, KernelConnection<KernelConnectionState>>;
@@ -371,11 +386,29 @@ async function dispatchKernel(
       case "conversation.forProcess":
         data = await handleConversationForProcess(frame.args, ctx);
         break;
+      case "conversation.attention.list":
+        data = handleConversationAttentionList(frame.args, ctx);
+        break;
+      case "conversation.attention.dismiss":
+        data = handleConversationAttentionDismiss(frame.args, ctx);
+        break;
+      case "conversation.inbox":
+        data = handleConversationInbox(frame.args, ctx);
+        break;
+      case "conversation.view.get":
+        data = handleConversationViewGet(frame.args, ctx);
+        break;
+      case "conversation.view.update":
+        data = handleConversationViewUpdate(frame.args, ctx);
+        break;
       case "conversation.list":
         data = await handleConversationList(ctx);
         break;
       case "conversation.history":
         data = await handleConversationHistory(frame.args, ctx);
+        break;
+      case "conversation.search":
+        data = await handleConversationSearch(frame.args, ctx);
         break;
       case "conversation.send":
         data = await handleConversationSend(frame.args, ctx);
@@ -396,6 +429,12 @@ async function dispatchKernel(
         return handleProcObserve(frame, ctx);
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
+        break;
+      case "proc.scope.get":
+        data = handleProcScopeGet(frame.args, ctx);
+        break;
+      case "proc.scope.revoke":
+        data = await handleProcScopeRevoke(frame.args, ctx);
         break;
       case "proc.fork":
         data = await handleProcFork(frame.args, ctx);
@@ -688,6 +727,81 @@ async function dispatchKernel(
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
+      case "contact.draft.create":
+        data = await handleContactDraftCreate(frame.args, ctx);
+        break;
+      case "contact.draft.get":
+        data = handleContactDraftGet(frame.args, ctx);
+        break;
+      case "contact.draft.list":
+        data = handleContactDraftList(frame.args, ctx);
+        break;
+      case "contact.draft.approve":
+        data = await handleContactDraftApprove(frame.args, ctx);
+        break;
+      case "contact.draft.discard":
+        data = handleContactDraftDiscard(frame.args, ctx);
+        break;
+
+      case "contact.context.list":
+        data = handleContactContextList(frame.args, ctx);
+        break;
+      case "contact.context.sources":
+        data = handleContactContextSources(ctx);
+        break;
+      case "contact.context.subscribe":
+        data = await handleContactContextSubscribe(frame.args, ctx);
+        break;
+      case "contact.context.sync":
+        data = await handleContactContextSync(frame.args, ctx);
+        break;
+      case "contact.context.publications":
+        data = handleContactContextPublications(frame.args, ctx);
+        break;
+      case "contact.context.publish":
+        data = await handleContactContextPublish(frame.args, ctx);
+        break;
+      case "contact.context.withdraw":
+        data = await handleContactContextWithdraw(frame.args, ctx);
+        break;
+      case "contact.context.consent":
+        data = await handleContactContextConsent(frame.args, ctx);
+        break;
+      case "profile.get":
+        data = handleProfileGet(ctx);
+        break;
+      case "profile.avatar.upload":
+        data = await handleProfileAvatarUpload(ctx, frame.body);
+        break;
+      case "profile.avatar.read":
+        return { type: "res", id: frame.id, ok: true, ...await handleProfileAvatarRead(frame.args, ctx) };
+      case "approach.create":
+        data = await handleApproachCreate(frame.args, ctx);
+        break;
+      case "approach.get":
+        data = handleApproachGet(frame.args, ctx);
+        break;
+      case "approach.list":
+        data = handleApproachList(frame.args, ctx);
+        break;
+      case "approach.decide":
+        data = await handleApproachDecide(frame.args, ctx);
+        break;
+      case "approach.retry":
+        data = await handleApproachRetry(frame.args, ctx);
+        break;
+      case "profile.update":
+        data = await handleProfileUpdate(frame.args, ctx);
+        break;
+      case "profile.publish":
+        data = await handleProfilePublish(frame.args, ctx);
+        break;
+      case "profile.unpublish":
+        data = await handleProfileUnpublish(frame.args, ctx);
+        break;
+      case "profile.resolve":
+        data = await handleProfileResolve(frame.args, ctx);
+        break;
       // --- contact.* ---
       case "contact.identity":
         data = await handleContactIdentity(ctx);
@@ -707,6 +821,18 @@ async function dispatchKernel(
       case "contact.list":
         data = handleContactList(frame.args, ctx);
         break;
+      case "contact.notice.dismiss":
+        data = handleContactNoticeDismiss(ctx);
+        break;
+      case "contact.preferences.update":
+        data = handleContactPreferencesUpdate(frame.args, ctx);
+        break;
+      case "contact.block.set":
+        data = await handleContactBlockSet(frame.args, ctx);
+        break;
+      case "contact.block.list":
+        data = handleContactBlockList(frame.args, ctx);
+        break;
       case "contact.alias.set":
         data = handleContactAliasSet(frame.args, ctx);
         break;
@@ -716,6 +842,12 @@ async function dispatchKernel(
       case "contact.send":
         data = await handleContactSend(frame.args, ctx);
         break;
+      case "contact.delivery.list":
+        data = handleContactDeliveryList(frame.args, ctx);
+        break;
+      case "contact.delivery.retry":
+        data = await handleContactDeliveryRetry(frame.args, ctx);
+        break;
       case "contact.delivery.get":
         data = handleContactDeliveryGet(frame.args, ctx);
         break;
@@ -724,6 +856,9 @@ async function dispatchKernel(
         break;
       case "contact.request.create":
         data = await handleContactRequestCreate(frame.args, ctx);
+        break;
+      case "contact.request.act":
+        data = await handleContactRequestAct(frame.args, ctx);
         break;
       case "contact.request.update":
         data = await handleContactRequestUpdate(frame.args, ctx);
