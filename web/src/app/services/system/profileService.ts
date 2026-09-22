@@ -8,8 +8,9 @@ export async function uploadProfileAvatar(client: GSVClient, blob: Blob, signal:
   return profileAvatarSchema.parse(response.data.avatar);
 }
 
-export async function readProfileAvatar(client: GSVClient, sha256: string, signal: AbortSignal): Promise<Blob> {
-  const response = await client.request("profile.avatar.read", { sha256 }, { signal });
+export async function readProfileAvatar(client: GSVClient, sha256: string, signal: AbortSignal, profileUrl?: string): Promise<Blob> {
+  const args = profileUrl === undefined ? { sha256 } : { sha256, profileUrl };
+  const response = await client.request("profile.avatar.read", args, { signal });
   if (!response.body) throw new Error("Profile image has no content");
   const bytes = await bodyToBytes(response.body, 262_144, signal);
   return new Blob([new Uint8Array(bytes)], { type: "image/png" });

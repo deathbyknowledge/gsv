@@ -127,10 +127,10 @@ export function People({ onDirtyChange, onProfile, onOpenHelper, initialHelp }: 
   return <main class={`people${selection ? " has-selection" : ""}`} aria-label="People">
     <aside class="people-list" aria-label="People and conversations">
       <header class="people-list-heading"><h1>People</h1><button class="people-action" disabled={!connected || !account || busy || !canConfigure(account, "approach.create")} onClick={() => setSelection({ kind: "compose" })}>new conversation</button></header>
-      {account && canConfigure(account, "conversation.attention.list") && <div class="people-attention-link"><button class="people-action" onClick={() => setSelection({ kind: "attention" })}>
-        catch up{attention.data?.readyCount ? ` · ${attention.data.readyCount}` : ""}</button>
-        {!!attention.data?.digestWaitingCount && <span>digest gathering</span>}</div>}
-      <nav class="people-tabs" aria-label="People sections">{(["inbox", "requests", "contacts"] as const).map((name) => <button key={name} aria-current={view === name ? "page" : undefined} disabled={busy} onClick={() => { setView(name); setFilter(""); }}>{name === "requests" ? "Requests" : name === "inbox" ? "Inbox" : "Contacts"}</button>)}</nav>
+      {account && (canConfigure(account, "conversation.attention.list") || canConfigure(account, "approach.list")) && <div class="people-attention-link"><button class="people-action" onClick={() => setSelection({ kind: "attention" })}>
+        catch up{attention.readyCount ? ` · ${attention.readyCount}` : ""}</button>
+        {!!attention.digestWaitingCount && <span>digest gathering</span>}</div>}
+      <nav class="people-tabs" aria-label="People sections">{(["inbox", "requests", "contacts"] as const).map((name) => <button key={name} aria-current={view === name ? "page" : undefined} disabled={busy} onClick={() => { setView(name); setFilter(""); }}>{name === "requests" ? "Requests" : name === "inbox" ? "Inbox" : "Contacts"}{name === "requests" && attention.requestCount > 0 && <span class="instrument-attention-count" aria-label={`${attention.requestCount} message requests need attention`}>{attention.requestCount}</span>}</button>)}</nav>
       {view === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
         <div class="people-list-tools"><div class="people-directions">{(["incoming", "outgoing"] as const).map((value) => <button class="people-action" aria-pressed={direction === value} disabled={busy} onClick={() => setDirection(value)}>{value === "incoming" ? "received" : "sent"}</button>)}</div><label class="people-check"><input type="checkbox" checked={history} onChange={(event) => setHistory(event.currentTarget.checked)} />history</label></div>
@@ -158,7 +158,9 @@ export function People({ onDirtyChange, onProfile, onOpenHelper, initialHelp }: 
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label="Selected conversation">
       {selection && <button class="people-action people-back" disabled={busy} onClick={() => setSelection(null)}>← back to {view}</button>}
       {selection?.kind === "compose" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} onOpen={openContact} onInvitation={() => setSelection({ kind: "invitation" })} />
-        : selection?.kind === "attention" ? <ConversationAttention account={account} onOpen={openContact} />
+        : selection?.kind === "attention" ? <ConversationAttention account={account} onOpen={openContact} onOpenRequest={(id) => {
+          setView("requests"); setDirection("incoming"); setHistory(false); setSelection({ kind: "request", id });
+        }} />
         : selection?.kind === "sharing" ? <SharedContextManager account={account} onDirty={setPanelDirty} onOpen={openContact} />
         : selection?.kind === "blocked" ? <BlockedPeople account={account} />
         : selection?.kind === "invitation" ? <AddContact account={account} onClose={() => setSelection(null)} onAdded={openContact} />

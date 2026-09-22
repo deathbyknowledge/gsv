@@ -16,6 +16,7 @@ import type {
 import type { TestHarness } from "wrangler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import { profileImageFixture } from "../src/test-support/profile-image";
 
 const FIRST_USER = "federation-first";
 const SECOND_USER = "federation-second";
@@ -66,7 +67,9 @@ describe("cross-GSV federation integration", () => {
 
   it("publishes one approved profile and resolves it from an independently routed space", async () => {
     expect((await first.profile.get({})).profile.published).toBeUndefined();
-    const draft = { alias: "public-first", displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
+    const bytes = profileImageFixture();
+    const uploaded = await first.request("profile.avatar.upload", {}, { body: bodyFromBytes(bytes) });
+    const draft = { alias: "public-first", displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const, avatar: uploaded.data.avatar };
     await first.profile.update({ expectedRevision: 0, draft });
     const url = new URL("/@public-first", firstOrigin).href;
     const privatePage = await fetch(url);
@@ -78,6 +81,9 @@ describe("cross-GSV federation integration", () => {
     expect(remote.profile).toMatchObject({ alias: draft.alias, about: draft.about, origin: firstOrigin.origin, revision: 1 });
     expect(remote.profile).not.toHaveProperty("ownerUid");
     expect(remote.profile).not.toHaveProperty("username");
+    const image = await second.request("profile.avatar.read", { sha256: uploaded.data.avatar.sha256, profileUrl: url });
+    expect(image.body).toBeDefined();
+    expect(await bodyToBytes(image.body!)).toEqual(bytes);
     expect((await second.profile.get({})).profile.published).toBeUndefined();
     const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
     const document = await fetch(subjectUrl);
@@ -86,6 +92,7 @@ describe("cross-GSV federation integration", () => {
     expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
     await first.profile.unpublish({ expectedRevision: 2 });
     await expect(second.profile.resolve({ url })).rejects.toThrow("404");
+    await expect(second.request("profile.avatar.read", { sha256: uploaded.data.avatar.sha256, profileUrl: url })).rejects.toThrow("404");
     const unavailableSubject = await fetch(subjectUrl);
     expect(unavailableSubject.status).toBe(404);
     await unavailableSubject.arrayBuffer();
@@ -450,12 +457,14 @@ describe("cross-GSV federation integration", () => {
     expect((await first.approach.create(input)).approach.id).toBe(sent.id);
     await expect.poll(async () => (await second.approach.list({ direction: "incoming" })).approaches[0]?.state, { timeout: 20_000 }).toBe("pending");
     const received = (await second.approach.list({ direction: "incoming" })).approaches[0];
+    expect((await second.approach.list({ direction: "incoming", status: "active", limit: 1 })).total).toBe(1);
     const before = await second.conversation.history({ conversationId: received.conversationId });
     expect(messagesWithText(before, input.text)).toHaveLength(1);
     expect(before.messages.find((message) => message.text === input.text)?.social?.provenance.kind).toBe("human");
     expect(before.conversation.handlerPid).toBeUndefined();
     await second.approach.decide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" });
     await expect.poll(async () => (await first.approach.get({ approachId: sent.id })).approach.connection, { timeout: 20_000 }).toBe("connected");
+    await expect.poll(async () => (await second.approach.list({ direction: "incoming", status: "active", limit: 1 })).total, { timeout: 20_000 }).toBe(0);
     const connected = (await second.approach.get({ approachId: received.id })).approach;
     expect(connected.contactId).toBeDefined();
     expect(connected.conversationId).toBe(received.conversationId);

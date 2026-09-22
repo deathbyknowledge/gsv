@@ -32,7 +32,14 @@ counts use Kernel metadata without loading Conversation histories. The invalidat
 signal additionally requires the list capability. No read or dismissal is sent
 to the other participant.
 
-People exposes the list as Catch up, and the shared header shows the number of
-conversations with ready alerts. Each item opens its conversation or dismisses
-only that alert. The separate unread cursor advances only when messages are
-actually visible in the reading pane.
+People exposes the list as Catch up alongside incoming message requests. Requests
+are read from the existing owned approach list, with a total independent of page
+size; they do not acquire a second alert record. The shared header counts ready
+conversation alerts plus active incoming requests. The Requests tab also shows
+that incoming count. An approach change refreshes request pages and the summary,
+including after reconnect. Merely viewing a request does not dismiss its decision.
+
+Catch up opens a request for review or a conversation for reading. Only a
+conversation alert can be dismissed there; accepting, declining or blocking a
+request resolves its separate decision. The separate unread cursor advances only
+when messages are actually visible in the reading pane.

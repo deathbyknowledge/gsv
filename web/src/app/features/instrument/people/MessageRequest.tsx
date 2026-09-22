@@ -52,7 +52,7 @@ export function MessageRequest({ request, account, onOpen, onDirty }: {
       <h2>Open a conversation?</h2>
       <p class="people-note">Accept to exchange messages and attachments with this person. You can save them as a contact afterwards. Your Ship won’t respond unless you ask it to.</p>
       <div class="people-actions"><button class="ibtn is-primary" disabled={!allowed("approach.decide") || pending || request.state !== "pending"} onClick={() => decide.mutate("accept")}>{decide.isPending && decide.variables === "accept" ? "accepting…" : "accept conversation"}</button><button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("decline")}>decline</button></div>
-      <p class="people-note">Declining does not notify the sender.</p>
+      <p class="people-note">Decline privately. The sender won’t be told that you read or declined their request.</p>
     </div>}
     {canDecide && request.direction === "outgoing" && <div class="people-decision">
       <p class="people-note">They can read this first message and decide whether to open a conversation. Requests expire after 30 days.</p>

@@ -52,7 +52,7 @@ export type ProfileResolveArgs = { url: string } | { contactId: string };
 export type ProfileResolveResult = { profile: PublicProfile };
 export type ProfileAvatarUploadArgs = Record<string, never>;
 export type ProfileAvatarUploadResult = { avatar: ProfileAvatar };
-export type ProfileAvatarReadArgs = { sha256: string };
+export type ProfileAvatarReadArgs = { sha256: string; profileUrl?: string };
 export type ProfileAvatarReadResult = { avatar: ProfileAvatar };
 
 export const publicProfileAliasSchema = z.string().check(z.regex(/^[a-z][a-z0-9_-]{1,31}$/));

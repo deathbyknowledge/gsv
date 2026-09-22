@@ -77,6 +77,8 @@
 .people-form textarea { resize: vertical; min-height: 140px; max-height: 50vh; }
 .people-profile-preview { border-block: 1px solid var(--border); padding-block: 22px; }
 .people-profile-preview h2 { margin: 10px 0; }
+.people-profile-image { min-height: 96px; margin-bottom: 16px; display: flex; align-items: center; }
+.people-profile-image img { display: block; width: 96px; height: 96px; border-radius: 8px; object-fit: cover; }
 .people-profile-preview > p:not(.people-note) { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.6 var(--gsv-font-prose); }
 .people-compose-footer { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; border-top: 1px solid var(--border); padding-top: 20px; margin-top: 32px; color: var(--text-dim); font: 14px/1.6 var(--gsv-font-prose); }
 .people-status { color: var(--accent); font-size: 11px; margin-bottom: 28px; }

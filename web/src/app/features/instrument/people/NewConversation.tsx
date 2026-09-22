@@ -7,6 +7,7 @@ import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { INSTRUMENT_CONTACTS_KEY } from "../wire/queryKeys";
 import { approachSendIntent, type ApproachDraft } from "./peopleModel";
+import { PublicProfileImage } from "./PublicProfileImage";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, onOpen, onInvitation }: {
   account: ConsoleAccount | undefined;
@@ -61,6 +62,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, onOp
     </form>
     {profile && <>
       <div class="people-profile-preview">
+        {account && canConfigure(account, "profile.avatar.read") && <PublicProfileImage profile={profile} />}
         <span class="people-kicker">@{profile.alias} · {new URL(profile.origin).host}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
         <p class="people-note">{profile.representation === "human-and-ship" ? "They may reply personally or through their Ship. Messages show who sent them." : "A personal profile."}</p>

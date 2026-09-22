@@ -692,6 +692,11 @@ use the returned `(createdAtMs, id)` cursor. Decisions (`accept`, `decline`,
 `withdraw`) require the displayed revision. Block uses `contact.block.set` for
 the pinned actor. Private setup material never appears in these results.
 
+`approach.list` also returns `total` for the selected direction and active/history
+filter, independently of its page cursor. Clients can count incoming decisions
+without loading every request or any message history. `approach.changed` refreshes
+both that count and the list; declines remain private to the recipient.
+
 `delivery` describes first-message receipt; `connection` describes pairing.
 `received` does not mean read or accepted. `connecting` and `failed` preserve
 uncertain setup, with explicit retry where the local participant owns recovery.
@@ -721,7 +726,7 @@ federated subject. `expectedRevision` prevents stale edits or publication.
 
   "profile.get": { args: {}; result: { profile: ProfileState } };
   "profile.avatar.upload": { args: {}; result: { avatar: ProfileAvatar } };
-  "profile.avatar.read": { args: { sha256: string }; result: { avatar: ProfileAvatar } };
+  "profile.avatar.read": { args: { sha256: string; profileUrl?: string }; result: { avatar: ProfileAvatar } };
   "profile.update": { args: { expectedRevision: number; draft: ProfileFields }; result: { profile: ProfileState } };
   "profile.publish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
   "profile.unpublish": { args: { expectedRevision: number }; result: { profile: ProfileState } };
@@ -752,6 +757,19 @@ image serving requires a currently published reference and rechecks publication
 after reading storage. Unreferenced uploads expire after 24 hours; each owner may
 retain eight images, with an installation ceiling of 2,048. Neither syscall
 accepts another account or a caller-chosen storage address.
+
+For an explicitly opened remote profile, `profile.avatar.read` takes its public
+`profileUrl` and expected image hash. It resolves the current signed publication,
+fetches only that publication's image through federation egress without redirects,
+and validates PNG dimensions, byte length and SHA-256 before returning the binary
+body. The browser can render a local blob URL without disclosing the viewer's IP
+or browser cookies to the remote space. Unpublished or replaced images cannot be
+read through an old profile descriptor.
+
+Image bytes are profile-owned R2 objects under the installation prefix at
+`social/avatars/<encoded subject>/<sha256>.png`. Kernel SQLite owns their metadata
+and publication/cleanup state. This storage is not mounted in the GSV filesystem;
+use the image syscall or currently published image URL to read it.
 
 `profile.resolve` fetches one explicitly chosen profile URL (or the published
 subject of one owned active contact) through public-only

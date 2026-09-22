@@ -17,6 +17,48 @@ const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", g
 const DRAFT: ProfileFields = { alias: "public-person", displayName: "Published name", about: "Hello from my space", contactPolicy: "requests", representation: "human-and-ship" };
 
 describe("explicit profile publication", () => {
+  it("reads a remote image only through its current signed profile and verifies its bytes", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      const bytes = profileImageFixture();
+      const { avatar } = await handleProfileAvatarUpload(ctx, bodyFromBytes(bytes));
+      await handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, avatar } }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const profile = ctx.profiles.publication(OWNER.uid)!.profile;
+      const fetch = vi.spyOn(globalThis, "fetch");
+      try {
+        fetch.mockResolvedValueOnce(Response.json(profile))
+          .mockResolvedValueOnce(new Response(bytes, { headers: { "content-type": "image/png" } }));
+        const result = await handleProfileAvatarRead({ sha256: avatar.sha256, profileUrl: profile.url }, ctx);
+        expect(result.data.avatar).toEqual(avatar);
+        expect(await bodyToBytes(result.body)).toEqual(bytes);
+        expect(fetch).toHaveBeenLastCalledWith(avatar.url, expect.objectContaining({ redirect: "manual", headers: { accept: "image/png" } }));
+
+        fetch.mockClear();
+        fetch.mockResolvedValueOnce(Response.json(profile));
+        await expect(handleProfileAvatarRead({ sha256: "0".repeat(64), profileUrl: profile.url }, ctx)).rejects.toThrow("changed");
+        expect(fetch).toHaveBeenCalledOnce();
+
+        const { signature: _signature, ...unsigned } = profile;
+        const mismatch = { ...unsigned, avatar: { ...avatar, sha256: "0".repeat(64), url: avatar.url.replace(avatar.sha256, "0".repeat(64)) } };
+        fetch.mockResolvedValueOnce(Response.json({ ...mismatch, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(mismatch)) }))
+          .mockResolvedValueOnce(new Response(bytes, { headers: { "content-type": "image/png" } }));
+        await expect(handleProfileAvatarRead({ sha256: mismatch.avatar.sha256, profileUrl: profile.url }, ctx)).rejects.toThrow("does not match");
+
+        const cancel = vi.fn();
+        fetch.mockClear();
+        fetch.mockResolvedValueOnce(Response.json(profile)).mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), {
+          status: 302, headers: { location: "https://tracker.example/image.png" },
+        }));
+        await expect(handleProfileAvatarRead({ sha256: avatar.sha256, profileUrl: profile.url }, ctx)).rejects.toThrow("unavailable");
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(cancel).toHaveBeenCalledOnce();
+        await expect(handleProfileAvatarRead({ sha256: avatar.sha256, profileUrl: profile.url }, { ...ctx, processId: "proc:ship" })).rejects.toThrow("signed-in human");
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally { fetch.mockRestore(); }
+    });
+  });
+
   it("resolves only the explicitly selected contact's pinned public subject", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = profileContext(storage);

@@ -19,6 +19,7 @@ export type ApproachListArgs = {
 };
 export type ApproachListResult = {
   approaches: ApproachSummary[];
+  total: number;
   next?: { createdAtMs: number; id: string };
 };
 export type ApproachDecideArgs = {

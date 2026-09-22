@@ -46,8 +46,10 @@ published identity.
 
 Compose follows resolve → review → write. A changed profile requires another
 review. Text remains available after errors, retry uses the original intent,
-and navigation/reload protects unsent content. Requests show no remote avatars,
-link previews or fetched attachments. Established messages retain safe media,
+and navigation/reload protects unsent content. A resolved request profile can
+show its published image through the local gateway; the browser does not fetch
+another space directly. Requests show no link previews or fetched attachments.
+Established messages retain safe media,
 reply references and a clear human / Ship / approved-draft attribution.
 
 “Ask my Ship” previews the exact selected messages and resources entering context.
@@ -76,12 +78,15 @@ behavior and boundary checks; the maintainer trials the rendered UI, keyboard,
 mobile and two-space flows. These design decisions are not a claim that the
 entire experience is implemented or visually accepted.
 
-Catch up is a finite, private list of message alerts in People. The shared header
-shows the ready conversation count. Notify is immediate; Digest gathers a
-conversation's messages for 24 hours before it becomes ready. Each row opens the
-conversation or dismisses the exact covered alert. Dismissal does not mark the
-thread read. The UI explains queued digest timing and keeps unread conversation
-state separate. No browser notification permission or generated summary is needed.
+Catch up is a finite, private list of message alerts and incoming message
+requests in People. The shared header shows both kinds of pending attention, and
+the Requests tab shows its incoming request count. Notify is immediate; Digest
+gathers a conversation's messages for 24 hours before it becomes ready. Each row
+opens a conversation or opens the exact request for review. Dismissing a
+conversation alert does not mark the thread read; viewing a request does not
+decide it. Declining a request is private and does not notify the sender. The UI
+explains queued digest timing and keeps unread conversation state separate. No
+browser notification permission or generated summary is needed.
 
 Work requests expose the immutable offer and two short participant statement
 lists. A stop request, cancellation confirmation, result report, dispute and

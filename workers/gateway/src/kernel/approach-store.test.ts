@@ -4,6 +4,27 @@ import { APPROACH_LIFETIME_MS, APPROACH_RECEIPT_MS, ApproachStore, type PrepareA
 import { FederationStore } from "./federation-store";
 
 describe("durable first-contact records", () => {
+  it("counts all requests needing attention independently of pages and keeps owners and decisions separate", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const requests = new ApproachStore(storage);
+      const first = requests.prepare(incoming(), () => {});
+      const second = requests.prepare(incoming(), () => {});
+      requests.prepare(incoming(1001), () => {});
+      requests.prepare({ ...incoming(), direction: "outgoing" }, () => {});
+      expect(requests.list(1000, { direction: "incoming", status: "active", limit: 1 })).toHaveLength(1);
+      expect(requests.count(1000, "incoming", "active")).toBe(2);
+      expect(requests.count(1000, "outgoing", "active")).toBe(1);
+      expect(requests.count(1001, "incoming", "active")).toBe(1);
+      requests.messageCommitted(first.summary.id, 1);
+      requests.decide(first.summary.id, 1000, 1, "declined");
+      expect(requests.count(1000, "incoming", "active")).toBe(1);
+      expect(requests.count(1000, "incoming", "history")).toBe(1);
+      requests.expire(second.summary.id, second.summary.expiresAtMs + 1);
+      expect(new ApproachStore(storage).count(1000, "incoming", "active")).toBe(0);
+      expect(requests.count(1000, "incoming", "history")).toBe(2);
+    });
+  });
+
   it("measures the full installation intake budget and frees admission capacity after expiry", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const requests = new ApproachStore(storage);

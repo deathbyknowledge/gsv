@@ -2,6 +2,11 @@ import type { ActorRef, ApproachContent, ApproachRef, ApproachState, ApproachSum
 import { approachMetadataSchema, federationPublicKeySchema, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 
 const PENDING_STATES = "('preparing', 'pending', 'accepting')";
+const ACTIVE = `(state IN ${PENDING_STATES} OR (state = 'accepted' AND (next_attempt_at IS NOT NULL OR attempts >= 12)))`;
+
+function statusFilter(status?: "active" | "history"): string {
+  return status === "active" ? `AND ${ACTIVE}` : status === "history" ? `AND NOT ${ACTIVE}` : "";
+}
 export const APPROACH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
 export const APPROACH_RECEIPT_MS = 8 * 24 * 60 * 60_000;
 
@@ -254,8 +259,7 @@ export class ApproachStore {
 
   list(ownerUid: number, input: { direction: ApproachSummary["direction"]; status?: "active" | "history"; before?: { createdAtMs: number; id: string }; limit: number }): ApproachSummary[] {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("Message request page limit must be between 1 and 100");
-    const active = `(state IN ${PENDING_STATES} OR (state = 'accepted' AND (next_attempt_at IS NOT NULL OR attempts >= 12)))`;
-    const status = input.status === "active" ? `AND ${active}` : input.status === "history" ? `AND NOT ${active}` : "";
+    const status = statusFilter(input.status);
     const before = input.before ? "AND (created_at, approach_id) < (?, ?)" : "";
     const values: (string | number)[] = [ownerUid, input.direction];
     if (input.before) values.push(input.before.createdAtMs, input.before.id);
@@ -263,6 +267,11 @@ export class ApproachStore {
     const rows = this.sql.exec<ApproachRow>(`SELECT * FROM social_approaches WHERE owner_uid = ? AND direction = ?
       ${status} ${before} ORDER BY created_at DESC, approach_id DESC LIMIT ?`, ...values);
     return rows.toArray().map(summary);
+  }
+
+  count(ownerUid: number, direction: ApproachSummary["direction"], status?: "active" | "history"): number {
+    return this.sql.exec<{ total: number }>(`SELECT count(*) AS total FROM social_approaches
+      WHERE owner_uid = ? AND direction = ? ${statusFilter(status)}`, ownerUid, direction).one().total;
   }
 
   messageCommitted(id: string, sequence: number, now = Date.now()): ApproachRecord {
