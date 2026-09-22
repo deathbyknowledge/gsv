@@ -16,7 +16,7 @@ function measuredContext(process: Process) {
     revision: process.store.state.nextContextStateRevision(), runId: "measured-run",
     messageCount: stats.count, lastMessageId: stats.lastMessageId,
     provider: "workers-ai", model: "@cf/test/model", reasoning: "high",
-    contextWindowTokens: 11_000, maxOutputTokens: 1_000,
+    contextWindowTokens: 20_000, maxOutputTokens: 1_000,
     measurement: { estimatedInputTokens: 8_000, inputTokens: 8_000, confirmedInputTokens: 8_000,
       estimatedTrailingInputTokens: 0, source: "provider" },
     usageState: { inputTokens: 8_000, outputTokens: 123, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 8_123, cost: null },
