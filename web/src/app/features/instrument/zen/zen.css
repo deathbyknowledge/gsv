@@ -362,13 +362,16 @@
   font-size: 11px;
   color: var(--text-dim);
 }
-.zen-places li {
+.zen-places li { min-width: 0; }
+.zen-place {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
   overflow-wrap: anywhere;
+  text-align: left;
 }
+.zen-place:hover, .zen-place:focus-visible { color: var(--text); }
 .zen-place-status {
   flex: none;
   width: 7px;

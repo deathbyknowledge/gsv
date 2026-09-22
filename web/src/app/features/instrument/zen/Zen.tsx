@@ -8,6 +8,7 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
+import { Hint } from "../../../components/ui/Tooltip";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
   decideChatHil,
@@ -1036,16 +1037,28 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           {places.length > 0 && <ul class="zen-places" aria-label="Places">
-            {places.map((place) => (
-              <li key={place.id}>
-                <span
-                  class={`zen-place-status${place.online ? " is-online" : ""}`}
-                  role="img"
-                  aria-label={place.online ? "Online" : "Offline"}
-                />
-                <span>{place.label}</span>
-              </li>
-            ))}
+            {targetsQuery.data?.map((target) => {
+              const label = target.label || target.deviceId;
+              const kind = target.deviceId === CLOUD_PLACE_ID ? "Cloud home"
+                : target.kind === "native-device" ? "Computer"
+                : target.kind === "browser" ? "Browser" : "Place";
+              const details = [target.online ? "Online" : "Offline", kind, target.platform];
+              if (!target.online) {
+                details.push(target.lastSeenAt === null ? "Last seen unknown"
+                  : `Last seen ${new Date(target.lastSeenAt).toLocaleString(undefined, { timeZone })}`);
+              }
+              return (
+                <li key={target.deviceId}>
+                  <Hint text={details.filter(Boolean).join(" · ")} position="top">
+                    <button type="button" class="zen-place" aria-label={`View ${label} in Fleet`}
+                      onClick={() => onFleet(`target:${target.deviceId}`)}>
+                      <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  </Hint>
+                </li>
+              );
+            })}
           </ul>}
           <PromptLine
             ref={promptRef}
