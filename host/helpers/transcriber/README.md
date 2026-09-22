@@ -30,7 +30,8 @@ shaders used by the native inference library.
 
 Place `gsv-transcribe` beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
 development. Debug app builds also discover either a release or debug helper in the workspace
-`target` directory. Ship `THIRD_PARTY.md` beside the helper in distributable packages.
+`target` directory. Ship `THIRD_PARTY.md` beside the helper in standalone distributions;
+macOS app bundles keep it in `Contents/Resources/licenses/transcriber/`.
 `Cmd/Ctrl+Shift+Space` starts or finishes dictation. The first use downloads and SHA-256 verifies
 the pinned 534 MiB Q5 model. Concurrent app instances serialize preparation with a cache lock and
 resume a stable partial download only after the pinned server response confirms the exact remaining
