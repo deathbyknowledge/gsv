@@ -61,6 +61,55 @@ describe("terminal service", () => {
   });
 
   it.each([
+    { label: "offline before dispatch", code: 503, message: "Target offline: ham-chrome" },
+    { label: "missing implementation", code: 400, message: "Target ham-chrome does not implement shell.exec" },
+  ])("finishes a rejected sessionless command ($label) instead of leaving it live", async ({ code, message }) => {
+    vi.useFakeTimers();
+    const client = new GSVClient();
+    const request = vi.spyOn(client, "request").mockRejectedValue(new Error("Unexpected request"));
+    let journal: string | null = null;
+    const storage = { read: () => journal, write: (value: string) => { journal = value; } };
+    const operations = {
+      execute: (input: Parameters<typeof executeTerminalCommand>[1], signal: AbortSignal) => executeTerminalCommand(client, input, signal),
+      cancel: (id: string, signal: AbortSignal) => cancelTerminalCommand(client, id, signal),
+    };
+    const owner = new TerminalSessions(operations, storage);
+    try {
+      owner.setConnected(true);
+      // A rejected sessionless command carries no shellStart marker: the Kernel
+      // attaches one only to a start:true frame.
+      request.mockRejectedValueOnce(new GsvClientError({ code, message }));
+      const id = owner.start("echo hello", "ham-chrome", "ship", false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(owner.snapshot()[0]).toMatchObject({ status: "failed", sessionId: null, error: message, endedAt: expect.any(Number) });
+
+      // Nothing to poll and nothing to recover, so reconnecting must not revive it.
+      owner.setConnected(false);
+      owner.setConnected(true);
+      owner.targetConnected("ham-chrome");
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(owner.snapshot()[0]).toMatchObject({ status: "failed", endedAt: expect.any(Number) });
+
+      // Stop has nothing left to do and must not claim a lost session.
+      await owner.stop(id);
+      expect(owner.snapshot()[0]).toMatchObject({ status: "failed", actionError: "", action: null });
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally {
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a rejected sessionless command as failed rather than throwing", async () => {
+    const client = new GSVClient();
+    const error = new GsvClientError({ code: 503, message: "Target offline: ham-chrome" });
+    const request = vi.spyOn(client, "request").mockRejectedValue(error);
+    await expect(executeTerminalCommand(client, { input: "echo hello", target: "ham-chrome" }))
+      .resolves.toMatchObject({ status: "failed", stderr: "Target offline: ham-chrome", sessionId: null });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     new Error("Connection closed"),
     new GsvClientError({ code: 503, message: "Device disconnected: macbook" }),
     new GsvClientError({ code: 504, message: "Request timed out" }),
