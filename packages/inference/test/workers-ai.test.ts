@@ -138,7 +138,7 @@ describe("shared Workers AI inference", () => {
     expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
     expect(request.method).toBe("POST");
     expect(request.headers.get("cf-aig-collect-log-payload")).toBe("false");
-    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toMatchObject({
       "gsv.installation_id": REQUEST.installationId,
       "gsv.request_id": REQUEST.logicalRequestId,
       "gsv.attempt_id": expect.any(String),
@@ -251,7 +251,7 @@ describe("shared Workers AI inference", () => {
 
     expect(run).toHaveBeenCalledTimes(2);
     const metadata = run.mock.calls.map((args) => JSON.parse(new Request(...args).headers.get("cf-aig-metadata")!));
-    expect(metadata).toEqual([0, 1].map(() => ({
+    expect(metadata).toMatchObject([0, 1].map(() => ({
       "gsv.installation_id": REQUEST.installationId,
       "gsv.request_id": REQUEST.logicalRequestId,
       "gsv.attempt_id": expect.any(String),

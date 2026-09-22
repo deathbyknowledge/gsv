@@ -131,7 +131,7 @@ describe("public inference executor RPC", () => {
     expect(bindingFetch).toHaveBeenCalledTimes(2);
     expect(dispatched.map((entry) => entry.metadata["gsv.installation_id"]).sort()).toEqual(ids);
     for (const entry of dispatched) {
-      expect(entry.metadata).toEqual({
+      expect(entry.metadata).toMatchObject({
         "gsv.installation_id": expect.stringMatching(/^space_metadata_[ab]$/),
         "gsv.request_id": "same-logical-request",
         "gsv.attempt_id": expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),

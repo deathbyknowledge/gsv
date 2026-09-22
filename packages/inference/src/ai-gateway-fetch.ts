@@ -3,6 +3,7 @@ import {
   type AiBinding,
 } from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
 import type { InferenceAttribution } from "./text/provider";
+import { inferenceRequestShape } from "./request-shape";
 
 /** Attribution comes from the executing installation owner, never request headers. */
 export function createAttributedAiBindingFetch(
@@ -19,6 +20,10 @@ export function createAttributedAiBindingFetch(
       "gsv.installation_id": installationId,
       "gsv.request_id": logicalRequestId,
       "gsv.attempt_id": crypto.randomUUID(),
+      ...(typeof init?.body === "string" ? {
+        "gsv.request_bytes": new Blob([init.body]).size,
+        "gsv.request_shape": inferenceRequestShape(init.body),
+      } : {}),
     }));
     return bindingFetch(input, { ...init, headers });
   };
