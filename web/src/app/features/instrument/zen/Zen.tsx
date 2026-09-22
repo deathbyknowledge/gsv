@@ -1035,6 +1035,18 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
+          {places.length > 0 && <ul class="zen-places" aria-label="Places">
+            {places.map((place) => (
+              <li key={place.id}>
+                <span
+                  class={`zen-place-status${place.online ? " is-online" : ""}`}
+                  role="img"
+                  aria-label={place.online ? "Online" : "Offline"}
+                />
+                <span>{place.label}</span>
+              </li>
+            ))}
+          </ul>}
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}

@@ -352,6 +352,31 @@
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
 .zen-delegated-approvals .fleet-approval { margin-top: 10px; }
+.zen-places {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.zen-places li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.zen-place-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.zen-place-status.is-online { background: var(--online); }
 .zen-feedback {
   display: flex;
   flex-wrap: wrap;
