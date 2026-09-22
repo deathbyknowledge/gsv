@@ -140,7 +140,7 @@ describe("resolveGenerationOptions", () => {
         ...CONFIG,
         provider: "google",
         model: "gemini-3.1-pro-preview",
-        reasoning: "medium",
+        reasoning: "xhigh",
       },
       context: CONTEXT,
     });
@@ -489,7 +489,7 @@ describe("createGenerationService", () => {
       config: {
         ...CONFIG,
         provider: "openai-codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-astra",
         apiKey: "codex-access-token",
         openAiCodex: { accountId: "chatgpt-account-1" },
       },
@@ -519,7 +519,7 @@ describe("createGenerationService", () => {
       config: {
         ...CONFIG,
         provider: "openai-codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-astra",
         apiKey: "codex-access-token",
         baseUrl: "https://chatgpt.com/backend-api",
         providerStyle: "openai-responses",
