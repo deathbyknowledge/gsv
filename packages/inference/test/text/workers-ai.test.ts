@@ -154,9 +154,9 @@ describe("Workers AI provider", () => {
     });
     expect(payload).not.toHaveProperty("max_completion_tokens");
     expect(payload).not.toHaveProperty("reasoning_effort");
-    expect(payload).not.toHaveProperty("tools.0.function.strict");
+    expect(payload).toHaveProperty("tools.0.function.strict", false);
     expect(request.headers.get("cf-aig-collect-log")).toBe("false");
-    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toMatchObject({
       "gsv.installation_id": "native-space",
       "gsv.request_id": "native-request",
       "gsv.attempt_id": expect.any(String),

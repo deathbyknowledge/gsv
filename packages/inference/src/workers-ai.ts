@@ -1,5 +1,6 @@
 import {
   createProvider,
+  normalizeContext,
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
@@ -229,7 +230,7 @@ async function* streamWorkersAiGeneration(
     });
     const source = workersAi.streamSimple(
       workersAiModel(modelRouting),
-      context,
+      normalizeContext(context),
       {
         fetch: bindingFetch,
         signal: attemptSignal,
@@ -509,7 +510,7 @@ function workersAiModel(
     baseUrl: AI_GATEWAY_COMPAT_URL,
     reasoning: routing.reasoning,
     thinkingLevelMap: catalogModel?.thinkingLevelMap,
-    input: ["text", "image"],
+    input: catalogModel?.input ?? ["text"],
     cost: {
       input: routing.inputNanoUsdPerToken / 1_000,
       output: routing.outputNanoUsdPerToken / 1_000,
@@ -715,7 +716,10 @@ function cloneToolCall(
     type: "toolCall",
     id: toolCall.id,
     name: toolCall.name,
-    arguments: structuredClone(toolCall.arguments),
+    // SAFETY: structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
+    arguments: structuredClone(toolCall.arguments) as Extract<
+      InferenceResult["content"][number], { type: "toolCall" }
+    >["arguments"],
   };
   if (toolCall.thoughtSignature !== undefined) {
     clone.thoughtSignature = toolCall.thoughtSignature;

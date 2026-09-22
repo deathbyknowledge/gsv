@@ -12,6 +12,7 @@ import type {
   InferenceTarget as ManagedInferenceTarget,
 } from "@humansandmachines/gsv/services/inference";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 import {
   createGsvInferenceProviderFactory,
 } from "../../src/text/gsv-provider";
@@ -60,6 +61,24 @@ describe("GSV inference provider", () => {
 
     expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
       .toBe(32_768);
+  });
+
+  it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {
+    const generateStream = vi.fn(async () => eventStream({ type: "done", reason: "stop", message: RESULT }));
+    const { service } = managedService(generateStream);
+    const models = createModels();
+    models.setProvider(createGsvInferenceProviderFactory(service).create(ATTRIBUTION));
+    const tools = [{ name: "Read", description: "Read a fixture", parameters: Type.Object({ path: Type.String() }) }];
+    const context: Context = { ...CONTEXT, systemPrompt: "Synthetic system policy.", tools };
+
+    await models.completeSimple(models.getModel("gsv", GSV_INFERENCE_MODEL)!, context);
+
+    expect(generateStream).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      systemPrompt: context.systemPrompt,
+      tools: JSON.parse(JSON.stringify(tools)),
+      messages: CONTEXT.messages,
+    }));
+    expect(context.messages).toEqual(CONTEXT.messages);
   });
 
   it("disables DeepSeek thinking for a bounded compaction request through GSV Default", async () => {
