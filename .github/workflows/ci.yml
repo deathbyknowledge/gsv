@@ -31,7 +31,6 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       machine: ${{ steps.filter.outputs.machine }}
       desktop: ${{ steps.filter.outputs.desktop }}
-      gestures: ${{ steps.filter.outputs.gestures }}
       host_crates: ${{ steps.filter.outputs.host_crates }}
     steps:
       - uses: actions/checkout@v4
@@ -174,6 +173,7 @@ jobs:
               - 'host/crates/config/**'
             desktop:
               - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/apps/desktop/**'
@@ -188,14 +188,6 @@ jobs:
               - 'host/crates/gesture-protocol/**'
               - 'web/public/brand/gsv-mark-white.svg'
               - 'web/public/fonts/**'
-            gestures:
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/release.yml'
-              - 'host/Cargo.toml'
-              - 'host/Cargo.lock'
-              - 'host/helpers/gestures/**'
-              - 'host/crates/gesture-protocol/**'
-              - 'scripts/vision-native/**'
             host_crates:
               - '.github/workflows/ci.yml'
               - 'host/Cargo.toml'
@@ -596,40 +588,6 @@ jobs:
         working-directory: host
         run: cargo clippy --locked --package machine --all-targets -- -D warnings
 
-  gestures-native:
-    name: Gesture runtime (${{ matrix.os }})
-    needs: [changes]
-    if: needs.changes.outputs.gestures == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: host -> target
-          cache-on-failure: true
-
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang cmake libclang-dev \
-            libwayland-dev libx11-dev libxkbcommon-dev linux-libc-dev pkg-config
-
-      - name: Test native inference and the relocated helper
-        working-directory: host
-        run: cargo test --locked --release --package gestures --package gesture-protocol
-
-      - name: Check public gesture fixtures and tracking recovery
-        run: scripts/vision-native/parity.sh
-
   desktop-build:
     name: Desktop (Linux)
     runs-on: ubuntu-22.04
@@ -691,6 +649,11 @@ jobs:
         run: >-
           cargo test --locked --package desktop --package transcriber
           --package gestures --package gesture-protocol
+
+      - name: Check public gesture fixtures and tracking recovery
+        env:
+          GSV_VISION_TEST_PROFILE: test
+        run: scripts/vision-native/parity.sh
 
       - name: Lint Desktop and helpers
         working-directory: host

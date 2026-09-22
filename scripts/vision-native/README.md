@@ -61,7 +61,8 @@ against a synthetic LiteRT reference at one, two and four threads, invalid
 model/tensor rejection, and independent state under concurrent inference.
 The executable test copies the helper to an empty installation directory and
 checks its handshake and shutdown with a cleared environment, without opening
-a camera. The native CI and release matrices run tests on all four targets.
+a camera. The existing Linux Desktop CI job runs these tests and public-image
+parity. Release builds run both on Linux x64/ARM64 and macOS Intel/Apple Silicon.
 
 Run the public-image parity tests with:
 
@@ -69,7 +70,10 @@ Run the public-image parity tests with:
 ./scripts/vision-native/parity.sh
 ```
 
-They download four checksum-pinned official fixture images and check handedness,
+The script uses the release profile by default. CI sets
+`GSV_VISION_TEST_PROFILE=test` to reuse the preceding Desktop/helper test build.
+
+The tests download four checksum-pinned official fixture images and check handedness,
 wrist coordinates, authored poses and actionability against the existing
 MediaPipe Tasks reference. A composite frame also exercises two simultaneous
 hands, tracking loss and reacquisition. MediaPipe supplies golden landmarks;
