@@ -171,7 +171,7 @@ describe("shared Workers AI inference", () => {
   });
 
   it.each([undefined, "high"] as const)(
-    "preserves DeepSeek thinking controls for reasoning=%s and applies routing limits",
+    "uses Cloudflare's DeepSeek thinking controls for reasoning=%s and applies routing limits",
     async (reasoning) => {
       const model = {
         ...FIRST_MODEL,
@@ -190,11 +190,13 @@ describe("shared Workers AI inference", () => {
 
       expect(run).toHaveBeenCalledOnce();
       const request = new Request(...run.mock.calls[0]);
-      expect(await request.json()).toMatchObject({
+      const payload: unknown = await request.json();
+      expect(payload).toMatchObject({
         model: `workers-ai/${model.modelId}`,
-        thinking: { type: reasoning ? "enabled" : "disabled" },
+        chat_template_kwargs: { enable_thinking: reasoning !== undefined },
         max_tokens: 2_048,
       });
+      expect(payload).not.toHaveProperty("thinking");
       expect(result.stopReason).toBe("stop");
       expect(result.usage.cost.output).toBeCloseTo(0.000002, 12);
     },

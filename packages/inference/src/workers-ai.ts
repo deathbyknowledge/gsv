@@ -6,7 +6,6 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
   type AiBinding,
@@ -22,6 +21,7 @@ import {
 } from "./failure";
 import type { InferenceModelRouting, InferenceRequest, InferencePartial, InferenceResult, InferenceRouting, InferenceStreamEvent, InferenceAbortReason } from "./types";
 import { createAttributedAiBindingFetch } from "./ai-gateway-fetch";
+import { getWorkersAiModels } from "./workers-ai-models";
 
 const GSV_INFERENCE_API = "gsv-inference";
 const AI_GATEWAY_ID = "default";
@@ -29,7 +29,7 @@ const AI_GATEWAY_BASE_URL =
   `https://workers-binding.ai/ai-gateway/gateways/${AI_GATEWAY_ID}`;
 const AI_GATEWAY_COMPAT_URL = `${AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_MODEL_PREFIX = "workers-ai/";
-const workersAiCatalog = getBuiltinModels("cloudflare-workers-ai");
+const workersAiCatalog = getWorkersAiModels();
 
 export type WorkersAiGeneration = {
   stream: (routing: InferenceRouting) => AsyncIterable<AssistantMessageEvent>;
@@ -500,9 +500,7 @@ async function resultFromEvents(
 function workersAiModel(
   routing: InferenceModelRouting,
 ): Model<"openai-completions"> {
-  const catalogModel = workersAiCatalog.find((model) => (
-    model.id === routing.modelId && model.api === "openai-completions"
-  ));
+  const catalogModel = workersAiCatalog.find((model) => model.id === routing.modelId);
   return {
     id: `${WORKERS_AI_MODEL_PREFIX}${routing.modelId}`,
     name: routing.displayName,

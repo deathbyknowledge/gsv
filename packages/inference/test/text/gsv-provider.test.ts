@@ -118,11 +118,13 @@ describe("GSV inference provider", () => {
       content: [{ type: "text", text: "Completed summary." }],
     });
     expect(bindingFetch).toHaveBeenCalledOnce();
-    expect(await new Request(...bindingFetch.mock.calls[0]).json()).toMatchObject({
+    const payload: unknown = await new Request(...bindingFetch.mock.calls[0]).json();
+    expect(payload).toMatchObject({
       model: `workers-ai/${modelId}`,
       max_tokens: 768,
-      thinking: { type: "disabled" },
+      chat_template_kwargs: { enable_thinking: false },
     });
+    expect(payload).not.toHaveProperty("thinking");
     expect(target.generate).not.toHaveBeenCalled();
   });
 
