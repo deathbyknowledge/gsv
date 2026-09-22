@@ -1,15 +1,17 @@
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import { useBrowserNavigation } from "../../../services/platform/BrowserNavigation";
 import { startOwnerLink } from "../../../services/session/ownerLink";
 
 export function OwnerAccess() {
   const { client, connected } = useGateway();
+  const navigate = useBrowserNavigation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const link = async () => {
     setBusy(true); setError(null);
     try {
-      window.location.assign(await startOwnerLink(client));
+      await navigate(await startOwnerLink(client));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Owner linking failed"); }
     finally { setBusy(false); }
   };

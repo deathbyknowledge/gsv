@@ -37,6 +37,9 @@ Only the bundled main window can invoke explicitly listed application commands.
 No remote capability, general filesystem, shell plugin, or disabled web security
 is used. HTTP(S) links open in the external browser. OAuth and recovery complete
 in the chosen gateway's browser UI; there is no prototype deep-link receiver.
+Imperative browser flows such as owner verification use the shared navigation
+provider: browser builds retain current-tab navigation, while Desktop delegates
+to its native opener. External pages never replace the trusted app webview.
 
 ## Input lifetime
 

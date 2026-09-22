@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { App } from "../app/App";
 import { AuthScene } from "../app/features/session/AuthLayout";
+import { BrowserNavigationProvider } from "../app/services/platform/BrowserNavigation";
 import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
 import { PlatformIdentityProvider } from "../app/services/platform/PlatformIdentity";
 import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
-import { invoke, nativeInput, nativeSessionStorage, type DesktopSession } from "./bridge";
+import { invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import "./desktop.css";
 
@@ -88,7 +89,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
       }}>{confirmation === "disconnect" ? "disconnect" : "quit"}</button>
     </dialog>
     <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
-      onRecover={() => void invoke("desktop_open", { url: `${session.origin}/recover-member` }).catch(() => onError("Could not open your browser."))}
+      onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
       onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />}>
       <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>
     </PlatformIdentityProvider>
@@ -124,13 +125,13 @@ export function DesktopApp() {
       }
       if (url.protocol !== "https:" && url.protocol !== "http:") return;
       event.preventDefault(); event.stopImmediatePropagation();
-      void invoke("desktop_open", { url: url.href }).catch(() => setError("Could not open your browser."));
+      void openInBrowser(url.href).catch(() => setError("Could not open your browser."));
     };
     document.addEventListener("click", links, true);
     return () => document.removeEventListener("click", links, true);
   }, [mock, session?.origin]);
 
-  return <div class="desktop-root">
+  return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
     {session && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
       <AuthScene setup={false}><form class="desktop-connect" onSubmit={(event) => {
@@ -146,5 +147,5 @@ export function DesktopApp() {
         <button type="submit" disabled={busy || !session}>{busy ? "connecting…" : "continue"}</button>
         {import.meta.env.DEV && <a href="/?mock=1">open the development mock</a>}
       </form></AuthScene>}
-  </div>;
+  </div></BrowserNavigationProvider>;
 }

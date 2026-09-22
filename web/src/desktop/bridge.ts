@@ -37,6 +37,11 @@ export function invoke<C extends keyof DesktopCommands>(command: C, ...args: Com
   return window.__TAURI__.core.invoke(command, ...args);
 }
 
+export async function openInBrowser(url: string): Promise<void> {
+  try { await invoke("desktop_open", { url }); }
+  catch { throw new Error("Could not open your browser."); }
+}
+
 /** Synchronous session-service view backed by serialized, generation-fenced host writes. */
 export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): SessionStorage {
   const values = { ...session.values };
