@@ -5,6 +5,7 @@ import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSub
 import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
+import { ClientControlError, useClientControl, type MicrophoneStatus } from "./ClientControl";
 
 export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue">;
 
@@ -29,6 +30,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
   const latest = useRef({ send, scroll, enabled, onAction });
   latest.current = { send, scroll, enabled, onAction };
   const state = useRef<NativeSnapshot | null>(null);
+  const deviceWaiters = useRef(new Set<(snapshot: NativeSnapshot) => void>());
   const command = async (value: NativeCommand): Promise<boolean> => {
     if (!input || !lease.current) return false;
     const id = lease.current;
@@ -40,6 +42,47 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
     writing.current = true;
     try { prompt.current?.setValue(value, caret); } finally { writing.current = false; }
   };
+
+  useClientControl(["microphoneList", "microphoneUse", "microphoneDefault"], async ({ command: request, checkpoint, signal }) => {
+    if (!state.current || state.current.voice || state.current.devices_loading) throw new ClientControlError("busy");
+    const revision = state.current.devices_revision;
+    await checkpoint();
+    const devices = await new Promise<NativeSnapshot>((resolve, reject) => {
+      const cleanup = () => { deviceWaiters.current.delete(receive); signal.removeEventListener("abort", cancel); };
+      const cancel = () => { cleanup(); reject(new ClientControlError("conflict")); };
+      const receive = (next: NativeSnapshot) => {
+        if (next.devices_revision > revision && !next.devices_loading) {
+          cleanup();
+          if (next.notice) reject(new ClientControlError("unavailable"));
+          else resolve(next);
+        }
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      deviceWaiters.current.add(receive);
+      if (signal.aborted) { cancel(); return; }
+      void command({ kind: "devices" }).then((ok) => {
+        if (!ok) { cleanup(); reject(new ClientControlError("unavailable")); }
+      });
+    });
+    await checkpoint();
+    let selected = device;
+    if (request.type === "microphoneUse") {
+      const matches = devices.devices.filter((entry) => entry.name === request.name);
+      if (matches.length !== 1) throw new ClientControlError("conflict");
+      selected = matches[0].id;
+      setDevice(selected);
+    } else if (request.type === "microphoneDefault") {
+      selected = "";
+      setDevice(selected);
+    }
+    const name = devices.devices.find((entry) => entry.id === selected)?.name;
+    const status: MicrophoneStatus = {
+      devices: devices.devices.map((entry) => ({ name: entry.name, isDefault: entry.is_default })),
+      selected: name ? { type: "device", name } : { type: "systemDefault" },
+      environmentOverride: null,
+    };
+    return { type: request.type === "microphoneList" ? "microphonesListed" : request.type === "microphoneUse" ? "microphoneSelected" : "defaultMicrophoneSelected", status };
+  }, enabled && !practice);
 
   useLayoutEffect(() => {
     state.current = null;
@@ -133,6 +176,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         frame = 0;
       }
       state.current = next;
+      for (const receive of deviceWaiters.current) receive(next);
       setSnapshot((current) => sameNativePresentation(current, next) ? current : next);
     };
     const receive = (update: NativeUpdate) => {

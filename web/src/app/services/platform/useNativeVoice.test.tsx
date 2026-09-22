@@ -4,12 +4,13 @@ import { createTestRoot } from "../../testing/testHarness";
 import type { PromptLineHandle } from "../../features/instrument/shared/PromptLine";
 import { NativeInputProvider, type NativeInput, type NativeSnapshot, type NativeUpdate, type NativeVoice } from "./PlatformProvider";
 import { useNativeVoice } from "./useNativeVoice";
+import { ClientControlProvider, type ClientControl, type ControlCommand, type ControlHandler } from "./ClientControl";
 
 const idle = (lease = "view-1"): NativeSnapshot => ({
   lease, voice: null, gestures_enabled: false, gesture_status: "off",
   gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0, gesture_needs_reset: false, gesture_reset_after_action: 0,
   gesture_practice: null,
-  scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, notice: null, events: [],
+  scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, devices_revision: 0, notice: null, events: [],
 });
 const voice = (text: string, segment = 0, revision = 1): NativeVoice => ({
   request_id: 10, segment_id: segment, revision, text, phase: "listening", progress: null,
@@ -61,7 +62,12 @@ async function mounted(practice = false) {
   }
   const root = createTestRoot("native input subscription");
   roots.push(root);
-  const render = (scope: string) => root.render(<NativeInputProvider input={input}><Probe scope={scope} /></NativeInputProvider>);
+  const handlers = new Map<ControlCommand["type"], ControlHandler>();
+  const cli: ClientControl = { register(commands, handler) {
+    for (const command of commands) handlers.set(command, handler);
+    return () => { for (const command of commands) handlers.delete(command); };
+  } };
+  const render = (scope: string) => root.render(<ClientControlProvider control={cli}><NativeInputProvider input={input}><Probe scope={scope} /></NativeInputProvider></ClientControlProvider>);
   await render("ship");
   const push = (revision: number, snapshot: NativeSnapshot, listener = 0, age = 0) => act(() => {
     receives[listener]({ revision, snapshot, sent_at_ms: Date.now() - age, scroll_age_ms: 0 });
@@ -69,10 +75,37 @@ async function mounted(practice = false) {
   const start = () => push(1, { ...idle(), voice: voice("hello"), events: [
     { id: 1, request_id: 10, segment_id: 0, kind: "started", action: null, text: "" },
   ] });
-  return { input, disposals, prompt, send, render, push, start, control: () => control, value: () => value, renders: () => renders };
+  return { input, disposals, prompt, send, render, push, start, handlers, control: () => control, value: () => value, renders: () => renders };
 }
 
 describe("native input subscription", () => {
+  it("selects the CLI microphone after discovery even when loading updates were coalesced", async () => {
+    const app = await mounted();
+    const result = app.handlers.get("microphoneUse")!({
+      command: { type: "microphoneUse", name: "USB microphone" },
+      checkpoint: async () => {}, signal: new AbortController().signal,
+    });
+    await vi.waitFor(() => expect(app.input.command).toHaveBeenCalledWith("view-1", { kind: "devices" }));
+    await app.push(1, { ...idle(), devices_revision: 1, devices: [{ id: "usb", name: "USB microphone", is_default: false }] });
+    await expect(result).resolves.toMatchObject({ type: "microphoneSelected", status: { selected: { type: "device", name: "USB microphone" } } });
+    expect(app.control().device).toBe("usb");
+    expect(app.input.command).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts CLI microphone discovery without changing the selected input", async () => {
+    const app = await mounted();
+    const abort = new AbortController();
+    const result = app.handlers.get("microphoneUse")!({
+      command: { type: "microphoneUse", name: "USB microphone" }, checkpoint: async () => {}, signal: abort.signal,
+    });
+    const rejected = expect(result).rejects.toMatchObject({ code: "conflict" });
+    await vi.waitFor(() => expect(app.input.command).toHaveBeenCalledOnce());
+    abort.abort();
+    await rejected;
+    await app.push(1, { ...idle(), devices_revision: 1, devices: [{ id: "usb", name: "USB microphone", is_default: false }] });
+    expect(app.control().device).toBe("");
+  });
+
   it("updates dictated text without rerendering controls or rendering on a heartbeat", async () => {
     const app = await mounted();
     const idleRenders = app.renders();

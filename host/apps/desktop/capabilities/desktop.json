@@ -1,6 +1,6 @@
 {
-  "identifier": "prototype",
-  "description": "Only the packaged prototype main window may control its isolated session and native input.",
+  "identifier": "desktop",
+  "description": "Only the packaged desktop main window may control its session and native input.",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -11,6 +11,10 @@
     "allow-desktop-store",
     "allow-desktop-open",
     "allow-desktop-quit",
+    "allow-control-attach",
+    "allow-control-detach",
+    "allow-control-active",
+    "allow-control-reply",
     "allow-input-attach",
     "allow-input-acknowledge",
     "allow-input-command"

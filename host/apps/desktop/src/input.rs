@@ -108,6 +108,7 @@ pub struct Snapshot {
     pub scroll_sequence: u64,
     pub devices: Vec<Device>,
     pub devices_loading: bool,
+    pub devices_revision: u64,
     pub notice: Option<String>,
     pub events: Vec<InputEvent>,
 }
@@ -268,6 +269,7 @@ impl State {
                 scroll_sequence: 0,
                 devices: Vec::new(),
                 devices_loading: false,
+                devices_revision: 0,
                 notice: None,
                 events: Vec::new(),
             },
@@ -703,6 +705,7 @@ impl State {
                     .send(VoiceCommand::ListDevices { request_id })
                     .map_err(|_| "Voice helper is unavailable.")?;
                 self.device_request = Some(request_id);
+                self.snapshot.notice = None;
             }
             InputCommand::Gestures { enabled } => {
                 if !enabled {
@@ -742,6 +745,7 @@ impl State {
                 devices,
             } if self.device_request == Some(request_id) => {
                 self.device_request = None;
+                self.snapshot.devices_revision += 1;
                 self.snapshot.devices = devices
                     .into_iter()
                     .map(|d| Device {
@@ -753,6 +757,9 @@ impl State {
             }
             VoiceEvent::Error { request_id, code } => {
                 if request_id.is_none() || request_id == self.device_request {
+                    if self.device_request.is_some() {
+                        self.snapshot.devices_revision += 1;
+                    }
                     self.device_request = None;
                     self.snapshot.notice = Some(voice_error_message(code, None).into());
                 }
@@ -891,15 +898,14 @@ impl State {
                     }
                 }
             }
-            VoiceEvent::Cancelled { request_id } => {
+            VoiceEvent::Cancelled { request_id }
                 if self
                     .snapshot
                     .voice
                     .as_ref()
-                    .is_some_and(|v| v.request_id == request_id)
-                {
-                    self.cancel_voice();
-                }
+                    .is_some_and(|v| v.request_id == request_id) =>
+            {
+                self.cancel_voice();
             }
             _ => {}
         }

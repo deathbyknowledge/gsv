@@ -50,6 +50,7 @@ export type NativeSnapshot = {
   scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];
   devices_loading: boolean;
+  devices_revision: number;
   notice: string | null;
   events: NativeEvent[];
 };

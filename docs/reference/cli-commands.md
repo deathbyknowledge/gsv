@@ -379,7 +379,7 @@ window state, and the selected PID; `--json` prints those same redacted fields
 for scripts. The command returns an error when Desktop is not running.
 
 The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
 an explicit executable when testing a nonstandard installation.
 
 These commands use the versioned same-user IPC contract in

@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: host/scripts/package-macos.sh [--debug|--release] [--skip-build] [--output DIR]
 
-Build and assemble an unsigned GSV.app for the current Mac architecture.
+Build and assemble an ad-hoc signed GSV.app for the current Mac architecture.
 
 Options:
   --debug       Package optimized development-profile binaries (default).
@@ -52,7 +52,7 @@ while (($# > 0)); do
 done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "run this script on macOS"
-for command in awk cargo ditto file iconutil install plutil sed sips; do
+for command in awk cargo codesign ditto file iconutil install plutil sed sips; do
   command -v "$command" >/dev/null 2>&1 || die "$command is required"
 done
 
@@ -62,13 +62,15 @@ repository_root="$(cd "$host_root/.." && pwd)"
 target_root="$host_root/target"
 architecture="$(uname -m)"
 output_dir="${output_override:-$target_root/package/macos/$architecture/$profile}"
-binary_dir="$target_root/$profile"
+binary_dir="$target_root/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}$profile"
 plist_template="$host_root/packaging/macos/Info.plist"
-icon_source="$repository_root/web/public/brand/gsv-mark-white.svg"
+icon_source="$repository_root/web/public/icons/gsv-512.png"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 
 if ((skip_build == 0)); then
+  (cd "$repository_root" && npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts)
+  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
   cargo_args=(
     --locked
     --manifest-path "$host_root/Cargo.toml"
@@ -119,7 +121,7 @@ install -m 0644 "$host_root/helpers/gestures/THIRD_PARTY.md" \
   "$gesture_license_dir/THIRD_PARTY.md"
 
 icon_artwork="$stage/GSV-app-icon-1024.png"
-"$binary_dir/gsv-desktop" --render-macos-icon "$icon_artwork"
+sips -z 1024 1024 "$icon_source" --out "$icon_artwork" >/dev/null
 [[ -f "$icon_artwork" ]] || die "application icon renderer produced no output"
 iconset="$stage/GSV.iconset"
 mkdir -p "$iconset"
@@ -144,6 +146,12 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -f "$gesture_license_dir/THIRD_PARTY.md" ]] \
   || die "bundle gesture-runtime notices staging failed"
 
+for binary in "${binaries[@]}"; do
+  codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$macos_dir/$binary"
+done
+codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$app"
+codesign --verify --deep --strict "$app"
+
 app_path="$output_dir/GSV.app"
 zip_path="$output_dir/GSV-$version-$architecture-$profile.zip"
 [[ "$(basename "$app_path")" == "GSV.app" ]] || die "unsafe app output path"
@@ -154,6 +162,6 @@ ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip_path"
 
 trap - EXIT
 rm -rf "$stage"
-printf 'Unsigned development app: %s\n' "$app_path"
+printf 'Development app: %s\n' "$app_path"
 printf 'Shareable development ZIP: %s\n' "$zip_path"
 printf 'Public distribution still requires signing and notarization.\n'

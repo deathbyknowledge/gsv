@@ -186,8 +186,9 @@ jobs:
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
               - 'host/crates/gesture-protocol/**'
-              - 'web/public/brand/gsv-mark-white.svg'
-              - 'web/public/fonts/**'
+              - 'web/**'
+              - 'packages/gsv/**'
+              - 'package*.json'
             host_crates:
               - '.github/workflows/ci.yml'
               - 'host/Cargo.toml'
@@ -620,7 +621,12 @@ jobs:
             cmake \
             libasound2-dev \
             libclang-dev \
-            libfontconfig1-dev \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libv4l-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-libav \
             libssl-dev \
             libwayland-dev \
             libx11-dev \
@@ -657,16 +663,27 @@ jobs:
           bash -n scripts/vision-native/parity.sh
           bash -n scripts/vision-native/update-models.sh
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Build shared desktop frontend
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+          npm run gsv:build
+          npm run build --workspace web -- --config vite.desktop.config.ts
+          npm run test:run --workspace web -- src/desktop src/app/services/platform
+
       - name: Check formatting
         working-directory: host
         run: >-
-          cargo fmt --package desktop --package transcriber
+          cargo fmt --package desktop --package desktop-native --package transcriber
           --package gestures --package gesture-protocol --check
 
       - name: Test Desktop and helpers
         working-directory: host
         run: |
-          cargo test --locked --package desktop --package transcriber \
+          cargo test --locked --package desktop --package desktop-native --package transcriber \
             --package gestures --package gesture-protocol
           ccache --show-stats --verbose
 
@@ -674,12 +691,12 @@ jobs:
         working-directory: host
         run: >-
           ../scripts/vision-native/parity.sh --profile test
-          --package desktop --package transcriber --package gestures --package gesture-protocol
+          --package desktop --package desktop-native --package transcriber --package gestures --package gesture-protocol
 
       - name: Lint Desktop and helpers
         working-directory: host
         run: |
           ccache --zero-stats
-          cargo clippy --locked --package desktop --package transcriber \
+          cargo clippy --locked --package desktop --package desktop-native --package transcriber \
             --package gestures --package gesture-protocol --all-targets -- -D warnings
           ccache --show-stats --verbose

@@ -8,6 +8,8 @@ import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
 import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
+import { ClientControlProvider } from "../app/services/platform/ClientControl";
+import { desktopControl } from "./control";
 import "./desktop.css";
 
 function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession; mock: boolean; onError(message: string): void }) {
@@ -31,7 +33,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     quitting.current = true;
     void storage.flush().then(() => invoke("desktop_quit")).catch(() => {
       quitting.current = false;
-      onError("Could not quit the prototype.");
+      onError("Could not quit GSV.");
     });
   }, [onError, storage]);
   const requestQuit = useCallback(() => {
@@ -53,6 +55,8 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     return () => { disposed = true; unlisten?.(); };
   }, [onError, requestQuit]);
   const input = useMemo(() => nativeInput(session.generation), [session.generation]);
+  const control = useMemo(() => desktopControl(session.generation), [session.generation]);
+  useEffect(() => control.attach(), [control]);
   const factory = useMemo(() => (client: Parameters<typeof createSessionService>[0]) => {
     const origin = session.origin ?? "http://localhost:5186";
     configureGatewayOrigin(origin);
@@ -89,7 +93,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); if (!disconnecting) setConfirmation(null); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
+      <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit GSV?"} Unsent work will be discarded.</p>
       <button type="button" disabled={disconnecting} onClick={() => setConfirmation(null)}>keep working</button>
       <button type="button" disabled={disconnecting || (confirmation === "disconnect" && !service)} onClick={() => {
         if (confirmation === "disconnect") void disconnect();
@@ -99,7 +103,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
       onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
       onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />}>
-      <NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider>
+      <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
     </PlatformIdentityProvider>
   </>;
 }
@@ -116,7 +120,7 @@ export function DesktopApp() {
         "gsv.ui.session.token.v1": JSON.stringify({ username: "esteve", tokenId: "desktop-mock", token: "mock-session-token", expiresAt: null }),
       } };
       setSession(value);
-    }).catch(() => setError("Open this frontend with the prototype executable."));
+    }).catch(() => setError("Open this frontend with GSV Desktop."));
   }, [mock]);
 
   useEffect(() => {
@@ -149,8 +153,7 @@ export function DesktopApp() {
         }).catch(() => setError("Use an HTTPS space address, such as https://your-space.example. HTTP is allowed for localhost."))
           .finally(() => setBusy(false));
       }}>
-        <h1>GSV Tauri Prototype</h1>
-        <p>Connect one space. Sign in with your existing account on the next screen.</p>
+        <h1>GSV</h1>
         <label>Space address<input type="url" required value={origin} placeholder="https://your-space.example" onInput={(event) => setOrigin(event.currentTarget.value)} /></label>
         <button type="submit" disabled={busy || !session}>{busy ? "connecting…" : "continue"}</button>
         {import.meta.env.DEV && <a href="/?mock=1">open the development mock</a>}

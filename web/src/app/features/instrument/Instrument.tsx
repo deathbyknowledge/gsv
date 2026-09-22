@@ -17,6 +17,8 @@ import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
 import { RetainedView } from "../../services/navigation/ViewActivity";
+import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
+import { useGateway } from "../../services/gateway/GatewayProvider";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -53,6 +55,10 @@ function storedScale(): Scale {
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
   const { service, snapshot } = useSession();
+  const { status } = useGateway();
+  useClientControl(["status"], async () => ({ type: "status", status: {
+    gateway: status.state === "connecting" ? "connecting" : "disconnected", window: "visible", selectedProcess: null,
+  } }), snapshot.phase !== "ready");
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
@@ -61,6 +67,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const { service: session } = useSession();
+  const { client, status } = useGateway();
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
@@ -91,6 +98,37 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  const selectingProcess = useRef(false);
+  const controlState = useRef({ zenDirty });
+  controlState.current = { zenDirty };
+  useClientControl(["status", "new", "use"], async ({ command, checkpoint, signal }) => {
+    if (command.type === "status") return { type: "status", status: {
+      gateway: status.state === "connected" ? "connected" : status.state === "connecting" ? "connecting" : "disconnected",
+      window: "visible", selectedProcess: zenPid,
+    } };
+    if (zenDirty || selectingProcess.current) throw new ClientControlError("busy");
+    if (status.state !== "connected") throw new ClientControlError("unavailable");
+    selectingProcess.current = true;
+    try {
+      await checkpoint();
+      let pid: string;
+      if (command.type === "new") {
+        const { data: result } = await client.request("proc.spawn", { interactive: true, label: "Desktop" }, { signal });
+        if (!result.ok) throw new ClientControlError("permissionDenied");
+        pid = result.pid;
+      } else if (command.type === "use") {
+        const { data: result } = await client.request("proc.list", {}, { signal });
+        if (!result.processes.some((process) => process.pid === command.processId)) throw new ClientControlError("processNotFound");
+        pid = command.processId;
+      } else throw new ClientControlError("unavailable");
+      await checkpoint();
+      if (controlState.current.zenDirty) throw new ClientControlError("busy");
+      setZenPid(pid);
+      setDistance("zen");
+      history.replaceState(null, "", "/zen");
+      return { type: command.type === "new" ? "created" : "selected", processId: pid };
+    } finally { selectingProcess.current = false; }
+  });
 
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {

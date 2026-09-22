@@ -3,7 +3,7 @@
 The `gestures` package builds the experimental `gsv-vision` local hand-control
 helper. It is a separate Rust process that owns the camera, native LiteRT/XNNPACK
 inference, temporal gesture policy, and optional diagnostic window. Camera
-pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
+pixels never enter the frontend, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
@@ -34,6 +34,8 @@ already checked in and are never downloaded by the build.
 From the repository root:
 
 ```bash
+npm run gsv:build
+npm run build --workspace web -- --config vite.desktop.config.ts
 cargo build --manifest-path host/Cargo.toml --package gestures --package desktop
 cargo run --manifest-path host/Cargo.toml --package desktop
 ```
@@ -74,8 +76,7 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-The helper starts disarmed until its owning client grants a context. The Tauri
-prototype grants standby as soon as its explicitly enabled camera becomes ready.
+The helper starts disarmed until its owning client grants a context. Desktop grants standby as soon as its explicitly enabled camera becomes ready.
 Both fists exits hands-free there, cancelling microphone capture and stopping the
 camera. Its frontend exposes Off, Ready and Listening; one finger starts or pauses
 listening, preserving the draft. There is no extra arm or mute control.
@@ -87,15 +88,7 @@ counts without executing them. Dwell and fist-reset requirements remain the same
 both fists can always exit practice, including after a rejected count. The private
 launch marker is v9, requiring the helper and client to be built together.
 
-The GPUI client retains its existing authority model: hold both hands in closed fists for 700 ms to
-request arming or disarming. Desktop owns that explicit state and echoes one
-strict absolute context: disarmed, armed standby, temporarily disabled, or
-armed and active with the exact listening request and acknowledged mute state.
-The helper cannot arm itself. Disarming turns off gesture commands without
-stopping an active transcription. Keyboard-started dictation enters the same
-Desktop-owned context.
-
-Once armed, the physical right hand performs actions alone by default; camera
+When enabled, the physical right hand performs actions alone by default; camera
 array order and the left-hand posture are irrelevant. Set
 `GSV_GESTURE_DOMINANT_HAND=left` to use the physical left action hand or `auto`
 to learn the first unambiguous action hand.
