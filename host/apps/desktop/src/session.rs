@@ -56,22 +56,42 @@ pub fn gateway_origin(value: &str) -> Result<String, String> {
 }
 
 impl SessionStore {
+    pub fn import_previous_session(
+        directory: &std::path::Path,
+        previous: &std::path::Path,
+    ) -> Result<(), String> {
+        use fs2::FileExt;
+        if directory.join("session.json").exists() || !previous.join("session.json").exists() {
+            return Ok(());
+        }
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(previous.join("prototype.lock"))
+            .map_err(|_| "Cannot open the previous Desktop session.")?;
+        lock.try_lock_exclusive()
+            .map_err(|_| "Close the older GSV window before upgrading.")?;
+        let previous = Self::open(previous.to_owned())?;
+        let mut destination = Self::open(directory.to_owned())?;
+        destination.commit(previous.current, previous.pending_revokes)
+    }
+
     pub fn open(directory: PathBuf) -> Result<Self, String> {
-        fs::create_dir_all(&directory).map_err(|_| "Cannot create prototype data directory.")?;
+        fs::create_dir_all(&directory).map_err(|_| "Cannot create desktop data directory.")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-                .map_err(|_| "Cannot protect prototype data directory.")?;
+                .map_err(|_| "Cannot protect desktop data directory.")?;
         }
         let path = directory.join("session.json");
         let stored = match fs::read(&path) {
             Ok(bytes) if bytes.len() <= MAX_SESSION_BYTES => {
                 let session: StoredSession = serde_json::from_slice(&bytes)
-                    .map_err(|_| "Prototype session file is invalid.")?;
+                    .map_err(|_| "Desktop session file is invalid.")?;
                 for origin in session.origin.iter().chain(session.pending_revokes.keys()) {
                     if gateway_origin(origin)? != *origin {
-                        return Err("Prototype gateway is not a canonical origin.".into());
+                        return Err("Desktop gateway is not a canonical origin.".into());
                     }
                 }
                 session
@@ -82,7 +102,7 @@ impl SessionStore {
                 values: BTreeMap::new(),
                 pending_revokes: BTreeMap::new(),
             },
-            _ => return Err("Cannot read prototype session file.".into()),
+            _ => return Err("Cannot read desktop session file.".into()),
         };
         Ok(Self {
             path,
@@ -172,7 +192,7 @@ impl SessionStore {
         };
         let bytes = serde_json::to_vec(&stored).map_err(|_| "Cannot encode session.")?;
         if bytes.len() > MAX_SESSION_BYTES {
-            return Err("Prototype session storage is full.".into());
+            return Err("Desktop session storage is full.".into());
         }
         let parent = self.path.parent().ok_or("Missing session directory.")?;
         let mut file = tempfile::NamedTempFile::new_in(parent)
@@ -195,6 +215,39 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrade_imports_once_without_overwriting_a_new_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let previous = temp.path().join("previous");
+        let current = temp.path().join("current");
+        let mut old = SessionStore::open(previous.clone()).unwrap();
+        old.configure(Some("https://first.example".into())).unwrap();
+        fs::File::create(previous.join("prototype.lock")).unwrap();
+        SessionStore::import_previous_session(&current, &previous).unwrap();
+        let mut imported = SessionStore::open(current.clone()).unwrap();
+        assert_eq!(imported.current.generation, old.current.generation);
+        imported
+            .configure(Some("https://second.example".into()))
+            .unwrap();
+        SessionStore::import_previous_session(&current, &previous).unwrap();
+        assert_eq!(
+            SessionStore::open(current)
+                .unwrap()
+                .current
+                .origin
+                .as_deref(),
+            Some("https://second.example")
+        );
+        assert_eq!(
+            SessionStore::open(previous)
+                .unwrap()
+                .current
+                .origin
+                .as_deref(),
+            Some("https://first.example")
+        );
+    }
 
     #[test]
     fn existing_session_files_keep_their_credential_when_opened() {

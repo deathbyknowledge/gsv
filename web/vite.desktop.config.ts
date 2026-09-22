@@ -12,7 +12,7 @@ export default defineConfig({
       },
     },
   }],
-  build: { outDir: "dist-tauri", emptyOutDir: true, sourcemap: true },
+  build: { outDir: "dist-desktop", emptyOutDir: true, sourcemap: true },
   worker: { format: "es" },
   server: { host: "localhost", port: 5186, strictPort: true, open: false },
 });

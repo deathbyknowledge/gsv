@@ -6,10 +6,14 @@ fn main() {
             "desktop_store",
             "desktop_open",
             "desktop_quit",
+            "control_attach",
+            "control_detach",
+            "control_active",
+            "control_reply",
             "input_attach",
             "input_acknowledge",
             "input_command",
         ]),
     ))
-    .expect("build the prototype application command manifest");
+    .expect("build the desktop application command manifest");
 }

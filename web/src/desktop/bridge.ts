@@ -1,5 +1,6 @@
 import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
 import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
+import type { ControlEvent, ControlReply } from "./control";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -9,6 +10,10 @@ type DesktopCommands = {
   desktop_store: { args: { generation: string; values: Record<string, string> }; result: void };
   desktop_open: { args: { url: string }; result: void };
   desktop_quit: { args: undefined; result: void };
+  control_attach: { args: { generation: string; updates: NativeChannel<ControlEvent> }; result: string };
+  control_detach: { args: { lease: string }; result: void };
+  control_active: { args: { lease: string; id: string }; result: boolean };
+  control_reply: { args: { lease: string; id: string; reply: ControlReply }; result: void };
   input_attach: { args: { generation: string; updates: NativeChannel<NativeUpdate>; practice: boolean }; result: NativeSnapshot };
   input_acknowledge: { args: { lease: string; revision: number; ack: number }; result: void };
   input_command: { args: { lease: string; command: NativeCommand }; result: void };
@@ -33,7 +38,7 @@ declare global {
 }
 
 export function invoke<C extends keyof DesktopCommands>(command: C, ...args: CommandArguments<C>): Promise<DesktopCommands[C]["result"]> {
-  if (!window.__TAURI__) return Promise.reject(new Error("Open this frontend in GSV Tauri Prototype."));
+  if (!window.__TAURI__) return Promise.reject(new Error("Open this frontend in GSV."));
   return window.__TAURI__.core.invoke(command, ...args);
 }
 
@@ -72,7 +77,7 @@ export async function disconnectSpace(service: SessionService, storage: NativeSe
 export function nativeInput(generation: string): NativeInput {
   return {
     subscribe: (receive, practice = false) => {
-      if (!window.__TAURI__) throw new Error("Open this frontend in GSV Tauri Prototype.");
+      if (!window.__TAURI__) throw new Error("Open this frontend in GSV.");
       const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
       const initial = invoke("input_attach", { generation, updates, practice });
       let disposed = false;

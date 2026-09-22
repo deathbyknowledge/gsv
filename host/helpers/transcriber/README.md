@@ -2,7 +2,7 @@
 
 The `transcriber` package builds Desktop's isolated `gsv-transcribe` dictation
 worker. It owns microphone capture, model download and verification, and
-streaming inference in a separate process. The GPUI process only exchanges
+streaming inference in a separate process. The Desktop host only exchanges
 bounded newline-delimited JSON commands and text snapshots with it; if the
 helper stalls, crashes, or exhausts its own resources, the app kills it and
 remains usable for typing.

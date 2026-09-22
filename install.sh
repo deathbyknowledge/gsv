@@ -654,6 +654,10 @@ main() {
     echo "  CLI login: gsv --url wss://your-space.example/ws auth login"
     echo "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
     echo "  Open: gsv desktop"
+    if [ "$OS" = "linux" ]; then
+        echo "  Desktop runtime: WebKitGTK 4.1 and GStreamer base/good/libav plugins."
+        echo "  Setup: https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/install-host-apps.md#desktop"
+    fi
     echo ""
 }
 
