@@ -165,7 +165,9 @@ excludes the mock. The real helpers are still real in development mode.
 5. Disconnect the space, then select another destination. Its username may also
    be `root`; it must show fresh sign-in with no old history, draft, uploads,
    pending sends or terminal recovery. The disconnect action warns about unsent
-   work and tears down the whole frontend.
+   work and tears down the whole frontend. Repeat offline, then reconnect to the
+   original space and sign in: pending token revocations must retry there. Switching
+   to another space must not expose the previous space's pending token IDs.
 6. Quit and reopen. Camera and microphone must be off. The independent
    daemon and installed Desktop should remain available.
    Repeat with the window manager's Close action (Super+W): with no unsaved work

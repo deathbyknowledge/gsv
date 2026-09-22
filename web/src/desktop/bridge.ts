@@ -1,5 +1,5 @@
 import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
-import type { SessionStorage } from "../app/services/session/sessionService";
+import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -43,20 +43,30 @@ export async function openInBrowser(url: string): Promise<void> {
 }
 
 /** Synchronous session-service view backed by serialized, generation-fenced host writes. */
-export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): SessionStorage {
+export type NativeSessionStorage = SessionStorage & { flush(): Promise<void> };
+
+export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): NativeSessionStorage {
   const values = { ...session.values };
   let pending = Promise.resolve();
   const persist = () => {
     if (mock) return;
     const snapshot = { ...values };
-    pending = pending.then(() => invoke("desktop_store", { generation: session.generation, values: snapshot }))
-      .catch(() => onError("This session could not be saved. Sign in again after restarting."));
+    pending = pending.catch(() => {}).then(() => invoke("desktop_store", { generation: session.generation, values: snapshot }));
+    void pending.catch(() => onError("This session could not be saved. Sign in again after restarting."));
   };
   return {
     getItem: (key) => values[key] ?? null,
     setItem: (key, value) => { values[key] = value; persist(); },
     removeItem: (key) => { delete values[key]; persist(); },
+    flush: () => pending,
   };
+}
+
+export async function disconnectSpace(service: SessionService, storage: NativeSessionStorage): Promise<void> {
+  await service.lock("Disconnected");
+  await storage.flush();
+  await invoke("desktop_configure", { origin: null });
+  service.dispose?.();
 }
 
 export function nativeInput(generation: string): NativeInput {

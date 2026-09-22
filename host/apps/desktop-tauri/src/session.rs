@@ -12,6 +12,8 @@ const KEYS: &[&str] = &[
     "gsv.ui.session.token.v1",
     "gsv.ui.session.pending-revokes.v1",
 ];
+const PENDING_REVOKES: &str = "gsv.ui.session.pending-revokes.v1";
+const MAX_SESSION_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,9 +23,20 @@ pub struct Session {
     pub values: BTreeMap<String, String>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSession {
+    generation: String,
+    origin: Option<String>,
+    values: BTreeMap<String, String>,
+    #[serde(default)]
+    pending_revokes: BTreeMap<String, Vec<String>>,
+}
+
 pub struct SessionStore {
     path: PathBuf,
     pub current: Session,
+    pending_revokes: BTreeMap<String, Vec<String>>,
 }
 
 pub fn gateway_origin(value: &str) -> Result<String, String> {
@@ -52,34 +65,73 @@ impl SessionStore {
                 .map_err(|_| "Cannot protect prototype data directory.")?;
         }
         let path = directory.join("session.json");
-        let current = match fs::read(&path) {
-            Ok(bytes) if bytes.len() <= 128 * 1024 => {
-                let session: Session = serde_json::from_slice(&bytes)
+        let stored = match fs::read(&path) {
+            Ok(bytes) if bytes.len() <= MAX_SESSION_BYTES => {
+                let session: StoredSession = serde_json::from_slice(&bytes)
                     .map_err(|_| "Prototype session file is invalid.")?;
-                if let Some(origin) = &session.origin {
+                for origin in session.origin.iter().chain(session.pending_revokes.keys()) {
                     if gateway_origin(origin)? != *origin {
                         return Err("Prototype gateway is not a canonical origin.".into());
                     }
                 }
                 session
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Session {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoredSession {
                 generation: Uuid::new_v4().to_string(),
                 origin: None,
                 values: BTreeMap::new(),
+                pending_revokes: BTreeMap::new(),
             },
             _ => return Err("Cannot read prototype session file.".into()),
         };
-        Ok(Self { path, current })
+        Ok(Self {
+            path,
+            current: Session {
+                generation: stored.generation,
+                origin: stored.origin,
+                values: stored.values,
+            },
+            pending_revokes: stored.pending_revokes,
+        })
     }
 
     pub fn configure(&mut self, origin: Option<String>) -> Result<Session, String> {
         let origin = origin.as_deref().map(gateway_origin).transpose()?;
-        self.commit(Session {
-            generation: Uuid::new_v4().to_string(),
-            origin,
-            values: BTreeMap::new(),
-        })?;
+        let mut pending_revokes = self.pending_revokes.clone();
+        if let Some(previous_origin) = &self.current.origin {
+            let pending: Vec<String> = self
+                .current
+                .values
+                .get(PENDING_REVOKES)
+                .map(|value| serde_json::from_str(value))
+                .transpose()
+                .map_err(|_| "Invalid pending session revocations.")?
+                .unwrap_or_default();
+            if pending.is_empty() {
+                pending_revokes.remove(previous_origin);
+            } else {
+                pending_revokes.insert(previous_origin.clone(), pending);
+            }
+        }
+        let mut values = BTreeMap::new();
+        if let Some(pending) = origin
+            .as_ref()
+            .and_then(|origin| pending_revokes.remove(origin))
+        {
+            values.insert(
+                PENDING_REVOKES.into(),
+                serde_json::to_string(&pending)
+                    .map_err(|_| "Cannot encode pending session revocations.")?,
+            );
+        }
+        self.commit(
+            Session {
+                generation: Uuid::new_v4().to_string(),
+                origin,
+                values,
+            },
+            pending_revokes,
+        )?;
         Ok(self.current.clone())
     }
 
@@ -98,18 +150,36 @@ impl SessionStore {
         {
             return Err("Invalid session storage update.".into());
         }
-        self.commit(Session {
-            values,
-            ..self.current.clone()
-        })
+        self.commit(
+            Session {
+                values,
+                ..self.current.clone()
+            },
+            self.pending_revokes.clone(),
+        )
     }
 
-    fn commit(&mut self, next: Session) -> Result<(), String> {
+    fn commit(
+        &mut self,
+        next: Session,
+        pending_revokes: BTreeMap<String, Vec<String>>,
+    ) -> Result<(), String> {
+        let stored = StoredSession {
+            generation: next.generation.clone(),
+            origin: next.origin.clone(),
+            values: next.values.clone(),
+            pending_revokes: pending_revokes.clone(),
+        };
+        let bytes = serde_json::to_vec(&stored).map_err(|_| "Cannot encode session.")?;
+        if bytes.len() > MAX_SESSION_BYTES {
+            return Err("Prototype session storage is full.".into());
+        }
         let parent = self.path.parent().ok_or("Missing session directory.")?;
         let mut file = tempfile::NamedTempFile::new_in(parent)
             .map_err(|_| "Cannot create private session file.")?;
         // NamedTempFile is created with mode 0600 on Unix; replacement is atomic.
-        serde_json::to_writer(file.as_file_mut(), &next).map_err(|_| "Cannot encode session.")?;
+        file.write_all(&bytes)
+            .map_err(|_| "Cannot write session.")?;
         file.flush().map_err(|_| "Cannot flush session.")?;
         file.as_file()
             .sync_all()
@@ -117,6 +187,7 @@ impl SessionStore {
         file.persist(&self.path)
             .map_err(|_| "Cannot save session.")?;
         self.current = next;
+        self.pending_revokes = pending_revokes;
         Ok(())
     }
 }
@@ -124,6 +195,126 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_session_files_keep_their_credential_when_opened() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = Session {
+            generation: "existing-generation".into(),
+            origin: Some("https://first.example".into()),
+            values: BTreeMap::from([(KEYS[1].into(), "fixture credential".into())]),
+        };
+        fs::write(
+            directory.path().join("session.json"),
+            serde_json::to_vec(&session).unwrap(),
+        )
+        .unwrap();
+        let store = SessionStore::open(directory.path().to_owned()).unwrap();
+        assert_eq!(store.current.generation, session.generation);
+        assert_eq!(store.current.values, session.values);
+        assert!(store.pending_revokes.is_empty());
+    }
+
+    #[test]
+    fn disconnect_keeps_only_revocation_ids_and_returns_them_to_their_original_space() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let first = store
+            .configure(Some("https://first.example".into()))
+            .unwrap();
+        store
+            .store(
+                &first.generation,
+                BTreeMap::from([
+                    (KEYS[0].into(), "alice".into()),
+                    (KEYS[1].into(), "fixture credential".into()),
+                    (PENDING_REVOKES.into(), r#"["first-token"]"#.into()),
+                ]),
+            )
+            .unwrap();
+        store.configure(None).unwrap();
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        assert!(store.current.origin.is_none());
+        assert!(store.current.values.is_empty());
+        let saved = fs::read_to_string(directory.path().join("session.json")).unwrap();
+        assert!(!saved.contains("fixture credential"));
+        assert!(!saved.contains("alice"));
+
+        let second = store
+            .configure(Some("https://second.example".into()))
+            .unwrap();
+        assert!(second.values.is_empty());
+        assert!(!serde_json::to_string(&second)
+            .unwrap()
+            .contains("first-token"));
+        assert!(store.store(&first.generation, BTreeMap::new()).is_err());
+        store
+            .store(
+                &second.generation,
+                BTreeMap::from([(PENDING_REVOKES.into(), r#"["second-token"]"#.into())]),
+            )
+            .unwrap();
+        store.configure(None).unwrap();
+
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let first_again = store
+            .configure(Some("https://first.example".into()))
+            .unwrap();
+        assert_eq!(
+            first_again.values,
+            BTreeMap::from([(PENDING_REVOKES.into(), r#"["first-token"]"#.into()),])
+        );
+        assert!(!serde_json::to_string(&first_again)
+            .unwrap()
+            .contains("second-token"));
+        store
+            .store(&first_again.generation, BTreeMap::new())
+            .unwrap();
+        store.configure(None).unwrap();
+
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let first_done = store
+            .configure(Some("https://first.example".into()))
+            .unwrap();
+        assert!(first_done.values.is_empty());
+        let second_again = store
+            .configure(Some("https://second.example".into()))
+            .unwrap();
+        assert_eq!(
+            second_again.values.get(PENDING_REVOKES).unwrap(),
+            r#"["second-token"]"#
+        );
+    }
+
+    #[test]
+    fn oversized_revocation_storage_leaves_the_previous_session_intact() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let previous = store
+            .configure(Some("https://first.example".into()))
+            .unwrap();
+        let next = Session {
+            origin: None,
+            ..previous.clone()
+        };
+        assert!(store
+            .commit(
+                next,
+                BTreeMap::from([(
+                    "https://first.example".into(),
+                    vec!["x".repeat(MAX_SESSION_BYTES)]
+                ),])
+            )
+            .is_err());
+        assert_eq!(store.current.origin, previous.origin);
+        assert_eq!(
+            SessionStore::open(directory.path().to_owned())
+                .unwrap()
+                .current
+                .origin,
+            previous.origin
+        );
+    }
 
     #[test]
     fn destination_change_rejects_late_credential_writes() {

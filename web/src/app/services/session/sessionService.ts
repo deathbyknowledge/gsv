@@ -82,7 +82,7 @@ export type SessionService = {
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
-  lock: (reason?: string) => void;
+  lock: (reason?: string) => Promise<void>;
   start: () => Promise<void>;
   dispose?: () => void;
 };
@@ -707,15 +707,15 @@ export function createSessionService(client: SessionClient, options: SessionServ
     return result;
   };
 
-  const lock = (reason = "Session locked"): void => {
+  const lock = async (reason = "Session locked"): Promise<void> => {
     cancelSilentReconnect();
     const lockGeneration = reconnectGeneration;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
-    clearStoredSessionToken();
 
     if (previousTokenId) {
       queueRevoke(previousTokenId);
     }
+    clearStoredSessionToken();
 
     setSnapshot({
       phase: "locked",
@@ -725,16 +725,14 @@ export function createSessionService(client: SessionClient, options: SessionServ
       message: reason,
     });
 
-    void (async () => {
-      await Promise.race([
-        drainPendingRevokes("ui session lock"),
-        waitFor(LOCK_REVOKE_WAIT_MS),
-      ]);
+    await Promise.race([
+      drainPendingRevokes("ui session lock"),
+      waitFor(LOCK_REVOKE_WAIT_MS),
+    ]);
 
-      if (reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
-        client.disconnect();
-      }
-    })();
+    if (!disposed && reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
+      client.disconnect();
+    }
   };
 
   const start = async (): Promise<void> => {

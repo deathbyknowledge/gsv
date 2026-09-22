@@ -25,6 +25,12 @@ There is one configured gateway. Reconfiguration clears credentials and causes a
 complete frontend teardown/reload, including session storage, query clients,
 outbox, uploads, draft and terminal journals. Ordinary unsent-work warnings still
 apply. User client credentials never become machine credentials.
+Disconnect locks the shared session immediately, waits for its bounded token
+revocation attempt, and flushes native persistence before changing generations.
+Unconfirmed revocations retain only token IDs under their original gateway origin;
+the host returns them for cleanup after a later sign-in to that same space. These
+records survive disconnect and restart without retaining the credential or leaking
+into another configured space. Quit also waits for queued session writes.
 
 The host validates an HTTPS origin (HTTP loopback is permitted for development),
 stores credentials with that origin and a random configuration generation, and

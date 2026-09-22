@@ -52,7 +52,7 @@ export function Settings({ onDirtyChange, onSignOut }: SettingsProps) {
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
           if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
-          session.lock("Signed out");
+          void session.lock("Signed out");
         }}>sign out</button></div>
         {!connected && <p class="settings-muted" role="status">Disconnected. Reconnect to load or save settings.</p>}
         <SettingsError error={accounts.error} />

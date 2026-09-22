@@ -260,7 +260,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         <RetainedView active={distance === "settings"}>
           <Settings onDirtyChange={setSettingsDirty} onSignOut={() => {
             if ((settingsDirty || zenDirty || fleetDirty || memoryDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
-            session.lock("Signed out");
+            void session.lock("Signed out");
           }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>

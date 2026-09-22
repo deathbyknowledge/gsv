@@ -6,13 +6,16 @@ import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
 import { PlatformIdentityProvider } from "../app/services/platform/PlatformIdentity";
 import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
-import { invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
+import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import "./desktop.css";
 
 function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession; mock: boolean; onError(message: string): void }) {
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const disconnectPending = useRef(false);
+  const storage = useMemo(() => nativeSessionStorage(session, onError, mock), [session.generation]);
   const [confirmation, setConfirmation] = useState<"disconnect" | "quit" | null>(null);
   const confirmationDialog = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
@@ -26,11 +29,11 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   const quit = useCallback(() => {
     if (quitting.current) return;
     quitting.current = true;
-    void invoke("desktop_quit").catch(() => {
+    void storage.flush().then(() => invoke("desktop_quit")).catch(() => {
       quitting.current = false;
       onError("Could not quit the prototype.");
     });
-  }, [onError]);
+  }, [onError, storage]);
   const requestQuit = useCallback(() => {
     // Reuse every retained view's unload guard without navigating or unloading the page.
     if (window.dispatchEvent(new Event("beforeunload", { cancelable: true }))) quit();
@@ -50,7 +53,6 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     return () => { disposed = true; unlisten?.(); };
   }, [onError, requestQuit]);
   const input = useMemo(() => nativeInput(session.generation), [session.generation]);
-  const storage = useMemo(() => nativeSessionStorage(session, onError, mock), [session.generation]);
   const factory = useMemo(() => (client: Parameters<typeof createSessionService>[0]) => {
     const origin = session.origin ?? "http://localhost:5186";
     configureGatewayOrigin(origin);
@@ -67,26 +69,32 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   }), [service]);
 
   const disconnect = async () => {
-    setConfirmation(null);
-    service?.lock("Disconnected");
-    service?.dispose?.();
+    if (!service || disconnectPending.current) return;
+    disconnectPending.current = true;
+    setDisconnecting(true);
     try {
-      await invoke("desktop_configure", { origin: null });
+      await disconnectSpace(service, storage);
       window.sessionStorage.clear();
       window.localStorage.clear();
       window.location.replace("/");
-    } catch { onError("Could not clear the configured space. Try again."); }
+    } catch {
+      onError("Could not disconnect the space. Try again.");
+      setConfirmation(null);
+    } finally {
+      disconnectPending.current = false;
+      setDisconnecting(false);
+    }
   };
   return <>
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
-      onCancel={(event) => { event.preventDefault(); setConfirmation(null); }}
+      onCancel={(event) => { event.preventDefault(); if (!disconnecting) setConfirmation(null); }}
       onKeyDown={(event) => event.stopPropagation()}>
       <p>{confirmation === "disconnect" ? "Disconnect this space?" : "Quit the prototype?"} Unsent work will be discarded.</p>
-      <button type="button" onClick={() => setConfirmation(null)}>keep working</button>
-      <button type="button" onClick={() => {
+      <button type="button" disabled={disconnecting} onClick={() => setConfirmation(null)}>keep working</button>
+      <button type="button" disabled={disconnecting || (confirmation === "disconnect" && !service)} onClick={() => {
         if (confirmation === "disconnect") void disconnect();
         else quit();
-      }}>{confirmation === "disconnect" ? "disconnect" : "quit"}</button>
+      }}>{confirmation === "disconnect" ? disconnecting ? "disconnecting…" : "disconnect" : "quit"}</button>
     </dialog>
     <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
       onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
