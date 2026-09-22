@@ -13,9 +13,9 @@ mod prepared;
 mod startup;
 mod system_status;
 mod theme;
-mod transcription;
+use desktop_native::transcription;
 mod typography;
-mod vision_debug;
+use desktop_native::vision_debug;
 
 use std::borrow::Cow;
 use std::env;

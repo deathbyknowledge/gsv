@@ -1,4 +1,5 @@
 import { useEffect } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
@@ -18,6 +19,7 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
   onClose?: () => void;
   onConnected?: (targetId: string) => void;
 }) {
+  const visible = useViewActive();
   const { connected } = useGateway();
   const { snapshot } = useSession();
   const { pairing: owner, state } = useDevicePairing();
@@ -34,12 +36,12 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
   useEffect(() => {
     if (initialPlatform && !owner.snapshot().invitation && !owner.snapshot().draft.label) owner.setPlatform(initialPlatform);
   }, [initialPlatform, owner]);
-  useEffect(() => { if (connected) void owner.refresh(); }, [connected, online, owner]);
+  useEffect(() => { if (visible && connected) void owner.refresh(); }, [visible, connected, online, owner]);
   useEffect(() => {
-    if (!active || !pairing) return;
+    if (!visible || !active || !pairing) return;
     const timer = window.setTimeout(() => void owner.refresh(), Math.max(1, pairing.expiresAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [active, pairing?.expiresAt, owner]);
+  }, [visible, active, pairing?.expiresAt, owner]);
 
   return <div class="device-pairing fleet-connection">
     {!allowed && <p class="note">Your account cannot create device invitations.</p>}

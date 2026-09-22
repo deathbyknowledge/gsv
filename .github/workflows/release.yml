@@ -208,6 +208,17 @@ jobs:
           cargo build --locked --release --target ${{ matrix.target }}
           --package desktop --package transcriber --package gestures
 
+      - name: Test gesture helper for this release target
+        working-directory: host
+        run: >-
+          cargo test --locked --release --target ${{ matrix.target }}
+          --package gestures --package gesture-protocol
+
+      - name: Check gesture fixture parity
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: scripts/vision-native/parity.sh
+
       - name: Stage Desktop
         shell: bash
         run: |
@@ -220,6 +231,7 @@ jobs:
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
             cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
             cp host/helpers/gestures/models/PROVENANCE.md release/gsv-vision-PROVENANCE.md
+            cp host/helpers/gestures/THIRD_PARTY.md release/gsv-vision-THIRD_PARTY.md
           fi
 
       - name: Upload Desktop
@@ -294,9 +306,15 @@ jobs:
           name: gsv-browser-extension
           path: release/gsv-browser-extension.zip
 
+  build-tauri-macos:
+    needs: [resolve]
+    uses: ./.github/workflows/desktop-tauri-macos.yml
+    permissions:
+      contents: read
+
   # Create GitHub Release with all artifacts
   release:
-    needs: [resolve, build-host-tools, build-desktop, build-cloudflare-bundles, build-browser-extension]
+    needs: [resolve, build-host-tools, build-desktop, build-tauri-macos, build-cloudflare-bundles, build-browser-extension]
     runs-on: ubuntu-latest
     env:
       KIND: ${{ needs.resolve.outputs.kind }}
@@ -330,6 +348,9 @@ jobs:
           cp artifacts/gsv-desktop-darwin-x64/* release/
           cp artifacts/gsv-desktop-darwin-arm64/* release/
 
+          cp artifacts/gsv-tauri-prototype-darwin-x64/*.zip release/
+          cp artifacts/gsv-tauri-prototype-darwin-arm64/*.zip release/
+
           # Cloudflare deploy bundles (modular, per component/adapter)
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-*.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-deployment-manifest.json release/
@@ -346,7 +367,8 @@ jobs:
             release/gsv-vision-darwin-*
           chmod -x release/gsv-transcribe-THIRD_PARTY.md \
             release/gsv-vision-LICENSE.apache-2.0 \
-            release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-PROVENANCE.md \
+            release/gsv-vision-THIRD_PARTY.md
 
           # Include install script
           cp install.sh release/
@@ -436,9 +458,17 @@ jobs:
           - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-vision-linux-arm64\`
           - **Windows (x64)**: \`gsv-windows-x64.exe\`, \`gsvd-windows-x64.exe\`
 
-          The macOS command-line Desktop builds are not yet code-signed or notarized.
-          A signed \`.app\` distribution remains blocked on Apple Developer signing
-          credentials and a notarization secret being configured for this repository.
+          ### macOS Tauri development app
+
+          Download \`gsv-tauri-prototype-darwin-arm64.zip\` for Apple Silicon or
+          \`gsv-tauri-prototype-darwin-x64.zip\` for Intel. Unzip it and move
+          \`GSV Tauri Prototype.app\` to Applications. Each app includes its local
+          voice and gesture helpers and uses a separate prototype session.
+
+          These developer builds are ad-hoc signed, without an Apple Developer ID
+          or notarization. After the first blocked launch, use **System Settings →
+          Privacy & Security → Open Anyway** for this app. macOS still asks for
+          camera and microphone access when you enable those features.
           BODY
 
       - name: Move mutable dev tag
@@ -504,6 +534,9 @@ jobs:
             release/gsv-vision-darwin-arm64
             release/gsv-vision-LICENSE.apache-2.0
             release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-THIRD_PARTY.md
+            release/gsv-tauri-prototype-darwin-x64.zip
+            release/gsv-tauri-prototype-darwin-arm64.zip
             release/gsv-cloudflare-*.tar.gz
             release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt

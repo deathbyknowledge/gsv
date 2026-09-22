@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+desktop-native = { path = "../../crates/desktop-native" }
 async-trait = "0.1"
 daemon-protocol = { path = "../../crates/daemon-protocol" }
 gpui = "=0.2.2"
@@ -41,6 +42,7 @@ tray-icon = { version = "=0.24.2", default-features = false }
 ksni = { version = "=0.3.6", features = ["blocking"] }
 
 [dev-dependencies]
+desktop-native = { path = "../../crates/desktop-native", features = ["test-support"] }
 gpui = { version = "=0.2.2", features = ["test-support"] }
 
 [[bin]]

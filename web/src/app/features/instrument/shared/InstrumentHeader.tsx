@@ -1,6 +1,7 @@
 import type { RefObject } from "preact";
 import type { Distance } from "../Instrument";
 import { Wordmark } from "./Wordmark";
+import { PlatformIdentity } from "../../../services/platform/PlatformIdentity";
 
 type InstrumentHeaderProps = {
   distance: Distance;
@@ -19,6 +20,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
         <Wordmark />
+        <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">

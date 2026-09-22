@@ -1,7 +1,9 @@
 import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
 import { ContactRequests } from "./ContactRequests";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -24,6 +26,7 @@ export function AddContact({ account, onClose, onAdded }: {
   onClose: () => void;
   onAdded: (id: string) => void;
 }) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [issued, setIssued] = useState<ContactInviteCreateResult | null>(null);
@@ -37,10 +40,10 @@ export function AddContact({ account, onClose, onAdded }: {
   const [now, setNow] = useState(Date.now());
   const deadline = Math.min(...(invites.data ?? []).filter((invite) => invite.state === "pending" && invite.expiresAtMs > now).map((invite) => invite.expiresAtMs));
   useEffect(() => {
-    if (!Number.isFinite(deadline)) return;
+    if (!active || !Number.isFinite(deadline)) return;
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, deadline - Date.now()));
     return () => clearTimeout(timer);
-  }, [deadline]);
+  }, [active, deadline]);
   const displayedInvites = invites.data?.map((invite) => invite.state === "pending" && invite.expiresAtMs <= Math.max(now, Date.now())
     ? { ...invite, state: "expired" as const } : invite);
   const currentInvite = displayedInvites?.find((invite) => invite.inviteId === issued?.inviteId);

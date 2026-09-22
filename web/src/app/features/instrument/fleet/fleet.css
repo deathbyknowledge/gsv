@@ -12,7 +12,7 @@
 }
 .fleet-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -23,7 +23,7 @@
   scroll-padding-top: var(--instrument-header-height);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  padding: var(--instrument-header-height) 0 var(--space-5);
+  padding: var(--instrument-header-height) 24px var(--space-5);
 }
 .fleet-block {
   padding: 18px var(--space-5) 6px;
@@ -106,10 +106,10 @@
 .fleet tr[data-row]:hover td {
   background: var(--hover);
 }
-.fleet tr[data-row].is-sel td {
+.fleet tr[data-row]:focus-within td {
   background: var(--selected);
 }
-.fleet tr[data-row].is-sel td:first-child {
+.fleet tr[data-row]:focus-within td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .fleet tr[data-row]:focus-visible td:first-child {
@@ -209,11 +209,44 @@
 }
 .fleet-tree .touched .place { color: var(--target); }
 
+.fleet-dialog {
+  position: fixed;
+  inset: 0;
+  box-sizing: border-box;
+  width: min(720px, calc(100vw / var(--type-scale) - 32px));
+  max-width: none;
+  height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px));
+  max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  overflow: hidden;
+}
+.fleet-dialog[open] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.fleet-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.fleet-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+.fleet-dialog-head > span { color: var(--faint); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+.fleet-dialog-head button { white-space: nowrap; }
+.fleet-dialog-head kbd { margin-left: 8px; color: var(--faint); font: inherit; font-size: 10px; }
+.fleet-dialog > .instrument-view:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: auto; min-height: 0; overflow: hidden; }
 .fleet-inspector {
-  border-left: 1px solid var(--border);
-  padding: calc(var(--instrument-header-height) + 18px) var(--space-5) 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
   overflow-y: auto;
-  background: var(--inspector-bg);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 .fleet-inspector .body {
   margin: 0 0 14px -6px;
@@ -301,6 +334,8 @@
 .fleet-setup, .fleet-approval .line-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 320px; overflow-y: auto; }
 .fleet-approval:focus { outline: 1px solid var(--border-focus); outline-offset: 5px; }
 @container instrument (max-width: 900px) {
+  .fleet-manifest { padding-inline: 0; }
+  .fleet-dialog-head { padding-inline: 18px; }
   .fleet-inspector { padding: 18px; min-height: 0; }
 }
 .fleet-select {
@@ -357,7 +392,7 @@
 .fleet-ledger .older { grid-column: 1 / -1; padding: 6px 0 2px; border-top: 1px solid var(--rule-inner); }
 .fleet-ledger .older button { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
 .fleet-ledger .older button:hover { color: var(--accent); }
-.fleet-ledger .older.is-sel { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+.fleet-ledger .older:focus-within { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 .fleet-ledger .row > span { white-space: nowrap; }
 .fleet-ledger .detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .fleet-ledger .who { text-align: right; }
@@ -376,14 +411,14 @@
 /* ledger rows are rows: hover, selection, and the accent inset, as in the tables */
 .fleet-ledger .row { cursor: pointer; }
 .fleet-ledger .row:hover { background: var(--hover); }
-.fleet-ledger .row.is-sel { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+.fleet-ledger .row:focus-within { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 .fleet-ledger .row > span { padding: 1px 0; }
 .fleet-ledger .row:focus-visible .what { text-decoration: underline; text-underline-offset: 0.25em; }
 .fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }
 
-.fleet tr.more.is-sel td { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+.fleet tr.more:focus-within td { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 
-.fleet-tree .place-head.is-sel, .fleet-tree li.f button.file.is-sel { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); padding-left: 6px; }
+.fleet-tree .place-head:focus, .fleet-tree li.f button.file:focus { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Contact conversations stay beside the relationship they belong to. */
 .fleet-contact-tabs { display: flex; gap: 18px; margin-bottom: 22px; }

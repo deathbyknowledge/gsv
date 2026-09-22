@@ -80,7 +80,7 @@ available as a syscall target.
 
 Platform-native, high-cost Desktop work runs in separately supervised helpers.
 `gsv-transcribe` owns local microphone capture and speech inference. The
-experimental `gsv-vision` helper owns camera capture, native Rust/tract model
+experimental `gsv-vision` helper owns camera capture, native LiteRT/XNNPACK model
 inference, authored landmark-to-pose recognition, and temporal gesture policy;
 camera frames and landmarks never
 enter GPUI or the gateway. Desktop starts it headlessly unless
@@ -93,9 +93,11 @@ propose starting transcription without a voice-request identity. Desktop owns
 an explicit, inspectable armed state that starts disarmed. The helper may
 propose changing it only after a 700 ms two-fist hold, and Desktop echoes the
 resulting absolute authority. Once armed, the right action hand alone maps
-sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
-and mute/unmute; those commands remain available while the Desktop window is
-unfocused. Scrolling deliberately requires a two-hand chord: the control palm
+counts of extended digits 1 through 5 to start/finish, send, delete, clear,
+and mute/unmute. The thumb counts independently, any combination is accepted,
+and ambiguous digits leave the pose unassigned. Those commands remain available
+while the Desktop window is unfocused. Scrolling deliberately requires a
+two-hand chord: the control palm
 stays open while the helper captures the image-aspect-corrected angle between
 both palm centers and a settled action fist changes that relative angle.
 Translating both hands together does not change the signal. The helper maps each
@@ -128,14 +130,16 @@ Desktop delete one Unicode grapheme or clear only unsent voice-owned text while
 preserving typed anchors and attachments. A later partial begins on the new
 segment and cannot resurrect corrected text. Gesture send and correction never
 masquerade as terminal transcription events. Its runtime is the Rust helper
-plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
+plus two checksum-pinned palm and hand-landmark TFLite models executed by a
+statically linked LiteRT CPU interpreter with an explicit XNNPACK delegate;
 the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
 dependency. The raw Linux and macOS host distributions and the unsigned macOS
 development application include `gsv-vision`, whose two checksum-verified
-TFLite models are embedded directly in the executable for offline,
-self-contained builds. They carry the model license and exact provenance as
-verified release assets. The application starts the helper in a disarmed state
+TFLite models are embedded directly in the executable for offline operation.
+Building the CPU runtime requires CMake, a C++20 compiler and an initial source
+dependency fetch. Distributions carry the model license, exact provenance and
+native runtime notices as verified release assets. The application starts the helper in a disarmed state
 and provides visible Voice and Gestures affordances rather than depending on
 shell environment variables that Finder does not provide. A signed macOS
 application distribution still requires Developer ID signing and notarization.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-session"
+description = "Enables the desktop_session command without any pre-configured scope."
+commands.allow = ["desktop_session"]
+
+[[permission]]
+identifier = "deny-desktop-session"
+description = "Denies the desktop_session command without any pre-configured scope."
+commands.deny = ["desktop_session"]

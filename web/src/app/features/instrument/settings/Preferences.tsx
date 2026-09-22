@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { ModelEditor } from "./ModelEditor";
 import { Timezone } from "./Timezone";
 import { useRef, useState } from "preact/hooks";

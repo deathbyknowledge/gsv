@@ -15,6 +15,7 @@ export type AsciiAnimationFrame = {
 /** A scene owns its shape and simulation. The host owns time, glyph layers, and presentation. */
 export type AsciiAnimationScene = {
   prepare?: () => void | Promise<void>;
+  subscribe?: (redraw: () => void) => () => void;
   stillAt: number;
   frame: (seconds: number, motion: boolean, palette?: ColorTheme) => AsciiAnimationFrame;
 };
@@ -56,6 +57,7 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
     let inViewport = !pauseWhenOffscreen || !("IntersectionObserver" in window);
     let visible = inViewport && !document.hidden;
     let raf = 0;
+    let redrawRaf = 0;
     let start = 0;
     let last = 0;
     let frameSeconds = scene.stillAt;
@@ -78,6 +80,15 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
     redraw.current = () => {
       if (ready && visible && !cancelled) draw(frameSeconds, frameMotion);
     };
+    const unsubscribe = scene.subscribe?.(() => {
+      if (!ready || !visible || cancelled || redrawRaf) return;
+      redrawRaf = window.requestAnimationFrame(() => {
+        redrawRaf = 0;
+        if (!ready || !visible || cancelled) return;
+        const allowMotion = moving();
+        draw(allowMotion ? (performance.now() - start) / 1000 : scene.stillAt, allowMotion);
+      });
+    });
     const revealReplay = (visible: boolean) => {
       if (replay.current) {
         replay.current.hidden = !visible;
@@ -152,6 +163,8 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
       cancelled = true;
       redraw.current = null;
       window.cancelAnimationFrame(raf);
+      window.cancelAnimationFrame(redrawRaf);
+      unsubscribe?.();
       observer?.disconnect();
       document.removeEventListener("visibilitychange", updateVisibility);
       button?.removeEventListener("click", restart);

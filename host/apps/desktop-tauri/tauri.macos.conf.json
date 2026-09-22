@@ -1,0 +1,19 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "externalBin": ["binaries/gsv-transcribe", "binaries/gsv-vision"],
+    "resources": {
+      "../../../LICENSE": "LICENSE",
+      "../../helpers/transcriber/THIRD_PARTY.md": "licenses/transcription/THIRD_PARTY.md",
+      "../../helpers/gestures/THIRD_PARTY.md": "licenses/gestures/THIRD_PARTY.md",
+      "../../helpers/gestures/models/LICENSE.apache-2.0": "licenses/gestures/models/LICENSE.apache-2.0",
+      "../../helpers/gestures/models/PROVENANCE.md": "licenses/gestures/models/PROVENANCE.md"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    }
+  }
+}

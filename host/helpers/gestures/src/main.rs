@@ -299,6 +299,10 @@ fn control_presentation(
         ControlStatus::Disarmed { .. } => ControlStatus::Disarmed { progress: None },
         ControlStatus::Disabled { .. } => ControlStatus::Disabled { progress: None },
         ControlStatus::Standby { .. } => ControlStatus::Standby { progress: None },
+        ControlStatus::Practice { lesson_id, .. } => ControlStatus::Practice {
+            lesson_id,
+            progress: None,
+        },
         ControlStatus::Active {
             voice_request_id,
             muted,
@@ -339,6 +343,7 @@ fn inference_worker(
         ScrollControl::with_preference(GestureContext::Disabled, config.hand_preference);
     let mut control_revision = 0;
     let mut published_control_status = None;
+    let mut published_reset_sequence = 0;
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
             let stats = reader.stats();
@@ -422,17 +427,21 @@ fn inference_worker(
             };
         let publish_at = Instant::now();
         if let (Some(control_link), Some(context_revision)) = (&control_link, context_revision) {
-            if control_status_publish_due(
-                published_control_status,
-                context_revision,
-                control_status,
-                publish_at,
-            ) {
+            let reset_sequence = gesture_control.reset_sequence();
+            if reset_sequence != published_reset_sequence
+                || control_status_publish_due(
+                    published_control_status,
+                    context_revision,
+                    control_status,
+                    publish_at,
+                )
+            {
                 // Explanatory snapshots are replace-latest and never wait for
                 // the event writer. A repeated snapshot only lets a resumed UI
                 // recover presentation; it is neither an action nor liveness.
                 // Intent edges above retain their reliable bounded path.
-                let _ = control_link.publish_status(control_status);
+                let _ = control_link.publish_status(control_status, reset_sequence);
+                published_reset_sequence = reset_sequence;
                 published_control_status = Some((context_revision, control_status, publish_at));
             }
             if let Some(state) = scroll_update {
@@ -478,6 +487,10 @@ fn sync_control_context(
 fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
     let progress = control_progress(control, now);
     match control.state() {
+        GestureContext::Practice { lesson_id } => ControlStatus::Practice {
+            lesson_id,
+            progress,
+        },
         GestureContext::Disarmed => ControlStatus::Disarmed { progress },
         GestureContext::Disabled => ControlStatus::Disabled { progress },
         GestureContext::Standby => ControlStatus::Standby { progress },
@@ -503,6 +516,7 @@ fn gesture_candidate(
     chord: crate::control::ControlChord,
 ) -> Option<GestureCandidate> {
     let candidate = match chord {
+        crate::control::ControlChord::OpenPalm => GestureCandidate::OpenPalm,
         crate::control::ControlChord::Arm => GestureCandidate::Arm,
         crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
         crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,

@@ -249,6 +249,7 @@ impl GsvApp {
                 sequence,
                 received_at,
                 status,
+                ..
             } => {
                 if sequence == 0 || sequence <= self.vision_status_sequence {
                     return;
@@ -292,6 +293,7 @@ impl GsvApp {
                 let ready = self.vision_lifecycle == Some(LifecycleState::Ready);
 
                 match intent {
+                    GestureIntent::Practice { .. } => return,
                     GestureIntent::SetArmed { armed } => {
                         if fresh && ready {
                             self.vision_armed = armed;
@@ -509,9 +511,9 @@ impl GsvApp {
                 GestureCandidate::ClearDictation => VOICE_GESTURE_CLEAR,
                 GestureCandidate::Mute => VOICE_GESTURE_MUTE,
                 GestureCandidate::Unmute => VOICE_GESTURE_UNMUTE,
-                GestureCandidate::Arm | GestureCandidate::StartTranscription => {
-                    VOICE_GESTURES_ACTIVE
-                }
+                GestureCandidate::Arm
+                | GestureCandidate::StartTranscription
+                | GestureCandidate::OpenPalm => VOICE_GESTURES_ACTIVE,
             };
         }
         if muted {
@@ -640,6 +642,7 @@ impl GsvApp {
                         GestureContext::Disabled | GestureContext::Active { .. } => {
                             GESTURES_STANDBY
                         }
+                        GestureContext::Practice { .. } => GESTURES_UNAVAILABLE,
                     },
                     None => GESTURES_STARTING,
                     Some(_) => GESTURES_UNAVAILABLE,
@@ -671,6 +674,10 @@ impl GsvApp {
 
 fn status_context(status: ControlStatus) -> (GestureContext, Option<GestureProgress>) {
     match status {
+        ControlStatus::Practice {
+            lesson_id,
+            progress,
+        } => (GestureContext::Practice { lesson_id }, progress),
         ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
         ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
         ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
@@ -1057,6 +1064,7 @@ mod tests {
                 app.update(cx, |app, cx| {
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 1,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby {
@@ -1323,6 +1331,7 @@ mod tests {
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 2,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby { progress: None },
@@ -1375,6 +1384,7 @@ mod tests {
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
+                            reset_sequence: 0,
                             sequence: 3,
                             received_at: Instant::now(),
                             status: ControlStatus::Standby { progress: None },

@@ -1,0 +1,93 @@
+name: macos tauri development app
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-tauri-macos.yml'
+      - '.github/workflows/release.yml'
+      - 'host/Cargo.*'
+      - 'host/apps/desktop-tauri/**'
+      - 'host/crates/desktop-native/**'
+      - 'host/crates/gesture-protocol/**'
+      - 'host/helpers/**'
+      - 'web/**'
+      - 'packages/gsv/**'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: macOS prototype (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: darwin-x64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: tauri-macos-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Build shared frontend
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+          npm run gsv:build
+          npm run build --workspace web -- --config vite.desktop.config.ts
+      - name: Build and stage local helpers
+        env:
+          GSV_MACOS_TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --manifest-path host/Cargo.toml --locked --release --target "$GSV_MACOS_TARGET" --package transcriber --package gestures
+          mkdir -p host/apps/desktop-tauri/binaries
+          for helper in gsv-transcribe gsv-vision; do
+            cp "host/target/$GSV_MACOS_TARGET/release/$helper" "host/apps/desktop-tauri/binaries/$helper-$GSV_MACOS_TARGET"
+          done
+      - name: Build app with ad-hoc signing
+        working-directory: host/apps/desktop-tauri
+        env:
+          GSV_MACOS_TARGET: ${{ matrix.target }}
+        run: npx --yes @tauri-apps/cli@2.11.5 build --ci --target "$GSV_MACOS_TARGET" --bundles app -- --locked
+      - name: Check bundle and create shareable ZIP
+        env:
+          GSV_MACOS_TARGET: ${{ matrix.target }}
+          GSV_MACOS_PLATFORM: ${{ matrix.platform }}
+        run: |
+          app="host/target/$GSV_MACOS_TARGET/release/bundle/macos/GSV Tauri Prototype.app"
+          plutil -lint "$app/Contents/Info.plist"
+          plutil -extract NSCameraUsageDescription raw "$app/Contents/Info.plist"
+          plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist"
+          for binary in gsv-desktop-tauri gsv-transcribe gsv-vision; do
+            test -x "$app/Contents/MacOS/$binary"
+          done
+          test -f "$app/Contents/Resources/licenses/gestures/THIRD_PARTY.md"
+          test -f "$app/Contents/Resources/licenses/transcription/THIRD_PARTY.md"
+          codesign --verify --deep --strict "$app"
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release/gsv-tauri-prototype-$GSV_MACOS_PLATFORM.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gsv-tauri-prototype-${{ matrix.platform }}
+          path: release/gsv-tauri-prototype-${{ matrix.platform }}.zip
+          if-no-files-found: error

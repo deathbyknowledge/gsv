@@ -1,27 +1,35 @@
 # GSV gesture helper
 
 The `gestures` package builds the experimental `gsv-vision` local hand-control
-helper. It is a separate Rust process that owns the camera, native Rust/tract
+helper. It is a separate Rust process that owns the camera, native LiteRT/XNNPACK
 inference, temporal gesture policy, and optional diagnostic window. Camera
 pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
-`delete backward`, `clear dictation`, `mute`, and `unmute` intents, plus
+`delete backward`, and `clear dictation` intents, plus
 replace-latest absolute scroll-control velocity and semantic control status with
-bounded candidate progress. Every active action identifies the exact voice
-request, and every event is scoped to
+bounded candidate progress and a monotonic acknowledgement of confirmed fist
+resets. Reset status is presentation-only and cannot trigger a command. Every
+active action identifies the exact voice request, and every event is scoped to
 the random helper session. Reliable lifecycle and intent events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
 The runtime is one Rust executable with two verified TFLite models embedded
-from the pinned Gesture Recognizer bundle. tract executes palm and hand-landmark
-inference, then GSV's authored Rust recognizer maps landmark geometry into its
-small pose vocabulary. Python, Java, Bazel, and MediaPipe native code are not
-build or runtime dependencies.
+from the pinned Gesture Recognizer bundle. LiteRT 2.2.0 executes palm and
+hand-landmark inference through its CPU interpreter and XNNPACK delegate, then
+GSV's authored Rust recognizer maps landmark geometry into its small pose
+vocabulary. The runtime is statically linked; no additional inference library
+or model download is needed when running the helper. Python, Java, Bazel, and
+MediaPipe native code are not build or runtime dependencies.
 
 ## Build and run locally
+
+Building requires CMake 3.22+, a C++20 compiler and Git. The first build fetches
+checksum-pinned LiteRT/TensorFlow source archives and the dependencies selected
+by LiteRT; subsequent builds reuse Cargo's native build cache. Model files are
+already checked in and are never downloaded by the build.
 
 From the repository root:
 
@@ -66,7 +74,20 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-Gesture control starts disarmed. Hold both hands in closed fists for 700 ms to
+The helper starts disarmed until its owning client grants a context. The Tauri
+prototype grants standby as soon as its explicitly enabled camera becomes ready.
+Both fists exits hands-free there, cancelling microphone capture and stopping the
+camera. Its frontend exposes Off, Ready and Listening; one finger starts or pauses
+listening, preserving the draft. There is no extra arm or mute control.
+
+The private tutorial instead grants a lesson-scoped `practice` context. Held
+counts (including five) become observations, without voice-request authority.
+The client accepts only the gesture for its current lesson and explains rejected
+counts without executing them. Dwell and fist-reset requirements remain the same;
+both fists can always exit practice, including after a rejected count. The private
+launch marker is v9, requiring the helper and client to be built together.
+
+The GPUI client retains its existing authority model: hold both hands in closed fists for 700 ms to
 request arming or disarming. Desktop owns that explicit state and echoes one
 strict absolute context: disarmed, armed standby, temporarily disabled, or
 armed and active with the exact listening request and acknowledged mute state.
@@ -79,17 +100,21 @@ array order and the left-hand posture are irrelevant. Set
 `GSV_GESTURE_DOMINANT_HAND=left` to use the physical left action hand or `auto`
 to learn the first unambiguous action hand.
 
-- Open only the action index finger (`1`) and hold for 350 ms. In standby this
-  starts transcription; while active the same count finishes it.
-- Open the action index and middle fingers (`2`) for 350 ms to send now and keep
+Every extended digit counts, including the thumb. The same count works with any
+combination on the action hand; thumb + index + middle is three, not two. Each
+digit must be confidently open or closed. Ambiguous geometry stays unassigned
+instead of ignoring a digit or guessing a lower count.
+
+- Open any one action-hand finger or the thumb (`1`) and hold for 350 ms. In
+  standby this starts transcription; while active the same count finishes it.
+- Open any two action-hand digits (`2`) for 350 ms to send now and keep
   listening.
-- Open the action index, middle, and ring fingers (`3`) for 350 ms to delete one
+- Open any three action-hand digits (`3`) for 350 ms to delete one
   visible Unicode character (grapheme) from the unsent voice-owned transcription.
-- Open all four action fingers while keeping its thumb closed (`4`) for 1 second
+- Open any four action-hand digits (`4`) for 1 second
   to clear the unsent voice-owned transcription. Text typed before or after the
   voice insertion point and draft attachments remain intact.
-- Open all four action fingers and the thumb (`5`) for 350 ms to mute or unmute,
-  depending on current state.
+- An open action palm (`5`) has no standalone command.
 - Close the action hand into a fist (`0`) after every command. This is the only
   reset that rearms the next count.
 - Hold the control hand open while settling the action fist for 180 ms. The
@@ -97,9 +122,10 @@ to learn the first unambiguous action hand.
   making that line steeper in either direction controls continuous scroll
   speed. Return to the neutral angle to pause, or release either posture to end
   the chord. Each measured angle is mapped directly, without a dead zone or
-  smoothing. Four or five visible control-hand fingers count as an open modifier,
-  so thumb ambiguity does not interrupt scrolling. Make a fresh action fist
-  before showing a numbered command so the release posture cannot act accidentally.
+  smoothing. Four or five confidently extended control-hand digits count as an
+  open modifier. Ambiguous geometry uses the ordinary tracking grace period.
+  Make a fresh action fist before showing a numbered command so the release
+  posture cannot act accidentally.
 - Hold both fists for 700 ms whenever gesture commands should be armed or
   disarmed. Open either fist after the toggle before toggling again.
 
@@ -154,4 +180,4 @@ Library/model/backend paths and native diagnostics are not printed.
 The artifact and parity contract lives in
 [`scripts/vision-native/README.md`](../../../scripts/vision-native/README.md).
 The Linux/macOS host distribution and macOS development bundle carry the model
-license and provenance beside the executable.
+license, provenance and native runtime notices beside the executable.

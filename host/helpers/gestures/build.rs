@@ -25,9 +25,34 @@ const MODELS: [ModelContract; 2] = [
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS")?;
+    if !matches!(target_os.as_str(), "linux" | "macos") {
+        return Err("the gesture CPU runtime supports Linux and macOS".into());
+    }
     for contract in MODELS {
         println!("cargo:rerun-if-changed={}", contract.path);
         verify_model(&contract)?;
+    }
+    println!("cargo:rerun-if-changed=native");
+    let mut config = cmake::Config::new("native");
+    if target_os == "macos" {
+        println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+        let minimum = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or("12.0".into());
+        // This single-threaded build script sets the same baseline for cc's
+        // compiler discovery, CMake and the final Rust link as the app bundle.
+        std::env::set_var("MACOSX_DEPLOYMENT_TARGET", &minimum);
+        config.define("CMAKE_OSX_DEPLOYMENT_TARGET", &minimum);
+        println!("cargo:rustc-link-arg=-mmacosx-version-min={minimum}");
+    }
+    let native = config.profile("Release").build();
+    println!("cargo:rustc-link-search=native={}/lib", native.display());
+    println!("cargo:rustc-link-lib=static=gsv_litert");
+    if target_os == "macos" {
+        println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=dl");
     }
     Ok(())
 }

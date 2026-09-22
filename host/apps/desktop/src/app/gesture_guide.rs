@@ -24,13 +24,13 @@ const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
     },
     GestureGuideRow {
         action: "START / FINISH",
-        posture: "1 · INDEX ONLY",
+        posture: "1 · ANY ONE FINGER, INCLUDING THE THUMB",
         timing: "HOLD 350 MS",
         effect: "Starts while idle; finishes while listening.",
     },
     GestureGuideRow {
         action: "SEND",
-        posture: "2 · INDEX + MIDDLE",
+        posture: "2 · ANY TWO FINGERS",
         timing: "HOLD 350 MS",
         effect: "Sends the current utterance and keeps listening.",
     },
@@ -39,13 +39,13 @@ const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
 const EDIT_GESTURE_ROWS: [GestureGuideRow; 4] = [
     GestureGuideRow {
         action: "DELETE",
-        posture: "3 · INDEX + MIDDLE + RING",
+        posture: "3 · ANY THREE FINGERS",
         timing: "HOLD 350 MS",
         effect: "Deletes one visible character from unsent dictation.",
     },
     GestureGuideRow {
         action: "CLEAR DICTATION",
-        posture: "4 · FOUR FINGERS, THUMB CLOSED",
+        posture: "4 · ANY FOUR FINGERS",
         timing: "HOLD 1 SECOND",
         effect: "Clears dictated text; typed text and files stay.",
     },
