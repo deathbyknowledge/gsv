@@ -53,6 +53,22 @@ describe("AI Gateway request attribution", () => {
     expect(JSON.parse(JSON.parse(metadata)["gsv.request_shape"])).toEqual({ version: 1, validJson: false });
   });
 
+  it("forwards an invalid request without recording schema errors or private field values", async () => {
+    const response = new Response(null, { status: 400 });
+    const bindingFetch = vi.fn<typeof fetch>(async () => response);
+    const fetch = createAttributedAiBindingFetch({ aiGatewayLogId: null, fetch: bindingFetch }, ATTRIBUTION);
+    const body = JSON.stringify({ messages: [{ role: "user", content: { private: "private text" } }] });
+
+    expect(await fetch("https://workers-binding.ai/compat/chat/completions", { method: "POST", body })).toBe(response);
+    const init = bindingFetch.mock.calls[0]![1]!;
+    expect(init.body).toBe(body);
+    const metadata = new Headers(init.headers).get("cf-aig-metadata")!;
+    expect(metadata).not.toContain("private");
+    expect(JSON.parse(JSON.parse(metadata)["gsv.request_shape"])).toEqual({
+      version: 1, validJson: true, validRequest: false,
+    });
+  });
+
   it("replaces forged metadata after merging without taking ownership of either body", async () => {
     const requestPull = vi.fn();
     const requestCancel = vi.fn();

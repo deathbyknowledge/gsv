@@ -716,7 +716,7 @@ function cloneToolCall(
     type: "toolCall",
     id: toolCall.id,
     name: toolCall.name,
-    // structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
+    // SAFETY: structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
     arguments: structuredClone(toolCall.arguments) as Extract<
       InferenceResult["content"][number], { type: "toolCall" }
     >["arguments"],

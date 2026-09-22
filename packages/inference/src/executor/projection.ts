@@ -90,7 +90,7 @@ function thinkingContent(content: ThinkingContent): ThinkingContent {
     thinkingSignature: content.thinkingSignature, redacted: content.redacted };
 }
 function toolContent(content: ToolCall): AiToolCall {
-  // structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
+  // SAFETY: structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
   const args = structuredClone(content.arguments) as AiToolCall["arguments"];
   return { type: "toolCall", id: content.id, name: content.name, arguments: args,
     thoughtSignature: content.thoughtSignature };
