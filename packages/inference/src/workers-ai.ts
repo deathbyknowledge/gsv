@@ -6,6 +6,7 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
   type AiBinding,
@@ -28,6 +29,7 @@ const AI_GATEWAY_BASE_URL =
   `https://workers-binding.ai/ai-gateway/gateways/${AI_GATEWAY_ID}`;
 const AI_GATEWAY_COMPAT_URL = `${AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_MODEL_PREFIX = "workers-ai/";
+const workersAiCatalog = getBuiltinModels("cloudflare-workers-ai");
 
 export type WorkersAiGeneration = {
   stream: (routing: InferenceRouting) => AsyncIterable<AssistantMessageEvent>;
@@ -498,6 +500,9 @@ async function resultFromEvents(
 function workersAiModel(
   routing: InferenceModelRouting,
 ): Model<"openai-completions"> {
+  const catalogModel = workersAiCatalog.find((model) => (
+    model.id === routing.modelId && model.api === "openai-completions"
+  ));
   return {
     id: `${WORKERS_AI_MODEL_PREFIX}${routing.modelId}`,
     name: routing.displayName,
@@ -505,6 +510,7 @@ function workersAiModel(
     provider: "cloudflare-ai-gateway",
     baseUrl: AI_GATEWAY_COMPAT_URL,
     reasoning: routing.reasoning,
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
     input: ["text", "image"],
     cost: {
       input: routing.inputNanoUsdPerToken / 1_000,
@@ -515,6 +521,9 @@ function workersAiModel(
     contextWindow: routing.contextWindow,
     maxTokens: routing.maxOutputTokens,
     compat: {
+      // Model-specific controls translate reasoning off into a provider request.
+      // Routing still owns the limits, prices and binding transport above.
+      ...catalogModel?.compat,
       supportsStore: false,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
