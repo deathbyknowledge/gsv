@@ -615,6 +615,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            ccache \
             clang \
             cmake \
             libasound2-dev \
@@ -629,6 +630,24 @@ jobs:
             linux-libc-dev \
             patchelf \
             pkg-config
+
+      - name: Cache native compiler output
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/gsv-desktop-ccache
+          key: desktop-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: desktop-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure native compiler cache
+        run: |
+          printf '%s\n' \
+            "CCACHE_DIR=$RUNNER_TEMP/gsv-desktop-ccache" \
+            "CCACHE_BASEDIR=$GITHUB_WORKSPACE" \
+            'CCACHE_COMPILERCHECK=content' \
+            'CCACHE_MAXSIZE=512M' \
+            'CMAKE_C_COMPILER_LAUNCHER=ccache' \
+            'CMAKE_CXX_COMPILER_LAUNCHER=ccache' >> "$GITHUB_ENV"
+          CCACHE_DIR="$RUNNER_TEMP/gsv-desktop-ccache" ccache --zero-stats
 
       - name: Check vision artifact scripts
         run: |
@@ -646,17 +665,21 @@ jobs:
 
       - name: Test Desktop and helpers
         working-directory: host
-        run: >-
-          cargo test --locked --package desktop --package transcriber
-          --package gestures --package gesture-protocol
+        run: |
+          cargo test --locked --package desktop --package transcriber \
+            --package gestures --package gesture-protocol
+          ccache --show-stats --verbose
 
       - name: Check public gesture fixtures and tracking recovery
-        env:
-          GSV_VISION_TEST_PROFILE: test
-        run: scripts/vision-native/parity.sh
+        working-directory: host
+        run: >-
+          ../scripts/vision-native/parity.sh --profile test
+          --package desktop --package transcriber --package gestures --package gesture-protocol
 
       - name: Lint Desktop and helpers
         working-directory: host
-        run: >-
-          cargo clippy --locked --package desktop --package transcriber
-          --package gestures --package gesture-protocol --all-targets -- -D warnings
+        run: |
+          ccache --zero-stats
+          cargo clippy --locked --package desktop --package transcriber \
+            --package gestures --package gesture-protocol --all-targets -- -D warnings
+          ccache --show-stats --verbose

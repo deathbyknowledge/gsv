@@ -70,8 +70,18 @@ Run the public-image parity tests with:
 ./scripts/vision-native/parity.sh
 ```
 
-The script uses the release profile by default. CI sets
-`GSV_VISION_TEST_PROFILE=test` to reuse the preceding Desktop/helper test build.
+The script defaults to `--release --package gestures`; arguments replace that
+Cargo selection. Linux Desktop CI passes the same test profile and package set
+as its ordinary test command, so fixture checks reuse those compiled tests.
+Matching only the profile is insufficient: a different package set can change
+dependency features and rebuild the native runtime.
+
+That job also caches native C/C++ compilation with ccache across tests, Clippy
+and subsequent runs, with a 512 MB limit. It normalizes build paths and checks
+compiler contents, source, headers and flags before reusing output. Cache
+statistics follow the test and Clippy commands. Compiler-cache configuration
+is applied after Rust dependency-cache restoration so adding the launcher does
+not invalidate the existing Rust cache.
 
 The tests download four checksum-pinned official fixture images and check handedness,
 wrist coordinates, authored poses and actionability against the existing
