@@ -169,6 +169,10 @@ describe("compaction summary completion", () => {
   );
 
   const incomplete: Array<[string, () => AiAssistantMessage, string, number]> = [
+    ["output-limited reasoning", () => cerebrasResponse([
+      { type: "thinking", thinking: PLANNING },
+    ], { stopReason: "length", usage: testUsage(240, 768) }),
+      "LLM reached the output token limit without text or a tool call", 1],
     ["truncated", () => cerebrasResponse([
       { type: "thinking", thinking: PLANNING },
       { type: "text", text: SUMMARY.slice(0, 48) },

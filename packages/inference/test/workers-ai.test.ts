@@ -170,6 +170,36 @@ describe("shared Workers AI inference", () => {
     });
   });
 
+  it.each([undefined, "high"] as const)(
+    "preserves DeepSeek thinking controls for reasoning=%s and applies routing limits",
+    async (reasoning) => {
+      const model = {
+        ...FIRST_MODEL,
+        modelId: "@cf/deepseek-ai/deepseek-v4-flash-0731",
+        maxOutputTokens: 2_048,
+        outputNanoUsdPerToken: 2_000,
+      };
+      const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async () => completionResponse(model.modelId));
+      const generation = createWorkersAiGeneration({
+        ...REQUEST,
+        maxOutputTokens: 4_096,
+        reasoning,
+      }, testBinding(run).binding);
+
+      const result = await generation.result({ ...ROUTING, models: [model] });
+
+      expect(run).toHaveBeenCalledOnce();
+      const request = new Request(...run.mock.calls[0]);
+      expect(await request.json()).toMatchObject({
+        model: `workers-ai/${model.modelId}`,
+        thinking: { type: reasoning ? "enabled" : "disabled" },
+        max_tokens: 2_048,
+      });
+      expect(result.stopReason).toBe("stop");
+      expect(result.usage.cost.output).toBeCloseTo(0.000002, 12);
+    },
+  );
+
   it("captures content-free diagnostics for provider HTTP failures", async () => {
     const run = vi.fn(async () => new Response(JSON.stringify({
       error: { message: "provider-specific private detail" },
