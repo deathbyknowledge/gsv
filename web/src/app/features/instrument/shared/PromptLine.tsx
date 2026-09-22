@@ -48,6 +48,10 @@ export type PromptLineHandle = {
   submit(): void;
 };
 
+export function promptAfterSubmit(text: string): string {
+  return text.trimStart().startsWith("$") ? "$ " : "";
+}
+
 /**
  * One line: a place chip and an input. Plain words go to the ship. Text that
  * starts with `$` runs on the place directly, and while it does the chip shows
@@ -228,7 +232,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     try {
       const accepted = await onSubmit(text);
       if (accepted !== false && inputRef.current === input && revision.current === sentRevision) {
-        input.value = text.startsWith("$") ? "$ " : "";
+        input.value = promptAfterSubmit(text);
         input.setSelectionRange(input.value.length, input.value.length);
         changed();
       }

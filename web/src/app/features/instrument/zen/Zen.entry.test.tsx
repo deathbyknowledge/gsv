@@ -13,6 +13,7 @@ import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
 import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChatConversation";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
 import { PromptLine } from "../shared/PromptLine";
+import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
 import { ZenText } from "./ZenText";
 
@@ -76,17 +77,18 @@ beforeEach(() => {
       historyRevision: 1, historyGeneration: 1, historyResetRevision: 0 } };
     if (call === "proc.observe" || call === "proc.unobserve") return { data: { ok: true, pid: shipPid } };
     if (call === "conversation.send") return { data: await send(sendArgs.parse(args)) };
+    if (call === "shell.exec") return { data: { status: "completed", output: "/home/algo\n", stderr: "", exitCode: 0 } };
     throw new Error(`Unexpected request ${call}`);
   });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string) {
+async function mountedZen(pid?: string, initialTarget?: string) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   const draftChange = vi.fn();
-  function Harness() { tree = Zen({ pid, onFleet: () => {}, onDraftChange: draftChange }); return null; }
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet: () => {}, onDraftChange: draftChange }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -109,6 +111,52 @@ async function mountedZen(pid?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each(["$ pwd", "!pwd"])("routes a finalized native %s prompt to the terminal without sending it to Ship", async (text) => {
+    const zen = await mountedZen();
+    try {
+      await act(() => { expect(zen.props(NativeVoiceControls).send(text)).toBe(true); });
+      await vi.waitFor(() => expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call, args]) =>
+        call === "shell.exec" && z.object({ input: z.literal("pwd") }).safeParse(args).success,
+      )).toBe(true));
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("switches the place for a native @ prompt and reports an unknown place without sending either to Ship", async () => {
+    const zen = await mountedZen(undefined, "laptop");
+    try {
+      await vi.waitFor(() => expect(zen.props(PromptLine).place.id).toBe("laptop"));
+      await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
+      expect(zen.props(PromptLine).place.id).toBe("gsv");
+      await act(() => { zen.props(NativeVoiceControls).send("@missing"); });
+      expect(zen.text()).toContain("No place called missing.");
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("rejects native commands with attachments instead of submitting a chat message", async () => {
+    const zen = await mountedZen();
+    try {
+      await act(() => { zen.props(PromptLine).onFiles?.([new File(["fixture"], "note.txt", { type: "text/plain" })]); });
+      for (const text of ["$ pwd", "$", "!"]) {
+        await act(() => { expect(zen.props(NativeVoiceControls).send(text)).toBe(false); });
+      }
+      expect(zen.props(PromptLine).allowEmpty).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("sends ordinary native text through the conversation outbox", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "Hello from voice"), handlerPid: shipPid, runId: "voice" });
+    const zen = await mountedZen();
+    try {
+      await act(() => { expect(zen.props(NativeVoiceControls).send("Hello from voice")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe("Hello from voice");
+    } finally { await zen.unmount(); }
+  });
+
   it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
     const zen = await mountedZen();
     try {

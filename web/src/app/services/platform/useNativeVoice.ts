@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
-import type { PromptLineHandle } from "../../features/instrument/shared/PromptLine";
+import { promptAfterSubmit, type PromptLineHandle } from "../../features/instrument/shared/PromptLine";
 import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate, type SegmentAction } from "./PlatformProvider";
 import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
@@ -103,7 +103,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
             write(result.value, result.caret);
             if (event.action === "send") {
               if (latest.current.enabled && latest.current.send(result.value.trim())) {
-                write("");
+                write(practice ? "" : promptAfterSubmit(result.value));
                 const selection = prompt.current?.selection();
                 if (selection) draft.current.sent(selection);
                 latest.current.onAction?.("send");

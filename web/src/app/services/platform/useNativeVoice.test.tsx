@@ -33,7 +33,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mounted() {
+async function mounted(practice = false) {
   let value = "", renders = 0;
   const receives: ((update: NativeUpdate) => void)[] = [];
   const disposals: ReturnType<typeof vi.fn>[] = [];
@@ -53,8 +53,9 @@ async function mounted() {
   } satisfies PromptLineHandle };
   const send = vi.fn(() => true);
   const scroll = vi.fn();
+  let control: ReturnType<typeof useNativeVoice>;
   function Probe({ scope }: { scope: string }) {
-    useNativeVoice({ prompt, scope, enabled: true, send, scroll });
+    control = useNativeVoice({ prompt, scope, enabled: true, practice, send, scroll });
     renders++;
     return null;
   }
@@ -68,7 +69,7 @@ async function mounted() {
   const start = () => push(1, { ...idle(), voice: voice("hello"), events: [
     { id: 1, request_id: 10, segment_id: 0, kind: "started", action: null, text: "" },
   ] });
-  return { input, disposals, prompt, send, render, push, start, value: () => value, renders: () => renders };
+  return { input, disposals, prompt, send, render, push, start, control: () => control, value: () => value, renders: () => renders };
 }
 
 describe("native input subscription", () => {
@@ -98,6 +99,51 @@ describe("native input subscription", () => {
     expect(app.value()).toBe("");
     expect(app.renders()).toBe(renders);
     expect(app.input.acknowledge).toHaveBeenLastCalledWith("view-1", 3, 2);
+  });
+
+  it("finalizes Enter before submission and retains terminal mode for the next dictated command", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    expect(app.control().interceptSubmit()).toBe(true);
+    expect(app.send).not.toHaveBeenCalled();
+    expect(app.input.command).toHaveBeenLastCalledWith("view-1", { kind: "segment", request_id: 10, segment_id: 0, action: "send" });
+    await app.push(2, { ...idle(), voice: voice("", 1, 0), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "pwd" },
+    ] });
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ pwd");
+    expect(app.value()).toBe("$ ");
+    await app.push(3, { ...idle(), voice: voice("", 2, 0), events: [
+      { id: 3, request_id: 10, segment_id: 1, kind: "segment", action: "send", text: "ls" },
+    ] });
+    expect(app.send).toHaveBeenNthCalledWith(2, "$ ls");
+    expect(app.value()).toBe("$ ");
+  });
+
+  it("retains rejected submissions and stops dictation without replaying the send", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    app.send.mockReturnValue(false);
+    const next: NativeSnapshot = { ...idle(), voice: voice("", 1, 0), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "pwd" },
+    ] };
+    await app.push(2, next);
+    await app.push(3, next);
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ pwd");
+    expect(app.value()).toBe("$ pwd");
+    expect(app.input.command).toHaveBeenCalledWith("view-1", { kind: "cancel" });
+  });
+
+  it("clears literal command-like text after a tutorial submission", async () => {
+    const app = await mounted(true);
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    await app.push(2, { ...idle(), voice: voice("", 1, 0), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "example" },
+    ] });
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ example");
+    expect(app.value()).toBe("");
   });
 
   it("disposes the old subscription before another workspace can consume its output", async () => {

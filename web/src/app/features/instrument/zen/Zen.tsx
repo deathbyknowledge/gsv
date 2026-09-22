@@ -653,7 +653,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return attachments.length > 0 ? say("") : false;
+      if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
@@ -1068,7 +1068,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
               enabled={active && connected && pid !== null && pendingHil === null}
-              send={say} scroll={scrolling.move} />
+              send={onSubmit} scroll={scrolling.move} />
           </div>
         </div>
       </div>
