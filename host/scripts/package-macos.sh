@@ -109,8 +109,10 @@ for binary in "${binaries[@]}"; do
   install -m 0755 "$binary_dir/$binary" "$macos_dir/$binary"
 done
 install -m 0644 "$repository_root/LICENSE" "$resources_dir/LICENSE"
+transcriber_license_dir="$resources_dir/licenses/transcriber"
+mkdir -p "$transcriber_license_dir"
 install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
-  "$macos_dir/THIRD_PARTY.md"
+  "$transcriber_license_dir/THIRD_PARTY.md"
 gesture_license_dir="$resources_dir/licenses/gesture-models"
 mkdir -p "$gesture_license_dir"
 install -m 0644 "$host_root/helpers/gestures/models/LICENSE.apache-2.0" \
@@ -141,12 +143,16 @@ iconutil -c icns "$iconset" -o "$resources_dir/GSV.icns"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -x "$macos_dir/gsv-desktop" ]] || die "bundle validation failed"
 [[ -f "$resources_dir/GSV.icns" ]] || die "bundle icon generation failed"
+[[ -f "$transcriber_license_dir/THIRD_PARTY.md" ]] \
+  || die "bundle transcription-runtime notices staging failed"
 [[ -f "$gesture_license_dir/LICENSE.apache-2.0" ]] \
   || die "bundle gesture-model license staging failed"
 [[ -f "$gesture_license_dir/THIRD_PARTY.md" ]] \
   || die "bundle gesture-runtime notices staging failed"
 
+# Sign nested tools before the outer bundle signs its main executable.
 for binary in "${binaries[@]}"; do
+  [[ "$binary" == "gsv-desktop" ]] && continue
   codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$macos_dir/$binary"
 done
 codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$app"
