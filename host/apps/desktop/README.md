@@ -38,8 +38,11 @@ sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-lib
 sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
 ```
 
-If startup exits with a Wayland `Error 71` or opens a blank window with
-`Failed to create GBM buffer`, use this launch command from the repository root:
+On NVIDIA Linux systems, Desktop defaults to WebKit shared-memory buffer
+transport to avoid Wayland `Error 71` and failed GBM imports. An explicit
+`WEBKIT_DMABUF_RENDERER_FORCE_SHM` value takes precedence. The app can stay on
+Wayland; no desktop or display configuration is changed. If another driver
+combination still needs XWayland, use this launch command:
 
 ```bash
 GDK_BACKEND=x11 WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 ./host/target/debug/gsv-desktop

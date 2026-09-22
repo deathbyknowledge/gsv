@@ -227,10 +227,15 @@ fn main() {
     // these systems, respecting an explicit WebKit override. Set the environment
     // before Tauri/GTK or the async runtime starts any threads.
     #[cfg(target_os = "linux")]
-    if std::path::Path::new("/sys/module/nvidia").exists()
-        && std::env::var_os("WEBKIT_SKIA_GPU_PAINTING_THREADS").is_none()
-    {
-        std::env::set_var("WEBKIT_SKIA_GPU_PAINTING_THREADS", "0");
+    if std::path::Path::new("/sys/module/nvidia").exists() {
+        if std::env::var_os("WEBKIT_SKIA_GPU_PAINTING_THREADS").is_none() {
+            std::env::set_var("WEBKIT_SKIA_GPU_PAINTING_THREADS", "0");
+        }
+        // The hardware-buffer transport can terminate GTK with Wayland error 71.
+        // Shared-memory transport preserves the renderer while avoiding that path.
+        if std::env::var_os("WEBKIT_DMABUF_RENDERER_FORCE_SHM").is_none() {
+            std::env::set_var("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1");
+        }
     }
 
     let endpoint =
@@ -311,14 +316,16 @@ fn main() {
                 control_task: Mutex::new(Some(control_task)),
                 exiting: AtomicBool::new(false),
             });
-            WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
+            let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .data_directory(directory.join("webview"))
                 .on_navigation(trusted_navigation)
                 .on_new_window(|url, _| {
                     let _ = open_external(url.as_str());
                     tauri::webview::NewWindowResponse::Deny
-                })
-                .build()?;
+                });
+            #[cfg(target_os = "linux")]
+            let window = window.decorations(false);
+            window.build()?;
             Ok(())
         })
         .build(tauri::generate_context!())

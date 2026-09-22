@@ -43,10 +43,14 @@ intentional Fleet inspectors, gesture guide and hands-free tutorial. Status does
 not write into the prompt. Input feedback updates its own small component;
 there is no periodic conversation render or gateway refetch loop.
 
+Linux windows omit the native title bar. The space-name menu provides the
+connection and Quit controls within Instrument.
+
 The star field has no per-star blurred halo. The dark background avoids the
 banded gradient. On NVIDIA Linux systems the app defaults WebKit GPU painting
-to its main thread to avoid the observed exit crash, respecting explicit
-WebKit environment overrides.
+to its main thread to avoid the observed exit crash and uses shared-memory
+buffer transport to avoid Wayland protocol error 71. Both defaults respect
+explicit WebKit environment overrides.
 
 ## Distribution
 
