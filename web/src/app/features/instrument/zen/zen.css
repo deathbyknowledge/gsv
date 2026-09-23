@@ -343,6 +343,7 @@
 .zen-approval.is-decided .q { color: var(--text-dim); }
 
 .zen-bottom {
+  min-width: 0;
   padding: 0 56px 22px;
 }
 .zen-bottom > * {
@@ -361,21 +362,24 @@
 .zen-place-section { margin-top: 12px; }
 .zen-places {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-raised) transparent;
   gap: 8px 18px;
   margin: 0;
-  padding: 0;
+  padding: 0 0 8px;
   list-style: none;
   font-size: 11px;
   color: var(--text-dim);
 }
-.zen-places li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.zen-places li { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; }
 .zen-place {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   text-align: left;
 }
 .zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
