@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
 import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
 import type { ControlEvent, ControlReply } from "./control";
@@ -99,6 +100,12 @@ export function nativeInput(generation: string): NativeInput {
 export function nativeMachine(generation: string, username: string): NativeMachine {
   return {
     status: () => invoke("machine_status", { generation, username }),
-    command: (command) => invoke("machine_command", { generation, username, command }),
+    command: async (command) => {
+      try { return await invoke("machine_command", { generation, username, command }); }
+      catch (error) {
+        const message = z.string().safeParse(error);
+        throw new Error(message.success ? message.data : "Could not connect this computer. Retry.");
+      }
+    },
   };
 }

@@ -1,8 +1,11 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../app/testing/testHarness";
 import { DesktopMachineSession, type MachineIdentity, type MachineSnapshot, type NativeMachine } from "./machineSetup";
+import { nativeMachine } from "./bridge";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const identity: MachineIdentity = { origin: "https://space.example", username: "human", targetId: "laptop", label: "Laptop" };
 function harness(initial: Partial<MachineSnapshot> = {}) {
@@ -26,6 +29,18 @@ function harness(initial: Partial<MachineSnapshot> = {}) {
 }
 
 describe("Desktop machine enrollment", () => {
+  it.each([
+    { failure: "Machine setup was cancelled.", message: "Machine setup was cancelled." },
+    { failure: { unexpected: "private fixture data" }, message: "Could not connect this computer. Retry." },
+  ])("normalizes native command failures at the bridge: $message", async ({ failure, message }) => {
+    const invoke = vi.fn().mockRejectedValue(failure);
+    vi.stubGlobal("window", { __TAURI__: { core: { invoke } } });
+    await expect(nativeMachine("generation", "human").command({ kind: "start" })).rejects.toThrow(message);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("machine_command", {
+      generation: "generation", username: "human", command: { kind: "start" },
+    });
+  });
+
   it("creates one invitation with an available target name and delivers it to native pairing", async () => {
     const h = harness();
     const owner = h.owner();

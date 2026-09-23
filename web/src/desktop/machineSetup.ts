@@ -87,7 +87,7 @@ export class DesktopMachineSession {
       let machine = this.state.machine;
       try { machine = await this.native.status(); } catch { /* Retain the last confirmed identity. */ }
       this.publish({ machine, loading: false, busy: false,
-        error: error instanceof Error ? error.message : typeof error === "string" ? error : "Could not connect this computer. Retry." });
+        error: error instanceof Error ? error.message : "Could not connect this computer. Retry." });
       return false;
     }
   };
