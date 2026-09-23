@@ -125,9 +125,6 @@ describe("Zen conversation entry", () => {
       expect(prompt().showPlace).toBe(false);
       expect(zen.dirty()).toBe(true);
       expect(zen.onFleet).not.toHaveBeenCalled();
-      const details = zen.nodes().find((node) => node.props["aria-label"] === "View your cloud in Fleet")!;
-      await act(() => { details.props.onClick!(); });
-      expect(zen.onFleet).toHaveBeenCalledWith("target:gsv");
       await act(() => { prompt().onSubmit("Keep this draft"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",

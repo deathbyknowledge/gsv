@@ -8,7 +8,6 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
-import { Hint } from "../../../components/ui/Tooltip";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
   decideChatHil,
@@ -1033,38 +1032,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           <ul class="zen-places" aria-label="Choose a place for your next message or command">
             {selectorPlaces.map((target) => {
               const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-              const kind = target.id === CLOUD_PLACE_ID ? "Cloud"
-                : target.kind === "machine" ? "Computer"
-                : target.kind === "browser" ? "Browser" : "Place";
-              const details = [target.online ? "Online" : "Offline", kind,
-                target.id === CLOUD_PLACE_ID ? "" : target.platform];
-              if (!target.online) {
-                details.push(target.lastSeenAt === null ? "Last seen unknown"
-                  : `Last seen ${new Date(target.lastSeenAt).toLocaleString(undefined, {
-                    year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-                  })}`);
-              }
               return (
                 <li key={target.id}>
-                  <Hint text={details.filter(Boolean).join(" · ")} position="top">
-                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
-                      aria-label={`Use ${label} for the next message or command`}
-                      aria-pressed={target.id === currentPlace.id}
-                      onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
-                      <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
-                      <span>{label}</span>
-                    </button>
-                  </Hint>
-                  {target.id === currentPlace.id && <Hint text={`View ${label} in Fleet`}>
-                    <button type="button" class="zen-place-details"
-                      aria-label={`View ${label} in Fleet`} onClick={() => onFleet(`target:${target.id}`)}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
-                        <circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.25" />
-                        <circle cx="8" cy="5" r="0.8" fill="currentColor" />
-                        <path d="M8 7.5V11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                      </svg>
-                    </button>
-                  </Hint>}
+                  <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                    aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
+                    aria-pressed={target.id === currentPlace.id}
+                    disabled={!target.online}
+                    onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
+                    <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
                 </li>
               );
             })}

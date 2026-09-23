@@ -377,17 +377,14 @@
   overflow-wrap: anywhere;
   text-align: left;
 }
-.zen-place:hover, .zen-place:focus-visible { color: var(--text); }
+.zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
 .zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
-.zen-place-details { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; line-height: 0; color: var(--text-dim); }
-.zen-place-details svg { display: block; flex: none; }
-.zen-place-details:hover { color: var(--text); }
+.zen-place:disabled { color: var(--text-dim); cursor: default; }
 .zen-place-status {
   flex: none;
   width: 7px;
   height: 7px;
-  background: #fff;
-  box-shadow: 0 0 0 1px var(--border);
+  background: var(--idle);
 }
 .zen-place-status.is-online { background: var(--online); }
 .zen-feedback {
