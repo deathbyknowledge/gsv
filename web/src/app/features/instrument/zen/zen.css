@@ -358,11 +358,12 @@
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
 .zen-delegated-approvals .fleet-approval { margin-top: 10px; }
+.zen-place-section { margin-top: 12px; }
 .zen-places {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 11px;

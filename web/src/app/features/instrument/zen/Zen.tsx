@@ -1024,28 +1024,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
-          {!currentPlace.online && <div class="zen-feedback" role="status">
-            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-              {currentPlace.label} is offline · view place
-            </button>
-          </div>}
-          <ul class="zen-places" aria-label="Choose a place for your next message or command">
-            {selectorPlaces.map((target) => {
-              const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-              return (
-                <li key={target.id}>
-                  <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
-                    aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
-                    aria-pressed={target.id === currentPlace.id}
-                    disabled={!target.online}
-                    onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
-                    <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
-                    <span>{label}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
           {showFeedback && <div class="zen-feedback">
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
@@ -1086,6 +1064,30 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               enabled={active && connected && pid !== null && pendingHil === null}
               send={onSubmit} scroll={scrolling.move} />
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
+          </div>
+          <div class="zen-place-section">
+            {!currentPlace.online && <div class="zen-feedback" role="status">
+              <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+                {currentPlace.label} is offline · view place
+              </button>
+            </div>}
+            <ul class="zen-places" aria-label="Choose a place for your next message or command">
+              {selectorPlaces.map((target) => {
+                const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
+                return (
+                  <li key={target.id}>
+                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                      aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
+                      aria-pressed={target.id === currentPlace.id}
+                      disabled={!target.online}
+                      onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
+                      <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </div>
       </div>
