@@ -94,6 +94,9 @@ An optional `WEB_SEARCH` binding implements the native `gsv` target's
 and forwards a validated query, request identity, and deadline. The service owns
 provider credentials, quotas, cancellation, and cleanup. The binding is the
 implementation transport; target selection remains ordinary syscall routing.
+Cancellation and deadline expiry release the Gateway call without waiting for
+the provider's cancellation RPC. The Gateway defers that notification and
+disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
 
