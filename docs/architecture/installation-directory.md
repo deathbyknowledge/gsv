@@ -14,8 +14,8 @@ has its own authority; none follows merely from possession of a lookup binding.
 ## Public interfaces
 
 The contracts are exported from
-[`services/directory.ts`](../../packages/gsv/src/services/directory.ts) and
-[`services/onboarding.ts`](../../packages/gsv/src/services/onboarding.ts) in
+[`services/directory.ts`](https://github.com/deathbyknowledge/gsv/blob/main/packages/gsv/src/services/directory.ts) and
+[`services/onboarding.ts`](https://github.com/deathbyknowledge/gsv/blob/main/packages/gsv/src/services/onboarding.ts) in
 `@humansandmachines/gsv`. A deployment supplies implementations through
 trusted Worker service bindings.
 
@@ -52,12 +52,12 @@ administration can inspect it; ordinary work remains gated.
 | `restricted` | Refused while identity and data are retained. | Refused. |
 | `cancelled`, `retained`, `deleting`, `deleted` | Refused. | Refused. |
 
-The gateway's [routing implementation](../../workers/gateway/src/installation/routing.ts)
+The gateway's [routing implementation](https://github.com/deathbyknowledge/gsv/blob/main/workers/gateway/src/installation/routing.ts)
 accepts `active`, or `provisioning` when explicitly resolving a setup route.
 Unknown hosts must not allocate Kernel state. Directory failures must fail
 closed rather than falling back to a different installation.
 
-The [lifecycle gate](../../workers/gateway/src/installation/lifecycle.ts)
+The [lifecycle gate](https://github.com/deathbyknowledge/gsv/blob/main/workers/gateway/src/installation/lifecycle.ts)
 also applies to work entering through existing WebSockets, adapters,
 inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work

@@ -55,14 +55,14 @@ one-time link printed to the terminal, create the first space and follow its
 setup invitation. In the default `operator` access mode, save the operator
 credential shown once by the page. It opens `/operator` for explicit creation
 of further spaces. Cloudflare Access deployments use `--mode access` and their
-configured policy instead. See [bootstrap and recovery](../../deployment/operator-bootstrap.md)
+configured policy instead. See [bootstrap and recovery](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md)
 for link reissue and credential recovery. Keep credentials out of source files
 and command arguments.
 
 Owner email-code sign-in and **My spaces** are optional deployment configuration;
 they do not create spaces or grant operator access. Configure a verified sender
 with `GSV_OWNER_EMAIL_FROM`, or the supported OIDC provider inputs, as described
-in the [owner sign-in guide](../../deployment/operator-bootstrap.md#owner-email-sign-in).
+in the [owner sign-in guide](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md#owner-email-sign-in).
 
 ## Enable adapters
 
@@ -70,7 +70,7 @@ No messenger adapters are enabled by default. Set `GSV_ADAPTERS` to a
 comma-separated list of operator-supported adapter IDs after supplying each
 adapter's deployment configuration. Its `adapter.json` declares the required
 application secrets and variables in its single `deployment` manifest section.
-For example, [Telegram's manifest](../../workers/adapters/telegram/adapter.json)
+For example, [Telegram's manifest](https://github.com/deathbyknowledge/gsv/blob/main/workers/adapters/telegram/adapter.json)
 requires the bot token, webhook secret, bot username and public webhook origin.
 
 The operator supplies application credentials through the deployment environment
@@ -84,10 +84,10 @@ Use the same operator configuration and state, install the desired revision's
 dependencies, then run `deployment:plan` and `deployment:deploy` again. Preserve
 physical resource identities. Operators adopting a legacy combined Accounts
 database must first complete the one-time
-[migration ownership handoff](../../deployment/installation-migration-adoption.md);
+[migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md);
 ordinary updates of an adopted public database use its migration ledger.
 Deployments with an existing Mail queue also follow the
-[reader-before-writer upgrade](../../deployment/mail-queue-upgrade.md).
+[reader-before-writer upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md).
 
 The common stack does not adopt an old standalone deployment in place. Keep
 that deployment on its preserved source or release until its data has been

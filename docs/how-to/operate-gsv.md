@@ -6,7 +6,7 @@ storage, ripgit and inference execution. Each installation keeps its own Kernel,
 accounts, credentials, processes and data. H&M funding or billing services are
 optional operator integrations.
 
-The reference composition is [`alchemy.run.ts`](../../alchemy.run.ts). Configure
+The reference composition is [`alchemy.run.ts`](https://github.com/deathbyknowledge/gsv/blob/main/alchemy.run.ts). Configure
 Alchemy's Cloudflare account/authentication and set these deployment inputs:
 
 | Input | Purpose |

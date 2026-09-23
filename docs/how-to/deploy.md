@@ -41,9 +41,9 @@ npm run deployment:deploy
 
 Alchemy retains the stage state needed to update the existing resources rather
 than creating a second operator environment. Existing Mail queues require the
-[reader-before-writer upgrade](../../deployment/mail-queue-upgrade.md), and
+[reader-before-writer upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md), and
 adoption of a legacy combined Accounts database requires the one-time
-[migration ownership handoff](../../deployment/installation-migration-adoption.md).
+[migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md).
 Routine updates of an already adopted public database use its migration ledger.
 
 ### Remove

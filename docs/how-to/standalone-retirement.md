@@ -35,8 +35,8 @@ objects to a new space. The current runtime does not reassign or erase that data
 
 Keep the same resource names, Durable Object namespaces, storage prefixes and
 Alchemy state. The cutover preserves those physical identities. Complete any
-required [Accounts migration ownership handoff](../../deployment/installation-migration-adoption.md)
-and [Mail queue reader upgrade](../../deployment/mail-queue-upgrade.md) before
+required [Accounts migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md)
+and [Mail queue reader upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md) before
 deploying their dependent writers. Removing standalone does not replace either
 upgrade protocol.
 
