@@ -345,6 +345,12 @@
 .zen-bottom {
   padding: 0 56px 22px;
 }
+.zen-bottom > * {
+  width: 100%;
+  max-width: min(var(--measure-response), 92%);
+  margin-inline: auto;
+}
+.zen-composer { position: relative; }
 .zen-delegated-approvals {
   max-height: 40vh;
   overflow-y: auto;
@@ -550,7 +556,9 @@
   position: absolute;
   left: 0;
   bottom: calc(100% - 12px);
-  min-width: 320px;
+  width: 320px;
+  max-width: 100%;
+  box-sizing: border-box;
   background: var(--panel);
   border: 1px solid var(--border-raised);
   padding: 6px;

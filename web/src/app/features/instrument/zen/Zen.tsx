@@ -1006,7 +1006,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <div class="zen-bottom">
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
 
-        <div>
+        <div class="zen-composer">
           {pickerOpen ? (
             <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
               {pickerPlaces.map((place, index) => (
