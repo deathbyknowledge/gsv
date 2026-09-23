@@ -29,8 +29,10 @@ installation selected with `xcode-select`; Command Line Tools alone cannot compi
 shaders used by the native inference library.
 
 Linux releases also install `libopenblas-pthread-dev` on the build runner and set
-`TRANSCRIBE_CMAKE_ARGS="-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON"`.
+`TRANSCRIBE_CMAKE_ARGS="-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES"`.
 Clear cached BLAS detection first so restored CMake caches cannot retain a shared library.
+Include the system math library in CMake's C link probes: Ubuntu's ARM64 OpenBLAS archive
+uses `sqrt`, and `FindBLAS` otherwise rejects the installed archive as unavailable.
 This bundles accelerated BLAS into the helper: users do not install a BLAS or Fortran runtime,
 and distributions cannot substitute an incompatible `libblas.so.3`. CI uses the same settings.
 Run `python3 host/scripts/check-transcriber.py path/to/gsv-transcribe` to check the built
