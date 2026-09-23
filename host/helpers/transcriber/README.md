@@ -28,6 +28,15 @@ headers (`build-essential cmake pkg-config libasound2-dev`). macOS builds need a
 installation selected with `xcode-select`; Command Line Tools alone cannot compile the Metal
 shaders used by the native inference library.
 
+Linux releases also install `libopenblas-pthread-dev` on the build runner and set
+`TRANSCRIBE_CMAKE_ARGS="-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON"`.
+Clear cached BLAS detection first so restored CMake caches cannot retain a shared library.
+This bundles accelerated BLAS into the helper: users do not install a BLAS or Fortran runtime,
+and distributions cannot substitute an incompatible `libblas.so.3`. CI uses the same settings.
+Run `python3 host/scripts/check-transcriber.py path/to/gsv-transcribe` to check the built
+artifact's handshake, shutdown and runtime linkage without microphone capture or model setup.
+macOS continues to use the system Accelerate framework.
+
 Place `gsv-transcribe` beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
 development. Debug app builds also discover either a release or debug helper in the workspace
 `target` directory. Ship `THIRD_PARTY.md` beside the helper in standalone distributions;

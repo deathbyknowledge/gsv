@@ -597,6 +597,7 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      TRANSCRIBE_CMAKE_ARGS: -UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON
     steps:
       - uses: actions/checkout@v4
 
@@ -621,6 +622,7 @@ jobs:
             cmake \
             libasound2-dev \
             libclang-dev \
+            libopenblas-pthread-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libv4l-dev \
@@ -686,6 +688,11 @@ jobs:
           cargo test --locked --package desktop --package desktop-native --package transcriber \
             --package gestures --package gesture-protocol
           ccache --show-stats --verbose
+
+      - name: Check voice helper startup and bundled math
+        run: |
+          cargo build --manifest-path host/Cargo.toml --locked --package transcriber
+          python3 host/scripts/check-transcriber.py host/target/debug/gsv-transcribe
 
       - name: Check public gesture fixtures and tracking recovery
         working-directory: host
