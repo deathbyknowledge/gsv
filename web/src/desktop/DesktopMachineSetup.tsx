@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState, Spinner } from "../app/components/ui/Spinner";
+import { AsciiAnimation } from "../app/components/ui/AsciiAnimation";
+import { useColorTheme } from "../app/components/ui/useColorTheme";
 import { useGateway } from "../app/services/gateway/GatewayProvider";
 import { useSession } from "../app/services/session/SessionProvider";
 import { useConsoleAccounts, useConsoleTargets } from "../app/services/system/useConsoleData";
 import { canConfigure } from "../app/features/instrument/settings/settingsModel";
 import { nativeMachine, type NativeSessionStorage } from "./bridge";
 import { DesktopMachineSession } from "./machineSetup";
+import { createComputerScene } from "./computerScene";
 
 type Props = { origin: string; generation: string; request: number; storage: NativeSessionStorage };
 
@@ -20,6 +23,8 @@ export function DesktopMachineSetup({ storage, ...props }: Props) {
 
 function MachineSetup({ origin, generation, username, request, nativeReady }: Omit<Props, "storage"> & { username: string; nativeReady: boolean }) {
   const { client, connected } = useGateway();
+  const { theme } = useColorTheme();
+  const [computer] = useState(createComputerScene);
   const key = `gsv.desktop.machine:${JSON.stringify([origin, username])}`;
   const [owner] = useState(() => new DesktopMachineSession(origin, username, nativeMachine(generation, username), client.sys.pair, {
     read: () => window.localStorage.getItem(`${key}.invitation`),
@@ -76,6 +81,8 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
       void owner.connect(label, targets.targets.map((target) => target.deviceId));
     }}>
       <h2 id="desktop-machine-title">{machine?.configured?.label ?? "Connect this computer"}</h2>
+      {open && !state.loading && !machine?.configured && !other && <AsciiAnimation scene={computer} label="Computer" palette={theme}
+        frameRate={12} className="desktop-machine-art" />}
       {state.loading && !error ? <LoadingState>checking…</LoadingState> : other ?
         <p class="note">Already connected to {new URL(other.origin).host} as {other.username}.</p> : machine?.configured ?
         !error && <p class="note" role="status">{state.busy ? "Connecting…" : online ? "Connected" : machine.running ? "Connecting…" : "Connection stopped"}</p> : <>

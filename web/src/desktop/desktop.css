@@ -22,3 +22,5 @@
 .desktop-machine input { width: 100%; padding: 10px; font: inherit; color: var(--text-hi); background: transparent; border: 1px solid var(--border-raised); }
 .desktop-machine-actions { display: flex; justify-content: flex-end; align-items: center; gap: 24px; }
 .desktop-machine .desktop-machine-connect { display: inline-flex; align-items: center; justify-content: center; width: 104px; height: 36px; flex-shrink: 0; padding: 0 14px; }
+.desktop-machine-art.gsv-ascii-galaxy[data-ascii-palette] { height: clamp(0px, calc(100dvh / var(--type-scale, 1) - 360px), 132px); min-height: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; container-type: size; --ascii-background: transparent; --ascii-nebula: var(--text-dim); --ascii-foreground: var(--text); --ascii-stars: var(--accent-bright); --ascii-star-glow: none; --ascii-foreground-glow: none; }
+.desktop-machine-art .gsv-ascii-galaxy-pre { font-size: min(7px, 1.8cqi, 2.7cqb); line-height: 1; }
