@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../app/features/instrument/shared/useDismissOnOutsideClick";
 
-export function DesktopSpaceMenu({ origin, locked, onRecover, onDisconnect, onQuit }: {
+export function DesktopSpaceMenu({ origin, locked, onRecover, onDisconnect, onQuit, onMachine }: {
   origin: string | null;
   locked: boolean;
   onRecover(): void;
   onDisconnect(): void;
   onQuit(): void;
+  onMachine?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -27,6 +28,7 @@ export function DesktopSpaceMenu({ origin, locked, onRecover, onDisconnect, onQu
     {open && <div ref={panel} id="desktop-space-menu" class="desktop-space-menu" role="group" aria-label="Space">
       {address && <span class="desktop-space-address">{address.host}</span>}
       {locked && address && <button type="button" onClick={() => { setOpen(false); onRecover(); }}>recover account</button>}
+      {onMachine && <button type="button" onClick={() => { setOpen(false); onMachine(); }}>this computer</button>}
       <button type="button" onClick={() => { setOpen(false); onDisconnect(); }}>disconnect</button>
       <button type="button" onClick={onQuit}>quit</button>
     </div>}

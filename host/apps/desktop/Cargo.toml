@@ -8,6 +8,10 @@ publish = false
 tauri-build = "=2.6.3"
 
 [dependencies]
+base64 = "0.22"
+daemon-protocol = { path = "../../crates/daemon-protocol" }
+host-config = { path = "../../crates/config" }
+hostname = "0.4.2"
 fs2 = "0.4"
 async-trait = "0.1"
 desktop-protocol = { path = "../../crates/desktop-protocol" }
@@ -17,9 +21,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = "=2.11.6"
 tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["custom-protocol"]

@@ -23,6 +23,7 @@ use crate::update::{
     UnitState, UpdateError, UpdateTarget, INSTALLING_WINDOW, MIN_ATTEMPT_INTERVAL,
 };
 
+mod enrollment;
 mod transfer;
 
 const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
@@ -719,6 +720,19 @@ pub async fn run(
                 }
                 Ok(Err(e)) => {
                     if let Some(rpc_error) = e.downcast_ref::<GatewayRpcError>() {
+                        if rpc_error.call == "sys.connect" && rpc_error.code == 401 {
+                            let message =
+                                match enrollment::reject_credential(url, &auth, &device_id).await {
+                                    Ok(_) => {
+                                        "This computer's access was revoked. Connect it again."
+                                    }
+                                    Err(message) => message,
+                                };
+                            runtime.pairing_required(message);
+                            warn!(event = "connect.pairing_required");
+                            shutdown.cancelled().await;
+                            shutdown_device!("control");
+                        }
                         if rpc_error.is_setup_required() {
                             error!(
                                 event = "connect.setup_required",

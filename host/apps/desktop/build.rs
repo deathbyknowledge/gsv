@@ -6,6 +6,8 @@ fn main() {
             "desktop_store",
             "desktop_open",
             "desktop_quit",
+            "machine_status",
+            "machine_command",
             "control_attach",
             "control_detach",
             "control_active",

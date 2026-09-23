@@ -63,7 +63,69 @@ function sessionHarness(connected = true, restoredValues?: Record<string, string
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-describe("desktop session retirement", () => {
+describe("desktop session persistence", () => {
+  it("announces sign-in only after token issuance and the native credential write complete", async () => {
+    const h = sessionHarness(true, {});
+    const writes = deferred<void>();
+    const issuing = deferred<Awaited<ReturnType<SessionClient["sys"]["token"]["create"]>>>();
+    h.blockWrites(writes.promise);
+    h.client.connect.mockResolvedValue({
+      protocol: 4,
+      server: { version: "test", release: "test", connectionId: "connection:alice" },
+      peer: { id: "web", sessionId: "connection:alice",
+        principal: { kind: "human", account: { uid: 1, gid: 1, gids: [1], username: "alice", home: "/home/alice", cwd: "/home/alice" } },
+        grant: { calls: [], signals: [], implements: [] },
+      },
+    });
+    h.client.sys.token.create.mockReturnValue(issuing.promise);
+    const signedIn = vi.fn();
+    const unsubscribe = h.storage.subscribeSignedIn(signedIn);
+    expect(signedIn).toHaveBeenCalledExactlyOnceWith(null);
+    const login = h.service.login({ username: "alice", password: "fixture-password" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.service.snapshot().phase).toBe("ready");
+    expect(h.client.sys.token.create).toHaveBeenCalledOnce();
+    expect(signedIn).toHaveBeenCalledOnce();
+    expect(h.stored()[tokenKey]).toBeUndefined();
+    issuing.resolve({ token: {
+      tokenId: "next-token", token: "next-fixture-credential", tokenPrefix: "fixture", uid: 1, kind: "human",
+      label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+    } });
+    await login;
+    expect(signedIn).toHaveBeenCalledOnce();
+    expect(h.stored()[tokenKey]).toBeUndefined();
+    writes.resolve();
+    await h.storage.flush();
+    expect(signedIn.mock.calls).toEqual([[null], ["alice"]]);
+    expect(JSON.parse(h.stored()[tokenKey]).username).toBe("alice");
+    h.storage.setItem(tokenKey, JSON.stringify({ username: "alice", token: "rotated-fixture" }));
+    await h.storage.flush();
+    expect(signedIn).toHaveBeenCalledTimes(2);
+    h.storage.removeItem(tokenKey);
+    await h.storage.flush();
+    expect(signedIn.mock.calls).toEqual([[null], ["alice"], [null]]);
+    unsubscribe();
+    h.storage.setItem(tokenKey, JSON.stringify({ username: "bob", token: "other-fixture" }));
+    await h.storage.flush();
+    expect(signedIn).toHaveBeenCalledTimes(3);
+    h.service.dispose?.();
+  });
+
+  it("does not announce a credential the native host failed to save", async () => {
+    const h = sessionHarness(true, {});
+    const signedIn = vi.fn();
+    h.storage.subscribeSignedIn(signedIn);
+    h.failWrites(true);
+    h.storage.setItem(tokenKey, JSON.stringify({ username: "alice", token: "fixture-credential" }));
+    await expect(h.storage.flush()).rejects.toThrow("storage unavailable");
+    expect(signedIn).toHaveBeenCalledExactlyOnceWith(null);
+    h.failWrites(false);
+    h.storage.setItem(tokenKey, JSON.stringify({ username: "alice", token: "fixture-credential" }));
+    await h.storage.flush();
+    expect(signedIn.mock.calls).toEqual([[null], ["alice"]]);
+    h.service.dispose?.();
+  });
+
   it("locks immediately but waits for revocation and the final durable write before forgetting the space", async () => {
     const h = sessionHarness();
     const writes = deferred<void>();

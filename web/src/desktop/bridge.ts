@@ -1,6 +1,8 @@
+import { z } from "zod";
 import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
 import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
 import type { ControlEvent, ControlReply } from "./control";
+import type { MachineCommand, MachineSnapshot, NativeMachine } from "./machineSetup";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -10,6 +12,8 @@ type DesktopCommands = {
   desktop_store: { args: { generation: string; values: Record<string, string> }; result: void };
   desktop_open: { args: { url: string }; result: void };
   desktop_quit: { args: undefined; result: void };
+  machine_status: { args: { generation: string; username: string }; result: MachineSnapshot };
+  machine_command: { args: { generation: string; username: string; command: MachineCommand }; result: MachineSnapshot };
   control_attach: { args: { generation: string; updates: NativeChannel<ControlEvent> }; result: string };
   control_detach: { args: { lease: string }; result: void };
   control_active: { args: { lease: string; id: string }; result: boolean };
@@ -48,15 +52,34 @@ export async function openInBrowser(url: string): Promise<void> {
 }
 
 /** Synchronous session-service view backed by serialized, generation-fenced host writes. */
-export type NativeSessionStorage = SessionStorage & { flush(): Promise<void> };
+export type NativeSessionStorage = SessionStorage & {
+  flush(): Promise<void>;
+  /** Native operations require the saved identity, which may lag behind gateway sign-in. */
+  subscribeSignedIn(listener: (username: string | null) => void): () => void;
+};
+
+const nativeLoginSchema = z.object({ username: z.string().min(1), token: z.string().min(1) });
+
+function savedUsername(values: Record<string, string>): string | null {
+  try { return nativeLoginSchema.parse(JSON.parse(values["gsv.ui.session.token.v1"] ?? "null")).username; }
+  catch { return null; }
+}
 
 export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): NativeSessionStorage {
   const values = { ...session.values };
   let pending = Promise.resolve();
+  let username = savedUsername(values);
+  const listeners = new Set<(username: string | null) => void>();
   const persist = () => {
     if (mock) return;
     const snapshot = { ...values };
-    pending = pending.catch(() => {}).then(() => invoke("desktop_store", { generation: session.generation, values: snapshot }));
+    pending = pending.catch(() => {}).then(async () => {
+      await invoke("desktop_store", { generation: session.generation, values: snapshot });
+      const next = savedUsername(snapshot);
+      if (next === username) return;
+      username = next;
+      listeners.forEach((listener) => listener(username));
+    });
     void pending.catch(() => onError("This session could not be saved. Sign in again after restarting."));
   };
   return {
@@ -64,6 +87,11 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
     setItem: (key, value) => { values[key] = value; persist(); },
     removeItem: (key) => { delete values[key]; persist(); },
     flush: () => pending,
+    subscribeSignedIn: (listener) => {
+      listeners.add(listener);
+      listener(username);
+      return () => { listeners.delete(listener); };
+    },
   };
 }
 
@@ -90,5 +118,24 @@ export function nativeInput(generation: string): NativeInput {
     },
     acknowledge: (lease, revision, ack) => invoke("input_acknowledge", { lease, revision, ack }),
     command: (lease: string, command: NativeCommand) => invoke("input_command", { lease, command }),
+  };
+}
+
+export function nativeMachine(generation: string, username: string): NativeMachine {
+  return {
+    status: async () => {
+      try { return await invoke("machine_status", { generation, username }); }
+      catch (error) {
+        const message = z.string().safeParse(error);
+        throw new Error(message.success ? message.data : "Could not check this computer. Retry.");
+      }
+    },
+    command: async (command) => {
+      try { return await invoke("machine_command", { generation, username, command }); }
+      catch (error) {
+        const message = z.string().safeParse(error);
+        throw new Error(message.success ? message.data : "Could not connect this computer. Retry.");
+      }
+    },
   };
 }

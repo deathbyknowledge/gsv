@@ -96,7 +96,7 @@ Process history uses typed message, note, call, result, and event records. Stora
 - `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
-- `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, and window lifecycle.
+- `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.

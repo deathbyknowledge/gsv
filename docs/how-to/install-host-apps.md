@@ -141,6 +141,13 @@ Desktop uses the same Instrument source as the web UI. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
 rerun the installer to update it.
 
+After signing in, choose Connect this computer to make it a target. Desktop
+handles pairing and background service installation. Not now skips this step;
+reopen it from the space menu under This computer. An existing connection for
+the same space and account resumes automatically. Connections to another space
+or account and your separate CLI login are preserved. The background service
+continues after Desktop closes.
+
 Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. On Arch:
 
 ```bash

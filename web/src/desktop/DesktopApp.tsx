@@ -8,6 +8,8 @@ import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
 import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
+import { DesktopMachineSetup } from "./DesktopMachineSetup";
+import { DesktopConnect } from "./DesktopConnect";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import "./desktop.css";
@@ -16,6 +18,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [machineRequest, setMachineRequest] = useState(0);
   const disconnectPending = useRef(false);
   const storage = useMemo(() => nativeSessionStorage(session, onError, mock), [session.generation]);
   const [confirmation, setConfirmation] = useState<"disconnect" | "quit" | null>(null);
@@ -100,9 +103,12 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
         else quit();
       }}>{confirmation === "disconnect" ? disconnecting ? "disconnecting…" : "disconnect" : "quit"}</button>
     </dialog>
-    <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
+    <PlatformIdentityProvider identity={<><DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
       onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
-      onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />}>
+      onMachine={!locked && !mock ? () => setMachineRequest((value) => value + 1) : undefined}
+      onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />
+      {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
+        request={machineRequest} storage={storage} />}</>}>
       <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
     </PlatformIdentityProvider>
   </>;
@@ -110,9 +116,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
 
 export function DesktopApp() {
   const [session, setSession] = useState<DesktopSession | null>(null);
-  const [origin, setOrigin] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const mock = import.meta.env.DEV && new URLSearchParams(window.location.search).get("mock") === "1";
   useEffect(() => {
     void invoke("desktop_session").then((value) => {
@@ -146,17 +150,10 @@ export function DesktopApp() {
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
     {session && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
-      <AuthScene setup={false}><form class="desktop-connect" onSubmit={(event) => {
-        event.preventDefault(); setBusy(true); setError(null);
-        void invoke("desktop_configure", { origin }).then((next) => {
-          window.sessionStorage.clear(); window.localStorage.clear(); setSession(next);
-        }).catch(() => setError("Use an HTTPS space address, such as https://your-space.example. HTTP is allowed for localhost."))
-          .finally(() => setBusy(false));
-      }}>
-        <h1>GSV</h1>
-        <label>Space address<input type="url" required value={origin} placeholder="https://your-space.example" onInput={(event) => setOrigin(event.currentTarget.value)} /></label>
-        <button type="submit" disabled={busy || !session}>{busy ? "connecting…" : "continue"}</button>
-        {import.meta.env.DEV && <a href="/?mock=1">open the development mock</a>}
-      </form></AuthScene>}
+      <AuthScene setup={false}><DesktopConnect ready={!!session} onConnect={async (origin) => {
+        setError(null);
+        const next = await invoke("desktop_configure", { origin });
+        window.sessionStorage.clear(); window.localStorage.clear(); setSession(next);
+      }} /></AuthScene>}
   </div></BrowserNavigationProvider>;
 }
