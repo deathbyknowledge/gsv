@@ -15,6 +15,7 @@ import { collectNodes, collectText, createTestRoot, deferred } from "../../../te
 import { PromptLine } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
+import { RunFeedback } from "./RunFeedback";
 import { ZenText } from "./ZenText";
 
 let storage: Map<string, string>;
@@ -88,7 +89,8 @@ async function mountedZen(pid?: string, initialTarget?: string) {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   const draftChange = vi.fn();
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet: () => {}, onDraftChange: draftChange }); return null; }
+  const onFleet = vi.fn();
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -103,7 +105,7 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     // SAFETY: The VNode was selected by the exact component whose props type P describes.
     return node.props as P;
   };
-  return { render, props, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+  return { render, props, onFleet, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
@@ -111,6 +113,40 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it("selects the next send's place without discarding the draft or relabelling active work", async () => {
+    send.mockReturnValue(deferred<ConversationSendResult>().promise);
+    const zen = await mountedZen(undefined, "laptop");
+    try {
+      const prompt = () => zen.props(PromptLine);
+      await act(() => { prompt().onInput?.("Keep this draft"); });
+      const request = vi.mocked(GSVClient.prototype.request).getMockImplementation()!;
+      vi.mocked(GSVClient.prototype.request).mockImplementation((call, args, options) =>
+        call === "proc.history" ? new Promise(() => {}) : request(call, args, options));
+      await act(() => {
+        for (const listener of signals) listener("proc.run.tool.started", {
+          pid: shipPid, runId: "active", callId: "call", name: "Shell",
+          syscall: "shell.exec", target: "laptop", args: { command: "pwd" },
+        });
+      });
+      await vi.waitFor(() => expect(zen.props(RunFeedback).places).toEqual(["laptop"]));
+      const cloud = () => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud home for the next message or command")!;
+      await act(() => { cloud().props.onClick!(); });
+      expect(prompt().place.id).toBe("gsv");
+      expect(prompt().showPlace).toBe(false);
+      expect(zen.dirty()).toBe(true);
+      expect(zen.onFleet).not.toHaveBeenCalled();
+      expect(zen.props(RunFeedback).places).toEqual(["laptop"]);
+      const details = zen.nodes().find((node) => node.props["aria-label"] === "View your cloud home in Fleet")!;
+      await act(() => { details.props.onClick!(); });
+      expect(zen.onFleet).toHaveBeenCalledWith("target:gsv");
+      await act(() => { prompt().onSubmit("Keep this draft"); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
+        text: "Keep this draft", selectedTarget: "gsv",
+      })));
+    } finally { await zen.unmount(); }
+  });
+
   it.each(["$ pwd", "!pwd"])("routes a finalized native %s prompt to the terminal without sending it to Ship", async (text) => {
     const zen = await mountedZen();
     try {

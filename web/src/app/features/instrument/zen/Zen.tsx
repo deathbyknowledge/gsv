@@ -24,7 +24,7 @@ import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
-import type { FleetReference } from "../fleet/fleetModel";
+import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -44,6 +44,7 @@ import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, type ZenAttachment } from "./zenAttachments";
 import {
   activityDuration,
+  activitiesForRows,
   answerAttribution,
   answerHistorySnapshot,
   countLabel,
@@ -909,6 +910,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the status line */
   const activeRun = connected ? runtime.activeRunId : null;
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
+  const workingPlaces = useMemo(() => activeRun
+    ? activitiesForRows(runtime.rows.filter((row) => row.runId === activeRun), activeRun, true)
+      .flatMap((activity) => activity.live && activity.target !== null && activity.target !== "unknown target"
+        ? [placeLabel(activity.target, places)] : [])
+    : [], [activeRun, runtime.rows, places]);
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
@@ -997,17 +1004,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
       <div class="zen-bottom">
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
-        {showFeedback && <div class="zen-feedback">
-          {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
-            place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
-          {!connected && <span role="status">Not connected</span>}
-          {connected && !currentPlace.online ? (
-            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-              {currentPlace.label} is offline · view place
-            </button>
-          ) : null}
-          {note ? <span class="is-err" role="alert">{note}</span> : null}
-        </div>}
+
         <div>
           {pickerOpen ? (
             <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
@@ -1036,11 +1033,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
-          {places.length > 0 && <ul class="zen-places" aria-label="Places">
-            {targetsQuery.data?.map((target) => {
-              const label = target.label || target.deviceId;
-              const kind = target.deviceId === CLOUD_PLACE_ID ? "Cloud home"
-                : target.kind === "native-device" ? "Computer"
+          <ul class="zen-places" aria-label="Choose a place for your next message or command">
+            {selectorPlaces.map((target) => {
+              const label = target.label;
+              const kind = target.id === CLOUD_PLACE_ID ? "Cloud home"
+                : target.kind === "machine" ? "Computer"
                 : target.kind === "browser" ? "Browser" : "Place";
               const details = [target.online ? "Online" : "Offline", kind, target.platform];
               if (!target.online) {
@@ -1048,18 +1045,33 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   : `Last seen ${new Date(target.lastSeenAt).toLocaleString(undefined, { timeZone })}`);
               }
               return (
-                <li key={target.deviceId}>
+                <li key={target.id}>
                   <Hint text={details.filter(Boolean).join(" · ")} position="top">
-                    <button type="button" class="zen-place" aria-label={`View ${label} in Fleet`}
-                      onClick={() => onFleet(`target:${target.deviceId}`)}>
+                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                      aria-label={`Use ${label} for the next message or command`}
+                      aria-pressed={target.id === currentPlace.id}
+                      onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
                     </button>
                   </Hint>
+                  {target.id === currentPlace.id && <button type="button" class="zen-place-details"
+                    aria-label={`View ${label} in Fleet`} onClick={() => onFleet(`target:${target.id}`)}>details</button>}
                 </li>
               );
             })}
-          </ul>}
+          </ul>
+          {showFeedback && <div class="zen-feedback">
+            {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
+              places={workingPlaces} awaitingApproval={pendingHil !== null} />}
+            {!connected && <span role="status">Not connected</span>}
+            {connected && !currentPlace.online ? (
+              <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+                {currentPlace.label} is offline · view place
+              </button>
+            ) : null}
+            {note ? <span class="is-err" role="alert">{note}</span> : null}
+          </div>}
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}
@@ -1068,6 +1080,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             onKeyIntercept={onPromptKey}
             onPlace={openPicker}
             place={currentPlace}
+            showPlace={false}
             dir="~"
             placeholder={
               pendingHil

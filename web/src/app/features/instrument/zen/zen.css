@@ -362,7 +362,7 @@
   font-size: 11px;
   color: var(--text-dim);
 }
-.zen-places li { min-width: 0; }
+.zen-places li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .zen-place {
   display: flex;
   align-items: center;
@@ -372,6 +372,9 @@
   text-align: left;
 }
 .zen-place:hover, .zen-place:focus-visible { color: var(--text); }
+.zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
+.zen-place-details { font-size: 10px; color: var(--text-dim); }
+.zen-place-details:hover { color: var(--text); }
 .zen-place-status {
   flex: none;
   width: 7px;
@@ -394,8 +397,6 @@
   display: flex;
   gap: var(--space-5);
   flex-wrap: wrap;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   padding-left: 2px;
 }
 .zen-run-status .is-live { color: var(--live); }

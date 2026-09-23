@@ -1,12 +1,15 @@
-export function RunFeedback({ model, place, online, awaitingApproval }: {
+import { Hint } from "../../../components/ui/Tooltip";
+
+export function RunFeedback({ model, places, awaitingApproval }: {
   model: string | null;
-  place: string;
-  online: boolean;
+  places: readonly string[];
   awaitingApproval: boolean;
 }) {
-  return <div class="zen-run-status" role="status" aria-atomic="false">
-    {awaitingApproval && <span class="is-warn">waiting for your approval</span>}
-    {model && <span>attempting {model}</span>}
-    <span>{place} {online ? "ready" : "offline"}</span>
+  const label = awaitingApproval ? "Waiting for your approval"
+    : places.length > 0 ? `Working on ${places.join(", ")}…` : "Working…";
+  return <div class="zen-run-status" role="status">
+    {model ? <Hint text={`Model: ${model}`}>
+      <span tabIndex={0} class={awaitingApproval ? "is-warn" : undefined}>{label}</span>
+    </Hint> : <span class={awaitingApproval ? "is-warn" : undefined}>{label}</span>}
   </div>;
 }
