@@ -79,6 +79,15 @@ impl DaemonRuntime {
         });
     }
 
+    pub fn pairing_required(&self, message: &str) {
+        self.update(|snapshot| {
+            snapshot.phase = DaemonPhase::Unpaired;
+            snapshot.connected = false;
+            snapshot.reconnect_attempt = 0;
+            snapshot.last_error = Some(message.to_owned());
+        });
+    }
+
     /// The latest automatic-update decision, shown in diagnostics until the
     /// next handshake replaces it.
     pub fn set_update_notice(&self, notice: Option<DiagnosticNotice>) {

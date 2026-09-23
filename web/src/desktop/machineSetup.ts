@@ -45,8 +45,8 @@ export class DesktopMachineSession {
       const machine = await this.native.status();
       if (this.disposed || this.state.busy) return;
       this.publish({ machine, loading: false, busy: false, error: "" });
-      if (machine.configured && this.matches(machine.configured) && !machine.pending && !machine.running) {
-        await this.connect("", []);
+      if (machine.configured && this.matches(machine.configured) && !machine.pending && !machine.connected) {
+        await this.connect("", [], true);
       }
     } catch (error) {
       if (this.disposed || this.state.busy) return;
@@ -55,7 +55,7 @@ export class DesktopMachineSession {
     }
   };
 
-  connect = async (label: string, taken: readonly string[]): Promise<boolean> => {
+  connect = async (label: string, taken: readonly string[], existingOnly = false): Promise<boolean> => {
     if (this.disposed || this.state.busy) return false;
     this.publish({ ...this.state, busy: true, error: "" });
     try {
@@ -65,10 +65,16 @@ export class DesktopMachineSession {
       if ([machine.configured, machine.pending].some((identity) => identity && !this.matches(identity))) {
         throw new Error("This computer is connected to another space or account.");
       }
+      if (existingOnly && !machine.configured && !machine.pending) {
+        this.publish({ machine, loading: false, busy: false, error: "" });
+        return false;
+      }
       let command: MachineCommand;
       if (machine.pending) command = { kind: "resume" };
       else if (machine.configured) command = { kind: "start" };
       else {
+        await this.pairing.refresh();
+        if (this.disposed) return false;
         const previous = this.pairing.snapshot().invitation?.pairing;
         if (previous && (previous.state !== "pending" || previous.expiresAt <= Date.now())) this.pairing.startAnother();
         this.pairing.setLabel(label, taken);
@@ -83,8 +89,9 @@ export class DesktopMachineSession {
       }
       const result = await this.native.command(command);
       if (this.disposed) return false;
-      this.publish({ machine: result, loading: false, busy: false, error: "" });
-      return true;
+      this.publish({ machine: result, loading: false, busy: false,
+        error: !existingOnly && !result.configured && !result.pending ? "Connect this computer again." : "" });
+      return result.connected;
     } catch (error) {
       if (this.disposed) return false;
       // A failed service install can follow a committed pairing. Re-read the

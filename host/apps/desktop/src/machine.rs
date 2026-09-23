@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint};
+use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint, DaemonPhase};
 use host_config::{CliConfig, ConfigFile};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -186,11 +186,10 @@ fn read_config() -> Result<CliConfig, String> {
 }
 
 pub async fn inspect() -> Result<Snapshot, String> {
-    let config = tokio::task::spawn_blocking(read_config)
+    let mut config = tokio::task::spawn_blocking(read_config)
         .await
         .map_err(|_| "Could not check this computer.")??;
-    let configured = configured_identity(&config)?;
-    let pending = pending_identity(&config)?;
+    let mut configured = configured_identity(&config)?;
     let status = if configured.is_some() {
         match DaemonControlEndpoint::current_user() {
             Ok(endpoint) => DaemonControlClient::new(
@@ -207,16 +206,32 @@ pub async fn inspect() -> Result<Snapshot, String> {
     } else {
         None
     };
+    if status
+        .as_ref()
+        .is_some_and(|status| status.phase == DaemonPhase::Unpaired)
+    {
+        config = tokio::task::spawn_blocking(read_config)
+            .await
+            .map_err(|_| "Could not check this computer.")??;
+        configured = configured_identity(&config)?;
+    }
+    let pending = pending_identity(&config)?;
     let running = status.as_ref().is_some_and(|status| {
-        configured
-            .as_ref()
-            .is_some_and(|identity| identity.target_id == status.machine_id)
+        status.phase != DaemonPhase::Unpaired
+            && configured
+                .as_ref()
+                .is_some_and(|identity| identity.target_id == status.machine_id)
     });
     Ok(Snapshot {
-        suggested_name: hostname::get()
-            .ok()
-            .and_then(|name| name.into_string().ok())
-            .filter(|name| !name.trim().is_empty())
+        suggested_name: config
+            .device
+            .label
+            .or_else(|| {
+                hostname::get()
+                    .ok()
+                    .and_then(|name| name.into_string().ok())
+                    .filter(|name| !name.trim().is_empty())
+            })
             .unwrap_or_else(|| "My computer".into()),
         configured,
         pending,
@@ -267,20 +282,23 @@ impl MachineRuntime {
         mut operation: Operation,
     ) -> Result<Snapshot, String> {
         let snapshot = inspect().await?;
+        let already_running = matches!(&command, MachineCommand::Start) && snapshot.running;
         let (args, input, expected) = command_arguments(&scope, &snapshot, command)?;
         let executable = std::env::current_exe()
             .map_err(|_| "Cannot locate GSV.")?
             .parent()
             .ok_or("Cannot locate GSV.")?
             .join(if cfg!(windows) { "gsv.exe" } else { "gsv" });
-        run_cli(
-            &executable,
-            &args,
-            input.as_deref(),
-            &mut operation.cancelled,
-            Duration::from_secs(90),
-        )
-        .await?;
+        if !already_running {
+            run_cli(
+                &executable,
+                &args,
+                input.as_deref(),
+                &mut operation.cancelled,
+                Duration::from_secs(90),
+            )
+            .await?;
+        }
         wait_for_connection(
             &expected,
             &mut operation.cancelled,
@@ -363,6 +381,9 @@ where
     let work = async {
         loop {
             let snapshot = inspect().await?;
+            if snapshot.configured.is_none() && snapshot.pending.is_none() {
+                return Ok(snapshot);
+            }
             if !snapshot.configured.as_ref().is_some_and(|identity| {
                 identity.origin == expected.origin
                     && identity.username == expected.username

@@ -87,6 +87,47 @@ describe("Desktop machine enrollment", () => {
     expect(h.api.create).not.toHaveBeenCalled();
   });
 
+  it("returns a rejected running daemon to setup without silently pairing again", async () => {
+    const h = harness({ configured: identity, running: true, connected: false });
+    h.native.command.mockImplementationOnce(async () => {
+      h.setMachine({ configured: null, running: false, connected: false });
+      return h.native.status();
+    });
+    const owner = h.owner();
+    await owner.load();
+    expect(h.native.command).toHaveBeenCalledExactlyOnceWith({ kind: "start" });
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(owner.snapshot()).toMatchObject({ loading: false, busy: false, error: "", machine: { configured: null } });
+    expect(await owner.connect("Laptop", [])).toBe(true);
+    expect(h.api.create).toHaveBeenCalledOnce();
+  });
+
+  it("does not pair automatically if the credential disappears during startup", async () => {
+    const h = harness();
+    h.native.status.mockResolvedValueOnce({ suggestedName: "Laptop", configured: identity, pending: null, running: true, connected: false });
+    const owner = h.owner();
+    await owner.load();
+    expect(h.native.command).not.toHaveBeenCalled();
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(owner.snapshot()).toMatchObject({ busy: false, error: "", machine: { configured: null } });
+  });
+
+  it("reconciles a used invitation before adding a forgotten computer again", async () => {
+    const h = harness();
+    const first = h.owner();
+    expect(await first.connect("Laptop", [])).toBe(true);
+    const previous = h.api.create.mock.calls[0][0];
+    h.api.list.mockResolvedValue({ pairings: [{ ...previous, username: "human", createdAt: Date.now(), expiresAt: Date.now() + 600_000, state: "paired" }] });
+    first.dispose();
+    h.setMachine({ configured: null, running: false, connected: false });
+    const owner = h.owner();
+    await owner.load();
+    expect(await owner.connect("Laptop", [])).toBe(true);
+    expect(h.api.list).toHaveBeenCalledOnce();
+    expect(h.api.create.mock.calls[1][0].id).not.toBe(previous.id);
+    expect(h.api.create.mock.calls[1][0].secret).not.toBe(previous.secret);
+  });
+
   it.each([{ origin: "https://other.example" }, { username: "other" }])("preserves another binding: %j", async (other) => {
     const h = harness({ configured: { ...identity, ...other } });
     const owner = h.owner();

@@ -62,6 +62,14 @@ the result visible with Connected and Done, or an error with Retry. Reopening
 This computer refreshes local status. The daemon uses its own saved space and
 account independently of the CLI login, with fallback for older configurations.
 
+A machine authentication rejection retires only that exact saved credential and
+leaves the daemon idle awaiting pairing; it does not retry a revoked credential.
+The name and workspace remain available for setup. Desktop checks a disconnected
+daemon through the same bounded connection wait and offers enrollment again when
+the credential has been retired. Adding it again reconciles the previous
+invitation before creating a fresh one. Transient connection failures retain the
+credential and use ordinary reconnect backoff.
+
 Setup runs asynchronously. Signing out, changing spaces or quitting cancels the
 owned CLI process group. A committed machine pairing remains inspectable and
 recoverable. Native status exposes identity and connection state, never driver

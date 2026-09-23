@@ -154,6 +154,21 @@ async fn installation_waits_for_the_daemon_to_connect_before_reporting_success()
 }
 
 #[tokio::test]
+async fn a_retired_credential_returns_to_enrollment_without_claiming_a_connection() {
+    let (_cancel, mut cancelled) = watch::channel(0);
+    let result = wait_for_connection(
+        &identity(),
+        &mut cancelled,
+        Duration::from_secs(1),
+        || async { Ok(snapshot()) },
+    )
+    .await
+    .unwrap();
+    assert!(result.configured.is_none());
+    assert!(!result.connected);
+}
+
+#[tokio::test]
 async fn a_service_that_never_connects_is_a_retryable_failure() {
     let (_cancel, mut cancelled) = watch::channel(0);
     for running in [false, true] {

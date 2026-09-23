@@ -55,14 +55,22 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         runtime.set_machine_id(settings.device_id.clone());
         let driver_shutdown = CancellationToken::new();
         let driver_settings = settings.clone();
-        let driver = machine::device::run(
-            &driver_settings.url,
-            driver_settings.auth.clone(),
-            driver_settings.device_id.clone(),
-            driver_settings.workspace.clone(),
-            driver_shutdown.clone(),
-            runtime.clone(),
-        );
+        let driver = async {
+            if driver_settings.auth.token.is_none() {
+                runtime.pairing_required("Connect this computer to a space.");
+                driver_shutdown.cancelled().await;
+                return Ok(());
+            }
+            machine::device::run(
+                &driver_settings.url,
+                driver_settings.auth.clone(),
+                driver_settings.device_id.clone(),
+                driver_settings.workspace.clone(),
+                driver_shutdown.clone(),
+                runtime.clone(),
+            )
+            .await
+        };
         tokio::pin!(driver);
 
         enum SupervisorEvent {
@@ -156,12 +164,6 @@ fn resolve_settings(args: &Args, cfg: &CliConfig) -> Result<Settings, Box<dyn st
         token: args.token.clone().or_else(|| cfg.default_device_token()),
     };
     auth.validate()?;
-    if auth.username.is_some() && auth.token.is_none() {
-        return Err(
-            "Missing non-interactive device credential. Create a machine invitation in your space's Fleet, then run `gsv pair CODE` on this computer."
-                .into(),
-        );
-    }
 
     let _ = args.foreground;
     Ok(Settings {
