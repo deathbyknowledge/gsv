@@ -130,14 +130,14 @@ describe("Zen conversation entry", () => {
       });
       await vi.waitFor(() => expect(zen.props(RunFeedback).places).toEqual(["laptop"]));
       const cloud = () => zen.nodes().find((node) => node.type === "button"
-        && node.props["aria-label"] === "Use your cloud home for the next message or command")!;
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
       await act(() => { cloud().props.onClick!(); });
       expect(prompt().place.id).toBe("gsv");
       expect(prompt().showPlace).toBe(false);
       expect(zen.dirty()).toBe(true);
       expect(zen.onFleet).not.toHaveBeenCalled();
       expect(zen.props(RunFeedback).places).toEqual(["laptop"]);
-      const details = zen.nodes().find((node) => node.props["aria-label"] === "View your cloud home in Fleet")!;
+      const details = zen.nodes().find((node) => node.props["aria-label"] === "View your cloud in Fleet")!;
       await act(() => { details.props.onClick!(); });
       expect(zen.onFleet).toHaveBeenCalledWith("target:gsv");
       await act(() => { prompt().onSubmit("Keep this draft"); });

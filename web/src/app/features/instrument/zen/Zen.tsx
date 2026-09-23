@@ -8,6 +8,7 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
+import { Icon } from "../../../components/ui/Icon";
 import { Hint } from "../../../components/ui/Tooltip";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
@@ -62,6 +63,7 @@ import {
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
+  CLOUD_PLACE_LABEL,
   type Activity,
   type Moment,
   type Place,
@@ -359,7 +361,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
-    const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
+    const all = [{ id: "gsv", label: CLOUD_PLACE_LABEL, online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
     const needle = pickerQuery.toLowerCase();
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
@@ -389,7 +391,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
     const id = where ?? CLOUD_PLACE_ID;
-    if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
+    if (id === CLOUD_PLACE_ID) return { id, label: CLOUD_PLACE_LABEL, online: true };
     const place = places.find((entry) => entry.id === id);
     return { id, label: place?.label ?? id, online: place?.online ?? false };
   }, [places, where]);
@@ -915,7 +917,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       .flatMap((activity) => activity.live && activity.target !== null && activity.target !== "unknown target"
         ? [placeLabel(activity.target, places)] : [])
     : [], [activeRun, runtime.rows, places]);
-  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? [])
+    .sort((a, b) => Number(b.id === CLOUD_PLACE_ID) - Number(a.id === CLOUD_PLACE_ID)), [targetsQuery.data]);
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
@@ -1035,8 +1038,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </ul>}
           <ul class="zen-places" aria-label="Choose a place for your next message or command">
             {selectorPlaces.map((target) => {
-              const label = target.label;
-              const kind = target.id === CLOUD_PLACE_ID ? "Cloud home"
+              const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
+              const kind = target.id === CLOUD_PLACE_ID ? "Cloud"
                 : target.kind === "machine" ? "Computer"
                 : target.kind === "browser" ? "Browser" : "Place";
               const details = [target.online ? "Online" : "Offline", kind, target.platform];
@@ -1055,8 +1058,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       <span>{label}</span>
                     </button>
                   </Hint>
-                  {target.id === currentPlace.id && <button type="button" class="zen-place-details"
-                    aria-label={`View ${label} in Fleet`} onClick={() => onFleet(`target:${target.id}`)}>details</button>}
+                  {target.id === currentPlace.id && <Hint text={`View ${label} in Fleet`}>
+                    <button type="button" class="zen-place-details"
+                      aria-label={`View ${label} in Fleet`} onClick={() => onFleet(`target:${target.id}`)}>
+                      <span aria-hidden="true"><Icon name="arrowRight" family="doticons" size={12} /></span>
+                    </button>
+                  </Hint>}
                 </li>
               );
             })}
