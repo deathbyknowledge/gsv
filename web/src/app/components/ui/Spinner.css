@@ -35,5 +35,13 @@
   word-spacing: 0;
 }
 .gsv-loading-state { display: inline-flex; align-items: center; gap: 9px; max-width: 100%; }
+.gsv-spinner-ring { color: var(--accent); }
+.gsv-spinner-ring svg { display: block; width: 100%; height: 100%; }
+.gsv-spinner-ring-arc { transform-origin: 12px 12px; animation: gsv-ring-turn 1.4s linear infinite paused; }
+.gsv-spinner-ring-arc.is-moving { animation-play-state: running; }
+@keyframes gsv-ring-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .gsv-spinner-ring-arc.is-moving { animation-play-state: paused; }
+}
 .gsv-loading-state > span:last-child { min-width: 0; }
 .gsv-loading-state.is-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; box-sizing: border-box; padding: 20px 0; gap: 12px; text-align: center; }

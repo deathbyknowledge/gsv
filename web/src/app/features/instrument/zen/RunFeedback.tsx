@@ -13,7 +13,7 @@ export function RunFeedback({ model, places, awaitingApproval, running }: {
     : !running ? "Idle" : places.length > 0 ? `Working on ${places.join(", ")}` : "Working";
   return <Hint text={model && running ? `${label} · Model: ${model}` : label}>
     <span class="zen-run-indicator" role="status" aria-label={label} tabIndex={0}>
-      <Spinner size={18} animate={visible && running && !awaitingApproval} />
+      <Spinner size={28} variant="ring" animate={visible && running && !awaitingApproval} />
     </span>
   </Hint>;
 }
