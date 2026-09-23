@@ -32,6 +32,17 @@ Generated namespace methods and `client.call()` are data-only.
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
 
+### Tool purpose
+
+When a Process calls a syscall through one of its capability tools, the tool
+accepts one extra argument, `purpose`: a single sentence written for the person,
+saying why the call is being made. It is a tool argument, not a syscall
+argument. It never appears in a wire `args` object and is not part of any
+signature below: the runtime lifts it off the arguments before dispatch,
+collapses whitespace, and caps it at 400 characters. The person sees it in an
+approval prompt and in the corresponding [ledger](../architecture/ledger.md)
+line. It is optional; a call without one is admitted the same way.
+
 ## Shared Records
 
 These aliases are used below to keep each syscall signature readable.
