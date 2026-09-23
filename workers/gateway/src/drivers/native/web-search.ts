@@ -19,14 +19,12 @@ export async function handleWebSearch(value: WebSearchArgs, ctx: KernelContext):
     onLateResolve: (late) => late[Symbol.dispose]?.(),
   });
   const requestId = crypto.randomUUID();
-  let cancellation: Promise<void> | undefined;
   try {
     signal.throwIfAborted();
     return await raceWithAbort(target.search({ requestId, deadlineAt, search: args }), signal, {
-      onAbort: () => { cancellation = target.cancel(requestId); },
+      onAbort: () => { ctx.defer(target.cancel(requestId).catch(() => {})); },
     });
   } finally {
-    await cancellation?.catch(() => {});
     target[Symbol.dispose]?.();
   }
 }
