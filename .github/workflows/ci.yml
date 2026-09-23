@@ -31,6 +31,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       machine: ${{ steps.filter.outputs.machine }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      transcriber: ${{ steps.filter.outputs.transcriber }}
       host_crates: ${{ steps.filter.outputs.host_crates }}
     steps:
       - uses: actions/checkout@v4
@@ -194,6 +195,13 @@ jobs:
               - 'web/**'
               - 'packages/gsv/**'
               - 'package*.json'
+            transcriber:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
+              - 'host/helpers/transcriber/**'
+              - 'host/scripts/check-transcriber.py'
             host_crates:
               - '.github/workflows/ci.yml'
               - 'host/Cargo.toml'
@@ -602,7 +610,8 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
-      TRANSCRIBE_CMAKE_ARGS: -UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON
+      # ARM64 OpenBLAS needs libm during CMake's C link probes as well as the final link.
+      TRANSCRIBE_CMAKE_ARGS: -UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES
     steps:
       - uses: actions/checkout@v4
 
@@ -712,3 +721,36 @@ jobs:
           cargo clippy --locked --package desktop --package desktop-native --package transcriber \
             --package gestures --package gesture-protocol --all-targets -- -D warnings
           ccache --show-stats --verbose
+
+  transcriber-arm64:
+    name: Voice helper (Linux ARM64)
+    runs-on: ubuntu-22.04-arm
+    needs: [changes]
+    if: needs.changes.outputs.transcriber == 'true'
+    env:
+      TRANSCRIBE_CMAKE_ARGS: -UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: host -> target
+          key: transcriber-release-arm64
+
+      - name: Install voice build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang cmake libasound2-dev libclang-dev \
+            libopenblas-pthread-dev pkg-config
+
+      - name: Build release voice helper
+        working-directory: host
+        run: cargo build --locked --release --target aarch64-unknown-linux-gnu --package transcriber
+
+      - name: Check voice helper startup and bundled math
+        run: python3 host/scripts/check-transcriber.py host/target/aarch64-unknown-linux-gnu/release/gsv-transcribe

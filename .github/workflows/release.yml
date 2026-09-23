@@ -150,7 +150,8 @@ jobs:
     needs: [resolve]
     env:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
-      TRANSCRIBE_CMAKE_ARGS: ${{ startsWith(matrix.platform, 'linux-') && '-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON' || '' }}
+      # ARM64 OpenBLAS needs libm during CMake's C link probes as well as the final link.
+      TRANSCRIBE_CMAKE_ARGS: ${{ startsWith(matrix.platform, 'linux-') && '-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES' || '' }}
       GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
       GSV_BUILD_SHA: ${{ github.sha }}
       GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
