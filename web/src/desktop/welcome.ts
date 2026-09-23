@@ -14,7 +14,7 @@ export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
-}) => Promise<Pick<Response, "ok" | "json">>;
+}) => Promise<Pick<Response, "ok" | "text">>;
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
   | { code: string } | { handle: string } | Record<string, never>;
@@ -110,7 +110,7 @@ export class DesktopWelcome {
         method: body === undefined ? "GET" : "POST", headers, credentials: "omit", cache: "no-store",
         body: body === undefined ? undefined : JSON.stringify(body), signal: timeout.signal,
       });
-      const data: unknown = await response.json();
+      const data: unknown = JSON.parse(await response.text());
       if (!response.ok) {
         const error = failureSchema.safeParse(data);
         throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined);
