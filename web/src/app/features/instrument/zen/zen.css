@@ -373,7 +373,8 @@
 }
 .zen-place:hover, .zen-place:focus-visible { color: var(--text); }
 .zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
-.zen-place-details { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-dim); }
+.zen-place-details { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; line-height: 0; color: var(--text-dim); }
+.zen-place-details svg { display: block; flex: none; }
 .zen-place-details:hover { color: var(--text); }
 .zen-place-status {
   flex: none;

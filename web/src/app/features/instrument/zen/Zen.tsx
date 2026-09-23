@@ -8,7 +8,6 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
-import { Icon } from "../../../components/ui/Icon";
 import { Hint } from "../../../components/ui/Tooltip";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
 import {
@@ -1061,7 +1060,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   {target.id === currentPlace.id && <Hint text={`View ${label} in Fleet`}>
                     <button type="button" class="zen-place-details"
                       aria-label={`View ${label} in Fleet`} onClick={() => onFleet(`target:${target.id}`)}>
-                      <span aria-hidden="true"><Icon name="arrowRight" family="doticons" size={12} /></span>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                        <circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.25" />
+                        <circle cx="8" cy="5" r="0.8" fill="currentColor" />
+                        <path d="M8 7.5V11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                      </svg>
                     </button>
                   </Hint>}
                 </li>
