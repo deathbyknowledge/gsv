@@ -44,6 +44,7 @@ import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ProcessToolOwner } from "../protocol/process-frames";
 import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
@@ -79,6 +80,7 @@ export type KernelContext = {
   peer?: PeerContext;
   processId?: string;
   processRunId?: string;
+  toolOwner?: ProcessToolOwner;
   requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;

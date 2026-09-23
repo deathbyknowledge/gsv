@@ -39,6 +39,7 @@ import { hasCapability } from "../../kernel/capabilities";
 import { materializeToolResponse } from "../tool-response";
 import { raceWithAbort } from "../../shared/abort";
 import { stableOpaqueId } from "../../shared/stable-id";
+import type { ProcessToolAuthorizeArgs, ProcessToolOwner } from "../../protocol/process-frames";
 
 const APPROVED_READS_REMEMBERED = 64;
 const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
@@ -81,7 +82,49 @@ type AdmittedToolCall = {
 };
 
 export class ProcessTools {
+  private approvalQueue: Promise<void> | null = null;
+
   constructor(private readonly host: Process) {}
+
+  private nestedToolContext(owner: ProcessToolOwner): CodeModeSyscallContext {
+    const run = this.host.runs.active;
+    const dispatchId = this.host.codeModeResponses.get(owner.requestId)?.ownerDispatchId ?? owner.requestId;
+    const pending = this.host.store.tools.getPending(dispatchId);
+    if (!run || this.host.handleRunStopped(owner.runId) || run.runId !== owner.runId
+      || !pending || pending.runId !== owner.runId || pending.status !== "pending") {
+      throw new Error("Owning tool execution is no longer active");
+    }
+    const toolName = syscallToolName(pending.call);
+    if (!toolName || !this.wasToolOffered(run, toolName)) {
+      throw new Error("Owning tool was not offered for this generation");
+    }
+    return {
+      runId: run.runId,
+      dispatchId,
+      approvalPolicy: this.resolveToolApprovalPolicy(run),
+      capabilities: run.config?.capabilities ?? [],
+      purpose: this.host.store.tools.getResults(run.runId).find((tool) => tool.dispatchId === dispatchId)?.purpose,
+    };
+  }
+
+  async authorizeNestedTool(args: ProcessToolAuthorizeArgs, signal: AbortSignal): Promise<boolean> {
+    signal.throwIfAborted();
+    const context = this.nestedToolContext(args);
+    if (!hasCapability(context.capabilities, args.syscall)) {
+      throw new Error(`Permission denied: ${args.syscall}`);
+    }
+    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args);
+    if (approval.action === "deny") return false;
+    if (approval.action === "auto" && (approval.matchedRule || args.defaultAction !== "ask")) return true;
+    const approved = await this.waitForCodeModeApproval(
+      context.runId, context.dispatchId, crypto.randomUUID(),
+      syscallToolName(args.syscall) ?? args.syscall, args.syscall, args.args, context.purpose, signal,
+    );
+    signal.throwIfAborted();
+    if (!approved) return false;
+    this.nestedToolContext(args);
+    return true;
+  }
 
   resolveToolApprovalPolicy(run: RunState): ToolApprovalPolicy {
     if (run.approvalPolicy) {
@@ -519,6 +562,8 @@ export class ProcessTools {
   }
 
   async processToolCalls(runId: string): Promise<PendingHilRecord | null> {
+    const pendingApproval = this.host.store.tools.getPendingHilForRun(runId);
+    if (pendingApproval) return pendingApproval;
     const toolCalls = this.host.store.tools
       .getResults(runId)
       .filter((result) => result.status === "registered");
@@ -537,6 +582,8 @@ export class ProcessTools {
     }
 
     for (const toolCall of toolCalls) {
+      const pendingApproval = this.host.store.tools.getPendingHilForRun(runId);
+      if (pendingApproval) return pendingApproval;
       if (this.host.handleRunStopped(runId)) {
         return null;
       }
@@ -670,6 +717,7 @@ export class ProcessTools {
     args: CodeModeRunArgs,
     signal?: AbortSignal,
     requestId?: string,
+    owner?: ProcessToolOwner,
   ): Promise<CodeModeRunResult> {
     if (args.code.trim().length === 0) {
       return {
@@ -679,6 +727,7 @@ export class ProcessTools {
     }
 
     try {
+      const context = owner ? this.nestedToolContext(owner) : null;
       const options: CodeModeExecutionOptions = {
         argv: args.argv ?? [],
         args: args.args ?? null,
@@ -699,7 +748,7 @@ export class ProcessTools {
       return await executeCodeMode(
         this.host.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeSyscall(null, call, toolArgs, signal),
+        (call, toolArgs) => this.executeCodeModeSyscall(context, call, toolArgs, signal),
         options,
       );
     } catch (error) {
@@ -827,6 +876,7 @@ export class ProcessTools {
           call,
           toolArgs,
           context.purpose,
+          signal,
         );
         if (!approved) {
           throw new Error(`Tool execution was not approved: ${call}`);
@@ -844,6 +894,7 @@ export class ProcessTools {
       call,
       toolArgs,
       signal,
+      context?.dispatchId,
     );
 
     if (context && this.host.handleRunStopped(context.runId)) {
@@ -872,7 +923,36 @@ export class ProcessTools {
     call: SyscallName,
     args: JsonObject,
     purpose?: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
+    const previous = this.approvalQueue;
+    let release!: () => void;
+    const queued = new Promise<void>((resolve) => { release = resolve; });
+    this.approvalQueue = queued;
+    try {
+      if (previous) await previous;
+      signal?.throwIfAborted();
+      if (!this.pendingToolForRun(runId, dispatchId)) return false;
+      return await this.requestNestedApproval(runId, dispatchId, toolCallId, toolName, call, args, purpose, signal);
+    } finally {
+      release();
+      if (this.approvalQueue === queued) this.approvalQueue = null;
+    }
+  }
+
+  private async requestNestedApproval(
+    runId: string,
+    dispatchId: string,
+    toolCallId: string,
+    toolName: string,
+    call: SyscallName,
+    args: JsonObject,
+    purpose?: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (this.host.store.tools.getPendingHilForRun(runId)) {
+      throw new Error("Another action is waiting for approval; retry after the human decides");
+    }
     const requestId = crypto.randomUUID();
     const approved = new Promise<boolean>((resolve) => {
       const timeoutId = setTimeout(() => {
@@ -904,8 +984,16 @@ export class ProcessTools {
       pendingHil.purpose = purpose;
     }
     this.host.store.tools.setPendingHil(pendingHil);
-    await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
-    return approved;
+    try {
+      await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
+      return await raceWithAbort(approved, signal);
+    } finally {
+      if (this.host.store.tools.getPendingHil(requestId)) {
+        this.host.store.tools.clearPendingHil("error");
+      }
+      this.resolveCodeModeApproval(requestId, false);
+      this.host.startBackground("resume registered tools after nested approval", this.processToolCalls(runId));
+    }
   }
 
   async dispatchCodeModeSyscall(
@@ -914,6 +1002,7 @@ export class ProcessTools {
     call: SyscallName,
     args: JsonObject,
     signal?: AbortSignal,
+    ownerDispatchId?: string,
   ): Promise<ResponseFrame> {
     signal?.throwIfAborted();
     const pid = this.host.pid;
@@ -943,6 +1032,7 @@ export class ProcessTools {
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
       this.host.codeModeResponses.set(id, {
         runId,
+        ownerDispatchId,
         call,
         args,
         resolve,

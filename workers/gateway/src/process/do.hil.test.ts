@@ -776,7 +776,7 @@ describe("proc.hil", () => {
         }),
       ).resolves.toEqual({
         ok: false,
-        error: "CodeMode execution was interrupted while waiting for tool approval",
+        error: "Tool execution was interrupted while waiting for approval",
       });
 
       expect(process.store.tools.getPendingHil()).toBeNull();
@@ -788,7 +788,7 @@ describe("proc.hil", () => {
         {
           id: "call-codemode-outer",
           status: "error",
-          error: "CodeMode execution was interrupted while waiting for tool approval",
+          error: "Tool execution was interrupted while waiting for approval",
         },
       ]);
       expect(process.run.schedule).not.toHaveBeenCalled();

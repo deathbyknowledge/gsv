@@ -3,6 +3,7 @@ import type {
   AdapterInteractionOrigin,
   ConversationMessage,
   EventReplyTarget,
+  JsonObject,
   ProcMediaInput,
   ProcSendResult,
   ProcHistoryEvent,
@@ -12,6 +13,16 @@ import type {
   TypedResponseOk,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, SignalFrame } from "./frames";
+import type { SyscallName } from "../syscalls";
+
+/** Kernel-derived ownership for operations composed beneath a dispatched agent tool. */
+export type ProcessToolOwner = { runId: string; requestId: string };
+
+export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
+  syscall: SyscallName;
+  args: JsonObject;
+  defaultAction?: "ask";
+};
 
 export type ProcessAdapterWorkReturnedRuntimeEvent = {
   type: "adapter.work.returned";
@@ -142,6 +153,7 @@ export type ProcessMessageCommitArgs = {
  * carrier. They share the public frame envelope but have their own contract table.
  */
 export type InternalSyscallDomains = {
+  "proc.tool.authorize": { args: ProcessToolAuthorizeArgs; result: { approved: boolean } };
   "proc.event.deliver": { args: ProcessEventDeliverArgs; result: ProcessEventDeliverResult };
   "proc.runtime.event.deliver": {
     args: ProcessRuntimeEventDeliverArgs;
@@ -193,8 +205,8 @@ export type ProcessMessageStreamSignal = SignalFrame<{
   timestamp: number;
 }> & { signal: "proc.message.stream" };
 
-export type ProcessRequestFrame = RequestFrame | InternalRequestFrame<ProcessInternalCall>;
-export type ProcessInboundFrame = Frame | InternalRequestFrame<ProcessInternalCall>;
+export type ProcessRequestFrame = (RequestFrame | InternalRequestFrame<ProcessInternalCall>) & { toolOwner?: ProcessToolOwner };
+export type ProcessInboundFrame = Exclude<Frame, { type: "req" }> | ProcessRequestFrame;
 export type ProcessOutboundFrame =
   | Frame
   | InternalRequestFrame<"proc.message.commit">
