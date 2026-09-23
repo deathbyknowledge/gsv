@@ -121,18 +121,6 @@ const LONG_REPLY = [
 const targets: SysTargetSummary[] = [
   { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
   { targetId: "garage-pi", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "garage pi", description: "Raspberry Pi", implements: ["fs.*", "shell.*"], platform: "linux", version: "0.5.9", online: false, lastSeenAt: at(2, 22, 10) },
-  ...["office laptop", "home desktop", "travel macbook", "workstation", "kitchen tablet", "media server", "work browser", "test laptop", "living room pc", "backup server"].map((label, index) => ({
-    targetId: `mock-place-${index + 1}`,
-    ownerUid: OWNER.uid,
-    ownerUsername: OWNER.username,
-    label,
-    description: "Mock place for testing overflow",
-    implements: ["fs.*", "shell.*"],
-    platform: index % 2 === 0 ? "darwin" : "linux",
-    version: "0.6.0",
-    online: index % 3 !== 0,
-    lastSeenAt: index % 3 !== 0 ? Date.now() : at(1, 12, 0),
-  })),
 ];
 
 const accounts: AccountSummary[] = [
