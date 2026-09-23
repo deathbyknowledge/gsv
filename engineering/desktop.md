@@ -56,6 +56,12 @@ credential persistence, receipt recovery and per-user service installation.
 An interrupted pairing resumes its saved credential; a service-install failure
 after redemption retries installation without creating another target.
 
+Installing the service is not completion: native setup waits, with a bounded
+timeout and cancellation, for the daemon's gateway connection. The dialog keeps
+the result visible with Connected and Done, or an error with Retry. Reopening
+This computer refreshes local status. The daemon uses its own saved space and
+account independently of the CLI login, with fallback for older configurations.
+
 Setup runs asynchronously. Signing out, changing spaces or quitting cancels the
 owned CLI process group. A committed machine pairing remains inspectable and
 recoverable. Native status exposes identity and connection state, never driver

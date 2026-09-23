@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { LoadingState } from "../app/components/ui/Spinner";
+import { LoadingState, Spinner } from "../app/components/ui/Spinner";
 import { useGateway } from "../app/services/gateway/GatewayProvider";
 import { useSession } from "../app/services/session/SessionProvider";
 import { useConsoleAccounts, useConsoleTargets } from "../app/services/system/useConsoleData";
@@ -49,8 +49,12 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
     if (machine && !label) setLabel(machine.suggestedName.slice(0, 100));
   }, [machine?.suggestedName]);
   useEffect(() => {
-    if (request !== lastRequest.current) { lastRequest.current = request; setOpen(true); }
-  }, [request]);
+    if (request !== lastRequest.current) {
+      lastRequest.current = request;
+      setOpen(true);
+      if (nativeReady) void owner.load();
+    }
+  }, [request, nativeReady, owner]);
   useEffect(() => {
     if (!dismissed && !state.loading && !other && (state.error || machine && allowed && !machine.configured)) setOpen(true);
   }, [dismissed, state.loading, machine, other, allowed, state.error]);
@@ -64,16 +68,17 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
   };
   const online = !!machine?.configured && (machine.connected || targets.targets.some((target) => target.deviceId === machine.configured?.targetId && target.online));
   const error = state.error;
+  const complete = online && !state.busy && !error && !other;
   return <dialog ref={dialog} class="desktop-machine" aria-labelledby="desktop-machine-title"
     onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => event.stopPropagation()}>
     <form onSubmit={(event) => {
       event.preventDefault();
-      void owner.connect(label, targets.targets.map((target) => target.deviceId)).then((complete) => { if (complete) close(); });
+      void owner.connect(label, targets.targets.map((target) => target.deviceId));
     }}>
       <h2 id="desktop-machine-title">{machine?.configured?.label ?? "Connect this computer"}</h2>
       {state.loading && !error ? <LoadingState>checking…</LoadingState> : other ?
         <p class="note">Already connected to {new URL(other.origin).host} as {other.username}.</p> : machine?.configured ?
-        <p class="note" role="status">{online ? "Connected" : machine.running ? "Connecting…" : "Connection stopped"}</p> : <>
+        !error && <p class="note" role="status">{state.busy ? "Connecting…" : online ? "Connected" : machine.running ? "Connecting…" : "Connection stopped"}</p> : <>
           <p class="note">Let your Ship use this computer’s files and commands, even when the app is closed.</p>
           {!machine?.pending && <label>Display name<input value={label} maxLength={100} required autoComplete="off"
             disabled={state.busy} onInput={(event) => setLabel(event.currentTarget.value)} /></label>}
@@ -81,12 +86,15 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
         </>}
       {error && <p class="error" role="alert">{error}</p>}
       <div class="desktop-machine-actions">
-        <button type="button" class="fleet-text-action" onClick={close}>{state.busy ? "close" : machine?.configured || other ? "done" : "not now"}</button>
-        {!other && (!machine?.running || state.busy) && <button type={machine ? "submit" : "button"} class="ibtn is-primary"
-          disabled={state.busy || state.loading || !nativeReady || !connected || !allowed || needsInvitation && (!label.trim() || targets.isPending)}
-          onClick={machine ? undefined : () => void owner.load()}>
-          {state.busy ? <LoadingState>connecting…</LoadingState> : error || machine?.pending ? "retry" : "connect"}
-        </button>}
+        {complete ? <button type="button" class="ibtn is-primary desktop-machine-connect" onClick={close}>done</button> : <>
+          <button type="button" class="fleet-text-action" onClick={close}>{state.busy ? "close" : machine?.configured || other ? "done" : "not now"}</button>
+          {!other && <button type={machine ? "submit" : "button"} class="ibtn is-primary desktop-machine-connect"
+            disabled={state.busy || state.loading || !nativeReady || !connected || !allowed || needsInvitation && (!label.trim() || targets.isPending)}
+            aria-label={state.busy ? "Connecting" : undefined} aria-busy={state.busy}
+            onClick={machine ? undefined : () => void owner.load()}>
+            {state.busy ? <Spinner /> : error || machine?.pending ? "retry" : "connect"}
+          </button>}
+        </>}
       </div>
     </form>
   </dialog>;

@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint};
 use host_config::{CliConfig, ConfigFile};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -266,7 +267,7 @@ impl MachineRuntime {
         mut operation: Operation,
     ) -> Result<Snapshot, String> {
         let snapshot = inspect().await?;
-        let (args, input) = command_arguments(&scope, &snapshot, command)?;
+        let (args, input, expected) = command_arguments(&scope, &snapshot, command)?;
         let executable = std::env::current_exe()
             .map_err(|_| "Cannot locate GSV.")?
             .parent()
@@ -280,11 +281,13 @@ impl MachineRuntime {
             Duration::from_secs(90),
         )
         .await?;
-        let result = inspect().await?;
-        if operation.cancelled.has_changed().unwrap_or(true) {
-            return Err("Machine setup was cancelled.".into());
-        }
-        Ok(result)
+        wait_for_connection(
+            &expected,
+            &mut operation.cancelled,
+            Duration::from_secs(20),
+            inspect,
+        )
+        .await
     }
 }
 
@@ -292,7 +295,7 @@ fn command_arguments(
     scope: &Scope,
     snapshot: &Snapshot,
     command: MachineCommand,
-) -> Result<(Vec<&'static str>, Option<String>), String> {
+) -> Result<(Vec<&'static str>, Option<String>, Identity), String> {
     if snapshot
         .configured
         .iter()
@@ -303,16 +306,25 @@ fn command_arguments(
     }
     match command {
         MachineCommand::Start => {
-            if snapshot.configured.is_none() || snapshot.pending.is_some() {
+            let expected = snapshot
+                .configured
+                .clone()
+                .ok_or("Finish connecting this computer first.")?;
+            if snapshot.pending.is_some() {
                 return Err("Finish connecting this computer first.".into());
             }
-            Ok((vec!["daemon", "install"], None))
+            Ok((vec!["daemon", "install"], None, expected))
         }
         MachineCommand::Resume => {
-            if snapshot.pending.is_none() {
-                return Err("There is no unfinished machine setup.".into());
-            }
-            Ok((vec!["pair", "--preserve-cli-login", "--no-replace"], None))
+            let expected = snapshot
+                .pending
+                .clone()
+                .ok_or("There is no unfinished machine setup.")?;
+            Ok((
+                vec!["pair", "--preserve-cli-login", "--no-replace"],
+                None,
+                expected,
+            ))
         }
         MachineCommand::Pair { code } => {
             if snapshot.configured.is_some() {
@@ -320,14 +332,55 @@ fn command_arguments(
                     "This computer is already paired. Start its connection instead.".into(),
                 );
             }
-            if !invitation_identity(&code)?.matches(scope) {
+            let expected = invitation_identity(&code)?;
+            if !expected.matches(scope) {
                 return Err("The invitation belongs to another space or account.".into());
             }
             Ok((
                 vec!["pair", "-", "--preserve-cli-login", "--no-replace"],
                 Some(code),
+                expected,
             ))
         }
+    }
+}
+
+// Service installation only schedules a start. Setup completes after the
+// daemon confirms its gateway handshake for this exact saved identity.
+async fn wait_for_connection<F, Fut>(
+    expected: &Identity,
+    cancelled: &mut watch::Receiver<u64>,
+    timeout: Duration,
+    mut inspect: F,
+) -> Result<Snapshot, String>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Snapshot, String>>,
+{
+    if cancelled.has_changed().unwrap_or(true) {
+        return Err("Machine setup was cancelled.".into());
+    }
+    let work = async {
+        loop {
+            let snapshot = inspect().await?;
+            if !snapshot.configured.as_ref().is_some_and(|identity| {
+                identity.origin == expected.origin
+                    && identity.username == expected.username
+                    && identity.target_id == expected.target_id
+            }) || snapshot.pending.is_some()
+            {
+                return Err("The saved computer connection changed. Reopen it to check.".into());
+            }
+            if snapshot.running && snapshot.connected {
+                return Ok(snapshot);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = cancelled.changed() => Err("Machine setup was cancelled.".into()),
+        result = tokio::time::timeout(timeout, work) => result.map_err(|_| "This computer did not connect. Retry.")?,
     }
 }
 

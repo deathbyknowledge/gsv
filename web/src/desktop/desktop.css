@@ -21,3 +21,4 @@
 .desktop-machine label { display: grid; gap: 8px; }
 .desktop-machine input { width: 100%; padding: 10px; font: inherit; color: var(--text-hi); background: transparent; border: 1px solid var(--border-raised); }
 .desktop-machine-actions { display: flex; justify-content: flex-end; align-items: center; gap: 24px; }
+.desktop-machine .desktop-machine-connect { display: inline-flex; align-items: center; justify-content: center; width: 104px; height: 36px; flex-shrink: 0; padding: 0 14px; }

@@ -40,14 +40,16 @@ export class DesktopMachineSession {
   matches = (identity: MachineIdentity): boolean => identity.origin === this.origin && identity.username === this.username;
 
   load = async (): Promise<void> => {
+    if (this.disposed || this.state.busy) return;
     try {
       const machine = await this.native.status();
-      if (this.disposed) return;
+      if (this.disposed || this.state.busy) return;
       this.publish({ machine, loading: false, busy: false, error: "" });
       if (machine.configured && this.matches(machine.configured) && !machine.pending && !machine.running) {
         await this.connect("", []);
       }
     } catch (error) {
+      if (this.disposed || this.state.busy) return;
       this.publish({ ...this.state, loading: false,
         error: error instanceof Error ? error.message : "Could not check this computer. Retry." });
     }

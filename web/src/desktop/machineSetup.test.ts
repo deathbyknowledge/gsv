@@ -144,6 +144,25 @@ describe("Desktop machine enrollment", () => {
     expect(h.api.create).toHaveBeenCalledOnce();
   });
 
+  it("stays busy until the native connection finishes and does not run a competing status check", async () => {
+    const h = harness();
+    const connecting = deferred<void>();
+    h.native.command.mockImplementationOnce(async () => {
+      await connecting.promise;
+      throw new Error("This computer did not connect. Retry.");
+    });
+    const owner = h.owner();
+    const pending = owner.connect("Laptop", []);
+    await vi.waitFor(() => expect(h.native.command).toHaveBeenCalledOnce());
+    expect(owner.snapshot().busy).toBe(true);
+    await owner.load();
+    expect(h.native.status).toHaveBeenCalledOnce();
+    expect(await owner.connect("Laptop", [])).toBe(false);
+    connecting.resolve();
+    expect(await pending).toBe(false);
+    expect(owner.snapshot()).toMatchObject({ busy: false, error: "This computer did not connect. Retry." });
+  });
+
   it("replaces an expired invitation only on retry", async () => {
     const h = harness();
     h.api.create.mockImplementationOnce(async (args) => ({ pairing: { ...args, username: "human", createdAt: 1, expiresAt: 2, state: "expired" } }));

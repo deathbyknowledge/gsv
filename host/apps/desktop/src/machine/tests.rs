@@ -72,7 +72,7 @@ fn pairing_must_belong_to_the_selected_space_and_account() {
         .is_err());
     }
     let code = invitation("wss://space.example/ws", "human");
-    let (args, input) = command_arguments(
+    let (args, input, expected) = command_arguments(
         &scope(),
         &snapshot(),
         MachineCommand::Pair { code: code.clone() },
@@ -80,6 +80,7 @@ fn pairing_must_belong_to_the_selected_space_and_account() {
     .unwrap();
     assert_eq!(args, ["pair", "-", "--preserve-cli-login", "--no-replace"]);
     assert_eq!(input, Some(code.clone()));
+    assert_eq!(expected, identity());
     assert!(args.iter().all(|arg| !arg.contains(&code)));
 }
 
@@ -131,6 +132,94 @@ async fn cancellation_is_generation_fenced_and_does_not_block_the_next_operation
     drop(operation);
     let next = runtime.prepare().unwrap();
     assert!(!next.cancelled.has_changed().unwrap());
+}
+
+#[tokio::test]
+async fn installation_waits_for_the_daemon_to_connect_before_reporting_success() {
+    let (_cancel, mut cancelled) = watch::channel(0);
+    let mut checks = 0;
+    let result = wait_for_connection(&identity(), &mut cancelled, Duration::from_secs(2), || {
+        checks += 1;
+        std::future::ready(Ok(Snapshot {
+            configured: Some(identity()),
+            running: checks >= 2,
+            connected: checks >= 3,
+            ..snapshot()
+        }))
+    })
+    .await
+    .unwrap();
+    assert!(result.connected);
+    assert_eq!(checks, 3);
+}
+
+#[tokio::test]
+async fn a_service_that_never_connects_is_a_retryable_failure() {
+    let (_cancel, mut cancelled) = watch::channel(0);
+    for running in [false, true] {
+        let error = wait_for_connection(
+            &identity(),
+            &mut cancelled,
+            Duration::from_millis(20),
+            || async {
+                Ok(Snapshot {
+                    configured: Some(identity()),
+                    running,
+                    ..snapshot()
+                })
+            },
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error, "This computer did not connect. Retry.");
+    }
+}
+
+#[tokio::test]
+async fn connection_wait_rejects_a_replaced_binding_and_cancels_promptly() {
+    let (cancel, mut cancelled) = watch::channel(0);
+    let error = wait_for_connection(
+        &identity(),
+        &mut cancelled,
+        Duration::from_secs(2),
+        || async {
+            Ok(Snapshot {
+                configured: Some(Identity {
+                    target_id: "other-target".into(),
+                    ..identity()
+                }),
+                running: true,
+                connected: true,
+                ..snapshot()
+            })
+        },
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("changed"));
+
+    let task = tokio::spawn(async move {
+        wait_for_connection(
+            &identity(),
+            &mut cancelled,
+            Duration::from_secs(20),
+            || async { std::future::pending().await },
+        )
+        .await
+        .err()
+        .unwrap()
+    });
+    tokio::task::yield_now().await;
+    cancel.send(1).unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap(),
+        "Machine setup was cancelled."
+    );
 }
 
 #[cfg(unix)]
