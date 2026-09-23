@@ -12,6 +12,9 @@ export type WelcomeState = {
 };
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
+type OwnerFetch = (url: string, init: {
+  method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
+}) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 const invitationSchema = z.object({ id: z.string(), state: z.enum(["issued", "claimed", "provisioning", "active", "revoked", "expired"]),
   handle: z.string().nullable(), origin: z.string().nullable(), lastError: z.string().nullable() });
 export type OwnedInvite = z.infer<typeof invitationSchema>;
@@ -30,7 +33,7 @@ const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(32))].map((
 /** Save request identities before transmission so a lost response can be resumed. */
 export class DesktopWelcome {
   constructor(private snapshot: WelcomeSnapshot, private readonly storage: WelcomeStorage,
-    private readonly accountsOrigin: string, private readonly fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
+    private readonly accountsOrigin: string, private readonly fetcher: OwnerFetch = (input, init) => fetch(input, init)) {}
 
   get state(): WelcomeState {
     return this.snapshot.value ?? { origin: this.accountsOrigin, flow: "open", sessionSecret: null, challenge: null, inviteCode: null, inviteId: null, handle: null };
@@ -90,8 +93,8 @@ export class DesktopWelcome {
   }
 
   private async request(path: string, body?: unknown, authorize = true): Promise<unknown> {
-    const headers = new Headers({ "content-type": "application/json" });
-    if (authorize && this.state.sessionSecret) headers.set("authorization", `Bearer ${this.state.sessionSecret}`);
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (authorize && this.state.sessionSecret) headers.authorization = `Bearer ${this.state.sessionSecret}`;
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), 20_000);
     try {
