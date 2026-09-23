@@ -566,7 +566,8 @@
 .zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
 .zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }
 
-.zen-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; font-size: .7rem; color: var(--text-dim); }
+.zen-compose-actions { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; padding-right: calc(15ch + 1rem); font-size: .7rem; color: var(--text-dim); }
+.zen-connection-status { position: absolute; right: 0; top: .2rem; min-height: 1.5em; white-space: nowrap; }
 .zen-send-status { display: inline-flex; margin-left: 10px; vertical-align: middle; }
 .zen-send-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem; margin-top: .65rem; font-size: .75rem; color: var(--text-dim); }
 .zen-send-actions .is-err { color: var(--error); }

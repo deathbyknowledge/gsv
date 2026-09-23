@@ -908,7 +908,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
-  const showFeedback = !connected || !currentPlace.online || note !== null || pendingHil !== null;
+  const showFeedback = !currentPlace.online || note !== null || pendingHil !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1066,8 +1066,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </ul>
           {showFeedback && <div class="zen-feedback">
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
-            {!connected && <span role="status">Not connected</span>}
-            {connected && !currentPlace.online ? (
+            {!currentPlace.online ? (
               <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
                 {currentPlace.label} is offline · view place
               </button>
@@ -1109,6 +1108,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
               enabled={active && connected && pid !== null && pendingHil === null}
               send={onSubmit} scroll={scrolling.move} />
+            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
           </div>
         </div>
       </div>
