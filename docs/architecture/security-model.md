@@ -76,10 +76,10 @@ links, and Accounts records have each been removed by a separate resumable
 deletion operation.
 
 The accounts directory and onboarding methods are available only through a
-service binding. Cloudflare Access protects its public operator page at
-`https://gsv.space/admin`; it is not a customer login system. The registry
-principal and pending membership are control-plane bookkeeping and are not
-mapped to a Kernel uid during onboarding.
+service binding. Cloudflare Access, or an equivalent identity proxy, protects
+the operator page at `<admin-origin>/admin`; it is not a customer login system.
+The registry principal and pending membership are control-plane bookkeeping and
+are not mapped to a Kernel uid during onboarding.
 
 The CLI stores local credentials in `~/.config/gsv/config.toml`. On Unix it
 writes the file as `0600` and ignores cached session tokens if the file is
@@ -236,9 +236,9 @@ The installation-scoped email Durable Object durably reserves quotas and marks
 the provider attempt before sending. Local lifecycle, quota, and validation
 rejections before that attempt are `failed`; a successful provider acceptance
 is `accepted`; any binding throw or other ambiguous outcome after the attempt
-is `unknown` and is never replayed. Production deployment
-keeps outbound sending disabled and its daily message and byte allowances at
-zero until the operator completes the Email Sending release gates.
+is `unknown` and is never replayed. Outbound sending is off by default, with
+daily message and byte allowances at zero; an operator enables it once their
+mail provider is configured and verified.
 
 ## Git
 

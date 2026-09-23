@@ -48,7 +48,7 @@ administration can inspect it; ordinary work remains gated.
 | `active` | Admitted subject to Kernel authentication and capabilities. | Existing installation routing. |
 | `provisioning` | Refused. | A setup-capable route may address the Kernel, which must validate the installation's onboarding claim before accepting setup. |
 | `reserved` | Refused. | Not yet routable for setup. |
-| `trialing`, `past_due` | Refused. | Refused; these retained schema values do not imply a commercial admission exception. |
+| `trialing`, `past_due` | Refused. | Refused; retained schema values, not routing states. |
 | `restricted` | Refused while identity and data are retained. | Refused. |
 | `cancelled`, `retained`, `deleting`, `deleted` | Refused. | Refused. |
 
@@ -85,9 +85,9 @@ current Kernel root authorization and fresh owner verification. Native email
 and external-provider identities remain separate even when email addresses
 match. Successful setup does not assign that principal a Kernel uid.
 
-The legacy `role` and `local_uid` columns are being retired. They do not
-govern current local admission. The inference usage ledger's `local_uid`
-records the actor of a request and is unrelated; it remains intact.
+The legacy `role` and `local_uid` columns do not govern local admission. The
+inference usage ledger's `local_uid` records the actor of a request and is
+unrelated.
 
 ## Reset and deletion
 
@@ -114,22 +114,7 @@ verification bound to the exact recovery attempt. An ordinary owner session is
 insufficient. Accounts authorizes the operation; the Kernel changes local root
 credentials. Verification mail is independent of the space being recovered.
 
-## Validation and schema rollout
-
-Keep tests at both ends: Accounts tests cover reservation races, claim
-binding, expiry/reissue, activation, reset idempotency and rollback; gateway
-tests cover unknown-host rejection, state gates, immutable addressing, and
-cross-installation isolation. Test both an upgraded database containing
-ownership rows and a fresh instance.
-
-Ownership-column retirement uses two deployments because migrations run
-before the replacement Worker is active. First make the legacy role column
-default to `owner` and stop writing or reading both obsolete columns. Both
-old and new Workers work with that intermediate schema. After the new Worker
-is deployed and older requests are drained, a subsequent migration removes
-both columns and their obsolete uid uniqueness constraint. Keep the removal
-out of the first deployment's applied migration directory. Existing
-principal/installation foreign keys and ownership rows survive both steps.
+## Schema
 
 Shipped migration files are immutable. Cloudflare D1 enforces foreign keys
 during migrations; a table rebuild must preserve the relationships rather

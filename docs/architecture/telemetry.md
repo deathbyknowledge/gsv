@@ -49,8 +49,8 @@ profiles.
 ## Deployment boundary
 
 Producers emit one structured record only when `GSV_TELEMETRY_ENABLED` is set by
-their deployment. A Tail Worker or another deployment-owned consumer may accept
-those records and export them to a backend. It must validate the shared schema,
+their deployment. A deployment-owned log consumer may accept those records and
+export them to a backend. It must validate the shared schema,
 verify that the producing Worker is allowed to emit the claimed component, and
 discard every surrounding log, request, header, exception, and trace field.
 Because the transport record carries an installation ID until the consumer
@@ -59,7 +59,7 @@ console or invocation logs. `GsvRuntime` applies that non-persistent
 observability policy when the telemetry seam is enabled unless the deployment
 explicitly supplies a different policy.
 
-The managed deployment uses a Tail Worker to translate operational records to
-PostHog Logs and product records to PostHog Capture. PostHog knowledge and
-credentials stay in that deployment repository. Self-hosters can leave the seam
-disabled or attach a consumer for their own backend without changing GSV core.
+A deployment can attach a log-forwarding consumer that translates operational
+records and product records for its own observability backend. Backend
+knowledge and credentials stay in that deployment, not in GSV core. Self-hosters
+can leave the seam disabled or attach a consumer for their own backend.

@@ -24,7 +24,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
 | `GSV_INFERENCE_PROVIDER`, `GSV_INFERENCE_MODEL` | Operator default provider and model. |
 | `GSV_INFERENCE_API_KEY`, `GSV_INFERENCE_BASE_URL` | Optional operator provider credentials and endpoint. |
-| `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see the workflow below. |
+| `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see below. |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and
@@ -32,9 +32,9 @@ Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 Cloudflare account. Installations can also configure their own model credentials;
 provider execution uses the same public service either way.
 
-For isolated deployments attached to pull requests, see
-[Pull request previews](./pr-previews.md). Previews use the same public stack,
+Isolated deployments attached to pull requests use the same public stack,
 normal onboarding and included inference, with explicit disposable resources.
+Their workflow is described in the repository's engineering notes.
 
 Build and review the deployment before applying it:
 
@@ -106,32 +106,14 @@ complete history of destinations, including people's own provider accounts.
 Leave the catalog unset while that inventory is unresolved; deletion admission
 fails closed. A configured catalog declares scope, not successful cleanup.
 
-Follow the inventory and evidence workflow:
-
-1. Inventory application owners and historical addresses using the
-   [historical inventory rules](https://github.com/deathbyknowledge/gsv/blob/main/engineering/installation-deletion-gateway.md#historical-inventory-is-a-prerequisite).
-   The [Durable Object capture command](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-deletion-capture.md)
-   records namespace snapshots and trusted ownership observations for an already
-   retired space. Its capture alone neither begins erasure nor proves the
-   complete inventory.
-2. Combine those captures with the external scopes and evidence required by the
-   [operator evidence contract](https://github.com/deathbyknowledge/gsv/blob/main/engineering/installation-deletion-operator.md).
-   Accounts verifies the inventory before cleanup starts. Provider API access
-   stays in the operator's tools; record fresh cleanup evidence after the
-   application owners' live-erasure receipts, using the existing operator
-   authentication and mutation Origin checks.
-3. Inspect `GET /admin/api/installations/{installationId}/deletion` for owner
-   progress and `/deletion/operator-resources` under the same installation path
-   for external evidence. Resume failed work through the authenticated retry
-   endpoint. Preserve the replacement space, other people's data, and shared
-   application credentials throughout cleanup.
-
-Report verified live-data erasure separately from retained copies. Known,
-enforced retention can remain pending with its declared expiry visible; the
-operation must not claim final erasure until every live scope is empty and every
-retained copy is deleted or expires. Unknown scope or expiry stays unresolved.
-New inference tags can identify new AI Gateway records, but cannot establish
-ownership or absence of historical untagged logs in a shared gateway.
+Deleting a space is a resumable operation. Accounts verifies the resource
+inventory before cleanup starts, every owning service reports its own erasure
+receipt, and verified live-data erasure is reported separately from retained
+copies such as backups, queues and provider logs. Known, enforced retention can
+remain pending with its declared expiry visible; the operation does not claim
+final erasure until every live scope is empty and every retained copy is
+deleted or expires. Operators running the directory themselves follow the
+deletion contract in the repository's engineering notes.
 
 For local development, `npm run dev` builds the SDK and web assets, applies public
 migrations to a separate local database and runs the four public Workers. Open
@@ -143,6 +125,5 @@ The default state directory is `.wrangler/operator-dev-state`; set `GSV_DEV_STAT
 another disposable directory. Model calls still require an available provider.
 
 This composition and the migration tooling have local D1 and configuration tests.
-A fresh Cloudflare account with two installations and H&M's adopted staging
-deployment remain separate acceptance gates; local success is not evidence that
-those cloud deployments have completed.
+Local success is not evidence that a cloud deployment has completed; verify a
+fresh deployment end to end before giving anyone a space on it.
