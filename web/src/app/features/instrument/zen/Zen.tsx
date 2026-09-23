@@ -908,7 +908,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
-  const showFeedback = !currentPlace.online || note !== null || pendingHil !== null;
+  const showFeedback = note !== null || pendingHil !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1025,6 +1025,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
+          {!currentPlace.online && <div class="zen-feedback" role="status">
+            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+              {currentPlace.label} is offline · view place
+            </button>
+          </div>}
           <ul class="zen-places" aria-label="Choose a place for your next message or command">
             {selectorPlaces.map((target) => {
               const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
@@ -1066,11 +1071,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </ul>
           {showFeedback && <div class="zen-feedback">
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
-            {!currentPlace.online ? (
-              <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-                {currentPlace.label} is offline · view place
-              </button>
-            ) : null}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
           <PromptLine
