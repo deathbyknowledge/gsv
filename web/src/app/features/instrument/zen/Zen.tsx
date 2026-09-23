@@ -916,8 +916,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       .flatMap((activity) => activity.live && activity.target !== null && activity.target !== "unknown target"
         ? [placeLabel(activity.target, places)] : [])
     : [], [activeRun, runtime.rows, places]);
-  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? [])
-    .sort((a, b) => Number(b.id === CLOUD_PLACE_ID) - Number(a.id === CLOUD_PLACE_ID)), [targetsQuery.data]);
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
@@ -1041,10 +1040,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               const kind = target.id === CLOUD_PLACE_ID ? "Cloud"
                 : target.kind === "machine" ? "Computer"
                 : target.kind === "browser" ? "Browser" : "Place";
-              const details = [target.online ? "Online" : "Offline", kind, target.platform];
+              const details = [target.online ? "Online" : "Offline", kind,
+                target.id === CLOUD_PLACE_ID ? "" : target.platform];
               if (!target.online) {
                 details.push(target.lastSeenAt === null ? "Last seen unknown"
-                  : `Last seen ${new Date(target.lastSeenAt).toLocaleString(undefined, { timeZone })}`);
+                  : `Last seen ${new Date(target.lastSeenAt).toLocaleString(undefined, {
+                    year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                  })}`);
               }
               return (
                 <li key={target.id}>
