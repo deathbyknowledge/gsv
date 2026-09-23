@@ -10,7 +10,7 @@ function context(signal?: AbortSignal): KernelContext {
   // SAFETY: this test exercises only the request ownership fields of KernelContext.
   return {
     installationId: "installation", processId: "process", processRunId: "run", requestId: "outer",
-    toolOwner: { runId: "run", requestId: "outer" }, requestSignal: signal,
+    toolOwner: { runId: "run", requestId: "outer" }, requestSignal: signal, defer: vi.fn(),
   } as KernelContext;
 }
 
@@ -38,11 +38,8 @@ describe("Kernel nested approval ownership", () => {
     }));
   });
 
-  it("cancels the Process approval when its enclosing request is cancelled", async () => {
-    send.mockImplementation(async (_installation, _pid, frame) => {
-      if (frame.type === "sig") return null;
-      return await new Promise(() => {});
-    });
+  it("settles cancellation even when the Process cancellation RPC never returns", async () => {
+    send.mockImplementation(() => new Promise(() => {}));
     const controller = new AbortController();
     const waiting = authorizeNestedOperation(context(controller.signal), "sys.mcp.call", {}, undefined, send);
     const rejected = expect(waiting).rejects.toThrow("cancelled");

@@ -14,7 +14,7 @@ const deps = {} as DispatchDeps;
 function context(signal?: AbortSignal): KernelContext {
   // SAFETY: federation I/O is mocked; only these dispatch/approval fields are used.
   return { installationId: "installation", processId: "process", processRunId: "run",
-    toolOwner: owner, requestSignal: signal } as KernelContext;
+    toolOwner: owner, requestSignal: signal, defer: vi.fn() } as KernelContext;
 }
 
 afterEach(() => vi.restoreAllMocks());
