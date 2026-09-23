@@ -17,7 +17,7 @@ const recordedCloudflare = {
     recorded.workers.push({ id, props });
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
-        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32) },
+        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -191,6 +191,42 @@ describe("public operator composition", () => {
     expect(recorded.databases).toEqual([]);
   });
 
+  it("binds supplied search cleanup and discovers its installation namespace", async () => {
+    const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
+    await run(GsvDeployment({ ...input, services: {
+      webSearch: search,
+      webSearchLifecycle: { worker: search, entrypoint: "SearchLifecycle", namespaces: [
+        { className: "WebSearchInstallation", kind: "web-search-installation" },
+      ] },
+    } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.WEB_SEARCH).toBe(search);
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryWebSearchDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_WEB_SEARCH", service: "search-provider", entrypoint: "SearchLifecycle",
+      props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toHaveProperty("7".repeat(32), {
+      ownerId: "web-search", kind: "web-search-installation",
+    });
+  });
+
+  it("rejects incomplete search ownership before creating deployment resources", async () => {
+    const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
+    recorded.workers.length = 0;
+    const lifecycle = { worker: search, entrypoint: "SearchLifecycle", namespaces: [
+      { className: "WebSearchInstallation", kind: "web-search-installation" as const },
+    ] };
+    for (const services of [
+      { webSearch: search },
+      { webSearchLifecycle: lifecycle },
+      { webSearch: search, webSearchLifecycle: { ...lifecycle, entrypoint: " " } },
+      { webSearch: search, webSearchLifecycle: { ...lifecycle, namespaces: [{ className: "", kind: "web-search-installation" as const }] } },
+    ]) {
+      await expect(run(GsvDeployment({ ...input, services }, dependencies))).rejects.toThrow(/Supplied web search/);
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    }
+  });
+
   it("binds adapter cleanup to Accounts with the exact deployment-owned authority", async () => {
     const adapter = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram", main: "telegram.js" }));
     await run(GsvDeployment({ ...input, services: { adapters: [{ id: "telegram", worker: adapter,
@@ -260,7 +296,7 @@ describe("public operator composition", () => {
     const worker = await run(dependencies.Cloudflare.Worker("Provided", { name: "provided", main: "provided.js" }));
     const queue = await run(dependencies.Cloudflare.Queues.Queue("Mail", { name: "mail" }));
     recorded.workers.length = 0;
-    for (const services of [{ installationDirectory: worker }, { inferenceExecution: worker }, { mailOutbound: queue }]) {
+    for (const services of [{ installationDirectory: worker }, { inferenceExecution: worker }, { mailOutbound: queue }, { webSearch: worker }]) {
       await expect(run(GsvDeployment({ ...input, services, deletion: { operatorResources: catalog } }, dependencies)))
         .rejects.toThrow(/adopted operator composition/);
     }

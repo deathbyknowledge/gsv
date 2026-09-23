@@ -40,6 +40,11 @@ Operators supply the `gsv` implementation through a `WebSearchService` on the
 optional `WEB_SEARCH` binding or `GsvRuntime.services.webSearch`. The Gateway derives the immutable
 installation ID; users cannot select an installation or access provider keys.
 The service owns provider access, budgets, cancellation and data cleanup.
+`GsvDeployment` requires `services.webSearchLifecycle` alongside the search
+binding: its owning Worker, deletion entrypoint, and `web-search-installation`
+namespace inventory. It binds the cleanup owner to Accounts and includes these
+namespaces in deletion discovery. Compositions using `GsvRuntime` directly own
+those bindings and their complete resource inventory.
 Routing metadata is removed before calling the provider. Requests time out after
 20 seconds. Connected targets can implement the same syscall without a binding
 or messaging adapter. `Search` is offered only when the caller has its capability
