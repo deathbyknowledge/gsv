@@ -14,7 +14,15 @@ export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
-}) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+}) => Promise<Pick<Response, "ok" | "json">>;
+type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
+  | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
+  | { code: string } | { handle: string } | Record<string, never>;
+type OwnerHeaders = { "content-type": string; authorization?: string };
+const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
+const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
+const availableSchema = z.object({ available: z.boolean() });
+const loggedOutSchema = z.object({ ok: z.literal(true) });
 const invitationSchema = z.object({ id: z.string(), state: z.enum(["issued", "claimed", "provisioning", "active", "revoked", "expired"]),
   handle: z.string().nullable(), origin: z.string().nullable(), lastError: z.string().nullable() });
 export type OwnedInvite = z.infer<typeof invitationSchema>;
@@ -45,7 +53,7 @@ export class DesktopWelcome {
 
   async session(): Promise<OwnerSession | null> {
     if (!this.state.sessionSecret) return null;
-    try { return sessionSchema.parse(await this.request("/session")); }
+    try { return await this.request("/session", sessionSchema); }
     catch (error) { if (error instanceof OwnerApiError && error.code === "signed_out") return null; throw error; }
   }
 
@@ -55,45 +63,45 @@ export class DesktopWelcome {
       await this.save({ challenge: { id: crypto.randomUUID(), email, browserSecret: randomSecret() }, sessionSecret: randomSecret() });
     }
     const pending = this.state.challenge!;
-    const result = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) }).parse(await this.request("/code", {
+    const result = await this.request("/code", deliverySchema, {
       challengeId: pending.id, email: pending.email, browserSecret: pending.browserSecret, resend,
-    }, false));
+    }, false);
     if (result.deliveryStatus !== "sent") throw new OwnerApiError("Email is still sending. Try again shortly.");
   }
 
   async verify(code: string): Promise<void> {
     const pending = this.state.challenge;
     if (!pending || !this.state.sessionSecret) throw new Error("Request a code first.");
-    await this.request("/verify", { challengeId: pending.id, browserSecret: pending.browserSecret, sessionSecret: this.state.sessionSecret, code }, false);
+    await this.request("/verify", verifiedSchema, { challengeId: pending.id, browserSecret: pending.browserSecret, sessionSecret: this.state.sessionSecret, code }, false);
     await this.save({ challenge: null });
   }
 
   async claim(): Promise<OwnedInvite> {
     if (!this.state.inviteCode) throw new Error("Enter your invite code.");
-    const invite = invitationSchema.parse(await this.request("/invites/claim", { code: this.state.inviteCode }));
+    const invite = await this.request("/invites/claim", invitationSchema, { code: this.state.inviteCode });
     await this.save({ inviteCode: null, inviteId: invite.id, handle: invite.handle });
     return invite;
   }
 
   async available(handle: string): Promise<boolean> {
-    return z.object({ available: z.boolean() }).parse(await this.request(`/handle?value=${encodeURIComponent(handle)}`)).available;
+    return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available;
   }
 
   async prepare(inviteId: string, handle: string): Promise<PreparedSpace> {
     await this.save({ inviteId, handle });
-    return preparationSchema.parse(await this.request(`/invites/${encodeURIComponent(inviteId)}/space`, { handle }));
+    return this.request(`/invites/${encodeURIComponent(inviteId)}/space`, preparationSchema, { handle });
   }
 
   async signOut(): Promise<void> {
     if (this.state.sessionSecret) {
-      try { await this.request("/logout", {}); }
+      try { await this.request("/logout", loggedOutSchema, {}); }
       catch (error) { if (!(error instanceof OwnerApiError && error.code === "signed_out")) throw error; }
     }
     this.snapshot = await this.storage.save(this.snapshot.revision, null);
   }
 
-  private async request(path: string, body?: unknown, authorize = true): Promise<unknown> {
-    const headers: Record<string, string> = { "content-type": "application/json" };
+  private async request<T>(path: string, schema: z.ZodType<T>, body?: OwnerRequest, authorize = true): Promise<T> {
+    const headers: OwnerHeaders = { "content-type": "application/json" };
     if (authorize && this.state.sessionSecret) headers.authorization = `Bearer ${this.state.sessionSecret}`;
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), 20_000);
@@ -107,7 +115,7 @@ export class DesktopWelcome {
         const error = failureSchema.safeParse(data);
         throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined);
       }
-      return data;
+      return schema.parse(data);
     } catch (error) {
       if (error instanceof OwnerApiError) throw error;
       throw new OwnerApiError("Could not connect. Try again.");

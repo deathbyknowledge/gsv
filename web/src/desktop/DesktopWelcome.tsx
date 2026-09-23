@@ -84,9 +84,9 @@ export function DesktopWelcome({ ready, resume, onConnect }: Props) {
 
   if (step === "address") return <div class="desktop-welcome-address"><DesktopConnect ready={ready} onConnect={onConnect} />
     <button class="gsv-auth-link" type="button" onClick={() => setStep("welcome")}>Back</button></div>;
-  const titles: Record<Exclude<Step, "address">, string> = {
+  const titles = {
     welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", handle: "Choose your handle",
-  };
+  } satisfies Record<Exclude<Step, "address">, string>;
   const start = (intent: "open" | "create") => void run(async () => {
     if (!flow) return;
     await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null });

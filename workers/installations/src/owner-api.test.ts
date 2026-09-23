@@ -6,6 +6,7 @@ import { InstallationOwnerAuthStore } from "./owner-auth-store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationCreationInvites } from "./creation-invites";
 import { InstallationOwnerApi } from "./owner-api";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 
 const ORIGIN = "https://accounts.example.com";
 const secret = () => crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
@@ -26,10 +27,11 @@ async function fixture() {
   });
   const makeApi = () => new InstallationOwnerApi(auth, owners, invites, { send }, "accounts@example.com", ORIGIN);
   let api = makeApi();
-  const request = async (path: string, token?: string, body?: unknown, headers: Record<string, string> = {}) => {
+  const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
+    const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
+    if (token) requestHeaders.set("authorization", `Bearer ${token}`);
     const response = await api.handle(new Request(`${ORIGIN}/owner/api${path}`, {
-      method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json",
-        "cf-connecting-ip": registry, ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
+      method: body === undefined ? "GET" : "POST", headers: requestHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
     }));
     if (!response) throw new Error("Missing API response");

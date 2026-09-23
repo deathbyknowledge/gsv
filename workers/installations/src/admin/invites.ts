@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { InstallationCreationInvites } from "../creation-invites";
+import { InstallationCreationInvites, type CreationInvite } from "../creation-invites";
 import type { InstallationAdminAccess } from "./access";
 import { adminPageResponse, escapeHtml, formatDate } from "./page";
 import { adminRedirect, readAdminForm, requireAdminMutationOrigin, AdminForbiddenError } from "./http";
 import { readJsonObject } from "../http";
 
 type InvitePolicy = { choices(): Promise<{ id: string; name: string }[]> };
+type InviteAdminReply = { ok: true } | { error: string } | { invites: CreationInvite[] } | { invite: CreationInvite; code: string };
 
 export class InstallationInvitesAdminHttp {
   constructor(private readonly invitations: InstallationCreationInvites, private readonly access: InstallationAdminAccess,
@@ -17,7 +18,7 @@ export class InstallationInvitesAdminHttp {
     if (!revoke && !["/admin/invites", "/admin/api/invites"].includes(path)) return null;
     if (!await this.access.allows(request)) return new Response("Forbidden", { status: 403 });
     const api = path.startsWith("/admin/api/");
-    const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
+    const json = (value: InviteAdminReply, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
     try {
       let issuedCode: string | undefined;
       if (request.method === "POST") {

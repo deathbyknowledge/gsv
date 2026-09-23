@@ -14,7 +14,7 @@ describe("operator creation invites", () => {
     let allowed = false;
     const api = new InstallationInvitesAdminHttp(invites, { allows: async () => allowed }, ORIGIN,
       { choices: async () => [{ id: "early-access", name: "Early access" }] });
-    const request = (body: unknown, origin = ORIGIN) => api.handle(new Request(`${ORIGIN}/admin/api/invites`, {
+    const request = (body: Parameters<InstallationCreationInvites["create"]>[0], origin = ORIGIN) => api.handle(new Request(`${ORIGIN}/admin/api/invites`, {
       method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body),
     }));
     expect((await request({}))?.status).toBe(403);

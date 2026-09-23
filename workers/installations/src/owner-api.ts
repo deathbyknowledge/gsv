@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readJsonObject } from "./http";
-import { InstallationOwnerAuthStore, OwnerAuthError } from "./owner-auth-store";
+import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationCreationInvites, type CreationInvite } from "./creation-invites";
 import { sendOwnerVerification } from "./owner-verification";
@@ -10,6 +10,13 @@ const challenge = z.strictObject({ challengeId: z.string().uuid(), browserSecret
 const verification = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, sessionSecret: secret, code: z.string().regex(/^\d{6}$/) });
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
+type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
+  | { email: string; expiresAt: number }
+  | { email: string; expiresAt: number; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; invites: ReturnType<typeof ownedInvite>[] }
+  | ReturnType<typeof ownedInvite>
+  | { invite: ReturnType<typeof ownedInvite>; origin: string; handle: string; onboardingToken: string | null; expiresAt: number | null }
+  | { ok: true } | { available: boolean }
+  | { error: string; code?: OwnerAuthErrorCode | "signed_out"; retryAt?: number };
 
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
@@ -20,7 +27,7 @@ export class InstallationOwnerApi {
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/owner/api/")) return null;
-    const json = (value: unknown, status = 200) => Response.json(value, { status, headers: cors });
+    const json = (value: OwnerApiReply, status = 200) => Response.json(value, { status, headers: cors });
     if (url.origin !== this.origin) return json({ error: "Not found" }, 404);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     try {
