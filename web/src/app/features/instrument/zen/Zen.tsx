@@ -1098,9 +1098,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               pendingHil
                 ? "answer the approval first"
                 : !promptFocused
-                  ? "Start typing, or click here to write"
+                  ? "Start chatting, or click here to chat"
                   : currentPlace.online
-                    ? "Ask in plain words, or start with $ to run a command yourself"
+                    ? "Ask in plain words, or start with $ to run a terminal command yourself"
                     : `Ask in plain words; ${currentPlace.label} will run it when it's back`
             }
             disabled={!connected || !pid}
