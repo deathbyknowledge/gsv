@@ -151,6 +151,7 @@ export default defineConfig({
             { text: "Configuration", link: "/reference/configuration" },
             { text: "Context Files", link: "/reference/context-files" },
             { text: "Target Tools", link: "/reference/hardware-tools" },
+            { text: "Web Search", link: "/reference/web-search" },
             { text: "Routing", link: "/reference/routing" },
             { text: "Storage", link: "/reference/r2-storage" },
           ],

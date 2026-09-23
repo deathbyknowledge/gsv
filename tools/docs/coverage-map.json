@@ -1,0 +1,70 @@
+{
+  "$comment": "Product-facing source paths and the documentation that owns them. A pull request that changes a listed path must change docs/ too, or carry the docs-not-needed label, or say why in a line of the pull request body that starts with Docs:. The manual entries name pages in deathbyknowledge/gsv-manual, which agents read in every install.",
+  "entries": [
+    {
+      "id": "settings-ui",
+      "paths": ["web/src/app/features/instrument/settings/**"],
+      "docs": [
+        "docs/how-to/bring-your-own-model.md",
+        "docs/how-to/integrations.md",
+        "docs/how-to/invite-people.md",
+        "docs/how-to/messengers.md",
+        "docs/reference/configuration.md"
+      ],
+      "manual": ["pages/settings/", "pages/accounts-access/", "pages/integrations/"]
+    },
+    {
+      "id": "instrument-views",
+      "paths": [
+        "web/src/app/features/instrument/Instrument.tsx",
+        "web/src/app/features/instrument/fleet/**",
+        "web/src/app/features/instrument/memory/**",
+        "web/src/app/features/instrument/zen/**"
+      ],
+      "docs": ["docs/get-started/index.md", "docs/how-to/connect-devices.md", "docs/how-to/browse-web.md"],
+      "manual": ["pages/apps-desktop/", "pages/agents-assistants/"]
+    },
+    {
+      "id": "approval-policy",
+      "paths": ["workers/gateway/src/kernel/config.ts", "workers/gateway/src/process/approval.ts"],
+      "docs": ["docs/reference/configuration.md"],
+      "manual": ["pages/settings/"]
+    },
+    {
+      "id": "native-shell",
+      "paths": ["workers/gateway/src/drivers/native/shell/**", "workers/gateway/src/drivers/native/man-pages.ts"],
+      "docs": ["docs/reference/cli-commands.md"],
+      "manual": ["pages/reference/command-map.md", "pages/reference/shell-codemode-network.md"]
+    },
+    {
+      "id": "agent-tools",
+      "paths": ["workers/gateway/src/process/tools/**"],
+      "docs": ["docs/reference/syscalls.md", "docs/architecture/agent-loop.md"],
+      "manual": ["pages/reference/command-map.md"]
+    },
+    {
+      "id": "cli",
+      "paths": ["host/apps/cli/**"],
+      "docs": ["docs/reference/cli-commands.md"],
+      "manual": ["pages/reference/command-map.md"]
+    },
+    {
+      "id": "protocol",
+      "paths": ["packages/gsv/src/protocol/**"],
+      "docs": ["docs/reference/syscalls.md", "docs/reference/websocket-protocol.md"],
+      "manual": []
+    },
+    {
+      "id": "adapters",
+      "paths": ["workers/adapters/**"],
+      "docs": ["docs/how-to/messengers.md", "docs/architecture/adapter-model.md"],
+      "manual": ["pages/integrations/adapters-routing.md"]
+    },
+    {
+      "id": "skills",
+      "paths": ["skills/**"],
+      "docs": [],
+      "manual": ["pages/reference/", "pages/agents-assistants/", "pages/files-knowledge/"]
+    }
+  ]
+}
