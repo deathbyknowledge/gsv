@@ -1,6 +1,12 @@
-# Reviewed replies
+# Retained contact drafts
 
-People can adopt a committed reply from a fresh scoped helper into a private
+The reviewed-reply workflow is retired from the current social product. People
+no longer creates a social helper or exposes draft review. The Kernel keeps the
+old records and syscalls only so existing installations can read or finish a
+previously committed draft during migration; new social flows use ordinary
+messages, explicit Ship attention, and owner-created scoped work.
+
+Historically, People could adopt a committed reply from a fresh scoped helper into a private
 draft. The human reviews and may edit its wording, chooses exact immutable
 attachments from that reply or the helper's selected materials, and chooses the
 current recipient. Saving that review does not send a message. The draft is

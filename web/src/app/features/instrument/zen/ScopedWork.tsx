@@ -35,21 +35,17 @@ export function useScopedWork(pid: string | null | undefined) {
     checking: !!pid && (!query.isSuccess || contactIds.length > 0 && !contacts.isSuccess), connected };
 }
 
-export function ScopedWork({ work, pid, onPeople }: {
+export function ScopedWork({ work, pid }: {
   work: ReturnType<typeof useScopedWork>; pid: string;
-  onPeople?: (contactId: string, pid: string) => void;
 }) {
   const { scope, query, contacts, revoke, ended, exhausted, connected } = work;
   if (query.isSuccess && !scope) return null;
   return <aside class="zen-scoped-work" aria-label="Private helper access">
     {query.isPending ? <LoadingState>Loading this helper’s access…</LoadingState> : scope ? <>
-      <div class="zen-scoped-heading"><strong>{ended ? "Helper access ended" : exhausted ? "Helper allowance used" : "Private conversation helper"}</strong>
-        {onPeople && scope.policy.conversations[0] && <button type="button" onClick={() => onPeople(scope.policy.conversations[0].contactId, pid)}>← conversation and reply review</button>}
-      </div>
+      <div class="zen-scoped-heading"><strong>{ended ? "Scoped work ended" : exhausted ? "Scoped work allowance used" : "Scoped work"}</strong></div>
       <p>{scope.policy.conversations.some((entry) => entry.read) ? "Can read the reviewed conversation." : "Can read only the selected message copies."} {scope.policy.budgets.messages === 0 ? "Remote replies need your approval." : `${Math.max(0, scope.policy.budgets.messages - scope.used.messages)} remote replies left.`} {Math.max(0, scope.policy.budgets.generations - scope.used.generations)} model requests left.</p>
       <details><summary>Access details</summary><p>{scope.policy.resources.length} selected files · expires {new Date(scope.policy.expiresAtMs).toLocaleString()}.</p>
         <p>Follow-up text stays in this private work. To share different files, targets or conversations, start a fresh helper from People.</p>
-        {scope.policy.automatic && <p>Automatic help: {scope.automation?.acceptedMessages ?? 0} of {scope.policy.automatic.maxMessages} incoming messages admitted; {scope.automation?.pendingMessages ?? 0} waiting.{scope.automation?.pausedReason ? ` Paused: ${scope.automation.pausedReason}.` : ""}</p>}
         {!ended && <button type="button" disabled={!connected || revoke.isPending} onClick={() => revoke.mutate()}>{revoke.isPending ? "stopping…" : "stop helper and revoke access"}</button>}
       </details>
     </> : null}

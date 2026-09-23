@@ -52,26 +52,17 @@ another space directly. Requests show no link previews or fetched attachments.
 Established messages retain safe media,
 reply references and a clear human / Ship / approved-draft attribution.
 
-“Ask my Ship” previews the exact selected messages and resources entering context.
-Draft approval previews the exact recipient and content. Automatic assistance
-has its own explicit scope, budget and stop control. None of these grants are
-hidden inside accepting a message or saving a person.
+There is no social helper or “Ask my Ship” surface. A contact's private
+relationship settings include one explicit “Let Ship receive new messages”
+choice. It controls whether an incoming message creates Ship attention; it does
+not grant reply authority. Ship may then use its ordinary scoped Process tools,
+and any outgoing message keeps its human or Ship provenance visible.
 
-The Ship help tab contains optional automatic attention. It defaults to private
-drafts and requires a second review before activation. The review explains the
-one conversation it can read, the pasted material, whether replies may leave
-the space, its expiry and finite incoming-message/model-request allowances.
-The helper shows admitted and queued messages, the pause reason and a stop
-control. Creation retries recover the same helper. Renewal means stopping the
-old helper and making another explicit choice, never extending access silently.
-
-Opening a helper's full work in Zen keeps a persistent access summary and a
-return to that same conversation and helper. Its prompt accepts private follow-
-up text only. Reviewed material replaces the usual device chip, and attachment
-and direct-command controls are hidden. Revoked, expired, disconnected or
-exhausted work remains readable with its composer disabled. Scope and contact
-signals refresh that state across clients. A broader task starts with a fresh
-review in People.
+Opening scoped work in Zen keeps a persistent access summary and the same
+process identity. Its prompt accepts only the inputs granted to that scope.
+Revoked, expired, disconnected or exhausted work remains readable with its
+composer disabled. Scope and contact signals refresh that state across clients.
+A broader task starts with a fresh explicit grant.
 
 Verification is split by the standing work agreement: CI owns automated
 behavior and boundary checks; the maintainer trials the rendered UI, keyboard,
@@ -106,23 +97,6 @@ sharing exposes at most three reviewed excerpts, with no implicit file grants.
 Delivery receipts and exact retries distinguish a saved proposal from a
 received proposal and from the person's eventual consent decision.
 
-Ship help has a tab within each contact. Message selection opens a review of
-exact copied text, separately checked incoming files and optional pasted material.
-Reading the entire conversation, including future messages, is a separate choice.
-The default private helper can make 32 model requests, expires after a day and
-cannot send to the contact. Its immutable initial instruction is retained with
-its selected materials so a lost start response can be recovered after reload.
-
-The tab keeps private replies beside access, remaining allowances, expiry and a
-stop control. Full work opens in the existing Zen work surface. A reply can be
-adopted into an editable human draft; saving freezes it for a second, exact
-send review. Attachments require selection again. Saved reviews survive browser
-navigation, show uncertain submission explicitly, and link ordinary delivery
-state. Incoming contact files are supported; files in private native storage
-still require selected text material in this initial grant implementation.
-
-Delegated work stays selectable alongside its original helper. Returning from
-Zen opens that exact process, including a child. Removing the original automatic
-helper stops admission of new messages, while surviving work retains its shared
-grant and remains visible for review or revocation. A replacement becomes
-available after that family is removed or its access ends.
+Delegated work stays visible in its ordinary Process surface. Contact message
+history and work requests remain separate, and an incoming message never
+creates work or a draft review by itself.

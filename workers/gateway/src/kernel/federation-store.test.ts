@@ -78,11 +78,11 @@ describe("FederationStore", () => {
   it("preserves private preferences across re-pairing and rejects stale or foreign edits", async () => {
     await withStore((store) => {
       const contact = activateContact(store);
-      expect(contact.preferences).toEqual({ saved: true, muted: false, notifications: "notify", revision: 1 });
+      expect(contact.preferences).toEqual({ saved: true, muted: false, notifications: "notify", shipAttention: false, revision: 1 });
       const updated = store.updatePreferences(contact.ownerUid, {
-        contactId: contact.id, expectedRevision: 1, patch: { saved: false, muted: true, notifications: "quiet" },
+        contactId: contact.id, expectedRevision: 1, patch: { saved: false, muted: true, notifications: "quiet", shipAttention: true },
       });
-      expect(updated.preferences).toEqual({ saved: false, muted: true, notifications: "quiet", revision: 2 });
+      expect(updated.preferences).toEqual({ saved: false, muted: true, notifications: "quiet", shipAttention: true, revision: 2 });
       expect(updated.state).toBe("active");
       expect(updated.conversationId).toBe(contact.conversationId);
       expect(() => store.updatePreferences(contact.ownerUid, { contactId: contact.id, expectedRevision: 1, patch: { saved: true } })).toThrow("preferences changed");

@@ -2331,7 +2331,11 @@ old receipt is not evidence of confirmed delivery or a read receipt.
 
 `conversation.attention.list` and `.dismiss` expose private, durable message alerts and daily digests to the signed-in human. Dismissing an exact covered sequence does not mark messages read or send a receipt. See [social attention](../architecture/social-attention.md).
 
-### Reviewed contact drafts
+### Retained contact drafts
+
+These syscalls are a compatibility path for drafts created by an older social
+helper release. The current People surface does not create or review contact
+drafts; use ordinary `contact.send` or an explicitly scoped Process instead.
 
 `contact.draft.create` saves immutable `contactId`, `expectedGeneration`,
 `source: { conversationId, messageId, sequence }`, `text`, optional `media` and

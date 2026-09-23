@@ -20,8 +20,8 @@ no initial prompt: send the first input through the existing idempotent
 `conversation.send` path. The Kernel commits the receipt, scope and registry
 entry together, then retries identity initialization without replacing later
 preferences or history. Receipts are bounded at 256 per owner and 4,096 per
-installation. `proc.list.conversationId` finds the owner's existing helpers for
-a selected contact thread, including after a browser reload.
+installation. `proc.list.conversationId` finds the owner's existing scoped
+Processes for a selected contact thread, including after a browser reload.
 
 The registry captures the scope before Process initialization. A child inherits
 the same grant and counters, including when changing its run-as account. Forking
@@ -58,56 +58,30 @@ of cancellation delivery. Already committed outgoing deliveries remain durable.
 
 `proc.scope.get` exposes the policy and used allowances to the owner or its own
 scoped family. `proc.scope.revoke` requires a direct signed-in human and the
-reviewed revision. Changing a grant requires creating a fresh helper; it cannot
+reviewed revision. Changing a grant requires creating a fresh scoped Process; it cannot
 retroactively clean a broader Process history.
 
 Follow-up inputs through both `conversation.send` and `proc.send` may supply
 text, but cannot append files or target selections to a scoped Process. Those
-require a fresh reviewed helper. The Kernel rechecks the grant before retaining
+require a fresh reviewed Process. The Kernel rechecks the grant before retaining
 Conversation input and before Process admission. Zen keeps its access, expiry,
-remaining allowance and a return to the conversation's reply reviews visible;
+remaining allowance and the owning work context visible;
 device selection, attachments and direct owner shell commands are absent from
 this restricted work surface.
 
-People uses this runtime for selected-message assistance, private helper replies
-and durable exact-draft review. See social-drafts.md. A scoped contact send
-requires a causal reply reference; creating a contact never enables automatic
-participation.
+People uses this runtime only for explicitly delegated work. A scoped contact
+send requires a causal reply reference; receiving a contact message never
+creates a social helper or grants automatic participation.
 
-## Optional automatic help
+## Social attention
 
-A human may create one active automatic helper for a selected, unmuted v2
-conversation. The reviewed policy includes the owner's request, permission to
-prepare private replies or send as Ship, at most sixteen incoming messages, an
-admission interval of at least one minute, and the ordinary shared generation,
-process and outgoing-message allowances. There is no automatic renewal. People
-defaults to private replies, four incoming messages, a day of access and sixty-
-four model requests. These are limits on this explicitly delegated helper, not
-global limits on the personal Ship.
+Contact messages do not create a social helper or a draft review. The per-contact
+`shipAttention` preference is the only social admission path: when enabled,
+the Kernel creates a bounded `federation.message` responsibility for Ship for
+human or explicitly approved incoming messages; process-produced messages stay
+conversation-only to prevent Ship-to-Ship loops. When disabled, the message
+stays in the human inbox. Ship still decides whether to read, delegate or
+reply, and receiving a message never grants `contact.send`.
 
-Kernel SQLite owns a bounded queue of references to committed incoming human
-or human-approved messages. Legacy messages, Ship messages, acknowledgements,
-old messages and control events cannot wake it. Queue admission is deduplicated
-with the local Conversation projection. A full queue of four pending messages
-pauses attention for owner review; already accepted messages at the configured
-message allowance remain eligible for delivery. Paused helpers must be stopped
-before a fresh allowance is granted.
-
-The existing Kernel scheduler delivers an ordinary typed `social.message`
-Process event with a stable deduplication identity, the exact incoming cause,
-the owner's request and explicitly untrusted incoming text. Incoming attachments
-are not automatically shared. Scope, account, connection generation, mute,
-capabilities and model allowance are checked again after the Conversation read.
-Retries survive eviction and pause after five unconfirmed attempts. This uses
-the existing Process queue and loop; there is no additional agent runtime or DO.
-
-In reply mode, the Kernel derives the outgoing idempotency key from the scope
-and admitted incoming origin reference. It admits at most one remote response
-for that cause, even if the model invents another key. The cause reservation,
-message allowance and ordinary outbox admission commit atomically. A reply to
-an undispatched message is refused. Private drafts use the same exact human
-approval flow as manual assistance. Muting stops new automatic attention;
-revocation, expiry or ending the relationship stops further scoped effects.
-
-CI and the user's two-space trial validate the integrated feature. No local
-checks or browser trial have been run by the agent.
+The old automatic-helper queue remains readable only for migration and audit.
+New scopes reject its policy, and the scheduler admits no new social messages.

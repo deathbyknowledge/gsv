@@ -4,11 +4,21 @@ Messages remain in their Conversation regardless of notification policy. The
 Kernel keeps at most one pending attention row for each contact Conversation,
 containing a bounded committed-message preview and the latest covered sequence.
 This is a private list of conversations to revisit, not an activity feed or a
-model-generated summary. It does not admit Ship work or issue OS notifications.
+model-generated summary. It is separate from Ship attention: each contact has
+an explicit `shipAttention` preference, disabled by default. When enabled for
+an active, unmuted contact, an incoming human or explicitly approved message
+also creates one deduplicated `federation.message` responsibility for Ship and
+may wake the personal controller. Process-produced messages remain ordinary
+conversation records without waking Ship, which prevents Ship-to-Ship reply
+loops. The responsibility contains bounded metadata and points Ship at the
+Conversation; it never includes remote text as instructions and it never grants
+`contact.send`.
 
 Notify makes the row immediately available. Digest makes the row available
 24 hours after the first pending message from that person; later messages join
-that batch without moving its deadline. Quiet and mute create no attention.
+that batch without moving its deadline. Quiet and mute create no human
+attention. Mute also suppresses Ship attention; turning on `shipAttention`
+does not override a mute.
 The existing Kernel scheduler announces due digests in batches of at most 100
 conversations. Its durable state and the original deadline survive eviction.
 Clients read the same ready rows after reconnect, even if they missed the signal.
@@ -43,3 +53,12 @@ Catch up opens a request for review or a conversation for reading. Only a
 conversation alert can be dismissed there; accepting, declining or blocking a
 request resolves its separate decision. The separate unread cursor advances only
 when messages are actually visible in the reading pane.
+
+An ordinary contact message and a work request remain different protocol
+objects. A message can create the optional `federation.message` Ship
+responsibility described above; a structured request uses `federation.request`
+and its own participant-owned lifecycle. Ship must never infer a work contract
+from message wording. Outgoing message provenance makes the speaker explicit:
+`human` means the owner sent it, `process` means Ship sent it, and `approved`
+means the owner approved an exact process-produced send. Submission mechanics
+and speaker identity are audited separately.

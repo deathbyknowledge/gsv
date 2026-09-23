@@ -689,7 +689,7 @@ describe("federation outbound boundary", () => {
 
 function activeContact(): FederationContactRecord {
   return {
-    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    preferences: { saved: true, muted: false, notifications: "notify", shipAttention: false, revision: 1 },
     blocked: false,
     id: "contact:remote",
     ownerUid: OWNER.uid,

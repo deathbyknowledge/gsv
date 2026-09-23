@@ -308,6 +308,7 @@ type ContactRow = {
   saved: number;
   muted: number;
   notification_policy: ContactPreferences["notifications"];
+  ship_attention: number;
   policy_revision: number;
   actor_blocked: number;
 };
@@ -1028,11 +1029,13 @@ export class FederationStore {
       saved: input.patch.saved ?? current.preferences.saved,
       muted: input.patch.muted ?? current.preferences.muted,
       notifications: input.patch.notifications ?? current.preferences.notifications,
+      shipAttention: input.patch.shipAttention ?? current.preferences.shipAttention ?? false,
     };
-    if (next.saved === current.preferences.saved && next.muted === current.preferences.muted && next.notifications === current.preferences.notifications) return current;
-    this.sql.exec(`UPDATE federation_contacts SET saved = ?, muted = ?, notification_policy = ?, policy_revision = policy_revision + 1
+    if (next.saved === current.preferences.saved && next.muted === current.preferences.muted && next.notifications === current.preferences.notifications
+      && next.shipAttention === (current.preferences.shipAttention ?? false)) return current;
+    this.sql.exec(`UPDATE federation_contacts SET saved = ?, muted = ?, notification_policy = ?, ship_attention = ?, policy_revision = policy_revision + 1
       WHERE contact_id = ? AND owner_uid = ? AND policy_revision = ?`,
-    next.saved ? 1 : 0, next.muted ? 1 : 0, next.notifications, current.id, ownerUid, input.expectedRevision);
+    next.saved ? 1 : 0, next.muted ? 1 : 0, next.notifications, next.shipAttention ? 1 : 0, current.id, ownerUid, input.expectedRevision);
     return this.get(current.id)!;
   }
 
@@ -1958,7 +1961,7 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
       displayName: row.remote_display_name,
     },
     remoteOrigin: row.remote_origin,
-    preferences: { saved: row.saved === 1, muted: row.muted === 1, notifications: row.notification_policy, revision: row.policy_revision },
+    preferences: { saved: row.saved === 1, muted: row.muted === 1, notifications: row.notification_policy, shipAttention: row.ship_attention === 1, revision: row.policy_revision },
     blocked: row.actor_blocked === 1,
     ...(row.local_alias !== null ? { localAlias: row.local_alias } : undefined),
     remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),

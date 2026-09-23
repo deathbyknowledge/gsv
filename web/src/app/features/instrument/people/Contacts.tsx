@@ -1,4 +1,3 @@
-import { ContactAssistance } from "./ContactAssistance";
 import { ContactConversation, type ContactComposerProps } from "./ContactConversation";
 import { ContactRequests } from "./ContactRequests";
 import { ContactContext } from "./SharedContext";
@@ -25,7 +24,7 @@ export function ContactAttentionNotice({ notice, account }: {
     onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }, { cancelRefetch: false }),
   });
   return <div class="fleet-place-form" role="status">
-    <p>Contact messages now arrive in your inbox. Ship joins when you ask; receiving a message or adding a contact no longer starts agent work. Existing commitments continue.</p>
+    <p>Contact messages arrive in your inbox. Ship only receives new messages from contacts you explicitly allow; receiving a message or adding a contact never grants reply authority. Existing commitments continue.</p>
     <details><summary>Previous preferences</summary>
       <p class="note">Review incoming messages automatically: {notice.previousReceived ? "on" : "off"}. Learn about new contacts automatically: {notice.previousContactAdded ? "on" : "off"}.</p>
     </details>
@@ -110,9 +109,8 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, initialHelperPid, onWorkDirty, onOpenContact, onOpenHelper }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" | "help"; initialHelperPid?: string }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests" | "help">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
-  const [helperPid, setHelperPid] = useState<string | null>(initialHelperPid ?? null);
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection, onWorkDirty, onOpenContact }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
   const [workDirty, setWorkDirty] = useState(false);
   const workChanged = useCallback((dirty: boolean) => { setWorkDirty(dirty); onWorkDirty(dirty); }, [onWorkDirty]);
   const { client, connected } = useGateway();
@@ -136,9 +134,8 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <h3>{contactDisplayName(contact)}</h3>
     <div class="sub">{contact.state === "active" ? "Conversation open" : "Connection ended · history available"}</div>
     <ConversationViewControls conversationId={contact.conversationId} account={account} />
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests", "help"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard these unsent changes?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name === "help" ? "Ship help" : name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} onWorkDirty={workChanged} onOpenContact={onOpenContact} onOpenHelper={(pid) => { setHelperPid(pid); setSection("help"); }} />
-      : section === "help" && account ? <ContactAssistance key={contact.id} contact={contact} account={account} initialPid={helperPid} onDirty={workChanged} onOpenWork={onOpenHelper} onMessages={() => setSection("messages")} />
+    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => { if (name !== section && workDirty && !window.confirm("Discard these unsent changes?")) return; setSection(name); }}>{name === "requests" ? "work requests" : name}</button>)}</nav>
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} onWorkDirty={workChanged} onOpenContact={onOpenContact} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} onDirty={workChanged} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>

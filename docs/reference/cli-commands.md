@@ -271,10 +271,11 @@ conversation. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
 
 For a v2 conversation, `--reply-to` accepts the exact JSON origin reference
-shown in message history. A scoped helper must identify the message it answers;
-an automatic helper may answer only an incoming human message admitted to it.
-The Kernel bounds replies and derives the automatic reply's idempotency key.
-`proc scope` shows the helper's current access and remaining allowances.
+shown in message history. A scoped Process must identify the message it answers;
+the Kernel keeps the sender's human or Ship provenance visible. Social automatic
+helpers are retired; use the contact's private Ship-attention preference to let
+Ship receive new messages, then let it decide whether to delegate work.
+`proc scope` shows a scoped Process's current access and remaining allowances.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

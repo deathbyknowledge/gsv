@@ -72,7 +72,7 @@ function protocolContext(identity: FederationIdentity): KernelContext {
 
 function remoteContact(shipId: string, publicKey: FederationContactRecord["remotePublicKey"]): FederationContactRecord {
   return {
-    preferences: { saved: true, muted: false, notifications: "notify", revision: 1 },
+    preferences: { saved: true, muted: false, notifications: "notify", shipAttention: false, revision: 1 },
     blocked: false,
     id: "contact:remote", ownerUid: 1000, state: "active", generation: "generation:one",
     remoteShipId: shipId, remoteSubject: { id: "subject:remote", displayName: "Remote" },

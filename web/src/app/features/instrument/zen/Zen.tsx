@@ -66,7 +66,6 @@ import {
 import "./zen.css";
 
 export type ZenProps = {
-  onPeople?: (contactId: string, pid: string) => void;
   onMemory?: (page?: MemoryPageRef) => void;
   /** Step back to Fleet, optionally landing on a row (a place mentioned in a response, for instance). */
   onFleet: (reference?: FleetReference) => void;
@@ -303,7 +302,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, onPeople, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -847,7 +846,7 @@ export function Zen({ onFleet, onMemory, onPeople, initialTarget, prefill, onPre
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false); addFiles(files);
       }}>
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
-      {pidProp && <ScopedWork work={scopedWork} pid={pidProp} onPeople={onPeople} />}
+      {pidProp && <ScopedWork work={scopedWork} pid={pidProp} />}
 
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">

@@ -9,7 +9,7 @@ export type ProcessScopePolicy = {
   materials: Array<{ name: string; text: string }>;
   expiresAtMs: number;
   budgets: { processes: number; generations: number; messages: number };
-  /** Opt-in attention to new human messages in the one selected conversation. */
+  /** @deprecated Historical social-helper policy. New scopes reject it. */
   automatic?: { mode: "draft" | "reply"; request: string; maxMessages: number; intervalSeconds: number };
 };
 
@@ -45,7 +45,6 @@ export type ProcessScope = {
   policy: ProcessScopePolicy;
   used: { processes: number; generations: number; messages: number };
   createdAtMs: number;
-  automation?: { acceptedMessages: number; pendingMessages: number; pausedReason?: string };
 };
 
 export type ProcScopeGetArgs = { pid: string };

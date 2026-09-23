@@ -63,6 +63,8 @@ export type ContactPreferences = {
   saved: boolean;
   muted: boolean;
   notifications: "notify" | "digest" | "quiet";
+  /** Whether new messages from this contact may create Ship attention. */
+  shipAttention?: boolean;
   revision: number;
 };
 
@@ -70,11 +72,12 @@ export const contactPreferencesPatchSchema = z.strictObject({
   saved: z.optional(z.boolean()),
   muted: z.optional(z.boolean()),
   notifications: z.optional(z.enum(["notify", "digest", "quiet"])),
+  shipAttention: z.optional(z.boolean()),
 });
 export type ContactPreferencesUpdateArgs = {
   contactId: string;
   expectedRevision: number;
-  patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "notifications">>;
+  patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "notifications" | "shipAttention">>;
 };
 export type ContactPreferencesUpdateResult = { contact: ContactSummary };
 export type ContactBlock = { actor: ActorRef; createdAtMs: number; displayName?: string; origin?: string };

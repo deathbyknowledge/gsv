@@ -29,10 +29,10 @@ or deploy merely because an intermediate batch is ready.
 | 1. Federation correctness | Participant authority, durable delivery and generation fencing. | Kernel federation, protocol and clients | Implemented; CI green through c28fe6fe; human trial pending |
 | 2. Shared contracts and storage | Versioned messages/provenance/replies, participant-owned work streams, contact Conversations without handlers. | SDK, Kernel and Conversation | Implemented; CI green; human trial pending |
 | 3. Profiles and first contact | Explicit profiles and bounded images, signed approaches, durable accept/decline/block and pairing. | Gateway, Kernel and web | Implemented; CI green; human trial pending |
-| 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented, including scoped Ship help below; final CI and human trial pending |
+| 4. Everyday communication | Paged People/inbox, optimistic messages, replies, private read/archive/mute, retry, reports and durable alerts/digests. | Kernel, Conversation and Instrument | Implemented; Ship attention is an explicit per-contact preference; final CI and human trial pending |
 | 5. Shared relationship context | Mutually consented connections, attributed statements, selected subscriptions, withdrawal and deliberate introductions. | Kernel, protocol and People | Implemented; CI green through c28fe6fe; human trial pending |
 | 6. Private message search | Selected Conversation SQLite/FTS, bounded historical indexing and visible coverage; no extra Search DO. | Conversation and Kernel | Implemented; CI green; human trial pending |
-| 7. Scoped assistance | Fresh Process context, inherited restrictions, exact draft approval and optional bounded helpers. | Kernel, Process, protocol and People | Runtime, private assistance UI, exact drafts and optional automatic admission implemented; CI and final integration/UI audit in progress |
+| 7. Scoped assistance | Fresh Process context and inherited restrictions for explicitly delegated work. | Kernel, Process and protocol | Generic runtime retained; social helper and draft surfaces retired |
 
 Batch 4 is a useful complete-flow review checkpoint for human communication.
 It does not end this branch's scope or authorize an intermediate merge.
@@ -342,9 +342,9 @@ scopes, shared descendant allowances, isolated material mounts and archive homes
 filtered context/discovery, exact recipient/resource checks, inspection and
 revocation, and durable expiry. Boundary regression sources cover direct and
 shell access, stale contexts, descendants and private context assembly. This
-batch has not run locally; CI is next. The People assistance UI, durable exact
-approval, optional automatic participation and final lifecycle/UX consolidation
-remain in scope and implementation continues.
+batch has not run locally; CI is next. The historical People assistance and
+exact-approval work was superseded by ordinary conversations plus explicit
+per-contact Ship attention.
 
 The scope foundation is `3bafbfcd`; its first CI found one readonly-array type
 mismatch, corrected by `640643da` while Gateway tests continue. Helper creation
@@ -357,18 +357,17 @@ second social workflow runtime.
 Exact draft review now has Kernel-owned immutable records, owner and source
 checks, revision-bound human approval, a stable ordinary outbox send, and v2
 approved provenance. Crossed discard and uncertain submission preserve exact
-content. Store and handler regressions are source-only until CI runs. The People
-review UI and optional automatic admission are still being implemented.
+content. Store and handler regressions are source-only until CI runs. The
+current social surface no longer exposes draft review or automatic admission.
 CI at 640643da found synchronous filesystem denial promise adoption and an older
 incomplete registry fixture; e7594981 addresses those, awaiting CI confirmation.
 
 People now integrates selected-content Ask Ship, explicit thread/file access,
 expiry and model-request limits, recovery of the original private request,
-private replies, stop/revoke, and saved exact draft reviews. Helpers remain
-ordinary Processes with a link to their existing Zen work surface. Draft changes
-broadcast the existing owner-only contact invalidation; private content is not
-included in signals. Selection/attachment regressions are source for CI, not a
-local test result. Optional automatic admission and the final audit remain.
+private replies, stop/revoke, and saved exact draft reviews. Those social helper
+surfaces were later removed; generic scoped Processes remain available through
+their ordinary work surface. Selection/attachment regressions were source for
+CI, not a local test result.
 
 The scope audit found the Shell proc list presentation still reading the raw
 registry; it now uses the same restricted list handler as the protocol. Added

@@ -32,6 +32,7 @@ export function currentProcessScope(ctx: KernelContext): ProcessScope | null {
   if (!ctx.processScopeId) return null;
   if (!ctx.processId || ctx.procs.get(ctx.processId)?.scopeId !== ctx.processScopeId) throw new Error("Scoped process no longer exists");
   const scope = ctx.procs.scopes.requireActive(ctx.processScopeId);
+  if (scope.policy.automatic) throw new Error("Automatic social help has been removed; enable Ship attention per contact instead");
   if (scope.ownerUid !== resolveCallerOwnerUid(ctx)) throw new Error("Process scope owner changed");
   for (const grant of scope.policy.conversations) {
     const contact = ctx.federation.get(grant.contactId);
@@ -46,15 +47,12 @@ export function isProcessScopeCurrent(ctx: KernelContext): boolean {
 }
 
 export function validateScopePolicy(policy: ProcessScopePolicy, ownerUid: number, ctx: KernelContext): void {
+  if (policy.automatic) throw new Error("Automatic social help has been removed; enable Ship attention per contact instead");
   for (const grant of policy.conversations) {
     const contact = ctx.federation.get(grant.contactId);
     if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active" || contact.generation !== grant.generation
       || contact.conversationId !== grant.conversationId) throw new Error("Review the current conversation before granting helper access");
   }
-  if (policy.automatic && policy.conversations.some((grant) => {
-    const contact = ctx.federation.get(grant.contactId);
-    return contact?.protocol?.version !== 2 || !contact.protocol.features.includes("messages") || contact.preferences.muted;
-  })) throw new Error("Automatic help requires an unmuted conversation with v2 human-message attribution");
   for (const resource of policy.resources) {
     if (!policy.conversations.some((grant) => grant.contactId === resource.target)
       || !/^\/resources\/[^/]+$/.test(resource.path) || resource.expiresAt !== undefined) {

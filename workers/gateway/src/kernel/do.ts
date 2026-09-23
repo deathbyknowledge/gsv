@@ -1,4 +1,3 @@
-import { processScopeMessages } from "./process-scope-runtime";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -595,7 +594,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       await this.scheduleApproachMaintenance();
       await this.scheduleConversationAttention();
       await this.scheduleSharedContext();
-      await this.scheduleProcessScopeMessages();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -721,19 +719,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (existing.time * 1000 <= due + 1000) return;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onProfilePublication", ownerUid, options);
-    });
-  }
-
-  async scheduleProcessScopeMessages(runningTaskId?: string): Promise<void> {
-    await this.federationRuntime.coordinateFederationContact("scoped-message-schedule", async () => {
-      const next = this.procs.scopes.automation.nextDue();
-      if (next === null) return;
-      const due = Math.max(Date.now() + (runningTaskId ? 1000 : 10), next);
-      const options = { idempotent: true, excludeTaskId: runningTaskId };
-      const existing = await this.schedule(new Date(due), "onProcessScopeMessages", "messages", options);
-      if (existing.time * 1000 <= due + 1000) return;
-      await this.cancelSchedule(existing.id);
-      await this.schedule(new Date(due), "onProcessScopeMessages", "messages", options);
     });
   }
 
@@ -953,16 +938,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       }
       case "onProcessScopeMessages": {
-        const gate = await this.onboarding.managedWorkGate();
-        if (!gate.allowed) {
-          await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onProcessScopeMessages", "messages", { idempotent: true, excludeTaskId: task.id });
-          return;
-        }
-        try {
-          await this.federationRuntime.coordinateFederationContact("scoped-message-run", () => processScopeMessages(this.buildKernelContext({})));
-        } finally {
-          await this.scheduleProcessScopeMessages(task.id);
-        }
         return;
       }
       case "onProcessScopeExpiry":
@@ -1617,7 +1592,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       profiles: this.profiles,
       sharedContext: this.sharedContext,
       scheduleSharedContext: () => this.scheduleSharedContext(),
-      scheduleProcessScopeMessages: () => this.scheduleProcessScopeMessages(),
       scheduleProcessScopeExpiry: async (scopeId, expiresAtMs) => {
         const existing = await this.schedule(new Date(expiresAtMs), "onProcessScopeExpiry", scopeId, { idempotent: true });
         if (existing.time * 1000 > expiresAtMs + 1000) {
