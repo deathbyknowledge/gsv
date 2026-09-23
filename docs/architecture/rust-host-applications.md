@@ -114,12 +114,15 @@ focuses the existing window. The independent `gsvd` service keeps running.
 
 ## Machine enrollment
 
-Desktop uses Fleet's ordinary device-invitation flow and `gsv pair CODE` to
-connect this computer. The CLI stores the driver credential in private
-`config.toml` and owns per-user service installation; `gsvd` owns the persistent
-machine connection. The separate desktop enrollment wizard and tray controller
-were retired with the previous renderer. Installed machine identities and
-services remain valid through the desktop upgrade.
+Desktop offers Connect this computer after sign-in and through its space menu.
+The frontend creates the same ordinary device invitation as Fleet; the native
+host passes it on private stdin to `gsv pair - --preserve-cli-login --no-replace`.
+The CLI stores the driver credential in private `config.toml` and owns per-user
+service installation; `gsvd` owns the persistent machine connection. Existing
+bindings for this space and account resume automatically, while other bindings
+are preserved. Interrupted enrollment and failed service installation retain
+their durable identity for retry. Installed machine identities and services
+remain valid through the desktop upgrade.
 
 See [Desktop ownership](../../engineering/desktop.md) for the native boundary
 and [host installation](../how-to/install-host-apps.md) for distribution.

@@ -39,7 +39,20 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             code,
             workspace,
             no_install,
-        } => crate::pairing::run_pair(code, workspace, no_install).await,
+            preserve_cli_login,
+            no_replace,
+        } => {
+            crate::pairing::run_pair(
+                code,
+                workspace,
+                crate::pairing::PairOptions {
+                    no_install,
+                    preserve_cli_login,
+                    no_replace,
+                },
+            )
+            .await
+        }
         Commands::Chat { message, pid } => {
             run_with_login_retry(
                 &url,

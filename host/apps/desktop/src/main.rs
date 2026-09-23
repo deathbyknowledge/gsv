@@ -1,5 +1,6 @@
 mod control;
 mod input;
+mod machine;
 mod session;
 
 use fs2::FileExt;
@@ -22,6 +23,7 @@ struct Host {
     _instance_lock: std::fs::File,
     session: Mutex<SessionStore>,
     input: InputRuntime,
+    machine: machine::MachineRuntime,
     control: ControlBridge,
     control_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     control_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
@@ -31,6 +33,7 @@ struct Host {
 impl Host {
     async fn shutdown(&self) {
         self.control.reset();
+        self.machine.shutdown().await;
         if let Some(stop) = self.control_shutdown.lock().await.take() {
             let _ = stop.send(());
         }
@@ -63,6 +66,7 @@ async fn desktop_configure(
     main_window(&window)?;
     let mut session = host.session.lock().await;
     let next = session.configure(origin)?;
+    host.machine.cancel();
     host.control.reset();
     host.input.reset().await;
     Ok(next)
@@ -126,7 +130,45 @@ async fn desktop_store(
     values: BTreeMap<String, String>,
 ) -> Result<(), String> {
     main_window(&window)?;
-    host.session.lock().await.store(&generation, values)
+    let mut session = host.session.lock().await;
+    let previous = machine::session_username(&session.current);
+    session.store(&generation, values)?;
+    if machine::session_username(&session.current) != previous {
+        host.machine.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn machine_status(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+    username: String,
+) -> Result<machine::Snapshot, String> {
+    main_window(&window)?;
+    {
+        let session = host.session.lock().await;
+        machine::scope(&session.current, &generation, &username)?;
+    }
+    machine::inspect().await
+}
+
+#[tauri::command]
+async fn machine_command(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+    username: String,
+    command: machine::MachineCommand,
+) -> Result<machine::Snapshot, String> {
+    main_window(&window)?;
+    let (scope, operation) = {
+        let session = host.session.lock().await;
+        let scope = machine::scope(&session.current, &generation, &username)?;
+        (scope, host.machine.prepare()?)
+    };
+    host.machine.run(scope, command, operation).await
 }
 
 #[tauri::command]
@@ -255,6 +297,8 @@ fn main() {
             desktop_store,
             desktop_open,
             desktop_quit,
+            machine_status,
+            machine_command,
             input_attach,
             input_acknowledge,
             input_command,
@@ -311,6 +355,7 @@ fn main() {
                 _instance_lock: instance_lock,
                 session: Mutex::new(session),
                 input: InputRuntime::start(),
+                machine: machine::MachineRuntime::default(),
                 control,
                 control_shutdown: Mutex::new(Some(control_shutdown)),
                 control_task: Mutex::new(Some(control_task)),

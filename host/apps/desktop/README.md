@@ -77,9 +77,12 @@ verification on first use; vision models are embedded. Neither camera nor
 microphone starts at launch. Hands-free controls and their tutorial appear only
 in Desktop. The web UI shares the same screens without native input controls.
 
-Connect this computer through Fleet's device invitation and `gsv pair CODE`.
-The machine daemon owns its separate connection and service lifecycle; quitting
-Desktop does not stop it.
+After sign-in, Connect this computer enrolls the machine and starts its background
+service without a terminal. Not now defers setup; the space menu's This computer
+action reopens it. Desktop preserves the CLI login and any machine binding to
+another space or account. An existing binding for this account starts automatically
+when needed. The machine daemon owns its separate connection and service lifecycle;
+quitting Desktop does not stop it.
 
 ## macOS
 

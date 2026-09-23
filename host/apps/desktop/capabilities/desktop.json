@@ -11,6 +11,8 @@
     "allow-desktop-store",
     "allow-desktop-open",
     "allow-desktop-quit",
+    "allow-machine-status",
+    "allow-machine-command",
     "allow-control-attach",
     "allow-control-detach",
     "allow-control-active",

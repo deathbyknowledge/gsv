@@ -1,6 +1,7 @@
 import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from "../app/services/platform/PlatformProvider";
 import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
 import type { ControlEvent, ControlReply } from "./control";
+import type { MachineCommand, MachineSnapshot, NativeMachine } from "./machineSetup";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -10,6 +11,8 @@ type DesktopCommands = {
   desktop_store: { args: { generation: string; values: Record<string, string> }; result: void };
   desktop_open: { args: { url: string }; result: void };
   desktop_quit: { args: undefined; result: void };
+  machine_status: { args: { generation: string; username: string }; result: MachineSnapshot };
+  machine_command: { args: { generation: string; username: string; command: MachineCommand }; result: MachineSnapshot };
   control_attach: { args: { generation: string; updates: NativeChannel<ControlEvent> }; result: string };
   control_detach: { args: { lease: string }; result: void };
   control_active: { args: { lease: string; id: string }; result: boolean };
@@ -90,5 +93,12 @@ export function nativeInput(generation: string): NativeInput {
     },
     acknowledge: (lease, revision, ack) => invoke("input_acknowledge", { lease, revision, ack }),
     command: (lease: string, command: NativeCommand) => invoke("input_command", { lease, command }),
+  };
+}
+
+export function nativeMachine(generation: string, username: string): NativeMachine {
+  return {
+    status: () => invoke("machine_status", { generation, username }),
+    command: (command) => invoke("machine_command", { generation, username, command }),
   };
 }

@@ -8,6 +8,7 @@ import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
 import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
+import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import "./desktop.css";
@@ -16,6 +17,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [machineRequest, setMachineRequest] = useState(0);
   const disconnectPending = useRef(false);
   const storage = useMemo(() => nativeSessionStorage(session, onError, mock), [session.generation]);
   const [confirmation, setConfirmation] = useState<"disconnect" | "quit" | null>(null);
@@ -100,9 +102,12 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
         else quit();
       }}>{confirmation === "disconnect" ? disconnecting ? "disconnecting…" : "disconnect" : "quit"}</button>
     </dialog>
-    <PlatformIdentityProvider identity={<DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
+    <PlatformIdentityProvider identity={<><DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
       onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
-      onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />}>
+      onMachine={!locked && !mock ? () => setMachineRequest((value) => value + 1) : undefined}
+      onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />
+      {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
+        request={machineRequest} flush={storage.flush} />}</>}>
       <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
     </PlatformIdentityProvider>
   </>;

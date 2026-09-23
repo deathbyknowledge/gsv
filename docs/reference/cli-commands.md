@@ -400,6 +400,11 @@ gsv pair CODE [--workspace PATH] [--no-install]
 gsv pair  # resume an interrupted exchange
 ```
 
+Use `gsv pair -` to read the invitation from stdin instead of exposing it in
+process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+credentials unchanged; `--no-replace` refuses to overwrite an existing machine
+credential. Desktop uses these together for integrated machine setup.
+
 The invitation supplies the gateway, account and target identity. It expires in
 ten minutes and can enroll one device. The CLI saves its credential before the
 exchange and installs the per-user daemon by default. `--no-install` saves the

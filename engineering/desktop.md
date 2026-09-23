@@ -15,8 +15,9 @@ embedded desktop frontend (`web/dist-desktop`).
   persistence, same-user CLI control and native input supervision.
 - `desktop-native` supervises `gsv-transcribe` and `gsv-vision`. Camera and audio
   capture stay local. Helpers start only after explicit user action.
-- `gsvd` independently owns the machine connection. Fleet and `gsv pair` provide
-  enrollment. Closing Desktop never stops an installed daemon service.
+- `gsvd` independently owns the machine connection. Desktop enrolls this computer
+  through the same invitation and `gsv pair` path as Fleet. Closing Desktop never
+  stops an installed daemon service.
 
 ## Local control and lifecycle
 
@@ -35,6 +36,28 @@ Session writes are serialized, origin-bound and generation-fenced. Native input
 has its own expiring lease, bounded intent delivery and explicit acknowledgement.
 Suspension, disconnect or view changes cancel input authority. Quit flushes the
 session, closes local control, and waits for helper shutdown.
+
+## This computer
+
+After sign-in, an unconfigured computer gets a compact naming step with Connect
+and Not now. The space menu's This computer action reopens setup. An existing
+connection for this space and account starts automatically if its service is
+stopped; a running connection is left alone. A binding to another space or
+account is shown without being replaced.
+
+The frontend creates an ordinary device invitation through its authenticated
+gateway connection and retains the exact request for retries. The native host
+checks its session generation, account and invitation origin, then delivers the
+code on stdin to the sibling CLI. Pairing keeps the CLI login unchanged and
+refuses to replace an existing machine credential. The CLI remains the owner of
+credential persistence, receipt recovery and per-user service installation.
+An interrupted pairing resumes its saved credential; a service-install failure
+after redemption retries installation without creating another target.
+
+Setup runs asynchronously. Signing out, changing spaces or quitting cancels the
+owned CLI process group. A committed machine pairing remains inspectable and
+recoverable. Native status exposes identity and connection state, never driver
+credentials. This integration is present only in the desktop frontend.
 
 ## Presentation and input
 
