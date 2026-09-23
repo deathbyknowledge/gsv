@@ -72,6 +72,7 @@ jobs:
             test -x "$app/Contents/MacOS/$binary"
           done
           codesign --verify --deep --strict "$app"
+          python3 host/scripts/check-transcriber.py "$app/Contents/MacOS/gsv-transcribe"
       - uses: actions/upload-artifact@v4
         with:
           name: gsv-desktop-${{ matrix.platform }}
