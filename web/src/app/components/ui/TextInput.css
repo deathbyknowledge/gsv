@@ -27,6 +27,12 @@
   border-color: #b3aeff;
   box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
 }
+.gsv-ti.is-error .gsv-ti-wrap {
+  border-color: var(--error, #ff6f8c);
+}
+.gsv-ti.is-error .gsv-ti-wrap:focus-within {
+  box-shadow: 0 0 0 1px var(--error, #ff6f8c);
+}
 .gsv-ti-input {
   flex: 1;
   min-width: 0;

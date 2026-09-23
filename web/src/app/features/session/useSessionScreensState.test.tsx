@@ -94,10 +94,10 @@ describe("minimal account setup", () => {
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).not.toHaveBeenCalled();
-      expect(screen.state().setup.error).toBe("Passwords do not match.");
+      expect(screen.state().setup.fieldErrors.passwordConfirm).toBe("Passwords do not match.");
 
       await act(() => { screen.state().setup.onPasswordConfirm("password123"); });
-      expect(screen.state().setup.error).toBeNull();
+      expect(screen.state().setup.fieldErrors.passwordConfirm).toBeUndefined();
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
         username: "alice", password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
-import { validateSetupAccount } from "./sessionDomain";
+import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
@@ -10,13 +10,14 @@ type UseSessionScreensStateOptions = {
 export function useSessionScreensState({ session, snapshot }: UseSessionScreensStateOptions) {
   const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
   const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
-  const [setupValidationError, setSetupValidationError] = useState<string | null>(null);
+  const [setupTouched, setSetupTouched] = useState<Partial<Record<keyof SetupAccount, boolean>>>({});
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
   const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [setupUsername, setSetupUsername] = useState(snapshot.username);
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
+  const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
@@ -44,6 +45,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (snapshot.phase === "ready" || snapshot.phase === "locked") {
       setSetupPassword("");
       setSetupPasswordConfirm("");
+      setSetupTouched({});
     }
     if (snapshot.phase === "ready") setLoginPassword("");
   }, [snapshot.phase]);
@@ -65,9 +67,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     event.preventDefault();
     if (busy) return;
     const account = { username: setupUsername, password: setupPassword };
-    const error = validateSetupAccount({ ...account, passwordConfirm: setupPasswordConfirm });
-    if (error) { setSetupValidationError(error); return; }
-    setSetupValidationError(null);
+    setSetupTouched({ username: true, password: true, passwordConfirm: true });
+    if (Object.keys(setupErrors).length > 0) return;
     setLoginValidationError(null);
     setLoginUsername(account.username);
     setLoginUsernameTouched(false);
@@ -90,13 +91,19 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       onSubmit: submitLogin,
     },
     setup: {
-      error: setupValidationError ?? (snapshot.phase === "setup" ? snapshot.message : null),
+      error: snapshot.phase === "setup" ? snapshot.message : null,
+      fieldErrors: {
+        username: setupTouched.username ? setupErrors.username : undefined,
+        password: setupTouched.password ? setupErrors.password : undefined,
+        passwordConfirm: setupTouched.passwordConfirm ? setupErrors.passwordConfirm : undefined,
+      },
       username: setupUsername,
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
-      onUsername: (value: string) => { setSetupValidationError(null); setSetupUsername(value.toLowerCase()); },
-      onPassword: (value: string) => { setSetupValidationError(null); setSetupPassword(value); },
-      onPasswordConfirm: (value: string) => { setSetupValidationError(null); setSetupPasswordConfirm(value); },
+      onUsername: (value: string) => { setSetupUsername(value.toLowerCase()); },
+      onPassword: setSetupPassword,
+      onPasswordConfirm: setSetupPasswordConfirm,
+      onFieldBlur: (field: keyof SetupAccount) => { setSetupTouched((touched) => ({ ...touched, [field]: true })); },
       onSubmit: submitSetup,
     },
   };

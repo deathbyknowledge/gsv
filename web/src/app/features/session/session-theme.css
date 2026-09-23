@@ -128,6 +128,8 @@
 .gsv-auth-scene .gsv-ti-wrap { background: var(--void); border-color: var(--border); }
 .gsv-auth-scene .gsv-ti-wrap:hover { border-color: var(--border-raised); }
 .gsv-auth-scene .gsv-ti-wrap:focus-within { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+.gsv-auth-scene .gsv-ti.is-error .gsv-ti-wrap { border-color: var(--error); }
+.gsv-auth-scene .gsv-ti.is-error .gsv-ti-wrap:focus-within { outline-color: var(--error); box-shadow: none; }
 .gsv-auth-scene .gsv-ti-input { color: var(--text); font-size: 14px; letter-spacing: 0; }
 .gsv-auth-scene .gsv-ti-wrap:focus-within .gsv-ti-input { text-shadow: none; }
 .gsv-auth-scene .gsv-ti-input::placeholder { color: var(--text-dim); letter-spacing: 0; }
