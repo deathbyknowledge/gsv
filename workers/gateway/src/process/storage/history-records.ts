@@ -5,7 +5,7 @@ import {
   type ResourceBlock, type ProcHistoryMedia, type InteractionOrigin,
   type ProcHistoryArchivedResultPayload,
 } from "@humansandmachines/gsv/protocol";
-import { TOOL_TO_SYSCALL, type ToolSyscallName } from "../../syscalls/constants";
+import { resolveToolSyscall, type ToolSyscallName } from "../../syscalls/constants";
 import { takePurpose } from "../approval";
 import { parseStoredProcessMedia } from "../media";
 import { materializeLegacyToolResultImages, unwrapStoredToolResult } from "../tool-result-media";
@@ -159,6 +159,7 @@ export function assistantHistoryRecords(input: {
   media: ProcHistoryMedia[];
   runId: string | null;
   runControlCallIds?: readonly string[];
+  toolSyscalls?: Readonly<Record<string, string>>;
   resolveTarget?: (syscall: ToolSyscallName, args: JsonObject) => string | null;
 }): ProcHistoryRecordData[] {
   const note: Extract<ProcHistoryRecordData, { kind: "note" }> = {
@@ -168,7 +169,7 @@ export function assistantHistoryRecords(input: {
   return [note, ...input.toolCalls.map((call): ProcHistoryRecordData => {
     const args = jsonObjectSchema.parse(call.arguments);
     const runControl = input.runControlCallIds?.includes(call.id) === true;
-    const syscall = runControl ? null : TOOL_TO_SYSCALL[call.name] ?? null;
+    const syscall = runControl ? null : resolveToolSyscall(call.name, input.toolSyscalls) ?? null;
     const target = runControl
       ? null
       : syscall !== null && input.resolveTarget

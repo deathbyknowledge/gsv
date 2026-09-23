@@ -21,6 +21,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "fs.*",
     "shell.*",
     "net.fetch",
+    "web.search",
     "mail.send",
     "mail.status",
     "conversation.*",

@@ -19,6 +19,11 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
       entrypoint: string;
       namespaces: readonly Pick<GsvDeletionNamespace, "className" | "kind">[];
     };
+    webSearchLifecycle?: {
+      worker: Cloudflare.Workers.Worker;
+      entrypoint: string;
+      namespaces: readonly { className: string; kind: "web-search-installation" }[];
+    };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
   deletion?: { operatorResources: OperatorResourceCatalog };
@@ -51,7 +56,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
 export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRuntimeDependencies) => {
   const { Cloudflare, Effect, retain } = dependencies;
   return Effect.gen(function* () {
-  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound)) {
+  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch)) {
     throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
   }
   if (Boolean(props.services?.inferenceExecution) !== Boolean(props.services?.inferenceLifecycle)) {
@@ -61,6 +66,15 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || props.services.inferenceLifecycle.namespaces.some((namespace) => !namespace.className.trim()
       || !["inference-executor", "inference-installation"].includes(namespace.kind)))) {
     throw new Error("Supplied inference lifecycle requires valid inference namespace ownership");
+  }
+  const webSearchLifecycle = props.services?.webSearchLifecycle;
+  if (Boolean(props.services?.webSearch) !== Boolean(webSearchLifecycle)) {
+    throw new Error("Supplied web search requires its owned lifecycle and namespace inventory");
+  }
+  if (webSearchLifecycle && (!webSearchLifecycle.entrypoint.trim()
+    || webSearchLifecycle.namespaces.some((namespace) => !namespace.className.trim()
+      || namespace.kind !== "web-search-installation"))) {
+    throw new Error("Supplied web search lifecycle requires valid search namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
   const admin = new URL(props.adminOrigin);
@@ -183,12 +197,19 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     bindings: [{ type: "service", name: "DELETION_OWNER_INFERENCE", service: inferenceLifecycle.worker.workerName,
       entrypoint: inferenceLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
   });
+  if (webSearchLifecycle) {
+    yield* directory.bind(`${props.logicalPrefix}DirectoryWebSearchDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_WEB_SEARCH", service: webSearchLifecycle.worker.workerName,
+        entrypoint: webSearchLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
+    });
+  }
   yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
     { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
     { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
     { ownerId: "gateway", worker: runtime.gateway, className: "Conversation", kind: "conversation" },
     { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
     ...inferenceLifecycle.namespaces.map((namespace) => ({ ...namespace, ownerId: "inference", worker: inferenceLifecycle.worker })),
+    ...(webSearchLifecycle?.namespaces.map((namespace) => ({ ...namespace, ownerId: "web-search", worker: webSearchLifecycle.worker })) ?? []),
     ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
   ]);
   if (catalog && database) {

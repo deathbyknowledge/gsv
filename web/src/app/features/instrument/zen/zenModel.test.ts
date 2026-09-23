@@ -1008,6 +1008,14 @@ describe("isMessageSend", () => {
 });
 
 describe("outputText", () => {
+  it("renders web sources and excerpts without exposing transport JSON", () => {
+    expect(argumentThatMatters("web.search", { query: "current news" })).toBe("current news");
+    expect(outputText("web.search", { provider: "fixture", results: [
+      { title: "Source", url: "https://example.com/news", snippet: "The excerpt.", publishedAt: "2026-09-18" },
+    ] }, "{json}")).toBe("Source\nhttps://example.com/news\n2026-09-18\nThe excerpt.");
+    expect(outputText("web.search", { provider: "fixture", results: [] }, "{json}")).toBe("No results.");
+  });
+
   it("reads a command's stdout and stderr instead of the transport json", () => {
     expect(outputText("shell.exec", { ok: true, stdout: "a\nb\n", stderr: "", exitCode: 0 }, "{json}")).toBe("a\nb\n");
     expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");

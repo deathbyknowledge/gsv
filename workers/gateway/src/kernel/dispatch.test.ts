@@ -100,6 +100,52 @@ function sendFrame(connection: { send(message: string): void }, frame: KernelTes
 }
 
 describe("dispatch", () => {
+  it("routes web search to its selected provider without leaking routing metadata", async () => {
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", true, ["web.search"]));
+    const send = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    // SAFETY: this fixture supplies the dependencies used by connected target routing.
+    const deps = {
+      connections: new Map([["search-connection", {
+        id: "search-connection",
+        state: { step: "connected", peer: operationPeer("search-provider", ["web.search"]) },
+        send,
+      }]]),
+      sendFrame,
+      registerRoute,
+    } as DispatchDeps;
+
+    expect(await dispatch({ type: "req", id: "search", call: "web.search", args: {
+      query: " news ", target: "search-provider", includeDomains: ["EXAMPLE.COM"],
+    } }, { type: "connection", id: "caller" }, ctx, deps)).toEqual({ handled: false });
+    expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+      type: "req", id: "search", call: "web.search", args: { query: "news", includeDomains: ["example.com"] },
+    });
+    expect(registerRoute).toHaveBeenCalledWith(expect.objectContaining({
+      id: "search", call: "web.search", targetId: "search-provider", ttlMs: 20_000,
+    }));
+  });
+
+  it.each([
+    ["invalid", 400], ["forbidden", 403], ["offline", 503], ["unsupported", 400], ["cancelled", 499],
+  ] as const)("rejects %s search before dispatching provider work", async (reason, code) => {
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", reason !== "offline",
+      reason === "unsupported" ? ["fs.*"] : ["web.search"]));
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(reason !== "forbidden");
+    if (reason === "cancelled") ctx.requestSignal = AbortSignal.abort();
+    const registerRoute = vi.fn();
+    // SAFETY: these rejection paths return before looking up a live connection.
+    const deps = { registerRoute } as DispatchDeps;
+    expect(await dispatch({ type: "req", id: "search", call: "web.search", args: {
+      query: "news", target: "search-provider", limit: reason === "invalid" ? 11 : 5,
+    } }, { type: "connection", id: "caller" }, ctx, deps)).toMatchObject({
+      handled: true, response: { ok: false, error: { code } },
+    });
+    expect(registerRoute).not.toHaveBeenCalled();
+  });
+
   it("persists a named session before forwarding and recovers it without the start response", async () => {
     await runWithRealKernelSql(async (sql) => {
       const sessionId = crypto.randomUUID();

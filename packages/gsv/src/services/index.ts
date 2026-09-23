@@ -6,3 +6,4 @@ export * from "./lifecycle";
 export type * from "./mail";
 export type * from "./onboarding";
 export type * from "./inference-execution";
+export * from "./web-search";

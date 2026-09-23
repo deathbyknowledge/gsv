@@ -236,6 +236,9 @@ function buildCodeModeSource(
     },
   });
 ${mcpFunctionDeclarations}
+  const web = Object.freeze({
+    search: async (args) => __unwrapToolResult(await __web.search(__withObjectArgs("web.search", args))),
+  });
   const __userMain = ${userMain};
   return await __userMain();
 }`;
@@ -321,6 +324,10 @@ export async function executeCodeMode(
   };
 
   const providers: ResolvedProvider[] = [
+    {
+      name: "__web",
+      fns: { search: async (args) => request("web.search", jsonObjectSchema.parse(args)) },
+    },
     {
       name: "codemode",
       fns: {

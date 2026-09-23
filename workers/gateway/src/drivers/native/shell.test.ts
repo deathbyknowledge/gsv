@@ -1626,6 +1626,17 @@ describe("targets native command", () => {
     expect(native.stdout).toContain("- net.fetch");
     expect(native.stdout).not.toContain("- codemode.exec");
   });
+
+  it("advertises native search only when its service is configured", async () => {
+    const ctx = makeContext({ capabilities: ["sys.target.get"] });
+    const withoutSearch = await handleShellExec({ input: "targets show gsv" }, ctx);
+    expect(withoutSearch.stdout).not.toContain("- web.search");
+    ctx.env.WEB_SEARCH = {
+      getInstallation: async () => ({ search: async () => ({ provider: "fixture", results: [] }), cancel: async () => {} }),
+    };
+    const withSearch = await handleShellExec({ input: "targets show gsv" }, ctx);
+    expect(withSearch.stdout).toContain("- web.search");
+  });
 });
 
 describe("signal native command", () => {

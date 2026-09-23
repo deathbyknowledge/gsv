@@ -19,6 +19,8 @@ export type AiToolsTarget = {
 
 export type AiToolsResult = {
   tools: ToolDefinition[];
+  /** Capture with the offered tools so an active run keeps its original syscall routing. */
+  toolSyscalls?: Record<string, string>;
   targets: AiToolsTarget[];
   mcpServers: string[];
 };

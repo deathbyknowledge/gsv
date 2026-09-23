@@ -57,6 +57,8 @@ This document is the root engineering contract for the repository. It explains h
 
 The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Send is the run control, message and yield, as a tool, and is the only tool that is not a capability. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
 
+Search exposes the provider-neutral, targetable `web.search` syscall. It defaults to `gsv`, whose implementation uses an optional operator-owned service binding; other accessible targets may advertise the same syscall. Filesystem search uses Shell commands or CodeMode `fs.search`. Provider credentials and metering belong to the provider implementation.
+
 GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction burden for models and humans. This is a design model, not a promise of POSIX compatibility.
 
 ### Treat agents as real processes

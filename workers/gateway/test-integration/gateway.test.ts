@@ -4,8 +4,9 @@ import {
   GSVClient,
   GsvClientError,
 } from "@humansandmachines/gsv";
+import { webSearchQuerySchema } from "@humansandmachines/gsv/services/web-search";
 import type { TestHarness } from "wrangler";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 
 const USERNAME = "harness-user";
@@ -59,6 +60,68 @@ describe("gateway integration", () => {
     const removedCliAsset = await harness.fetch("/public/gsv/downloads/cli/install.sh");
     expect(removedCliAsset.status).toBe(404);
     await expect(removedCliAsset.text()).resolves.toBe("Not Found");
+  });
+
+  it("discovers and routes a connected search provider without a managed binding", async () => {
+    const wsUrl = webSocketUrl(baseUrl);
+    await new GSVClient().requestOnce(wsUrl, "sys.setup", {
+      onboardingToken: "integration-onboarding-default", username: USERNAME, password: PASSWORD,
+    });
+    const client = new GSVClient({
+      url: wsUrl, username: USERNAME, password: PASSWORD,
+      peer: { id: "search-caller", version: "fixture", platform: "node" },
+    });
+    let provider: GSVClient | undefined;
+    try {
+      await client.connect();
+      const token = await client.sys.token.create({ kind: "machine", peerId: "search-provider" });
+      provider = new GSVClient({
+        url: wsUrl, username: USERNAME, token: token.token.token,
+        peer: { id: "search-provider", version: "fixture", platform: "node", implements: ["web.search"] },
+      });
+      const result = { provider: "fixture", results: [{ title: "News", url: "https://example.com/news", snippet: "Search fixture." }] };
+      const requests: unknown[] = [];
+      let waiting = false;
+      let cancelled = false;
+      provider.onRequest(async (frame, _body, signal) => {
+        expect(frame.call).toBe("web.search");
+        expect(frame.args).not.toHaveProperty("target");
+        const args = webSearchQuerySchema.parse(frame.args);
+        requests.push(args);
+        if (args.query === "cancel") {
+          waiting = true;
+          await new Promise<void>((resolve) => {
+            signal?.addEventListener("abort", () => { cancelled = true; resolve(); }, { once: true });
+          });
+        }
+        return { data: result };
+      });
+      await provider.connect();
+      const discovery = await client.sys.target.list();
+      expect(discovery.targets).toContainEqual(expect.objectContaining({ targetId: "search-provider", implements: ["web.search"] }));
+      await expect(client.web.search({ target: "search-provider", query: " news ", limit: 2 }))
+        .resolves.toEqual(result);
+      expect(requests).toEqual([{ query: "news", limit: 2 }]);
+      const shell = await client.shell.exec({ input: "web search --target search-provider --json news" });
+      expect(shell).toMatchObject({ status: "completed", output: `${JSON.stringify(result)}\n`, exitCode: 0 });
+      await expect(client.web.search({ query: "news" })).rejects.toMatchObject({
+        message: "Web search is not configured for this installation",
+      });
+      await expect(client.web.search({ target: "search-provider", query: "news", limit: 11 })).rejects.toMatchObject({ code: 400 });
+      expect(requests).toHaveLength(2);
+
+      const controller = new AbortController();
+      const pending = client.request("web.search", { target: "search-provider", query: "cancel" }, { signal: controller.signal });
+      const failed = expect(pending).rejects.toThrow("cancelled");
+      await vi.waitFor(() => expect(waiting).toBe(true));
+      controller.abort(new Error("cancelled"));
+      await failed;
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      await expect(client.web.search({ target: "search-provider", query: "after cancellation" })).resolves.toEqual(result);
+    } finally {
+      provider?.close();
+      client.close();
+    }
   });
 
   it("runs setup, authentication, process lifecycle, and adapter RPC through real boundaries", async () => {

@@ -3,7 +3,7 @@ import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
 import {
   GSV_TARGET_ID,
-  GSV_TARGET_IMPLEMENTATIONS,
+  gsvTargetImplementations,
   listAllVisibleTargets,
   resolveVisibleTarget,
   type TargetDescriptor,
@@ -318,7 +318,7 @@ function gsvTarget(ctx: KernelContext): TargetListEntry {
     platform: "cloudflare-worker",
     version: ctx.config.get("config/server/version") ?? ctx.serverVersion ?? "",
     online: true,
-    implements: [...GSV_TARGET_IMPLEMENTATIONS],
+    implements: gsvTargetImplementations(ctx),
     firstSeenAt: now,
     lastSeenAt: now,
     connectedAt: now,

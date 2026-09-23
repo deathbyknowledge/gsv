@@ -25,6 +25,7 @@ import type { ShellSessionStore } from "./shell-sessions";
 import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
 import {
   handleAiContext,
   handleAiConfig,
@@ -226,6 +227,13 @@ export async function dispatch(
       handled: true,
       response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
     };
+  }
+  if (frame.call === "web.search") {
+    const parsed = webSearchArgsSchema.safeParse(frame.args);
+    if (!parsed.success) {
+      return { handled: true, response: rejectBeforeDispatch(frame, 400, "Invalid web.search arguments") };
+    }
+    frame = { ...frame, args: parsed.data };
   }
   const routingArgs = routableFrameArgs(frame);
   const target = frame.call === "ai.text.generate"
@@ -916,6 +924,7 @@ async function routeToTarget(
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
+  if (frame.call === "web.search") return WEB_SEARCH_TIMEOUT_MS;
   if (frame.call === "shell.exec") {
     const requested = frame.args.timeout;
     if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {

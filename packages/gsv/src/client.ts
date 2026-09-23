@@ -224,6 +224,7 @@ export type GsvR12yNamespace = GsvClientNamespaces["r12y"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
 export type GsvSchedNamespace = GsvClientNamespaces["sched"];
 export type GsvShellNamespace = GsvClientNamespaces["shell"];
+export type GsvWebNamespace = GsvClientNamespaces["web"];
 export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
@@ -265,6 +266,7 @@ const SYSCALL_NAMES = [
   "fs.edit",
   "fs.delete",
   "fs.search",
+  "web.search",
   "fs.copy",
   "fs.transfer.stat",
   "shell.exec",
@@ -451,6 +453,7 @@ export class GSVClient {
   declare readonly shell: GsvShellNamespace;
   declare readonly signal: GsvSignalNamespace;
   declare readonly sys: GsvSysNamespace;
+  declare readonly web: GsvWebNamespace;
   readonly call: GsvClientCall;
 
   private readonly WebSocketCtor: GsvWebSocketConstructor | null;

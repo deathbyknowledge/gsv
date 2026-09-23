@@ -52,10 +52,10 @@ If `target` names a registered external target and the syscall is routable, the
 Kernel forwards the unchanged syscall to that provider.
 
 The native provider is an in-process implementation, not a synthetic peer or
-device record. It owns only `fs.*`, `shell.exec`, and `net.fetch`; the Kernel
-continues to own control-plane dispatch.
+device record. It owns `fs.*`, `shell.exec`, `net.fetch`, and `web.search` when
+a search service is configured; the Kernel owns control-plane dispatch.
 
-The `fs.*`, `shell.*`, and `net.*` domains support target routing. Other domains
+The `fs.*`, `shell.*`, `net.*`, and `web.*` domains support target routing. Other domains
 such as `sys.*`, `proc.*`, `repo.*`, `adapter.*`, and `signal.*` are Kernel
 control-plane interfaces rather than target operations.
 
@@ -86,8 +86,9 @@ preventing long-running commands from depending on one in-flight route.
 Process DO executes it locally with the Worker Loader instead of routing it
 through the Kernel dispatcher. The manual `codemode.run` syscall is public and
 kernel-forwarded to a Process DO, which uses the same executor. CodeMode's
-in-block `shell(...)`, `fs.*(...)`, and `fetch(...)` helpers call back into the
-Process, which dispatches normal `shell.exec`, `fs.*`, and `net.fetch` request
+in-block `shell(...)`, `fs.*(...)`, `fetch(...)`, and `web.search(...)` helpers call
+back into the Process, which dispatches normal `shell.exec`, `fs.*`, `net.fetch`,
+and `web.search` request
 frames through the Kernel. Nested calls therefore use the same capabilities,
 target routing, async responses, shell sessions, and agent approval policy as
 direct tool calls.

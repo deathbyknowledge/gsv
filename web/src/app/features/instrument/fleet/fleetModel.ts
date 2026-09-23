@@ -230,6 +230,7 @@ export function describeToolCall(syscall: string, args: ChatTranscriptValue | un
   const parsed = parseToolArgs(args);
   let detail = "";
   if (syscall === "shell.exec") detail = parsed.input ?? "";
+  else if (syscall === "web.search") detail = parsed.query ?? "";
   else if (syscall === "fs.copy") detail = [parsed.source, parsed.destination].map((endpoint) => endpoint ? `${endpoint.target ? `${endpoint.target}:` : ""}${endpoint.path}` : "").filter(Boolean).join(" → ");
   else if (syscall.startsWith("fs.")) detail = [parsed.path, syscall === "fs.search" ? parsed.query : null].filter(Boolean).join(" · ");
   else if (syscall.startsWith("net.")) detail = parsed.url ?? "";
@@ -290,6 +291,7 @@ export function humanCall(syscall: string, args: ChatTranscriptValue | undefined
   if (syscall === "fs.delete") return name ? `removed ${name}` : "removed a file";
   if (syscall === "fs.copy") return name ? `copied ${name}` : "copied a file";
   if (syscall === "fs.search") return parsed.query ? `searched for ${parsed.query}` : "searched files";
+  if (syscall === "web.search") return parsed.query ? `searched the web for ${parsed.query}` : "searched the web";
   if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
   return ledgerLabel(syscall);
 }

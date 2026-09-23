@@ -101,6 +101,19 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { sessionId: "sh_123" }).target).toBe("targets/*");
   });
 
+  it("applies search approval rules to the actual target", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "deny",
+      rules: [
+        { match: "web.search", target: "gsv", action: "auto" },
+        { match: "web.search", target: "targets/*", action: "ask" },
+      ],
+    }));
+    expect(resolveToolApproval(policy, "web.search", { query: "news" })).toMatchObject({ action: "auto", target: "gsv" });
+    expect(resolveToolApproval(policy, "web.search", { query: "news", target: "personal-search" }))
+      .toMatchObject({ action: "ask", target: "personal-search" });
+  });
+
   it("prefers exact syscall rules over domain wildcards", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "auto",

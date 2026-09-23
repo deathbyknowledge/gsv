@@ -22,6 +22,30 @@ function prepareShell(process: Process): void {
 }
 
 describe("approval beneath a native command", () => {
+  it("keeps a search target's approval beneath its owning Shell call", async () => {
+    const stub = await initProcess("nested-shell-search", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      prepareShell(process);
+      const run = process.runs.active!;
+      run.approvalPolicy!.rules.unshift(
+        { match: "web.search", target: "gsv", action: "auto" },
+        { match: "web.search", target: "targets/*", action: "ask" },
+      );
+      process.runs.active = run;
+      const signal = new AbortController().signal;
+      const request: ProcessToolAuthorizeArgs = {
+        runId: "run", requestId: "shell", syscall: "web.search", args: { target: "gsv", query: "news" },
+      };
+      expect(await process.tools.authorizeNestedTool(request, signal)).toBe(true);
+      const waiting = process.tools.authorizeNestedTool({ ...request, args: { target: "personal-search", query: "news" } }, signal);
+      const pending = process.store.tools.getPendingHil()!;
+      expect(pending).toMatchObject({ ownerDispatchId: "shell", syscall: "web.search" });
+      process.tools.resolveCodeModeApproval(pending.requestId, false);
+      expect(await waiting).toBe(false);
+      process.runs.active = null;
+    });
+  });
+
   it("asks about the actual destination and approves the offered Shell owner", async () => {
     const stub = await initProcess("nested-shell-approve", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
