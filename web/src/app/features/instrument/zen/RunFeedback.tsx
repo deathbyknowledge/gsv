@@ -1,15 +1,19 @@
 import { Hint } from "../../../components/ui/Tooltip";
+import { Spinner } from "../../../components/ui/Spinner";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 
-export function RunFeedback({ model, places, awaitingApproval }: {
+export function RunFeedback({ model, places, awaitingApproval, running }: {
   model: string | null;
   places: readonly string[];
   awaitingApproval: boolean;
+  running: boolean;
 }) {
+  const visible = useViewActive();
   const label = awaitingApproval ? "Waiting for your approval"
-    : places.length > 0 ? `Working on ${places.join(", ")}…` : "Working…";
-  return <div class="zen-run-status" role="status">
-    {model ? <Hint text={`Model: ${model}`}>
-      <span tabIndex={0} class={awaitingApproval ? "is-warn" : undefined}>{label}</span>
-    </Hint> : <span class={awaitingApproval ? "is-warn" : undefined}>{label}</span>}
-  </div>;
+    : !running ? "Idle" : places.length > 0 ? `Working on ${places.join(", ")}` : "Working";
+  return <Hint text={model && running ? `${label} · Model: ${model}` : label}>
+    <span class="zen-run-indicator" role="status" aria-label={label} tabIndex={0}>
+      <Spinner size={18} animate={visible && running && !awaitingApproval} />
+    </span>
+  </Hint>;
 }

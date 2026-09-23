@@ -400,13 +400,8 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-.zen-run-status {
-  display: flex;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  padding-left: 2px;
-}
-.zen-run-status .is-live { color: var(--live); }
+.zen-run-indicator { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; }
+.zen-run-indicator:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }

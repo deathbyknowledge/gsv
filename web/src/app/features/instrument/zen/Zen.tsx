@@ -917,7 +917,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         ? [placeLabel(activity.target, places)] : [])
     : [], [activeRun, runtime.rows, places]);
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
-  const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
+  const showFeedback = !connected || !currentPlace.online || note !== null || pendingHil !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1050,6 +1050,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               }
               return (
                 <li key={target.id}>
+                  {target.id === CLOUD_PLACE_ID && <RunFeedback model={attemptedModel}
+                    places={workingPlaces} running={activeRun !== null} awaitingApproval={pendingHil !== null} />}
                   <Hint text={details.filter(Boolean).join(" · ")} position="top">
                     <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
                       aria-label={`Use ${label} for the next message or command`}
@@ -1074,8 +1076,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             })}
           </ul>
           {showFeedback && <div class="zen-feedback">
-            {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
-              places={workingPlaces} awaitingApproval={pendingHil !== null} />}
+            {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
             {!connected && <span role="status">Not connected</span>}
             {connected && !currentPlace.online ? (
               <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>

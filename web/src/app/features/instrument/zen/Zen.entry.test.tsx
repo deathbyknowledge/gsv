@@ -118,6 +118,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen(undefined, "laptop");
     try {
       const prompt = () => zen.props(PromptLine);
+      expect(zen.props(RunFeedback).running).toBe(false);
       await act(() => { prompt().onInput?.("Keep this draft"); });
       const request = vi.mocked(GSVClient.prototype.request).getMockImplementation()!;
       vi.mocked(GSVClient.prototype.request).mockImplementation((call, args, options) =>
@@ -129,6 +130,7 @@ describe("Zen conversation entry", () => {
         });
       });
       await vi.waitFor(() => expect(zen.props(RunFeedback).places).toEqual(["laptop"]));
+      expect(zen.props(RunFeedback).running).toBe(true);
       const cloud = () => zen.nodes().find((node) => node.type === "button"
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
       await act(() => { cloud().props.onClick!(); });
@@ -144,6 +146,10 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",
       })));
+      await act(() => {
+        for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active" });
+      });
+      await vi.waitFor(() => expect(zen.props(RunFeedback).running).toBe(false));
     } finally { await zen.unmount(); }
   });
 
