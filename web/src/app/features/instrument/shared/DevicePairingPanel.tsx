@@ -75,14 +75,10 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
         <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
         <SetupCommand text={code} label="copy invitation" />
       </> : <>
-        <p class="note">1 · On the computer you want to connect, {draft.platform === "windows"
-          ? <>open the Start menu, search for <strong>PowerShell</strong>, and open it.</>
-          : draft.platform === "mac"
-            ? <>press Command + Space, search for <strong>Terminal</strong>, and open it.</>
-            : <>open the app menu, search for <strong>Terminal</strong>, and open it.</>}</p>
-        <p class="note">2 · Click <strong>Copy install command</strong> below. Paste it into {draft.platform === "windows" ? "PowerShell" : "Terminal"} and press Enter to install GSV. Wait for it to finish.</p>
+        <p class="note">Open {draft.platform === "windows" ? "PowerShell" : "Terminal"} on the computer you want to connect.</p>
+        <p class="note">1 · Paste and run this command to install GSV.</p>
         <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label="copy install command" />
-        <p class="note">3 · Click <strong>Copy connect command</strong> below. Paste it into the same {draft.platform === "windows" ? "PowerShell" : "Terminal"} window and press Enter to connect this computer to your Ship.</p>
+        <p class="note">2 · When it finishes, run this command in the same window to connect.</p>
         <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label="copy connect command" />
       </>}
       <p class="note">You can close this panel and come back. Cancelling an invitation leaves an already-paired device connected.</p>
