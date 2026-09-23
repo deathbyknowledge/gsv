@@ -2,6 +2,8 @@ import type { AsciiAnimationFrame, AsciiAnimationScene } from "../app/components
 import { AsciiMeshRaster, rotationMatrix, type AsciiMaterial, type AsciiMesh } from "../app/components/ui/asciiMesh";
 
 type Vector = [number, number, number];
+export const COMPUTER_COLUMNS = 80;
+export const COMPUTER_ROWS = 36;
 const shell: AsciiMaterial = { albedo: 0.94, emission: 0 };
 const recess: AsciiMaterial = { albedo: 0.13, emission: 0 };
 const keycap: AsciiMaterial = { albedo: 0.66, emission: 0 };
@@ -50,7 +52,7 @@ function computerModel(): AsciiMesh {
 }
 
 export function createComputerScene(): AsciiAnimationScene {
-  const raster = new AsciiMeshRaster(80, 36, { centerY: 0.46, perspective: 0.02 });
+  const raster = new AsciiMeshRaster(COMPUTER_COLUMNS, COMPUTER_ROWS, { centerY: 0.46, perspective: 0.02 });
   const frames = new Map<number, AsciiAnimationFrame>();
   let model: AsciiMesh;
   let cachedPalette: string | undefined;

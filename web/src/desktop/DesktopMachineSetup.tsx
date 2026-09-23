@@ -8,7 +8,7 @@ import { useConsoleAccounts, useConsoleTargets } from "../app/services/system/us
 import { canConfigure } from "../app/features/instrument/settings/settingsModel";
 import { nativeMachine, type NativeSessionStorage } from "./bridge";
 import { DesktopMachineSession } from "./machineSetup";
-import { createComputerScene } from "./computerScene";
+import { COMPUTER_COLUMNS, COMPUTER_ROWS, createComputerScene } from "./computerScene";
 
 type Props = { origin: string; generation: string; request: number; storage: NativeSessionStorage };
 
@@ -39,6 +39,7 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
   const machine = state.machine;
   const current = machine?.pending ?? machine?.configured;
   const other = current && !owner.matches(current) ? current : null;
+  const showComputer = open && !state.loading && !machine?.configured && !other;
   const needsInvitation = !!machine && !machine.configured && !machine.pending;
   const accounts = useConsoleAccounts({ enabled: needsInvitation });
   const targets = useConsoleTargets({ enabled: open });
@@ -67,6 +68,28 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
     if (open && !dialog.current?.open) dialog.current?.showModal();
     if (!open && dialog.current?.open) dialog.current.close();
   }, [open]);
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    const viewport = element?.closest(".instrument-scaled");
+    if (!open || !element || !viewport) return;
+    const art = element.querySelector<HTMLElement>(".desktop-machine-art");
+    // WebKit scales viewport and container units again inside CSS zoom.
+    // ResizeObserver gives layout pixels, so the dialog and glyphs scale once.
+    const observer = new ResizeObserver((entries) => {
+      for (const { target, contentRect: { width, height } } of entries) {
+        if (target === viewport) {
+          element.style.setProperty("--desktop-machine-width", `${width}px`);
+          element.style.setProperty("--desktop-machine-height", `${height}px`);
+        } else if (target === art) {
+          const fontSize = Math.min(width / COMPUTER_COLUMNS, height / (COMPUTER_ROWS + 2));
+          art.style.setProperty("--desktop-machine-font-size", `${fontSize}px`);
+        }
+      }
+    });
+    observer.observe(viewport);
+    if (art) observer.observe(art);
+    return () => observer.disconnect();
+  }, [open, showComputer]);
 
   const close = () => {
     setOpen(false); setDismissed(true);
@@ -81,7 +104,7 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
       void owner.connect(label, targets.targets.map((target) => target.deviceId));
     }}>
       <h2 id="desktop-machine-title">{machine?.configured?.label ?? "Connect this computer"}</h2>
-      {open && !state.loading && !machine?.configured && !other && <AsciiAnimation scene={computer} label="Computer" palette={theme}
+      {showComputer && <AsciiAnimation scene={computer} label="Computer" palette={theme}
         frameRate={12} className="desktop-machine-art" />}
       {state.loading && !error ? <LoadingState>checking…</LoadingState> : other ?
         <p class="note">Already connected to {new URL(other.origin).host} as {other.username}.</p> : machine?.configured ?
