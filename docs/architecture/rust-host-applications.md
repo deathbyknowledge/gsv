@@ -72,144 +72,60 @@ machine runtime in the CLI process.
 
 ## GSV Desktop
 
-Desktop connects to the gateway with a user role. It owns the selected Process,
-the active conversation workspace, drafts, approvals, attachment work,
-presentation, microphone preference, and the same-user local control server.
-Desktop does not need `gsvd` to chat; the daemon only makes the local machine
-available as a syscall target.
+`host/apps/desktop` hosts the same Preact Instrument source as the web UI.
+The frontend owns the sole authenticated gateway connection, conversations,
+Process observation, drafts, approvals, attachments and retained screen state.
+Rust owns native input, private session persistence, external browser navigation,
+window lifecycle and the same-user `desktop-protocol` control server.
 
-Platform-native, high-cost Desktop work runs in separately supervised helpers.
-`gsv-transcribe` owns local microphone capture and speech inference. The
-experimental `gsv-vision` helper owns camera capture, native Rust/tract model
-inference, authored landmark-to-pose recognition, and temporal gesture policy;
-camera frames and landmarks never
-enter GPUI or the gateway. Desktop starts it headlessly unless
-`GSV_GESTURES=0`; the exact `GSV_GESTURE_DEBUG=1` opt-in adds its local
-diagnostic window. A private,
-bounded parent-child protocol carries reliable typed semantic intents plus
-replace-latest absolute scroll-control velocity and control status with bounded
-semantic candidate progress for presentation. In standby, the helper may
-propose starting transcription without a voice-request identity. Desktop owns
-an explicit, inspectable armed state that starts disarmed. The helper may
-propose changing it only after a 700 ms two-fist hold, and Desktop echoes the
-resulting absolute authority. Once armed, the right action hand alone maps
-sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
-and mute/unmute; those commands remain available while the Desktop window is
-unfocused. Scrolling deliberately requires a two-hand chord: the control palm
-stays open while the helper captures the image-aspect-corrected angle between
-both palm centers and a settled action fist changes that relative angle.
-Translating both hands together does not change the signal. The helper maps each
-fresh change from neutral directly to a bounded velocity without a dead zone or
-smoothing; Desktop applies that velocity through the conversation's existing
-long-message and history-scroll policy. Returning to the neutral angle stops
-movement, and releasing either posture ends the chord.
-A stationary action fist by itself remains the only positive reset
-between number commands. Releasing the scroll chord cannot become a numbered
-command until another fist reset, and tracking loss can neither rearm a command
-nor continue scrolling. While transcription is preparing or
-stopping, Desktop temporarily disables action authority but still permits the
-two-fist disarm gesture. Once listening and its initial mute state are
-authoritative, Desktop grants an action lease for that exact voice request.
-Disarming removes gesture authority without ending that request. Active events
-echo the exact voice request, and every helper event echoes the random
-supervisor session, so stale work cannot act on or describe later dictation.
-Scroll state is absolute, coalescible, and heartbeated while the chord remains
-valid. Desktop validates session, sequence, armed authority, and freshness
-before its frame loop applies continuous view movement. Status and progress
-never invoke an action. Desktop remains the owner of starting and
-ending the overall voice request, acknowledged microphone mute state, and
-conversation submission. Within an active request,
-`gsv-transcribe` owns authoritative utterance boundaries: it finalizes and
-replaces only the model stream while retaining microphone capture, request
-identity, and mute state. Desktop accepts
-the correlated utterance final, submits it through the ordinary conversation
-owner, and rebases the continuing voice draft; the same exact boundary lets
-Desktop delete one Unicode grapheme or clear only unsent voice-owned text while
-preserving typed anchors and attachments. A later partial begins on the new
-segment and cannot resurrect corrected text. Gesture send and correction never
-masquerade as terminal transcription events. Its runtime is the Rust helper
-plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
-the command vocabulary is owned by Rust rather than the upstream canned gesture
-classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
-dependency. The raw Linux and macOS host distributions and the unsigned macOS
-development application include `gsv-vision`, whose two checksum-verified
-TFLite models are embedded directly in the executable for offline,
-self-contained builds. They carry the model license and exact provenance as
-verified release assets. The application starts the helper in a disarmed state
-and provides visible Voice and Gestures affordances rather than depending on
-shell environment variables that Finder does not provide. A signed macOS
-application distribution still requires Developer ID signing and notarization.
+The installed binary is `gsv-desktop`; the app is GSV with bundle identity
+`space.gsv.desktop`. There is no second desktop renderer or gateway client.
+Desktop credentials are isolated from CLI and driver credentials. Only the
+bundled main window can invoke the narrow native bridge. Space changes reset
+native input and invalidate frontend control and credential writes.
 
-The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
-narrow `microphone list/use/default` operations. Its endpoint must be accessible
-only to the current OS user. Credentials, drafts, attachment paths, approval
-arguments, and conversation content never cross this IPC boundary. Bounded
-human-readable microphone names cross only the explicit microphone operations;
-they never enter general Desktop status.
+`desktop-native` supervises `gsv-transcribe` for local capture and speech
+inference, and `gsv-vision` for local camera capture, LiteRT/XNNPACK inference
+and authored gesture recognition. Audio, camera frames and landmarks stay in
+the helpers. Both features start only when explicitly enabled. The helper
+protocol carries bounded, session-scoped semantic intents and feedback.
+The frontend acknowledges pushed updates; it does not poll conversation state.
 
-`new` means Desktop performs an authenticated `proc.spawn`, then selects the
-returned Process only after its authoritative history handoff succeeds. If
-cancellation lands after the durable spawn but before selection, that Process
-can remain valid but unselected. `use` validates access to an existing PID
-before selection. Each asynchronous result is fenced by connection epoch, PID,
-and operation identity so output from the previous Process cannot mutate the
-new workspace.
+Hands-free has Off, Ready and Listening states. One finger starts or pauses
+listening; two sends, three deletes, four clears dictated text, and both fists
+exits hands-free. The thumb counts independently and any finger combination
+is accepted. A control palm and action fist scroll together. The tutorial uses
+lesson-scoped observations and accepts only its current gesture. Voice events
+retain request and segment identity so stale output cannot change a later draft.
+The input lease expires on suspension and is released when leaving Zen.
 
-## Desktop-managed machine enrollment
+Local control supports activation, redacted status, new Process creation,
+selection of an accessible Process, and microphone discovery and selection.
+The IPC server verifies OS user identity. Credentials, conversation text, drafts
+and attachment paths never cross this channel. Requests are correlated through
+a frontend channel. Cancellation, timeout, disconnect and reload invalidate
+pending work before UI mutations. If a Process spawn has already committed when
+cancelled, the Process remains durable and inspectable, without being selected.
+Microphone commands use the active Zen input owner and never start capture.
 
-Installing Desktop is sufficient to connect the local computer without making
-a user operate `gsvd` manually. After the first authenticated session, Desktop
-presents an explicit “Connect this computer” step with an editable suggested
-name. It derives the stable machine ID from that name with the same lowercase,
-48-character normalization as the Web Machines flow, keeps the original name as
-the display label, and rejects an existing ID or label. It saves the
-driver-bound credential and its issuing gateway/account atomically in
-`config.toml`, asks the bundled
-`gsv` executable to install the per-user service, then verifies and reloads
-`gsvd` through `daemon-protocol`. The credential never appears in process
-arguments. A failed install can be retried without minting another identity,
-and “not now” leaves chat available. Subsequent launches reuse that identity
-and never create another machine merely because the application restarted.
+Closing the window follows the same unsent-work guard and credential flush as
+Quit, stops local control, waits for helper shutdown and exits. A second launch
+focuses the existing window. The independent `gsvd` service keeps running.
 
-Desktop is the setup and control UI; `gsvd` remains the machine endpoint and
-owns its persistent driver connection. Closing Desktop does not disconnect the
-machine. Signing out of the user client and explicitly disconnecting the
-computer are separate actions: disconnect revokes the driver credential and
-stops the service. Neither normal enrollment nor background operation requires
-administrator or root access.
+## Machine enrollment
 
-The enrollment state machine and local control protocol are platform-neutral.
-OS integration stays behind narrow credential-store, service-manager, local-IPC,
-and permission-manager boundaries:
+Desktop offers Connect this computer after sign-in and through its space menu.
+The frontend creates the same ordinary device invitation as Fleet; the native
+host passes it on private stdin to `gsv pair - --preserve-cli-login --no-replace`.
+The CLI stores the driver credential in private `config.toml` and owns per-user
+service installation; `gsvd` owns the persistent machine connection. Existing
+bindings for this space and account resume automatically, while other bindings
+are preserved. Interrupted enrollment and failed service installation retain
+their durable identity for retry. Installed machine identities and services
+remain valid through the desktop upgrade.
 
-| Concern | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Credential storage | Keychain | Secret Service or an explicit protected-file backend | Credential Manager/DPAPI |
-| Background startup | `SMAppService` | systemd user service with an XDG fallback | per-user Startup Task |
-| Local IPC | Unix socket | Unix socket | named pipe |
-| Permissions | TCC | portals, PipeWire, and device access | Windows privacy APIs |
-
-The shared contract is a persistent machine credential, not any one OS storage
-API. The current host configuration stores it in the private, atomically
-replaced `config.toml`; the credential-store boundary remains available for a
-later packaging hardening without changing enrollment or daemon IPC. Local IPC
-is same-user, authenticated,
-versioned, and limited to typed setup, status, lifecycle, helper, and diagnostic
-operations. Camera frames and audio do not cross the control channel. Release
-packages include the matching daemon, helpers, models, and OS integration so a
-single application installation cannot assemble incompatible host components.
-
-Desktop may expose one optional operating-system status item for the complete
-local GSV experience: machine connectivity, voice state, gesture state, and
-their explicit controls. That is a Desktop surface in the macOS menu bar,
-Windows notification area, or a best-effort Linux StatusNotifier integration.
-`gsvd` remains a headless per-user service and never creates a second tray
-icon. The status item observes live daemon state through that typed local
-protocol. Reconnect and diagnostics use it directly; start and restart delegate
-to the bundled CLI's cross-platform per-user service manager. Gateway reconnect
-remains owned by Desktop's existing Gateway connection loop. The CLI and
-Desktop therefore share the same daemon and service-control boundaries instead
-of implementing platform commands in the menu layer.
+See [Desktop ownership](../../engineering/desktop.md) for the native boundary
+and [host installation](../how-to/install-host-apps.md) for distribution.
 
 ## Distribution and upgrades
 
@@ -250,7 +166,6 @@ for `gsv` and `gsvd`. Checksums cover every release asset, including the vision
 model license and provenance. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
-metadata, and local gesture models. The result is intentionally unsigned and
-unnotarized. Public distribution additionally requires Developer ID signing,
+metadata, and local gesture models. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.

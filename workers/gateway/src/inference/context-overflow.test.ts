@@ -25,7 +25,7 @@ describe("context pressure without a provider SDK", () => {
     expect(isContextOverflow(message({ errorMessage }))).toBe(true);
   });
 
-  it.each(["Throttling error: too many tokens", "Service unavailable: too many tokens", "rate limit: token limit exceeded", "too many requests", "invalid API key", "insufficient quota"])("does not compact for %s", (errorMessage) => {
+  it.each(["Throttling error: too many tokens", "Service unavailable: too many tokens", "rate limit: token limit exceeded", "too many requests", "invalid API key", "insufficient quota", "400 (no body)", "400 status code (no body)"])("does not compact for %s", (errorMessage) => {
     expect(isContextOverflow(message({ errorMessage }))).toBe(false);
   });
 

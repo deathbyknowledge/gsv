@@ -67,6 +67,23 @@ Examples:
 - Fleet processes: running/completed/error, label, owner and last activity
 - Fleet files: current target, path, dirty state and preview type
 
+## UI Copy And Disclosure
+
+Text should supply what the user needs now and cannot already infer from the interface.
+
+- Write for the user's next action or decision. Every label, sentence and control must serve an identifiable purpose.
+- Use the current screen, heading and visual demonstration as context. Avoid restating that context in subordinate labels.
+- Prefer action names for controls. Put gesture mechanics in demonstrations and focused instructions.
+- Write direct, natural instructions: action plus purpose. Avoid narrating obvious intermediate states.
+- Teach concepts where they first become necessary. Use contextual feedback for mistakes instead of front-loading explanations of internal rules.
+- Preserve information about non-obvious consequences, destructive actions and meaningful state changes.
+- Give each control a distinct purpose. Keep paired actions consistent in placement and appearance.
+- Create space by removing repetition and unnecessary controls before shrinking text or tightening spacing.
+- Before adding explanatory copy, consider whether clearer layout, naming or feedback would resolve the confusion.
+- When the user proposes a copy review, let them lead that review before making unsolicited edits.
+
+For example, inside a tutorial, repeating “practice” in every label adds no context. An animated hand can show a finger count while its guide button names the action. “Only dictated words clear; typed text stays” earns space because it explains a consequence the visual does not show.
+
 ## Keep Scope Boundaries
 
 Do not casually merge responsibilities because the data is nearby. If a concern belongs to another app, link to that app instead of re-implementing it.

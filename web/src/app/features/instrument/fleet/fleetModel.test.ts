@@ -18,7 +18,6 @@ import {
   humanCall,
   ledgerFromSysLines,
   visibleProcesses,
-  reconcileFleetSelection,
   fleetReferenceRow,
   isApprovalReference,
   referencedApproval,
@@ -40,7 +39,6 @@ describe("Fleet references and supported place actions", () => {
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {
     const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
     expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");
-    expect(reconcileFleetSelection(fleetReferenceRow(reference), fleetReferenceRow(reference), ["proc:another"])).toBe("proc:proc:child:123");
     expect(fleetReferenceRow("target:browser:profile")).toBe("target:browser:profile");
     expect(fleetReferenceRow(null)).toBeNull();
   });
@@ -146,14 +144,6 @@ describe("places", () => {
 });
 
 describe("processes", () => {
-  it.each(["proc:replaced", "target:removed"] as const)("retains an unavailable explicit reference %s until the person leaves it", (requested) => {
-    const rows = ["target:gsv", "proc:current"] as const;
-    expect(reconcileFleetSelection(requested, requested, [])).toBe(requested);
-    expect(reconcileFleetSelection(requested, requested, rows)).toBe(requested);
-    expect(reconcileFleetSelection(requested, requested, [...rows, requested])).toBe(requested);
-    expect(reconcileFleetSelection("proc:current", requested, rows)).toBe("proc:current");
-    expect(reconcileFleetSelection("proc:disappeared", requested, rows)).toBe("target:gsv");
-  });
   it("leads with the ship, then the most recently active", () => {
     const ordered = orderProcesses([
       process({ pid: "42", lastActiveAt: 10 }),

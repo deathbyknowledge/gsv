@@ -1,3 +1,4 @@
+import { gatewayHttpOrigin } from "../platform/gatewayOrigin";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { createPairingSecret } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -16,7 +17,7 @@ export async function createHumanInvitation(client: { account: { invite: Pick<GS
     window.sessionStorage.removeItem(pendingKey);
     throw new Error("This invitation has ended. Create another invitation to continue.");
   }
-  const url = new URL("/join", window.location.origin);
+  const url = new URL("/join", gatewayHttpOrigin());
   url.hash = new URLSearchParams({ id: attempt.id, secret: attempt.secret }).toString();
   return url.href;
 }

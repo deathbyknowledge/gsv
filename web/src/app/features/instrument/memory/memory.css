@@ -90,7 +90,7 @@
   cursor: pointer;
   border-left: 2px solid transparent;
 }
-.memory-rail .page:hover { background: var(--hover); }
+.memory-rail .page:hover, .memory-rail .page:focus { background: var(--hover); }
 .memory-rail .page.is-sel { color: var(--text-hi); border-left-color: var(--accent); background: var(--selected); }
 .memory-folder > summary {
   display: flex;
@@ -102,7 +102,7 @@
   list-style: none;
 }
 .memory-folder > summary::-webkit-details-marker { display: none; }
-.memory-folder > summary:hover { background: var(--hover); }
+.memory-folder > summary:hover, .memory-folder > summary:focus { background: var(--hover); }
 .memory-folder .tri { width: 1ch; flex: none; color: var(--faint); }
 .memory-folder.has-current > summary { color: var(--accent); }
 .memory-folder-pages { margin-left: 16px; border-left: 1px solid var(--border); }

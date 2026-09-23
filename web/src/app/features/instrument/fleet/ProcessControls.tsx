@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import type { ProcSpawnArgs } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";

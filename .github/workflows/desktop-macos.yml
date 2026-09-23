@@ -1,0 +1,80 @@
+name: macOS desktop
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-macos.yml'
+      - '.github/workflows/release.yml'
+      - 'host/Cargo.*'
+      - 'host/apps/desktop/**'
+      - 'host/apps/cli/**'
+      - 'host/apps/machine/**'
+      - 'host/crates/**'
+      - 'host/packaging/**'
+      - 'host/scripts/**'
+      - 'host/helpers/**'
+      - 'web/**'
+      - 'packages/gsv/**'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: macOS app (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: darwin-x64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Test macOS packaging
+        run: bash host/scripts/test-package-macos.sh
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: desktop-macos-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Install frontend dependencies
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+      - name: Build and package app
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: host/scripts/package-macos.sh --release --output release
+      - name: Check app permissions and executables
+        run: |
+          app="release/GSV.app"
+          plutil -lint "$app/Contents/Info.plist"
+          plutil -extract NSCameraUsageDescription raw "$app/Contents/Info.plist"
+          plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist"
+          for binary in gsv-desktop gsv gsvd gsv-transcribe gsv-vision; do
+            test -x "$app/Contents/MacOS/$binary"
+          done
+          codesign --verify --deep --strict "$app"
+          python3 host/scripts/check-transcriber.py "$app/Contents/MacOS/gsv-transcribe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gsv-desktop-${{ matrix.platform }}
+          path: release/*.zip
+          if-no-files-found: error

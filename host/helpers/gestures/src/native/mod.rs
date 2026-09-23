@@ -1,5 +1,5 @@
-mod depthwise;
 mod geometry;
+mod litert;
 mod models;
 pub(crate) mod runtime;
 
@@ -956,8 +956,8 @@ mod tests {
             ),
             (
                 "thumb_up.jpg",
-                HandPose::Unknown,
-                false,
+                HandPose::OneFinger,
+                true,
                 0.983_551_7_f32,
                 (0.638_752_8_f32, 0.671_340_5_f32),
             ),

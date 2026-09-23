@@ -186,7 +186,7 @@ export const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 
 export const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 
-export const COMPACTION_SUMMARY_MAX_TOKENS = 768;
+export const COMPACTION_SUMMARY_MAX_TOKENS = 4_096;
 
 export const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 

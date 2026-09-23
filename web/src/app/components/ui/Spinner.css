@@ -1,15 +1,25 @@
 /* Ported from Spinner.dc.html — values transcribed verbatim. */
 .gsv-spinner {
-  display: inline-flex;
+  position: relative;
+  display: inline-block;
   flex: none;
+  aspect-ratio: 1;
+  line-height: 0;
   vertical-align: middle;
   overflow: hidden;
 }
 .gsv-spinner .gsv-spinner-orbit {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--spinner-stage-size);
+  height: var(--spinner-stage-size);
+  min-width: 0;
   min-height: 0;
-  aspect-ratio: auto;
+  aspect-ratio: 1;
+  /* Lay out the glyphs at their native font size, then scale both axes together. */
+  transform: translate(-50%, -50%) scale(var(--spinner-scale));
+  transform-origin: center;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -18,7 +28,12 @@
   --ascii-foreground-glow: none;
 }
 .gsv-spinner .gsv-ascii-galaxy-nebula, .gsv-spinner .gsv-ascii-galaxy-stars { display: none; }
-.gsv-spinner .gsv-ascii-galaxy-foreground { font-family: "Departure Mono", ui-monospace, monospace; }
+.gsv-spinner .gsv-ascii-galaxy-foreground {
+  font-family: "Departure Mono", ui-monospace, monospace;
+  font-weight: 400;
+  font-style: normal;
+  word-spacing: 0;
+}
 .gsv-loading-state { display: inline-flex; align-items: center; gap: 9px; max-width: 100%; }
 .gsv-loading-state > span:last-child { min-width: 0; }
 .gsv-loading-state.is-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; box-sizing: border-box; padding: 20px 0; gap: 12px; text-align: center; }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useQueryClient } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useDeleteConsoleMachine } from "../../../services/system/useConsoleData";
@@ -8,6 +9,7 @@ import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { placeActions, type Place } from "./fleetModel";
 
 export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: number | null; focusPair: boolean }) {
+  const active = useViewActive();
   const { connected } = useGateway();
   const { pairing } = useDevicePairing();
   const queryClient = useQueryClient();
@@ -21,12 +23,12 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
   const remove = useDeleteConsoleMachine();
 
   useEffect(() => {
-    if (focusPair && allowed.pair && connected && !focused.current) {
+    if (active && focusPair && allowed.pair && connected && !focused.current) {
       pairButton.current?.focus();
       focused.current = true;
     }
-  }, [focusPair, allowed.pair, connected]);
-  useEffect(() => { if (mode === "forget") confirmInput.current?.focus(); }, [mode]);
+  }, [active, focusPair, allowed.pair, connected]);
+  useEffect(() => { if (active && mode === "forget") confirmInput.current?.focus(); }, [mode]);
 
   if (!allowed.pair && !allowed.forget) return null;
   return <section class="fleet-place-actions" onKeyDown={(event) => {

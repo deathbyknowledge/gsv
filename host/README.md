@@ -7,7 +7,7 @@ the GSV control plane.
 host/
 ├── apps/
 │   ├── cli/       # `gsv` operator client
-│   ├── desktop/   # `gsv-desktop` GPUI application
+│   ├── desktop/   # `gsv-desktop` shared Instrument application
 │   └── machine/   # `gsvd` machine driver
 ├── helpers/
 │   ├── gestures/  # isolated camera and gesture process
@@ -15,6 +15,7 @@ host/
 └── crates/
     ├── config/
     ├── daemon-protocol/
+    ├── desktop-native/
     ├── desktop-protocol/
     ├── gateway-client/
     └── gesture-protocol/
@@ -29,6 +30,8 @@ for ownership and lifecycle details.
 `host/` is a self-contained Cargo workspace. From the repository root:
 
 ```bash
+npm run gsv:build
+npm run build --workspace web -- --config vite.desktop.config.ts
 cd host
 cargo build --workspace
 ```
@@ -37,7 +40,7 @@ Build artifacts are written to `host/target/`. `workers/ripgit/` is a separate R
 project with its own manifest and lockfile.
 
 On macOS, assemble all host executables, the application metadata, the icon,
-and the local gesture models into one unsigned development application:
+and the local gesture models into one ad-hoc signed development application:
 
 ```bash
 ./host/scripts/package-macos.sh --debug

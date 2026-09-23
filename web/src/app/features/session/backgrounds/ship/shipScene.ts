@@ -1,12 +1,11 @@
 import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../components/ui/AsciiAnimation";
 import type { ColorTheme } from "../../../../components/ui/useColorTheme";
 import { buildOpenCountry, sampleShipSurface, type ShipModel, type ShipPoint } from "./openCountry";
-import { rotationMatrix, ShipRaster } from "./shipRaster";
+import { rotationMatrix, AsciiMeshRaster } from "../../../../components/ui/asciiMesh";
 
 const COLS = 160;
 const ROWS = 80;
-const RAMP = " .,:;irsXA253hMHGS#9B&@";
-const INK_RAMP = " .,:;-=+xX%#@";
+const PROJECTION = { centerX: 0.43, centerY: 0.51, aspect: 1.62, perspective: 0.035 };
 const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 const smooth = (start: number, end: number, time: number) => {
   const amount = Math.max(0, Math.min(1, (time - start) / (end - start)));
@@ -14,8 +13,8 @@ const smooth = (start: number, end: number, time: number) => {
 };
 
 export function createShipScene(arrival: boolean): AsciiAnimationScene {
-  const raster = new ShipRaster(COLS, ROWS);
-  let particles: ShipRaster | undefined;
+  const raster = new AsciiMeshRaster(COLS, ROWS, PROJECTION);
+  let particles: AsciiMeshRaster | undefined;
   let points: ShipPoint[] | undefined;
   let model: ShipModel;
   return {
@@ -39,7 +38,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
       const ignition = smooth(1.3, 4.1, time);
       raster.clear();
       if (surface > 0) raster.mesh(model.mesh, matrix, unit, bob, ignition);
-      const drawParticle = (point: ShipPoint, target: ShipRaster) => {
+      const drawParticle = (point: ShipPoint, target: AsciiMeshRaster) => {
         const formed = smooth(0.3 + point.delay, 3.2 + point.delay, time);
         if (point.noise > 0.07 + formed * 0.93) return;
         const swirl = (1 - formed) * 0.9;
@@ -63,7 +62,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
         target.splat(column, row, z, Math.min(1, light), 1.15);
       };
       if (surface < 1) {
-        particles ??= new ShipRaster(COLS, ROWS);
+        particles ??= new AsciiMeshRaster(COLS, ROWS, PROJECTION);
         points ??= sampleShipSurface(model.mesh);
         particles.clear();
         for (const point of points) drawParticle(point, particles);
@@ -71,40 +70,7 @@ export function createShipScene(arrival: boolean): AsciiAnimationScene {
       }
       raster.glow(model.driveGlow, matrix, unit, bob, ignition);
 
-      const cells = raster.resolve();
-      const ink = palette === "light";
-      const ramp = ink ? INK_RAMP : RAMP;
-      const material: string[] = [], dust: string[] = [], highlights: string[] = [];
-      for (let row = 0; row < ROWS; row++) {
-        let foreground = "", nebula = "", stars = "";
-        for (let column = 0; column < COLS; column++) {
-          const cell = row * COLS + column;
-          const light = cells.light[cell];
-          const coverage = cells.coverage[cell];
-          let tone = light;
-          let density = light;
-          if (ink) {
-            if (coverage > 0) {
-              const shade = Math.max(0, Math.min(1, 1 - light / coverage));
-              // Pale faces keep substantial strokes; geometry coverage softens their edges.
-              tone = Math.max(0.09, shade);
-              density = coverage * mix(0.55, 1, shade);
-            } else {
-              // Empty space stays blank and exhaust retains its soft falloff.
-              tone = light * 0.18;
-              density = tone;
-            }
-          }
-          const glyph = ramp[Math.min(ramp.length - 1, Math.floor(density * ramp.length))];
-          nebula += tone > 0.06 && tone < 0.35 ? glyph : " ";
-          foreground += tone >= 0.35 && tone < 0.8 ? glyph : " ";
-          stars += tone >= 0.8 ? glyph : " ";
-        }
-        material.push(foreground);
-        dust.push(nebula);
-        highlights.push(stars);
-      }
-      return { foreground: material.join("\n"), nebula: dust.join("\n"), stars: highlights.join("\n") };
+      return raster.frame(palette);
     },
   };
 }

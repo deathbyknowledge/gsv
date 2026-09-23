@@ -1,5 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useRef } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
@@ -8,6 +10,7 @@ import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKe
 import { referencedApproval } from "./fleetModel";
 
 export function FleetApproval({ pid, requestId, runId }: { pid: string; requestId?: string; runId?: string }) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const queryKey = ["fleet", "pending-hil", pid, requestId ?? null, runId ?? null];
@@ -32,11 +35,11 @@ export function FleetApproval({ pid, requestId, runId }: { pid: string; requestI
     },
   });
   useEffect(() => {
-    if (requestId && !focused.current && !pending.isPending && !pending.isFetching) {
+    if (active && requestId && !focused.current && !pending.isPending && !pending.isFetching) {
       (request && !pending.isError ? approve.current : region.current)?.focus();
       focused.current = true;
     }
-  }, [requestId, pending.isPending, pending.isFetching, pending.isError, request]);
+  }, [active, requestId, pending.isPending, pending.isFetching, pending.isError, request]);
   const decisionApplies = !request || decide.variables?.requestId === request.requestId;
   const ready = connected && !!request && !pending.isError && !pending.isFetching && !decide.isPending && !(decide.isSuccess && decisionApplies);
 

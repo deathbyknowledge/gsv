@@ -71,14 +71,14 @@ fn persist_gateway_overrides(
     let changed = ConfigFile::<CliConfig>::new(config_path).update(|local_cfg| {
         let mut changed = false;
         if let Some(url) = gateway_url_override {
-            if local_cfg.gateway.url.as_deref() != Some(url) {
-                local_cfg.gateway.url = Some(url.to_string());
+            if local_cfg.device.gateway_url.as_deref() != Some(url) {
+                local_cfg.device.gateway_url = Some(url.to_string());
                 changed = true;
             }
         }
         if let Some(username) = gateway_username_override {
-            if local_cfg.gateway.username.as_deref() != Some(username) {
-                local_cfg.gateway.username = Some(username.to_string());
+            if local_cfg.device.gateway_username.as_deref() != Some(username) {
+                local_cfg.device.gateway_username = Some(username.to_string());
                 changed = true;
             }
         }

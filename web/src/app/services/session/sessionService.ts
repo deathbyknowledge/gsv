@@ -82,36 +82,45 @@ export type SessionService = {
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
-  lock: (reason?: string) => void;
+  lock: (reason?: string) => Promise<void>;
   start: () => Promise<void>;
+  dispose?: () => void;
 };
 
-function readStored(key: string): string | null {
+export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+export type SessionServiceOptions = {
+  url?: string;
+  storage?: SessionStorage;
+  onboarding?: boolean;
+};
+
+function readStored(key: string, storage?: SessionStorage): string | null {
   try {
-    return window.localStorage.getItem(key);
+    return (storage ?? window.localStorage).getItem(key);
   } catch {
     return null;
   }
 }
 
-function storeValue(key: string, value: string): void {
+function storeValue(key: string, value: string, storage?: SessionStorage): void {
   try {
-    window.localStorage.setItem(key, value);
+    (storage ?? window.localStorage).setItem(key, value);
   } catch {
     // Ignore storage failures.
   }
 }
 
-function removeValue(key: string): void {
+function removeValue(key: string, storage?: SessionStorage): void {
   try {
-    window.localStorage.removeItem(key);
+    (storage ?? window.localStorage).removeItem(key);
   } catch {
     // Ignore storage failures.
   }
 }
 
-function readPersistedToken(): PersistedSessionToken | null {
-  const raw = readStored(STORAGE_SESSION_TOKEN);
+function readPersistedToken(storage?: SessionStorage): PersistedSessionToken | null {
+  const raw = readStored(STORAGE_SESSION_TOKEN, storage);
   if (!raw) {
     return null;
   }
@@ -123,8 +132,8 @@ function readPersistedToken(): PersistedSessionToken | null {
   }
 }
 
-function readPersistedRevokes(): string[] {
-  const raw = readStored(STORAGE_PENDING_REVOKES);
+function readPersistedRevokes(storage?: SessionStorage): string[] {
+  const raw = readStored(STORAGE_PENDING_REVOKES, storage);
   if (!raw) {
     return [];
   }
@@ -136,9 +145,9 @@ function readPersistedRevokes(): string[] {
   }
 }
 
-function storePersistedToken(token: PersistedSessionToken): void {
+function storePersistedToken(token: PersistedSessionToken, storage?: SessionStorage): void {
   try {
-    window.localStorage.setItem(STORAGE_SESSION_TOKEN, JSON.stringify(token));
+    (storage ?? window.localStorage).setItem(STORAGE_SESSION_TOKEN, JSON.stringify(token));
   } catch {
     // Ignore storage failures.
   }
@@ -230,22 +239,25 @@ async function probeSetupMode(client: SessionClient, url: string): Promise<boole
   }
 }
 
-export function createSessionService(client: SessionClient): SessionService {
+export function createSessionService(client: SessionClient, options: SessionServiceOptions = {}): SessionService {
+  const gatewayUrl = () => options.url ?? deriveGatewayUrlFromOrigin();
+  const storage = options.storage;
+  let disposed = false;
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
-  let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
-  let installationOnboardingToken = readInstallationOnboardingToken();
+  let currentSessionToken: PersistedSessionToken | null = readPersistedToken(storage);
+  let installationOnboardingToken = options.onboarding === false ? null : readInstallationOnboardingToken();
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
-    url: deriveGatewayUrlFromOrigin(),
-    username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME) ?? "",
+    url: gatewayUrl(),
+    username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME, storage) ?? "",
     connectionId: null,
     server: null,
     message: "Booting up...",
   };
 
-  let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
+  let pendingRevokes = Array.from(new Set(readPersistedRevokes(storage)));
   let refreshTimerId: number | null = null;
   let reconnectTimerId: number | null = null;
   let reconnectStableTimerId: number | null = null;
@@ -254,6 +266,7 @@ export function createSessionService(client: SessionClient): SessionService {
   let reconnectGeneration = 0;
 
   const emit = (): void => {
+    if (disposed) return;
     for (const listener of listeners) {
       listener(snapshot);
     }
@@ -262,6 +275,7 @@ export function createSessionService(client: SessionClient): SessionService {
   const setSnapshot = (
     next: Omit<SessionSnapshot, "server"> & { server?: ServerBuild | null },
   ): void => {
+    if (disposed) return;
     snapshot = {
       ...next,
       server: next.server === undefined && next.phase === "ready"
@@ -302,17 +316,18 @@ export function createSessionService(client: SessionClient): SessionService {
 
   const clearStoredSessionToken = (): void => {
     currentSessionToken = null;
-    removeValue(STORAGE_SESSION_TOKEN);
+    removeValue(STORAGE_SESSION_TOKEN, storage);
     clearRefreshTimer();
   };
 
   const persistPendingRevokes = (): void => {
+    if (disposed) return;
     if (pendingRevokes.length === 0) {
-      removeValue(STORAGE_PENDING_REVOKES);
+      removeValue(STORAGE_PENDING_REVOKES, storage);
       return;
     }
 
-    storeValue(STORAGE_PENDING_REVOKES, JSON.stringify(pendingRevokes));
+    storeValue(STORAGE_PENDING_REVOKES, JSON.stringify(pendingRevokes), storage);
   };
 
   const queueRevoke = (tokenId: string): void => {
@@ -326,33 +341,28 @@ export function createSessionService(client: SessionClient): SessionService {
   };
 
   const drainPendingRevokes = async (reason: string): Promise<void> => {
-    if (!client.isConnected() || pendingRevokes.length === 0) {
-      return;
-    }
-
-    const remaining: string[] = [];
-    for (const tokenId of pendingRevokes) {
+    const generation = reconnectGeneration;
+    if (disposed || !client.isConnected() || pendingRevokes.length === 0) return;
+    const requestedRevokes = [...pendingRevokes];
+    for (const tokenId of requestedRevokes) {
+      if (disposed || generation !== reconnectGeneration || !client.isConnected()) return;
       try {
         const revoked = await revokeSessionToken(client, tokenId, reason);
-        if (!revoked) {
-          remaining.push(tokenId);
+        if (disposed || generation !== reconnectGeneration) return;
+        if (revoked) {
+          pendingRevokes = pendingRevokes.filter((id) => id !== tokenId);
+          persistPendingRevokes();
         }
       } catch {
-        remaining.push(tokenId);
-        if (!client.isConnected()) {
-          break;
-        }
+        // Keep failed and unattempted revocations for a later authenticated connection.
       }
     }
-
-    pendingRevokes = Array.from(new Set(remaining));
-    persistPendingRevokes();
   };
 
   const scheduleRefresh = (token: PersistedSessionToken): void => {
     clearRefreshTimer();
 
-    if (token.expiresAt === null) {
+    if (disposed || snapshot.phase !== "ready" || token.expiresAt === null) {
       return;
     }
 
@@ -364,7 +374,8 @@ export function createSessionService(client: SessionClient): SessionService {
   };
 
   const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<void> => {
-    if (!client.isConnected()) {
+    const generation = reconnectGeneration;
+    if (disposed || snapshot.phase !== "ready" || !client.isConnected()) {
       return;
     }
 
@@ -379,16 +390,18 @@ export function createSessionService(client: SessionClient): SessionService {
     try {
       nextToken = await createUserSessionToken(client, nextExpiry);
     } catch {
+      if (disposed || generation !== reconnectGeneration) return;
       if (reason === "scheduled" && currentSessionToken?.expiresAt && currentSessionToken.expiresAt <= Date.now()) {
         clearStoredSessionToken();
       }
       return;
     }
 
+    if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready") return;
     const previousToken = currentSessionToken;
     const persisted = toPersistedToken(username, nextToken);
     currentSessionToken = persisted;
-    storePersistedToken(persisted);
+    storePersistedToken(persisted, storage);
     scheduleRefresh(persisted);
 
     if (previousToken && previousToken.tokenId !== nextToken.tokenId) {
@@ -449,7 +462,7 @@ export function createSessionService(client: SessionClient): SessionService {
     clearRefreshTimer();
     setSnapshot({
       phase: "ready",
-      url: deriveGatewayUrlFromOrigin(),
+      url: gatewayUrl(),
       username: token.username,
       connectionId: null,
       message: "Reconnecting...",
@@ -457,7 +470,7 @@ export function createSessionService(client: SessionClient): SessionService {
 
     try {
       const result = await client.connect({
-        url: deriveGatewayUrlFromOrigin(),
+        url: gatewayUrl(),
         username: token.username,
         token: token.token,
       });
@@ -467,7 +480,7 @@ export function createSessionService(client: SessionClient): SessionService {
         return;
       }
 
-      storeValue(STORAGE_USERNAME, token.username);
+      storeValue(STORAGE_USERNAME, token.username, storage);
       setSnapshot({ ...snapshot, server: result.server });
       scheduleRefresh(token);
       await drainPendingRevokes("ui session cleanup");
@@ -482,7 +495,7 @@ export function createSessionService(client: SessionClient): SessionService {
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
-          url: deriveGatewayUrlFromOrigin(),
+          url: gatewayUrl(),
           username: token.username,
           connectionId: null,
           message: null,
@@ -543,7 +556,8 @@ export function createSessionService(client: SessionClient): SessionService {
     }, delay);
   };
 
-  client.onStatus((status) => {
+  const unsubscribeStatus = client.onStatus((status) => {
+    if (disposed) return;
     if (status.state === "connected") {
       reconnectInFlight = false;
       clearReconnectTimer();
@@ -582,8 +596,10 @@ export function createSessionService(client: SessionClient): SessionService {
   });
 
   const login = async (input: SessionLoginInput): Promise<ConnectResult> => {
+    if (disposed) throw new Error("Session ended");
     cancelSilentReconnect();
-    const url = deriveGatewayUrlFromOrigin();
+    const generation = reconnectGeneration;
+    const url = gatewayUrl();
     const username = input.username.trim();
     const password = input.password ?? "";
     const token = input.token?.trim() ?? "";
@@ -604,7 +620,8 @@ export function createSessionService(client: SessionClient): SessionService {
 
     try {
       const result = await client.connect(options);
-      storeValue(STORAGE_USERNAME, username);
+      if (disposed || generation !== reconnectGeneration) throw new Error("Session ended");
+      storeValue(STORAGE_USERNAME, username, storage);
 
       setSnapshot({
         phase: "ready",
@@ -620,6 +637,7 @@ export function createSessionService(client: SessionClient): SessionService {
 
       return result;
     } catch (error) {
+      if (disposed || generation !== reconnectGeneration) throw error;
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
@@ -645,7 +663,7 @@ export function createSessionService(client: SessionClient): SessionService {
   const setup = async (input: SessionSetupInput): Promise<SysSetupResult> => {
     cancelSilentReconnect();
     const setupGeneration = reconnectGeneration;
-    const url = deriveGatewayUrlFromOrigin();
+    const url = gatewayUrl();
     const username = input.username.trim();
     const password = input.password.trim();
 
@@ -684,44 +702,44 @@ export function createSessionService(client: SessionClient): SessionService {
     }
     if (setupGeneration !== reconnectGeneration) return result;
 
-    storeValue(STORAGE_USERNAME, username);
+    storeValue(STORAGE_USERNAME, username, storage);
     await login({ username, password });
     return result;
   };
 
-  const lock = (reason = "Session locked"): void => {
+  const lock = async (reason = "Session locked"): Promise<void> => {
     cancelSilentReconnect();
     const lockGeneration = reconnectGeneration;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
-    clearStoredSessionToken();
 
     if (previousTokenId) {
       queueRevoke(previousTokenId);
     }
+    clearStoredSessionToken();
 
     setSnapshot({
       phase: "locked",
-      url: deriveGatewayUrlFromOrigin(),
+      url: gatewayUrl(),
       username: snapshot.username,
       connectionId: null,
       message: reason,
     });
 
-    void (async () => {
-      await Promise.race([
-        drainPendingRevokes("ui session lock"),
-        waitFor(LOCK_REVOKE_WAIT_MS),
-      ]);
+    await Promise.race([
+      drainPendingRevokes("ui session lock"),
+      waitFor(LOCK_REVOKE_WAIT_MS),
+    ]);
 
-      if (reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
-        client.disconnect();
-      }
-    })();
+    if (!disposed && reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
+      client.disconnect();
+    }
   };
 
   const start = async (): Promise<void> => {
+    if (disposed) return;
     cancelSilentReconnect();
-    const url = deriveGatewayUrlFromOrigin();
+    const generation = reconnectGeneration;
+    const url = gatewayUrl();
     const persisted = currentSessionToken;
 
     if (installationOnboardingToken) {
@@ -737,6 +755,7 @@ export function createSessionService(client: SessionClient): SessionService {
 
     if (!persisted) {
       const setupRequired = await probeSetupMode(client, url);
+      if (disposed || generation !== reconnectGeneration) return;
       if (setupRequired) {
         setSnapshot({
           phase: "setup",
@@ -760,6 +779,7 @@ export function createSessionService(client: SessionClient): SessionService {
     if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
       clearStoredSessionToken();
       const setupRequired = await probeSetupMode(client, url);
+      if (disposed || generation !== reconnectGeneration) return;
       if (setupRequired) {
         setSnapshot({
           phase: "setup",
@@ -794,6 +814,7 @@ export function createSessionService(client: SessionClient): SessionService {
         username: persisted.username,
         token: persisted.token,
       });
+      if (disposed || generation !== reconnectGeneration) return;
 
       setSnapshot({
         phase: "ready",
@@ -807,6 +828,7 @@ export function createSessionService(client: SessionClient): SessionService {
       await drainPendingRevokes("ui session cleanup");
       scheduleRefresh(persisted);
     } catch (error) {
+      if (disposed || generation !== reconnectGeneration) return;
       clearStoredSessionToken();
       if (isSetupRequiredError(error)) {
         setSnapshot({
@@ -843,5 +865,13 @@ export function createSessionService(client: SessionClient): SessionService {
     setup,
     lock,
     start,
+    dispose: () => {
+      disposed = true;
+      cancelSilentReconnect();
+      clearRefreshTimer();
+      unsubscribeStatus();
+      listeners.clear();
+      client.disconnect();
+    },
   };
 }

@@ -581,6 +581,7 @@ main() {
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
+        "gsv-vision-THIRD_PARTY.md"
     )
     TARGETS=(
         "gsv"
@@ -591,8 +592,9 @@ main() {
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
+        "gsv-vision-THIRD_PARTY.md"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0)
+    EXECUTABLES=(1 1 1 1 1 0 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -652,6 +654,10 @@ main() {
     echo "  CLI login: gsv --url wss://your-space.example/ws auth login"
     echo "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
     echo "  Open: gsv desktop"
+    if [ "$OS" = "linux" ]; then
+        echo "  Desktop runtime: WebKitGTK 4.1 and GStreamer base/good/libav plugins."
+        echo "  Setup: https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/install-host-apps.md#desktop"
+    fi
     echo ""
 }
 

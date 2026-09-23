@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleProcesses } from "../../../services/system/consoleService";

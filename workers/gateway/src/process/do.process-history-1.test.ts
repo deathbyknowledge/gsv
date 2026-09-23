@@ -287,7 +287,7 @@ describe("process history", () => {
         lastMessageId: stats.lastMessageId,
         provider: "workers-ai",
         model: "@cf/test/model",
-        contextWindowTokens: 11_000,
+        contextWindowTokens: 20_000,
         maxOutputTokens: 1_000,
         measurement: {
           estimatedInputTokens: 8_000,
@@ -912,7 +912,7 @@ describe("process history", () => {
       }, async (request: any) => {
         summaryCalls += 1;
         expect(request.options).toMatchObject({
-          maxTokens: 768,
+          maxTokens: 4096,
           reasoning: "off",
           timeoutMs: 180000,
         });

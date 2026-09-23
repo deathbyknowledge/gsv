@@ -1,5 +1,6 @@
 import type { JsonValue, ResponsibilityRecord, ResponsibilitySourcePolicy, ScheduleRecord } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -48,9 +49,9 @@ function nextTime(value: number, now: number): string {
   const minutes = Math.ceil((value - now) / 60_000);
   return minutes < 60 ? `in ${minutes}m` : minutes < 1440 ? `in ${Math.ceil(minutes / 60)}h` : `in ${Math.ceil(minutes / 1440)}d`;
 }
-type WorkProps = { work: Work; account?: ConsoleAccount; processes: ConsoleProcess[]; selected: FleetRow | null; onSelect: (row: FleetRow) => void; onCreate: () => void; onSources: () => void; now: number };
+type WorkProps = { work: Work; account?: ConsoleAccount; processes: ConsoleProcess[]; onSelect: (row: FleetRow) => void; onCreate: () => void; onSources: () => void; now: number };
 
-export function WorkSections({ work, account, processes, selected, onSelect, onCreate, onSources, now }: WorkProps) {
+export function WorkSections({ work, account, processes, onSelect, onCreate, onSources, now }: WorkProps) {
   const query = work.history ? work.past : work.current;
   const filter = processes.find((process) => process.pid === work.filterPid);
   const records = work.filterPid ? work.records.filter((record) => assignedTo(record, filter ?? { pid: work.filterPid!, personal: false })) : work.records;
@@ -64,7 +65,7 @@ export function WorkSections({ work, account, processes, selected, onSelect, onC
       </div>
       {query.error && <p class="error" role="alert">{query.error.message}</p>}
       {account && !canConfigure(account, "r12y.list") ? <p class="fleet-empty">Your account cannot list responsibilities.</p> : query.isPending ? <LoadingState>Loading responsibilities…</LoadingState> : <>
-        {records.length ? <div class="tablewrap"><table><thead><tr><th>Responsibility</th><th>Assignee</th><th>State</th><th>Next check</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} data-row={`work:${record.id}`} tabIndex={0} class={selected === `work:${record.id}` ? "is-sel" : ""} onClick={() => onSelect(`work:${record.id}`)}>
+        {records.length ? <div class="tablewrap"><table><thead><tr><th>Responsibility</th><th>Assignee</th><th>State</th><th>Next check</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} data-row={`work:${record.id}`} tabIndex={0} onClick={() => onSelect(`work:${record.id}`)}>
           <td class="grow">{record.title}</td><td class="dim">{name(record)}</td><td><span class={`dot ${record.state === "active" ? "is-live" : record.state === "waiting" ? "is-warn" : record.state === "resolved" ? "is-on" : ""}`} />{record.state}</td><td class="dim">{record.nextCheckAtMs ? nextTime(record.nextCheckAtMs, now) : "-"}</td>
         </tr>)}</tbody></table></div> : <p class="fleet-empty">{work.history ? "No completed responsibilities here yet." : work.filterPid ? "No current responsibilities for this process." : "Nothing outstanding. Promises and follow-ups appear here."}</p>}
         {query.hasNextPage && <button class="fleet-heading-action" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "loading…" : "show more responsibilities"}</button>}
@@ -73,7 +74,7 @@ export function WorkSections({ work, account, processes, selected, onSelect, onC
     <section class="fleet-block" aria-label="Routines">
       <h2><i />Routines<button type="button" class="fleet-heading-action" onClick={onCreate} disabled={!account || !canConfigure(account, "sched.add")}>new routine</button><span class="count">{work.routines.data?.pages[0]?.count ?? "-"}</span></h2>
       {work.routines.error && <p class="error" role="alert">{work.routines.error.message}</p>}
-      {account && !canConfigure(account, "sched.list") ? <p class="fleet-empty">Your account cannot list routines.</p> : work.routines.isPending ? <LoadingState>Loading routines…</LoadingState> : work.schedules.length ? <div class="tablewrap"><table><thead><tr><th>Routine</th><th>Repeat</th><th>State</th><th>Next run</th></tr></thead><tbody>{work.schedules.map((schedule) => <tr key={schedule.id} tabIndex={0} data-row={`routine:${schedule.id}`} class={selected === `routine:${schedule.id}` ? "is-sel" : ""} onClick={() => onSelect(`routine:${schedule.id}`)}>
+      {account && !canConfigure(account, "sched.list") ? <p class="fleet-empty">Your account cannot list routines.</p> : work.routines.isPending ? <LoadingState>Loading routines…</LoadingState> : work.schedules.length ? <div class="tablewrap"><table><thead><tr><th>Routine</th><th>Repeat</th><th>State</th><th>Next run</th></tr></thead><tbody>{work.schedules.map((schedule) => <tr key={schedule.id} tabIndex={0} data-row={`routine:${schedule.id}`} onClick={() => onSelect(`routine:${schedule.id}`)}>
         <td class="grow">{schedule.name}</td><td class="dim grow">{cadenceLabel(schedule.expression)}</td><td><span class={`dot ${schedule.state.runningAtMs ? "is-live" : schedule.state.lastStatus === "error" ? "is-err" : schedule.enabled ? "is-on" : ""}`} />{schedule.state.runningAtMs ? "running" : !schedule.enabled ? "paused" : schedule.state.lastStatus === "error" ? "failed" : schedule.state.nextRunAtMs ? "ready" : "finished"}</td><td class="dim">{schedule.state.nextRunAtMs ? nextTime(schedule.state.nextRunAtMs, now) : "-"}</td>
       </tr>)}</tbody></table></div> : <p class="fleet-empty">Give Ship something to take care of regularly.</p>}
       {work.routines.hasNextPage && <button class="fleet-heading-action" disabled={work.routines.isFetchingNextPage} onClick={() => void work.routines.fetchNextPage()}>show more routines</button>}

@@ -46,6 +46,10 @@ rustls = [
     "rustls_crate",
 ]
 
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+
 [[bin]]
 name = "gsvd"
 path = "src/main.rs"

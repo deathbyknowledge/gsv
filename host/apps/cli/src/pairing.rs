@@ -5,6 +5,7 @@ use gsv::device_service;
 use host_config::{ConfigError, ConfigFile};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 use url::Url;
@@ -13,6 +14,36 @@ use uuid::Uuid;
 const PENDING_KEY: &str = "pairing_pending";
 const RECEIPT_KEY: &str = "pairing_id";
 type PairResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Default)]
+pub(crate) struct PairOptions {
+    pub no_install: bool,
+    pub preserve_cli_login: bool,
+    pub no_replace: bool,
+}
+
+fn read_invitation(input: impl Read) -> PairResult<String> {
+    let mut code = String::new();
+    input.take(4097).read_to_string(&mut code)?;
+    if code.len() > 4096 || code.trim().is_empty() {
+        return Err("Invalid GSV pairing code on stdin".into());
+    }
+    Ok(code)
+}
+
+fn protect_existing_machine(
+    config: &CliConfig,
+    invite: &PairingCode,
+    no_replace: bool,
+) -> PairResult<()> {
+    if no_replace && config.device.token.is_some() && !already_paired(config, invite) {
+        return Err(
+            "This computer already has a machine connection. Its credential was not replaced."
+                .into(),
+        );
+    }
+    Ok(())
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -132,8 +163,11 @@ fn pairing_config_file() -> PairResult<ConfigFile<CliConfig>> {
     Ok(ConfigFile::new(path))
 }
 
-fn update_pairing_config<T>(change: impl FnOnce(&mut CliConfig) -> PairResult<T>) -> PairResult<T> {
-    Ok(pairing_config_file()?.update(|config| {
+fn update_pairing_config<T>(
+    file: &ConfigFile<CliConfig>,
+    change: impl FnOnce(&mut CliConfig) -> PairResult<T>,
+) -> PairResult<T> {
+    Ok(file.update(|config| {
         change(config).map_err(|error| ConfigError::Io(std::io::Error::other(error.to_string())))
     })?)
 }
@@ -141,15 +175,29 @@ fn update_pairing_config<T>(change: impl FnOnce(&mut CliConfig) -> PairResult<T>
 pub(crate) async fn run_pair(
     code: Option<String>,
     workspace: Option<PathBuf>,
-    no_install: bool,
+    options: PairOptions,
 ) -> PairResult<()> {
-    let config = pairing_config_file()?.load()?;
+    let code = match code.as_deref() {
+        Some("-") => Some(read_invitation(std::io::stdin().lock())?),
+        _ => code,
+    };
+    pair_using(&pairing_config_file()?, code, workspace, options).await
+}
+
+async fn pair_using(
+    file: &ConfigFile<CliConfig>,
+    code: Option<String>,
+    workspace: Option<PathBuf>,
+    options: PairOptions,
+) -> PairResult<()> {
+    let config = file.load()?;
     let saved = pending(&config)?;
     let raw = code
         .or_else(|| saved.as_ref().map(|value| value.code.clone()))
         .ok_or("Copy an invitation from GSV and run: gsv pair CODE")?;
     let raw = raw.trim().to_string();
     let invite = decode(&raw)?;
+    protect_existing_machine(&config, &invite, options.no_replace)?;
     let workspace = workspace
         .or(config.device.workspace.clone())
         .or_else(dirs::home_dir)
@@ -160,7 +208,8 @@ pub(crate) async fn run_pair(
     }
 
     if !already_paired(&config, &invite) {
-        let prepared = update_pairing_config(|local| {
+        let prepared = update_pairing_config(file, |local| {
+            protect_existing_machine(local, &invite, options.no_replace)?;
             if already_paired(local, &invite) {
                 return Ok(PendingPairing {
                     code: raw.clone(),
@@ -220,7 +269,7 @@ pub(crate) async fn run_pair(
                     refused,
                     Some("expired" | "cancelled" | "used" | "unavailable")
                 ) {
-                    update_pairing_config(|local| {
+                    update_pairing_config(file, |local| {
                         if pending(local)?.is_some_and(|value| {
                             value.code == raw && value.credential == prepared.credential
                         }) {
@@ -245,7 +294,8 @@ pub(crate) async fn run_pair(
         {
             return Err("GSV returned a different pairing identity".into());
         }
-        update_pairing_config(|local| {
+        update_pairing_config(file, |local| {
+            protect_existing_machine(local, &invite, options.no_replace)?;
             if already_paired(local, &invite) {
                 return Ok(());
             }
@@ -256,16 +306,18 @@ pub(crate) async fn run_pair(
                     "Local pairing changed while connecting. Retry the original invitation.".into(),
                 );
             }
-            if local.gateway.url.as_deref() != Some(&invite.gateway_url)
-                || local.gateway.username.as_deref() != Some(&invite.username)
-            {
-                local.gateway.token = None;
-                local.gateway.session_token = None;
-                local.gateway.session_token_id = None;
-                local.gateway.session_expires_at = None;
+            if !options.preserve_cli_login {
+                if local.gateway.url.as_deref() != Some(&invite.gateway_url)
+                    || local.gateway.username.as_deref() != Some(&invite.username)
+                {
+                    local.gateway.token = None;
+                    local.gateway.session_token = None;
+                    local.gateway.session_token_id = None;
+                    local.gateway.session_expires_at = None;
+                }
+                local.gateway.url = Some(invite.gateway_url.clone());
+                local.gateway.username = Some(invite.username.clone());
             }
-            local.gateway.url = Some(invite.gateway_url.clone());
-            local.gateway.username = Some(invite.username.clone());
             local.device.id = Some(invite.target_id.clone());
             local.device.label = Some(invite.label.clone());
             local.device.gateway_url = Some(invite.gateway_url.clone());
@@ -281,7 +333,7 @@ pub(crate) async fn run_pair(
         })?;
     }
 
-    update_pairing_config(|local| {
+    update_pairing_config(file, |local| {
         if !already_paired(local, &invite) {
             return Err("Device pairing changed before service installation".into());
         }
@@ -289,7 +341,7 @@ pub(crate) async fn run_pair(
         Ok(())
     })?;
     println!("Paired {} as {}.", invite.label, invite.target_id);
-    if !no_install {
+    if !options.no_install {
         let installed = device_service::device_service_is_installed()?;
         device_service::install_device_service().map_err(|_private_error| "Pairing is saved, but service installation failed. Fix the service setup and run gsv daemon install to retry.")?;
         if installed {
@@ -318,6 +370,37 @@ mod tests {
         assert_eq!(invite.gateway_url, "wss://fixture.example/ws");
         assert_eq!(invite.target_id, "my-macbook");
         assert_eq!(invite.label, "My macbook");
+    }
+
+    #[test]
+    fn stdin_codes_are_bounded_and_never_echoed_by_validation() {
+        let invitation = code(payload());
+        assert_eq!(
+            read_invitation(invitation.as_bytes()).expect("stdin invitation"),
+            invitation
+        );
+        for input in [String::new(), " ".into(), "private".repeat(600)] {
+            let error = read_invitation(input.as_bytes()).expect_err("invalid stdin");
+            assert!(!error.to_string().contains("private"));
+        }
+    }
+
+    #[test]
+    fn protected_pairing_refuses_any_other_machine_credential() {
+        let invite = decode(&code(payload())).expect("invitation");
+        let mut config = CliConfig::default();
+        protect_existing_machine(&config, &invite, true).expect("unconfigured machine");
+        config.device.token = Some("existing-private-credential".into());
+        config.device.id = Some(invite.target_id.clone());
+        config.device.gateway_url = Some(invite.gateway_url.clone());
+        config.device.gateway_username = Some(invite.username.clone());
+        assert!(protect_existing_machine(&config, &invite, true).is_err());
+        protect_existing_machine(&config, &invite, false).expect("explicit replacement");
+        config
+            .device
+            .extra
+            .insert(RECEIPT_KEY.into(), toml::Value::String(invite.id.clone()));
+        protect_existing_machine(&config, &invite, true).expect("same pairing receipt");
     }
 
     #[test]

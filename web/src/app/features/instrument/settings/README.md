@@ -2,21 +2,31 @@
 
 One Settings surface uses the Instrument header and existing gateway services. It edits the signed-in account’s defaults; it never chooses another account when identity is unavailable.
 
-- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning is saved independently. Add model uses Instrument controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the console; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section changes and participate in the navigation guard.
+The section rail fits its widest label, including an unsaved-change marker, and
+its buttons keep their natural height at every Instrument zoom level. A short
+viewport scrolls the rail instead of compressing its buttons. On narrow layouts,
+the horizontal section strip also lets buttons grow to fit their labels.
+
+- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning is saved independently. Add model uses Instrument controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the console; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section and view changes and participate in sign-out and reload protection.
 - Permissions edits simple approval policies without changing rule order. Target specificity, then capability specificity, then source order determine matching. Unknown or malformed policies remain unchanged and can be inspected verbatim. Preparing a replacement starts from the inherited policy and requires a separate save; failed saves retain the draft. Saving rereads the account key and refuses an observed concurrent change. Account grants remain authoritative and are inspectable with human-readable labels.
 - Instructions lists `~/context.d/*.md` files and loads one selected file at a time. New instruction opens a name and the same Markdown editor; `.md` is added automatically, and creation rechecks for file or directory name collisions. A missing folder is an empty state. Reads retain exact text; non-text, incomplete, and failed reads cannot be saved. Blank files are valid. Only the selected file is written or deleted. Deletion requires its own capability and an inline confirmation that also explains any unsaved changes being discarded. New and existing drafts survive section switches; failed operations keep the draft and selection. Successful changes cancel stale reads and update the affected list/file caches.
 - Messengers lists the signed-in person's saved Telegram and Slack identities, with transport status, reconnect and explicit unlink controls. Availability and pairing support come from adapter discovery. Linking retains the existing inspect-then-confirm flow; unlinking uses the personal pairing operation. Reloads recover saved links, owner-scoped adapter status signals refresh the active connection snapshot, and closed sections wait until reopened. Failed reads or mutations remain visible without claiming a connection was removed. The current identity records expose provider IDs; the UI does not invent remembered names. No credential or connection operation is performed until the person invokes its control.
 - MCP lists connected servers first. A quiet add action opens the form; cancellation preserves a dirty draft unless explicitly discarded, and successful creation returns to the list. Existing servers offer sign-in, refresh, and removal controls according to ownership and capabilities.
 
-Section switches preserve drafts. Unsaved changes are reported to Instrument’s navigation guard and browser unload handling. Loading, disconnection, authorization, and mutation failures remain visible; backend authorization is unchanged.
+Section and Instrument view switches preserve drafts without a discard dialog.
+Instrument retains Settings until the signed-in session ends; hiding it pauses
+background reads, UI notifications and model sign-in polling. Unsaved changes
+are reported for sign-out and browser unload handling. Retention does not save
+changes to the gateway or browser storage. Loading, disconnection, authorization,
+and mutation failures remain visible; backend authorization is unchanged.
 
 Model rows expand to show connection details. Edit and remove are available for the account's own definitions (the installation layer for root); inherited definitions remain labelled and read-only. Adding and editing share the same compact form. A name-only edit saves without inference; connection changes are tested before saving. Saved keys stay out of the input, and blank preserves a key for the same connection; replacement and removal are explicit. Definition writes preserve the complete stored layer, including entries hidden by higher layers, and reject an edit when its original definition has changed. Removing a model uses an inline confirmation, clears its personal ordering references, and lets the gateway remove its detached credential. Adding with Use first also works when a personal fallback order is already saved.
 
-Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section changes and participate in the navigation guard. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
+Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
 The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations and cross-Ship request management belong to Fleet. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
 
-Settings includes a quiet sign-out action beside the current username. Unsaved settings require confirmation before leaving; signing out uses the shared session service to clear the stored credential, revoke the current UI token and return to login.
+Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained Instrument views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 
 Root has a People section for local human access: create and cancel a private,
 expiring invitation; see active and removed accounts; set a member's password;
@@ -26,7 +36,7 @@ choose the invitee's initial password. The invitee opens `/join` on the space's
 own hostname, chooses a password, and retains the same recipient proof across a
 lost-reply retry. Password reset and removal explain credential and messenger
 revocation; removal preserves data and already-running work. People drafts use
-the same navigation guard as the other Settings sections.
+the same retention and teardown protection as the other Settings sections.
 
 Root's Sign-in section holds the verified-owner linking control. Local accounts
 sign in with their password through the existing session service and token

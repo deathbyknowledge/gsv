@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { getProcessHistorySync, processHistoryKey } from "../backend/historySync";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../navigation/viewQueries";
 import type {
   ProcAbortArgs,
   ProcAiConfigSetArgs,

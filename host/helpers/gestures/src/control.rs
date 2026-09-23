@@ -7,13 +7,21 @@
 //!
 //! For scrolling, an open control hand acts as the modifier while the angle
 //! between its palm center and the action fist supplies continuous velocity.
+//!
+//! Number recognition now accepts any combination of extended digits, including
+//! the thumb. The sequential opening described above is only one way to count;
+//! temporal policy consumes the count and retains the same hold and reset gates.
+//! Number commands now stop at four. An open palm has no standalone action;
+//! it remains the control-hand modifier for scrolling.
 
 use std::time::{Duration, Instant};
 
 pub use gesture_protocol::{
     GestureContext as ControlState, GestureIntent as ControlIntent, ScrollState,
 };
-use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS};
+use gesture_protocol::{
+    PracticeGesture, VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS,
+};
 
 use crate::observation::{HandObservation, HandPose, Handedness};
 
@@ -43,6 +51,7 @@ const MIN_PALM_SCALE: f32 = 0.01;
 /// omitted, and the value never crosses GSV IPC or logs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlChord {
+    OpenPalm,
     Arm,
     Disarm,
     StartTranscription,
@@ -470,6 +479,7 @@ pub struct GestureControl {
     state: ControlState,
     pending: Option<ControlIntent>,
     release_latched: Option<Chord>,
+    reset_sequence: u64,
     scroll_release_latched: bool,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
@@ -498,6 +508,7 @@ impl GestureControl {
             state,
             pending: None,
             release_latched: None,
+            reset_sequence: 0,
             scroll_release_latched: false,
             diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
@@ -511,6 +522,12 @@ impl GestureControl {
     #[must_use]
     pub const fn state(&self) -> ControlState {
         self.state
+    }
+
+    /// Counts confirmed command releases; transport may coalesce snapshots without losing the acknowledgement.
+    #[must_use]
+    pub const fn reset_sequence(&self) -> u64 {
+        self.reset_sequence
     }
 
     #[must_use]
@@ -621,6 +638,9 @@ impl GestureControl {
             PairReading::Reset { quality } => {
                 self.candidate = None;
                 if quality >= ENTER_SCORE {
+                    if self.release_latched.is_some() {
+                        self.reset_sequence += 1;
+                    }
                     self.release_latched = None;
                     self.scroll_release_latched = false;
                     self.diagnostic = ControlDiagnostic::AwaitingPose;
@@ -657,7 +677,9 @@ impl GestureControl {
             };
             return None;
         }
-        if let Some(chord) = self.release_latched {
+        if let Some(chord) = self.release_latched.filter(|_| {
+            !(matches!(self.state, ControlState::Practice { .. }) && reading.chord == Chord::Disarm)
+        }) {
             self.candidate = None;
             self.diagnostic = ControlDiagnostic::AwaitingRelease {
                 chord: chord.into(),
@@ -767,6 +789,9 @@ impl GestureControl {
     }
 
     fn accepted_target(&self, chord: Chord) -> bool {
+        if matches!(self.state, ControlState::Practice { .. }) {
+            return chord != Chord::Arm;
+        }
         matches!(
             (self.state, chord),
             (ControlState::Disarmed, Chord::Arm)
@@ -782,8 +807,6 @@ impl GestureControl {
                         | Chord::DeleteBackward
                         | Chord::ClearDictation,
                 )
-                | (ControlState::Active { muted: false, .. }, Chord::Mute)
-                | (ControlState::Active { muted: true, .. }, Chord::Unmute)
         )
     }
 
@@ -797,14 +820,13 @@ impl GestureControl {
                 )
                 | (ControlState::Active { .. }, Chord::StartTranscription)
                 | (ControlState::Standby, Chord::StopTranscription)
-                | (ControlState::Active { muted: true, .. }, Chord::Mute)
-                | (ControlState::Active { muted: false, .. }, Chord::Unmute)
         )
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Chord {
+    OpenPalm,
     Arm,
     Disarm,
     StartTranscription,
@@ -812,8 +834,6 @@ enum Chord {
     Send,
     DeleteBackward,
     ClearDictation,
-    Mute,
-    Unmute,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -830,14 +850,16 @@ impl ActionPose {
         match (self, state) {
             (
                 Self::One,
-                ControlState::Disarmed | ControlState::Standby | ControlState::Disabled,
+                ControlState::Disarmed
+                | ControlState::Standby
+                | ControlState::Disabled
+                | ControlState::Practice { .. },
             ) => Chord::StartTranscription,
             (Self::One, ControlState::Active { .. }) => Chord::StopTranscription,
             (Self::Two, _) => Chord::Send,
             (Self::Three, _) => Chord::DeleteBackward,
             (Self::Four, _) => Chord::ClearDictation,
-            (Self::Five, ControlState::Active { muted: true, .. }) => Chord::Unmute,
-            (Self::Five, _) => Chord::Mute,
+            (Self::Five, _) => Chord::OpenPalm,
         }
     }
 }
@@ -850,6 +872,7 @@ struct RoleAssignment {
 impl From<Chord> for ControlChord {
     fn from(chord: Chord) -> Self {
         match chord {
+            Chord::OpenPalm => Self::OpenPalm,
             Chord::Arm => Self::Arm,
             Chord::Disarm => Self::Disarm,
             Chord::StartTranscription => Self::StartTranscription,
@@ -857,8 +880,6 @@ impl From<Chord> for ControlChord {
             Chord::Send => Self::Send,
             Chord::DeleteBackward => Self::DeleteBackward,
             Chord::ClearDictation => Self::ClearDictation,
-            Chord::Mute => Self::Mute,
-            Chord::Unmute => Self::Unmute,
         }
     }
 }
@@ -866,6 +887,15 @@ impl From<Chord> for ControlChord {
 impl From<ControlIntent> for ControlChord {
     fn from(intent: ControlIntent) -> Self {
         match intent {
+            ControlIntent::Practice { gesture, .. } => match gesture {
+                PracticeGesture::One => Self::StartTranscription,
+                PracticeGesture::Two => Self::Send,
+                PracticeGesture::Three => Self::DeleteBackward,
+                PracticeGesture::Four => Self::ClearDictation,
+                PracticeGesture::Five => Self::OpenPalm,
+                PracticeGesture::BothFists => Self::Disarm,
+                PracticeGesture::Scroll => Self::Scroll,
+            },
             ControlIntent::SetArmed { armed: true } => Self::Arm,
             ControlIntent::SetArmed { armed: false } => Self::Disarm,
             ControlIntent::StartTranscription => Self::StartTranscription,
@@ -882,6 +912,18 @@ impl From<ControlIntent> for ControlChord {
 }
 
 fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
+    if let ControlState::Practice { lesson_id } = state {
+        let gesture = match chord {
+            Chord::Arm => return None,
+            Chord::Disarm => PracticeGesture::BothFists,
+            Chord::StartTranscription | Chord::StopTranscription => PracticeGesture::One,
+            Chord::Send => PracticeGesture::Two,
+            Chord::DeleteBackward => PracticeGesture::Three,
+            Chord::ClearDictation => PracticeGesture::Four,
+            Chord::OpenPalm => PracticeGesture::Five,
+        };
+        return Some(ControlIntent::Practice { lesson_id, gesture });
+    }
     match (state, chord) {
         (ControlState::Disarmed, Chord::Arm) => Some(ControlIntent::SetArmed { armed: true }),
         (
@@ -898,13 +940,11 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
             chord,
         ) => {
             let action = match chord {
-                Chord::Arm | Chord::Disarm => return None,
+                Chord::Arm | Chord::Disarm | Chord::OpenPalm => return None,
                 Chord::StopTranscription => VoiceRequestGestureIntent::StopTranscription,
                 Chord::Send => VoiceRequestGestureIntent::Send,
                 Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
                 Chord::ClearDictation => VoiceRequestGestureIntent::ClearDictation,
-                Chord::Mute => VoiceRequestGestureIntent::Mute,
-                Chord::Unmute => VoiceRequestGestureIntent::Unmute,
                 Chord::StartTranscription => return None,
             };
             Some(ControlIntent::VoiceRequest {
@@ -925,8 +965,7 @@ impl Chord {
             | Self::StopTranscription
             | Self::Send
             | Self::DeleteBackward
-            | Self::Mute
-            | Self::Unmute => STANDARD_DWELL,
+            | Self::OpenPalm => STANDARD_DWELL,
         }
     }
 
@@ -938,8 +977,7 @@ impl Chord {
             | Self::StopTranscription
             | Self::Send
             | Self::DeleteBackward
-            | Self::Mute
-            | Self::Unmute => 4,
+            | Self::OpenPalm => 4,
         }
     }
 }
@@ -1097,7 +1135,8 @@ fn classify_hands(
         HandPose::TwoFingers => ActionPose::Two,
         HandPose::ThreeFingers => ActionPose::Three,
         HandPose::FourFingers => ActionPose::Four,
-        HandPose::FiveFingers => ActionPose::Five,
+        HandPose::FiveFingers if matches!(state, ControlState::Practice { .. }) => ActionPose::Five,
+        HandPose::FiveFingers => return Ok(PairReading::KnownOther),
         HandPose::Unknown => return Err(ClassificationFailure::UnsupportedPose),
     };
     Ok(PairReading::Action { action, quality })
@@ -1291,8 +1330,7 @@ const fn action_pose(pose: HandPose) -> Option<ActionPose> {
         HandPose::TwoFingers => Some(ActionPose::Two),
         HandPose::ThreeFingers => Some(ActionPose::Three),
         HandPose::FourFingers => Some(ActionPose::Four),
-        HandPose::FiveFingers => Some(ActionPose::Five),
-        HandPose::Fist | HandPose::Unknown => None,
+        HandPose::FiveFingers | HandPose::Fist | HandPose::Unknown => None,
     }
 }
 
@@ -1395,10 +1433,6 @@ mod tests {
     const ACTIVE: ControlState = ControlState::Active {
         voice_request_id: 41,
         muted: false,
-    };
-    const MUTED: ControlState = ControlState::Active {
-        voice_request_id: 41,
-        muted: true,
     };
 
     fn request(action: VoiceRequestGestureIntent) -> ControlIntent {
@@ -1583,16 +1617,6 @@ mod tests {
                 HandPose::FourFingers,
                 request(VoiceRequestGestureIntent::ClearDictation),
             ),
-            (
-                ACTIVE,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Mute),
-            ),
-            (
-                MUTED,
-                HandPose::FiveFingers,
-                request(VoiceRequestGestureIntent::Unmute),
-            ),
         ];
         for (state, pose, expected) in cases {
             let mut harness = Harness::new(state);
@@ -1616,7 +1640,11 @@ mod tests {
             harness.control.diagnostic(),
             ControlDiagnostic::AwaitingRelease { .. }
         ));
+        assert_eq!(harness.control.reset_sequence(), 0);
         assert_eq!(harness.sample(&reset), None);
+        assert_eq!(harness.control.reset_sequence(), 1);
+        assert!(harness.drive(10, &reset).is_empty());
+        assert_eq!(harness.control.reset_sequence(), 1);
         assert_eq!(
             harness.drive(10, &two),
             vec![request(VoiceRequestGestureIntent::Send)]
@@ -1624,13 +1652,76 @@ mod tests {
     }
 
     #[test]
+    fn practice_reports_counts_once_and_preserves_reset_across_lessons() {
+        for (pose, gesture) in [
+            (HandPose::OneFinger, PracticeGesture::One),
+            (HandPose::TwoFingers, PracticeGesture::Two),
+            (HandPose::ThreeFingers, PracticeGesture::Three),
+            (HandPose::FourFingers, PracticeGesture::Four),
+            (HandPose::FiveFingers, PracticeGesture::Five),
+        ] {
+            let mut harness = Harness::new(ControlState::Practice { lesson_id: 17 });
+            let hand = counted(pose, 0.95);
+            assert_eq!(
+                harness.drive(24, &hand),
+                vec![ControlIntent::Practice {
+                    lesson_id: 17,
+                    gesture
+                }]
+            );
+            harness.synchronize(ControlState::Practice { lesson_id: 18 });
+            assert!(harness.drive(24, &hand).is_empty());
+            assert!(harness
+                .drive(24, &counted(HandPose::OneFinger, 0.95))
+                .is_empty());
+            assert_eq!(harness.sample(&counted(HandPose::Fist, 0.95)), None);
+            assert_eq!(harness.control.reset_sequence(), 1);
+            assert_eq!(
+                harness.drive(24, &hand),
+                vec![ControlIntent::Practice {
+                    lesson_id: 18,
+                    gesture
+                }]
+            );
+        }
+        for context in [STANDBY, ACTIVE] {
+            let mut harness = Harness::new(context);
+            assert!(harness
+                .drive(24, &counted(HandPose::FiveFingers, 0.95))
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn practice_can_turn_off_after_a_rejected_count_without_another_action() {
+        let context = ControlState::Practice { lesson_id: 17 };
+        let mut harness = Harness::new(context);
+        assert_eq!(
+            harness.drive(10, &counted(HandPose::TwoFingers, 0.95)),
+            vec![ControlIntent::Practice {
+                lesson_id: 17,
+                gesture: PracticeGesture::Two,
+            }]
+        );
+        harness.synchronize(context);
+        assert_eq!(
+            harness.drive(20, &toggle(0.95)),
+            vec![ControlIntent::Practice {
+                lesson_id: 17,
+                gesture: PracticeGesture::BothFists,
+            }]
+        );
+    }
+
+    #[test]
     fn a_scroll_release_cannot_become_a_number_without_a_new_fist() {
+        let two = counted(HandPose::TwoFingers, 0.95);
         let five = counted(HandPose::FiveFingers, 0.95);
         let fist = counted(HandPose::Fist, 0.95);
         let mut harness = Harness::new(ACTIVE);
         harness.control.latch_scroll_release();
 
-        assert!(harness.drive(20, &five).is_empty());
+        assert!(harness.drive(20, &two).is_empty());
         assert_eq!(
             harness.control.diagnostic(),
             ControlDiagnostic::AwaitingRelease {
@@ -1638,9 +1729,10 @@ mod tests {
             }
         );
         assert_eq!(harness.sample(&fist), None);
+        assert!(harness.drive(10, &five).is_empty());
         assert_eq!(
-            harness.drive(10, &five),
-            vec![request(VoiceRequestGestureIntent::Mute)]
+            harness.drive(10, &two),
+            vec![request(VoiceRequestGestureIntent::Send)]
         );
     }
 

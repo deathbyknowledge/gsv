@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AiAssistantMessage } from "@humansandmachines/gsv/protocol";
+import type { AiAssistantMessage, AiTextGenerateArgs } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import type { GatewayEnv } from "../runtime-env";
 import { createGenerationService } from "../inference/execution-client";
@@ -43,7 +43,7 @@ function historyContents(process: any): string[] {
 }
 
 /** How many times compaction asked the provider for a summary. */
-type ProviderCalls = { calls: number };
+type ProviderCalls = { calls: number; maxTokens: Array<number | undefined> };
 
 /**
  * Feeds provider results into compaction through the boundary production uses:
@@ -56,9 +56,10 @@ function installCompactionProvider(
   executor: Executor,
   respond: (attempt: number) => AiAssistantMessage,
 ): ProviderCalls {
-  const state: ProviderCalls = { calls: 0 };
-  const next = () => {
+  const state: ProviderCalls = { calls: 0, maxTokens: [] };
+  const next = (maxTokens: number | undefined) => {
     state.calls += 1;
+    state.maxTokens.push(maxTokens);
     return respond(state.calls);
   };
   const config = {
@@ -68,9 +69,9 @@ function installCompactionProvider(
   };
   process.history.resolveCheckpointConfig = async () => config;
   if (executor === "kernel") {
-    process.kernel.kernelRpc = async (call: string) => {
+    process.kernel.kernelRpc = async (call: string, args: AiTextGenerateArgs) => {
       if (call !== "ai.text.generate") throw new Error(`Unexpected kernel call ${call}`);
-      const message = next();
+      const message = next(args.options?.maxTokens);
       // The Kernel's text field keeps its reasoning fallback for ai.text.generate callers.
       const text = extractGeneratedText(adaptGeneratedAssistantMessage(message));
       return { message, provider: message.provider, model: message.model, text };
@@ -78,7 +79,7 @@ function installCompactionProvider(
     return state;
   }
   const target: InferenceExecutor = {
-    generate: async () => next(),
+    generate: async (request) => next(request.options?.maxTokens),
     generateStream: async () => { throw new Error("Compaction does not stream"); },
     abort: async () => {},
     media: async () => { throw new Error("Compaction does not use media"); },
@@ -113,10 +114,11 @@ describe("compaction summary completion", () => {
       const outcome = await runInProcess(stub, async (process) => {
         seedConversation(process);
         const provider = installCompactionProvider(process, pid, executor, thinkingThenSummary);
-        return { ...(await compact(process)), calls: provider.calls };
+        return { ...(await compact(process)), calls: provider.calls, maxTokens: provider.maxTokens };
       });
       expect(outcome.result).toMatchObject({ ok: true, archivedMessages: 4 });
       expect(outcome.calls).toBe(1);
+      expect(outcome.maxTokens).toEqual([4_096]);
       expect(outcome.record).toMatchObject({
         kind: "event",
         payload: {
@@ -169,6 +171,10 @@ describe("compaction summary completion", () => {
   );
 
   const incomplete: Array<[string, () => AiAssistantMessage, string, number]> = [
+    ["output-limited reasoning", () => cerebrasResponse([
+      { type: "thinking", thinking: PLANNING },
+    ], { stopReason: "length", usage: testUsage(240, 768) }),
+      "LLM reached the output token limit without text or a tool call", 1],
     ["truncated", () => cerebrasResponse([
       { type: "thinking", thinking: PLANNING },
       { type: "text", text: SUMMARY.slice(0, 48) },

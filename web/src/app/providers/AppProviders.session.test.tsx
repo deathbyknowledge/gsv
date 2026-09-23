@@ -43,7 +43,7 @@ function createSessionHarness() {
     setup: async () => {
       throw new Error("Not used by this test");
     },
-    lock: () => {},
+    lock: async () => {},
     start,
   };
 

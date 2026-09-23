@@ -1,5 +1,6 @@
 /* Zen: the response is the page. */
 .zen {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
@@ -284,6 +285,7 @@
 }
 .work-heading .work-subject { font-family: var(--gsv-font-mono); font-size: 12px; color: var(--path); white-space: pre-wrap; }
 .work-detail, .work-state { color: var(--text-dim); }
+.work-pending { display: inline-flex; vertical-align: middle; margin-right: 6px; }
 .work-call.is-failed .work-state, .work-call.is-failed .work-output { color: var(--error); }
 .work-command, .work-source, .work-output {
   margin: 0;
