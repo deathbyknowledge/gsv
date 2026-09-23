@@ -436,4 +436,35 @@ mod tests {
         );
         assert!(gateway_origin("http://localhost:8787").is_ok());
     }
+
+    #[test]
+    fn setup_authority_survives_restart_and_never_moves_to_another_space() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let token = format!("onboard_{}", "a".repeat(43));
+        let saved = store
+            .configure_onboarding(Some("https://first.example".into()), Some(token.clone()))
+            .unwrap();
+        let mut reopened = SessionStore::open(directory.path().to_owned()).unwrap();
+        assert_eq!(
+            reopened
+                .current
+                .values
+                .get("gsv.ui.installation-onboarding.v1"),
+            Some(&token)
+        );
+        assert!(reopened
+            .configure_onboarding(
+                Some("https://second.example".into()),
+                Some("invalid".into())
+            )
+            .is_err());
+        assert_eq!(reopened.current.generation, saved.generation);
+        assert!(reopened
+            .configure(Some("https://second.example".into()))
+            .unwrap()
+            .values
+            .is_empty());
+        assert!(reopened.store(&saved.generation, saved.values).is_err());
+    }
 }
