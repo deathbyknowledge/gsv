@@ -82,6 +82,8 @@ An agent, Process, or the owner may prefer an entry from any layer by its stable
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/skills/index_mode` | `users/{uid}/ai/skills/index_mode` | `summary` | Skill index included in standing context: ids and descriptions with `summary`, ids only with `names`, or omitted with `off`. Live discovery remains available in every mode. |
+| `config/ai/generation/timeout_ms` | — | `180000` | Maximum time to wait for one model generation before the run is released. |
+| `config/ai/generation/streaming` | — | `auto` | `auto` streams when the provider supports it; `off` forces final-output only. |
 
 Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
 
@@ -104,11 +106,13 @@ config/ai/context.d/01-gsv.md
 
 ## Tool Approval Policy
 
-Each built-in profile has a JSON policy at:
+The approval policy decides whether an agent's tool call runs, asks the person
+first, or is refused. Two keys hold it:
 
-```text
-config/ai/profile/{profile}/tools/approval
-```
+| Key | Scope | Edited at |
+|---|---|---|
+| `config/ai/tools/approval` | Installation default, root-writable | `/sys/config/ai/tools/approval` |
+| `users/{uid}/ai/tools/approval` | One account's override, layered over the default | **Settings → permissions** in the web console, or `/sys/users/{uid}/ai/tools/approval` |
 
 Policy shape:
 
@@ -117,21 +121,30 @@ Policy shape:
   "default": "auto",
   "rules": [
     { "match": "shell.exec", "action": "ask" },
-    { "match": "sys.mcp.call", "action": "ask" },
+    { "match": "fs.*", "target": "targets/*", "action": "ask" },
     { "match": "fs.delete", "action": "deny" },
-    { "match": "fs.*", "when": { "target": "device" }, "action": "ask" }
+    { "match": "mail.send", "action": "auto" }
   ]
 }
 ```
 
-Actions are `auto`, `ask`, or `deny`. `match` accepts an exact syscall name or a domain wildcard such as `fs.*`. `when` can filter by `profile`, `anyProfile`, `anyTag`, `allTags`, `argEquals`, `argPrefix`, or `target` (`gsv` or `device`). Invalid or missing JSON falls back to the runtime default policy.
+- `action` is `auto`, `ask`, or `deny`. The console labels them **Allow**, **Ask**, and **Block**.
+- `match` is an exact syscall name or a domain wildcard ending in `.*`; `fs.*` matches `fs` and every `fs.` call.
+- `target` scopes a rule to where the call runs. Omit it, or use `*` or `any`, for every target. `gsv` is the cloud home (`gateway` and `local` are aliases). `targets/*` is any connected machine or browser. A bare target id scopes the rule to that one target. The legacy values `device` and `devices/*` are read as `targets/*`, and a legacy `when: { "target": ... }` object is read as `target`; nothing else inside `when` is honoured.
+- Precedence: the rule with the most specific target wins, then an exact `match` beats a wildcard, then list order. A rule that fails validation is dropped; a value that is not valid JSON falls back to the built-in default.
 
-Default policies:
+For a call, the target is resolved before matching: `fs.*`, `shell.exec`, and `net.fetch` use the call's `target` argument; a `shell.exec` carrying a `sessionId` resolves to `targets/*`; every other syscall resolves to `gsv`.
 
-| Profiles | Default | Rules |
-|---|---|---|
-| Interactive processes | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
-| `cron` | `auto` | Deny `fs.delete` and `sys.mcp.call`; allow `shell.exec`. |
+Default policy:
+
+| Setting | Value |
+|---|---|
+| `default` | `auto` |
+| Rules | Ask for `shell.exec`, `net.fetch`, `fs.delete`, `sys.mcp.call`, and `mail.send`. |
+
+Mail is guarded separately. When `default` is `auto` and no rule covers `mail.send` at the `gsv` scope, an `ask` rule for `mail.send` is added to the policy on read, and an unmatched `mail.send` resolves to `ask` regardless. Sending mail without asking requires an explicit `auto` rule for `mail.send`, as the permissions page says.
+
+Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
 
 ## Runtime Config Keys
 
@@ -143,7 +156,6 @@ Default policies:
 | `config/shell/timeout_ms` | `120000` | Default native shell timeout. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
-| `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
 
 The protocol's `server.version` is this semantic product version. `server.release`
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,

@@ -1,9 +1,8 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local Desktop application, device
-daemon, process tree, adapters, and Cloudflare infrastructure. Most commands
-talk to the Kernel syscall surface over WebSocket; `desktop` uses a same-user
-local endpoint and `infra` talks directly to Cloudflare.
+The `gsv` binary controls a GSV gateway, the local Desktop application, the
+machine daemon, the process tree, and adapters. Most commands talk to the Kernel
+syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
 ## Global Options
 
@@ -323,15 +322,16 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 gsv proc list [--uid UID]
 gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE --pid PID
-gsv proc history --pid PID [--limit N] [--offset N]
+gsv proc history --pid PID [--tail] [--limit N] [--offset N]
 gsv proc reset --pid PID
 gsv proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
-`send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
-lists and requires root when viewing another user.
+`send`, `history`, `reset`, and `kill` require a PID. `history --tail` reads
+the newest messages instead of the oldest page. `--uid` filters process lists
+and requires root when viewing another user.
 
 Spawn's `--model` and `--effort` flags have the same semantics as the native
 commands above; the settings apply before the optional initial prompt starts.
@@ -392,7 +392,7 @@ preference, and process-switch fencing.
 
 ## Daemon Commands
 
-Open **Fleet → Places → connect**, name the computer and create an invitation.
+Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 
 ```bash

@@ -35,11 +35,12 @@ Existing standalone deployments should read the
 
 ## Look around
 
-- **Zen** contains your Ship conversation and activity inspection.
-- **Fleet** lists machines, processes and contacts.
+The web console is called **Instrument** and has four views:
+
+- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Fleet** lists your places, processes, contacts and responsibilities, the ledger of actions and their outcomes, and recently touched files.
 - **Memory** shows your personal knowledge pages.
-- **Ledger** shows actions and their outcomes.
-- **Settings** contains models, permissions, messengers and MCP connections.
+- **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.
 
 ## Next steps
 
@@ -47,6 +48,7 @@ Existing standalone deployments should read the
 - [Bring your own model](/how-to/bring-your-own-model).
 - [Connect a messenger](/how-to/messengers).
 - [Add integrations](/how-to/integrations).
-- [Web access](/how-to/browse-web).
+- [Browse the web](/how-to/browse-web).
+- [Invite people](/how-to/invite-people).
 - [Examples](/examples/index).
 - [FAQ](/get-started/faq).
