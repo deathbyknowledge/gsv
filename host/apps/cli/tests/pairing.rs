@@ -52,16 +52,14 @@ impl Fixture {
         }
     }
 
-    async fn pair(&self, code: Option<&str>) -> Output {
+    fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_gsv"));
-        command.arg("pair");
-        if code.is_some() {
-            command.arg("-");
-        }
         command
-            .args(["--preserve-cli-login", "--no-replace", "--workspace"])
-            .arg(self.directory.path())
             .env("XDG_CONFIG_HOME", self.directory.path().join("config"))
+            .env_remove("GSV_URL")
+            .env_remove("GSV_USER")
+            .env_remove("GSV_TOKEN")
+            .env_remove("GSV_PASSWORD")
             .env("GSV_GSVD_PATH", self.bin.join("gsvd"))
             .env(
                 "GSV_TEST_COMMAND_LOG",
@@ -78,6 +76,18 @@ impl Fixture {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        command
+    }
+
+    async fn pair(&self, code: Option<&str>) -> Output {
+        let mut command = self.command();
+        command.arg("pair");
+        if code.is_some() {
+            command.arg("-");
+        }
+        command
+            .args(["--preserve-cli-login", "--no-replace", "--workspace"])
+            .arg(self.directory.path());
         let mut child = command.spawn().expect("run actual CLI");
         if let Some(code) = code {
             child
@@ -101,6 +111,44 @@ impl Fixture {
             .load()
             .expect("load resulting config")
     }
+}
+
+#[tokio::test]
+async fn service_overrides_change_the_machine_identity_without_changing_the_cli_login() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command()
+        .args([
+            "--url",
+            "wss://machine.example/ws",
+            "--user",
+            "machine-owner",
+            "--token",
+            "machine-credential",
+            "daemon",
+            "install",
+        ])
+        .output()
+        .await
+        .expect("install service");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = fixture.load();
+    assert_eq!(config.device_gateway_url(), "wss://machine.example/ws");
+    assert_eq!(
+        config.device_gateway_username().as_deref(),
+        Some("machine-owner")
+    );
+    assert_eq!(config.device.token.as_deref(), Some("machine-credential"));
+    assert_eq!(config.gateway.url.as_deref(), Some("wss://cli.example/ws"));
+    assert_eq!(config.gateway.username.as_deref(), Some("cli-user"));
+    assert_eq!(
+        config.gateway.session_token.as_deref(),
+        Some("private-cli-login")
+    );
 }
 
 fn script(path: &Path, body: &str) {

@@ -151,6 +151,9 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
                 let attempt_cfg = CliConfig::load();
+                let url = cli_url_override
+                    .clone()
+                    .unwrap_or_else(|| attempt_cfg.device_gateway_url());
                 let auth = resolve_device_gateway_auth(
                     &attempt_cfg,
                     cli_token_override.clone(),
