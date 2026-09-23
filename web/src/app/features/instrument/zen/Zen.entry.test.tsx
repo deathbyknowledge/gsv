@@ -15,7 +15,6 @@ import { collectNodes, collectText, createTestRoot, deferred } from "../../../te
 import { PromptLine } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
-import { RunFeedback } from "./RunFeedback";
 import { ZenText } from "./ZenText";
 
 let storage: Map<string, string>;
@@ -113,24 +112,12 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
-  it("selects the next send's place without discarding the draft or relabelling active work", async () => {
+  it("selects the next send's place without discarding the draft", async () => {
     send.mockReturnValue(deferred<ConversationSendResult>().promise);
     const zen = await mountedZen(undefined, "laptop");
     try {
       const prompt = () => zen.props(PromptLine);
-      expect(zen.props(RunFeedback).running).toBe(false);
       await act(() => { prompt().onInput?.("Keep this draft"); });
-      const request = vi.mocked(GSVClient.prototype.request).getMockImplementation()!;
-      vi.mocked(GSVClient.prototype.request).mockImplementation((call, args, options) =>
-        call === "proc.history" ? new Promise(() => {}) : request(call, args, options));
-      await act(() => {
-        for (const listener of signals) listener("proc.run.tool.started", {
-          pid: shipPid, runId: "active", callId: "call", name: "Shell",
-          syscall: "shell.exec", target: "laptop", args: { command: "pwd" },
-        });
-      });
-      await vi.waitFor(() => expect(zen.props(RunFeedback).places).toEqual(["laptop"]));
-      expect(zen.props(RunFeedback).running).toBe(true);
       const cloud = () => zen.nodes().find((node) => node.type === "button"
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
       await act(() => { cloud().props.onClick!(); });
@@ -138,7 +125,6 @@ describe("Zen conversation entry", () => {
       expect(prompt().showPlace).toBe(false);
       expect(zen.dirty()).toBe(true);
       expect(zen.onFleet).not.toHaveBeenCalled();
-      expect(zen.props(RunFeedback).places).toEqual(["laptop"]);
       const details = zen.nodes().find((node) => node.props["aria-label"] === "View your cloud in Fleet")!;
       await act(() => { details.props.onClick!(); });
       expect(zen.onFleet).toHaveBeenCalledWith("target:gsv");
@@ -146,10 +132,6 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",
       })));
-      await act(() => {
-        for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active" });
-      });
-      await vi.waitFor(() => expect(zen.props(RunFeedback).running).toBe(false));
     } finally { await zen.unmount(); }
   });
 

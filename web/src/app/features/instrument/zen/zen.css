@@ -400,8 +400,6 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-.zen-run-indicator { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; }
-.zen-run-indicator:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }

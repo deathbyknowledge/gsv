@@ -32,7 +32,6 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "./ApprovalCard";
-import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -44,7 +43,6 @@ import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, type ZenAttachment } from "./zenAttachments";
 import {
   activityDuration,
-  activitiesForRows,
   answerAttribution,
   answerHistorySnapshot,
   countLabel,
@@ -909,13 +907,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
 
   /* the status line */
-  const activeRun = connected ? runtime.activeRunId : null;
-  const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const workingPlaces = useMemo(() => activeRun
-    ? activitiesForRows(runtime.rows.filter((row) => row.runId === activeRun), activeRun, true)
-      .flatMap((activity) => activity.live && activity.target !== null && activity.target !== "unknown target"
-        ? [placeLabel(activity.target, places)] : [])
-    : [], [activeRun, runtime.rows, places]);
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const showFeedback = !connected || !currentPlace.online || note !== null || pendingHil !== null;
 
@@ -1050,8 +1041,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               }
               return (
                 <li key={target.id}>
-                  {target.id === CLOUD_PLACE_ID && <RunFeedback model={attemptedModel}
-                    places={workingPlaces} running={activeRun !== null} awaitingApproval={pendingHil !== null} />}
                   <Hint text={details.filter(Boolean).join(" · ")} position="top">
                     <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
                       aria-label={`Use ${label} for the next message or command`}
