@@ -47,7 +47,10 @@ export class DesktopMachineSession {
       if (machine.configured && this.matches(machine.configured) && !machine.pending && !machine.running) {
         await this.connect("", []);
       }
-    } catch { this.publish({ ...this.state, loading: false, error: "Could not check this computer. Retry." }); }
+    } catch (error) {
+      this.publish({ ...this.state, loading: false,
+        error: error instanceof Error ? error.message : "Could not check this computer. Retry." });
+    }
   };
 
   connect = async (label: string, taken: readonly string[]): Promise<boolean> => {

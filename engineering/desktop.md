@@ -40,8 +40,10 @@ session, closes local control, and waits for helper shutdown.
 ## This computer
 
 After sign-in, an unconfigured computer gets a compact naming step with Connect
-and Not now. The space menu's This computer action reopens setup. An existing
-connection for this space and account starts automatically if its service is
+and Not now. Setup waits for native session persistence before checking the
+computer, and a failed check opens the same prompt with Retry. Not now postpones
+setup for the current session. The space menu's This computer action reopens
+setup. An existing connection for this space and account starts automatically if its service is
 stopped; a running connection is left alone. A binding to another space or
 account is shown without being replaced.
 

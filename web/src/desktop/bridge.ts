@@ -52,15 +52,34 @@ export async function openInBrowser(url: string): Promise<void> {
 }
 
 /** Synchronous session-service view backed by serialized, generation-fenced host writes. */
-export type NativeSessionStorage = SessionStorage & { flush(): Promise<void> };
+export type NativeSessionStorage = SessionStorage & {
+  flush(): Promise<void>;
+  /** Native operations require the saved identity, which may lag behind gateway sign-in. */
+  subscribeSignedIn(listener: (username: string | null) => void): () => void;
+};
+
+const nativeLoginSchema = z.object({ username: z.string().min(1), token: z.string().min(1) });
+
+function savedUsername(values: Record<string, string>): string | null {
+  try { return nativeLoginSchema.parse(JSON.parse(values["gsv.ui.session.token.v1"] ?? "null")).username; }
+  catch { return null; }
+}
 
 export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): NativeSessionStorage {
   const values = { ...session.values };
   let pending = Promise.resolve();
+  let username = savedUsername(values);
+  const listeners = new Set<(username: string | null) => void>();
   const persist = () => {
     if (mock) return;
     const snapshot = { ...values };
-    pending = pending.catch(() => {}).then(() => invoke("desktop_store", { generation: session.generation, values: snapshot }));
+    pending = pending.catch(() => {}).then(async () => {
+      await invoke("desktop_store", { generation: session.generation, values: snapshot });
+      const next = savedUsername(snapshot);
+      if (next === username) return;
+      username = next;
+      listeners.forEach((listener) => listener(username));
+    });
     void pending.catch(() => onError("This session could not be saved. Sign in again after restarting."));
   };
   return {
@@ -68,6 +87,11 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
     setItem: (key, value) => { values[key] = value; persist(); },
     removeItem: (key) => { delete values[key]; persist(); },
     flush: () => pending,
+    subscribeSignedIn: (listener) => {
+      listeners.add(listener);
+      listener(username);
+      return () => { listeners.delete(listener); };
+    },
   };
 }
 
@@ -99,7 +123,13 @@ export function nativeInput(generation: string): NativeInput {
 
 export function nativeMachine(generation: string, username: string): NativeMachine {
   return {
-    status: () => invoke("machine_status", { generation, username }),
+    status: async () => {
+      try { return await invoke("machine_status", { generation, username }); }
+      catch (error) {
+        const message = z.string().safeParse(error);
+        throw new Error(message.success ? message.data : "Could not check this computer. Retry.");
+      }
+    },
     command: async (command) => {
       try { return await invoke("machine_command", { generation, username, command }); }
       catch (error) {

@@ -108,7 +108,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
       onMachine={!locked && !mock ? () => setMachineRequest((value) => value + 1) : undefined}
       onDisconnect={() => setConfirmation("disconnect")} onQuit={requestQuit} />
       {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
-        request={machineRequest} flush={storage.flush} />}</>}>
+        request={machineRequest} storage={storage} />}</>}>
       <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
     </PlatformIdentityProvider>
   </>;

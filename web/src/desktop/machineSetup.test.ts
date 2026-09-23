@@ -30,6 +30,24 @@ function harness(initial: Partial<MachineSnapshot> = {}) {
 
 describe("Desktop machine enrollment", () => {
   it.each([
+    { failure: "Cannot read the machine configuration.", message: "Cannot read the machine configuration." },
+    { failure: { unexpected: "private fixture data" }, message: "Could not check this computer. Retry." },
+  ])("retains useful native status failures for retry: $message", async ({ failure, message }) => {
+    const invoke = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce({
+      suggestedName: "Laptop", configured: null, pending: null, running: false, connected: false,
+    });
+    vi.stubGlobal("window", { __TAURI__: { core: { invoke } } });
+    const h = harness();
+    const owner = new DesktopMachineSession(identity.origin, identity.username, nativeMachine("generation", "human"), h.api, h.storage);
+    await owner.load();
+    expect(owner.snapshot()).toMatchObject({ loading: false, machine: null, error: message });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("machine_status", { generation: "generation", username: "human" });
+    await owner.load();
+    expect(owner.snapshot()).toMatchObject({ loading: false, machine: { configured: null }, error: "" });
+    expect(h.api.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
     { failure: "Machine setup was cancelled.", message: "Machine setup was cancelled." },
     { failure: { unexpected: "private fixture data" }, message: "Could not connect this computer. Retry." },
   ])("normalizes native command failures at the bridge: $message", async ({ failure, message }) => {
