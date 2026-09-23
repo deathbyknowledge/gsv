@@ -37,6 +37,23 @@ has its own expiring lease, bounded intent delivery and explicit acknowledgement
 Suspension, disconnect or view changes cancel input authority. Quit flushes the
 session, closes local control, and waits for helper shutdown.
 
+## Welcome and space creation
+
+The welcome screen opens an existing space or redeems an operator-issued invite.
+The packaged frontend talks to Accounts over HTTPS using explicit owner bearer
+authentication; browser cookies never authorize the native API. The default
+Accounts origin is `https://gsv.space`; operator builds may set
+`VITE_GSV_ACCOUNTS_ORIGIN`. Direct handle/custom-domain connections remain available.
+
+Rust saves the pending email challenge, client-chosen owner session secret, and
+invite operation in private `welcome.json` before network mutation. Atomic writes
+are revision-fenced; these credentials never enter web storage. Reopening probes
+the saved owner session and resumes the same claimed invitation. The per-space
+session stores the temporary onboarding capability until Kernel setup completes.
+If setup was interrupted, Accounts renews it for the same installation. A global
+owner session can list spaces and create an invited space, but cannot sign in to
+an existing Kernel or reset its root credential.
+
 ## This computer
 
 After sign-in, an unconfigured computer gets a compact naming step with Connect

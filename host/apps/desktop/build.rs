@@ -4,6 +4,8 @@ fn main() {
             "desktop_session",
             "desktop_configure",
             "desktop_store",
+            "desktop_welcome",
+            "desktop_save_welcome",
             "desktop_open",
             "desktop_quit",
             "machine_status",
