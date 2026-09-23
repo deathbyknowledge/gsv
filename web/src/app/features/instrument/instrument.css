@@ -6,6 +6,7 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
+  --instrument-height: 100dvh;
   --instrument-header-height: 44px;
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
@@ -60,13 +61,9 @@
 .instrument-field .gsv-glyph-stars pre {
   font-family: "Departure Mono", monospace;
 }
-.instrument-scan {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0, 0, 0, 0.22) 3px);
-  mix-blend-mode: multiply;
-}
+/* Black scanlines already darken through alpha; a backdrop blend adds no visual effect. */
+/* The scanline layer is now omitted in both themes: its repeating gradient produced
+ * visible horizontal bands in WebKit. Keep the stars over the continuous void color. */
 .instrument-vignette {
   position: absolute;
   inset: 0;
@@ -76,14 +73,13 @@
 
 /* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
  * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
+/* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size.
+ * Auto sizing between all four edges fills the parent; manually dividing viewport dimensions
+ * again leaves WebKit's zoomed layer smaller than the window. */
 .instrument-scaled {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: calc(100% / var(--type-scale));
-  height: calc(100% / var(--type-scale));
-  transform: scale(var(--type-scale));
-  transform-origin: 0 0;
+  inset: 0;
+  zoom: var(--type-scale);
   container-type: inline-size;
   container-name: instrument;
 }
@@ -94,17 +90,9 @@
   inset: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  transition: opacity var(--dur-move) ease, transform var(--dur-move) ease;
 }
-.distance.is-leaving {
-  opacity: 0;
-  transform: scale(0.985);
-  pointer-events: none;
-}
-.distance.is-arriving {
-  opacity: 0;
-  transform: scale(1.015);
-}
+.instrument-view { min-width: 0; min-height: 0; height: 100%; }
+.instrument-view[hidden] { display: none; }
 
 /* ---------- shared chrome ---------- */
 .instrument-top {
@@ -252,6 +240,8 @@
 }
 .prompt-line .block-caret {
   position: absolute;
+  visibility: hidden;
+  animation-play-state: paused;
   left: 0;
   top: 0;
   font-size: var(--prompt-font-size, 1em);
@@ -259,6 +249,7 @@
   height: 1em;
   pointer-events: none;
 }
+.prompt-line textarea:focus ~ .block-caret { animation-play-state: running; }
 .prompt-line textarea:focus {
   text-shadow: var(--glow-focus);
 }
@@ -371,9 +362,8 @@
   --glow-focus: none;
   --inspector-bg: rgba(255, 255, 255, 0.72);
 }
-.instrument.is-light .instrument-scan,
 .instrument.is-light .instrument-vignette { display: none; }
-.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); text-shadow: none; }
+.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); }
 .instrument.is-light .wordmark.is-glitch { text-shadow: none; }
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
@@ -392,14 +382,11 @@
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
 @container instrument (max-width: 1280px) {
-  .fleet-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .fleet-ledger { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .who { display: none; }
 }
 @container instrument (max-width: 900px) {
   .instrument-top { padding: 0 18px; }
-  .fleet-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .fleet-inspector { border-left: 0; border-top: 1px solid var(--border); max-height: calc(45vh / var(--type-scale)); }
   .fleet-ledger { grid-template-columns: auto max-content minmax(0, 1fr) auto; }
   .fleet-ledger .t { display: none; }
   .zen-bottom { padding: 0 18px 14px; }

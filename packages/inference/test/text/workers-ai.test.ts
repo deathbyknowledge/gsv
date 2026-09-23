@@ -47,6 +47,43 @@ function completionStream(): Response {
 }
 
 describe("Workers AI provider", () => {
+  it.each([undefined, "high"] as const)(
+    "uses Cloudflare's DeepSeek thinking controls for reasoning=%s through the direct provider",
+    async (reasoning) => {
+      const bindingFetch = vi.fn<typeof fetch>(async () => completionStream());
+      const binding: TestAi = {
+        aiGatewayLogId: null,
+        fetch: bindingFetch,
+        models: vi.fn(async () => []),
+      };
+      const models = createModels();
+      models.setProvider(createWorkersAiProvider(binding));
+      const model = models.getModel("workers-ai", "@cf/deepseek-ai/deepseek-v4-flash-0731");
+      expect(model).toBeDefined();
+      if (!model) return;
+
+      await models.completeSimple(model, {
+        messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+      }, {
+        fetch: workersAiBindingFetch(binding, {
+          installationId: "native-space", logicalRequestId: "native-request", actor: { localUid: 1000 },
+        }),
+        maxTokens: 64,
+        reasoning,
+        onPayload: prepareWorkersAiGatewayPayload,
+      });
+
+      expect(bindingFetch).toHaveBeenCalledOnce();
+      const payload: unknown = await new Request(...bindingFetch.mock.calls[0]).json();
+      expect(payload).toMatchObject({
+        model: `workers-ai/${model.id}`,
+        max_tokens: 64,
+        chat_template_kwargs: { enable_thinking: reasoning !== undefined },
+      });
+      expect(payload).not.toHaveProperty("thinking");
+    },
+  );
+
   it("uses GLM-5.3-Flash as the priced default model", () => {
     expect(DEFAULT_WORKERS_AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
     expect(resolveWorkersAiModelMetadata(DEFAULT_WORKERS_AI_MODEL)).toMatchObject({
@@ -117,9 +154,9 @@ describe("Workers AI provider", () => {
     });
     expect(payload).not.toHaveProperty("max_completion_tokens");
     expect(payload).not.toHaveProperty("reasoning_effort");
-    expect(payload).not.toHaveProperty("tools.0.function.strict");
+    expect(payload).toHaveProperty("tools.0.function.strict", false);
     expect(request.headers.get("cf-aig-collect-log")).toBe("false");
-    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toMatchObject({
       "gsv.installation_id": "native-space",
       "gsv.request_id": "native-request",
       "gsv.attempt_id": expect.any(String),

@@ -15,7 +15,7 @@
     "sourceMap": true,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "ES2022.Intl", "DOM", "DOM.Iterable"],
     "useDefineForClassFields": false,
     "experimentalDecorators": true
   },

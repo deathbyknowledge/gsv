@@ -138,7 +138,7 @@ describe("shared Workers AI inference", () => {
     expect(request.url).toBe("https://workers-binding.ai/ai-gateway/gateways/default/compat/chat/completions");
     expect(request.method).toBe("POST");
     expect(request.headers.get("cf-aig-collect-log-payload")).toBe("false");
-    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
+    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toMatchObject({
       "gsv.installation_id": REQUEST.installationId,
       "gsv.request_id": REQUEST.logicalRequestId,
       "gsv.attempt_id": expect.any(String),
@@ -168,6 +168,86 @@ describe("shared Workers AI inference", () => {
       usage: { input: 2, output: 1, totalTokens: 3 },
       stopReason: "stop",
     });
+  });
+
+  it.each([undefined, "high"] as const)(
+    "uses Cloudflare's DeepSeek thinking controls for reasoning=%s and applies routing limits",
+    async (reasoning) => {
+      const model = {
+        ...FIRST_MODEL,
+        modelId: "@cf/deepseek-ai/deepseek-v4-flash-0731",
+        maxOutputTokens: 2_048,
+        outputNanoUsdPerToken: 2_000,
+      };
+      const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async () => completionResponse(model.modelId));
+      const generation = createWorkersAiGeneration({
+        ...REQUEST,
+        maxOutputTokens: 4_096,
+        reasoning,
+      }, testBinding(run).binding);
+
+      const result = await generation.result({ ...ROUTING, models: [model] });
+
+      expect(run).toHaveBeenCalledOnce();
+      const request = new Request(...run.mock.calls[0]);
+      const payload: unknown = await request.json();
+      expect(payload).toMatchObject({
+        model: `workers-ai/${model.modelId}`,
+        chat_template_kwargs: { enable_thinking: reasoning !== undefined },
+        max_tokens: 2_048,
+      });
+      expect(payload).not.toHaveProperty("thinking");
+      expect(result.stopReason).toBe("stop");
+      expect(result.usage.cost.output).toBeCloseTo(0.000002, 12);
+    },
+  );
+
+  it.each([
+    ["@cf/deepseek-ai/deepseek-v4-flash-0731", false],
+    ["@cf/google/gemma-4-26b-a4b-it", true],
+    ["@cf/test/unknown-capabilities", false],
+  ] as const)("honors image support for user and tool history on %s", async (modelId, supportsImages) => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "c3ludGhldGljLWltYWdl" };
+    const input: ManagedInferenceRequest = {
+      ...REQUEST,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Image description: a green square." }, image], timestamp: 1 },
+        {
+          role: "assistant", api: "gsv-inference", provider: "gsv", model: "gsv/default",
+          content: [{ type: "toolCall", id: "call_read", name: "read", arguments: { path: "/image.png" } }],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse", timestamp: 2,
+        },
+        {
+          role: "toolResult", toolCallId: "call_read", toolName: "read", isError: false, timestamp: 3,
+          content: [{ type: "text", text: "Image description: the same green square." }, image],
+        },
+      ],
+    };
+    const original = structuredClone(input);
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>(async () => completionResponse(modelId));
+    const generation = createWorkersAiGeneration(input, testBinding(run).binding);
+
+    expect((await generation.result({ ...ROUTING, models: [{ ...SECOND_MODEL, modelId }] })).stopReason)
+      .toBe("stop");
+    expect(run).toHaveBeenCalledOnce();
+    const body = await new Request(...run.mock.calls[0]).text();
+    expect(body).toContain("Image description: a green square.");
+    expect(body).toContain("Image description: the same green square.");
+    expect(JSON.parse(body)).toMatchObject({ messages: expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", tool_calls: [expect.objectContaining({ id: "call_read" })] }),
+      expect.objectContaining({ role: "tool", tool_call_id: "call_read" }),
+    ]) });
+    if (supportsImages) {
+      expect(body.match(/"type":"image_url"/g)).toHaveLength(2);
+      expect(body).toContain(image.data);
+    } else {
+      expect(body).not.toContain("image_url");
+      expect(body).not.toContain(image.data);
+      expect(body).toContain("model does not support images");
+    }
+    expect(input).toEqual(original);
   });
 
   it("captures content-free diagnostics for provider HTTP failures", async () => {
@@ -219,7 +299,7 @@ describe("shared Workers AI inference", () => {
 
     expect(run).toHaveBeenCalledTimes(2);
     const metadata = run.mock.calls.map((args) => JSON.parse(new Request(...args).headers.get("cf-aig-metadata")!));
-    expect(metadata).toEqual([0, 1].map(() => ({
+    expect(metadata).toMatchObject([0, 1].map(() => ({
       "gsv.installation_id": REQUEST.installationId,
       "gsv.request_id": REQUEST.logicalRequestId,
       "gsv.attempt_id": expect.any(String),

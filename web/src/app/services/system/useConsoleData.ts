@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
+import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/preact-query";
+import { useQuery } from "../navigation/viewQueries";
 import { useEffect, useMemo } from "preact/hooks";
 import { useGateway } from "../gateway/GatewayProvider";
 import type { ConsoleModelListing } from "../../domain/system/consoleSettings";

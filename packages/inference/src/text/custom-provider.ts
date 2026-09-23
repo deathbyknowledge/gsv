@@ -3,6 +3,8 @@ import {
   createAssistantMessageEventStream,
   createModels,
   createProvider,
+  getCurrentTools,
+  normalizeContext,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -247,17 +249,19 @@ function streamOpenAICompletionsWithFetch(
     const output = emptyAssistantMessage(model);
     try {
       const compat = resolvedOpenAICompletionsCompat(model);
+      const context = normalizeContext(request.context);
+      const tools = getCurrentTools(context.messages);
       const payload: OpenAIChatPayload = {
         model: model.id,
-        messages: convertMessages(model, request.context, compat),
+        messages: convertMessages(model, context, compat),
         stream: true,
         max_tokens: request.options?.maxTokens ?? request.maxTokens,
       };
       if (supportsOpenAIChatStreamingUsage(model)) {
         payload.stream_options = { include_usage: true };
       }
-      if (request.context.tools && request.context.tools.length > 0) {
-        payload.tools = convertChatTools(request.context.tools);
+      if (tools.length > 0) {
+        payload.tools = convertChatTools(tools);
       }
       const response = await postJsonSse(fetchImpl, `${model.baseUrl}/chat/completions`, payload, request);
       stream.push({ type: "start", partial: output });
@@ -279,15 +283,17 @@ function streamOpenAIResponsesWithFetch(
   void (async () => {
     const output = emptyAssistantMessage(model);
     try {
+      const context = normalizeContext(request.context);
+      const tools = getCurrentTools(context.messages);
       const payload: OpenAIResponsesPayload = {
         model: model.id,
-        input: convertResponsesMessages(model, request.context, new Set([model.provider, "openai", "opencode"])),
+        input: convertResponsesMessages(model, context, new Set([model.provider, "openai", "opencode"])),
         stream: true,
         store: false,
         max_output_tokens: request.options?.maxTokens ?? request.maxTokens,
       };
-      if (request.context.tools && request.context.tools.length > 0) {
-        payload.tools = convertResponsesTools(request.context.tools);
+      if (tools.length > 0) {
+        payload.tools = convertResponsesTools(tools);
       }
       if (request.options?.reasoning) {
         payload.reasoning = {

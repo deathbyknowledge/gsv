@@ -40,8 +40,8 @@ Use `GSV_CHANNEL=dev` for the moving development channel, or set
 
 New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,
 `%LOCALAPPDATA%\Programs\gsv\bin` on Windows. No `sudo` is involved, the
-daemon can update itself there, and `~/.gsv` then holds everything GSV writes
-on the machine besides `config.toml` and the service definition. The installer
+daemon can update itself there, and `~/.gsv` holds the host tools, logs and model cache. Desktop keeps its
+private session and webview state in the platform application data directory. The installer
 puts the directory on `PATH` for new shells: one marked, guarded line in
 `~/.profile`, plus `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, and
 `~/.config/fish/conf.d/gsv.fish` where those exist, never added twice; on
@@ -137,12 +137,34 @@ supervise the exact same-version helpers. The vision executable embeds its
 checksum-pinned models; their Apache 2.0 license and provenance are installed
 as verified sidecar assets.
 
-The current Desktop release is a command-line executable rather than a macOS
-`.app` bundle. It is not code-signed or notarized. A signed/notarized macOS
-package requires Apple Developer signing credentials and a notarization secret
-to be configured in the release environment. Windows Desktop distribution is
-blocked on product support and packaging for the current GPUI version, so the
-Windows installer deliberately installs only `gsv` and `gsvd`.
+Desktop uses the same Instrument source as the web UI. It is the only desktop
+implementation shipped by releases. Launching opens the installed version;
+rerun the installer to update it.
+
+After signing in, choose Connect this computer to make it a target. Desktop
+handles pairing and background service installation. Not now skips this step;
+reopen it from the space menu under This computer. An existing connection for
+the same space and account resumes automatically. Connections to another space
+or account and your separate CLI login are preserved. The background service
+continues after Desktop closes.
+
+Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. On Arch:
+
+```bash
+sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-libav
+```
+
+On Ubuntu/Debian:
+
+```bash
+sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+```
+
+macOS releases also include `gsv-desktop-darwin-arm64.zip` and
+`gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
+helpers. The developer app is ad-hoc signed and unnotarized. After the first
+blocked launch, use System Settings → Privacy & Security → Open Anyway.
+Replace the bundle to update it. Windows receives only the CLI and daemon.
 
 ## Manual verification
 

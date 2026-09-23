@@ -17,7 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-ai": "0.87.0",
     "@humansandmachines/gsv": "0.0.6",
     "zod": "4.3.6"
   },

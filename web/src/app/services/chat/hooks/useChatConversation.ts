@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useCallback, useEffect, useMemo } from "preact/hooks";
+import { useViewSnapshot } from "../../navigation/ViewActivity";
+import { useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../navigation/viewQueries";
 import type {
   ConversationMessage,
   ConversationMessageOrigin,
@@ -143,9 +145,7 @@ export function useChatConversationRuntime(
     enabled: enabled && Boolean(conversationId),
     queryFn: () => getChatConversationHistory(client, conversationId, { limit: PAGE_SIZE }),
   });
-  const [runtime, setRuntime] = useState<ConversationRuntime>(EMPTY_RUNTIME);
-  const runtimeRef = useRef(runtime);
-  runtimeRef.current = runtime;
+  const [runtime, setRuntime, runtimeRef] = useViewSnapshot<ConversationRuntime>(EMPTY_RUNTIME);
 
   useEffect(() => {
     if (input.enabled === false || !processId) {

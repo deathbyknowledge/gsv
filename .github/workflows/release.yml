@@ -146,12 +146,12 @@ jobs:
           name: gsv-host-tools-${{ matrix.platform }}
           path: release/*
 
-  # GPUI 0.2.2 supports Linux and macOS. Build Desktop and its isolated
-  # transcription helper natively for both architectures on those systems.
-  # The gesture-vision helper uses the same native release matrix.
   build-desktop:
     needs: [resolve]
     env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      # ARM64 OpenBLAS needs libm during CMake's C link probes as well as the final link.
+      TRANSCRIBE_CMAKE_ARGS: ${{ startsWith(matrix.platform, 'linux-') && '-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES' || '' }}
       GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
       GSV_BUILD_SHA: ${{ github.sha }}
       GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
@@ -192,7 +192,13 @@ jobs:
             cmake \
             libasound2-dev \
             libclang-dev \
-            libfontconfig1-dev \
+            libopenblas-pthread-dev \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libv4l-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-libav \
             libssl-dev \
             libwayland-dev \
             libx11-dev \
@@ -202,11 +208,39 @@ jobs:
             linux-libc-dev \
             pkg-config
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: desktop-release-${{ matrix.target }}
+      - name: Build shared desktop frontend
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+          npm run gsv:build
+          npm run build --workspace web -- --config vite.desktop.config.ts
+
       - name: Build Desktop and local helpers
         working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
           --package desktop --package transcriber --package gestures
+
+      - name: Check shipped voice helper
+        run: python3 host/scripts/check-transcriber.py host/target/${{ matrix.target }}/release/gsv-transcribe
+
+      - name: Test gesture helper for this release target
+        working-directory: host
+        run: >-
+          cargo test --locked --release --target ${{ matrix.target }}
+          --package gestures --package gesture-protocol
+
+      - name: Check gesture fixture parity
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: scripts/vision-native/parity.sh
 
       - name: Stage Desktop
         shell: bash
@@ -220,7 +254,18 @@ jobs:
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
             cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
             cp host/helpers/gestures/models/PROVENANCE.md release/gsv-vision-PROVENANCE.md
+            cp host/helpers/gestures/THIRD_PARTY.md release/gsv-vision-THIRD_PARTY.md
           fi
+
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          MACOSX_DEPLOYMENT_TARGET: '12.0'
+        run: |
+          cargo build --manifest-path host/Cargo.toml --locked --release --package gsv --package machine
+          host/scripts/package-macos.sh --release --skip-build --output "$RUNNER_TEMP/gsv-app"
+          cp "$RUNNER_TEMP/gsv-app/"*.zip "release/gsv-desktop-${{ matrix.platform }}.zip"
 
       - name: Upload Desktop
         uses: actions/upload-artifact@v4
@@ -346,7 +391,8 @@ jobs:
             release/gsv-vision-darwin-*
           chmod -x release/gsv-transcribe-THIRD_PARTY.md \
             release/gsv-vision-LICENSE.apache-2.0 \
-            release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-PROVENANCE.md \
+            release/gsv-vision-THIRD_PARTY.md
 
           # Include install script
           cp install.sh release/
@@ -436,9 +482,17 @@ jobs:
           - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-vision-linux-arm64\`
           - **Windows (x64)**: \`gsv-windows-x64.exe\`, \`gsvd-windows-x64.exe\`
 
-          The macOS command-line Desktop builds are not yet code-signed or notarized.
-          A signed \`.app\` distribution remains blocked on Apple Developer signing
-          credentials and a notarization secret being configured for this repository.
+          ### macOS app
+
+          Download \`gsv-desktop-darwin-arm64.zip\` for Apple Silicon or
+          \`gsv-desktop-darwin-x64.zip\` for Intel. Unzip it and move
+          \`GSV.app\` to Applications. Each app includes its local
+          voice and gesture helpers, CLI, and machine daemon.
+
+          These developer builds are ad-hoc signed, without an Apple Developer ID
+          or notarization. After the first blocked launch, use **System Settings →
+          Privacy & Security → Open Anyway** for this app. macOS still asks for
+          camera and microphone access when you enable those features.
           BODY
 
       - name: Move mutable dev tag
@@ -504,6 +558,9 @@ jobs:
             release/gsv-vision-darwin-arm64
             release/gsv-vision-LICENSE.apache-2.0
             release/gsv-vision-PROVENANCE.md
+            release/gsv-vision-THIRD_PARTY.md
+            release/gsv-desktop-darwin-x64.zip
+            release/gsv-desktop-darwin-arm64.zip
             release/gsv-cloudflare-*.tar.gz
             release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt
@@ -511,3 +568,13 @@ jobs:
             release/install.sh
             release/install.ps1
             release/checksums.txt
+
+      - name: Remove retired desktop downloads
+        if: needs.resolve.outputs.kind == 'dev'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-"))' > retired-desktop-assets.txt
+          while IFS= read -r asset; do
+            gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+          done < retired-desktop-assets.txt

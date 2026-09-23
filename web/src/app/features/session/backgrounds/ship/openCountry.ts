@@ -1,17 +1,16 @@
+import type { AsciiGlowPoint, AsciiMaterial, AsciiMesh } from "../../../../components/ui/asciiMesh";
+
 /** Original Open Country geometry from the GSV shape study; no external model assets. */
 type Vector = [number, number, number];
 type Section = [number, number, number, number, number];
-type Material = { albedo: number; emission: number };
 type MaterialName = keyof typeof MATERIALS;
-export type ShipMesh = { vertices: Float32Array; indices: Uint32Array; materials: Material[] };
-export type ShipPoint = Material & {
+export type ShipPoint = AsciiMaterial & {
   x: number; y: number; z: number;
   nx: number; ny: number; nz: number;
   sx: number; sy: number; sz: number;
   delay: number; noise: number;
 };
-export type ShipGlowPoint = { x: number; y: number; z: number; radius: number; brightness: number };
-export type ShipModel = { mesh: ShipMesh; driveGlow: ShipGlowPoint[] };
+export type ShipModel = { mesh: AsciiMesh; driveGlow: AsciiGlowPoint[] };
 
 const TAU = Math.PI * 2;
 const MATERIALS = {
@@ -37,8 +36,8 @@ function random(seed: number): () => number {
 }
 
 export function buildOpenCountry(drivesOn: boolean): ShipModel {
-  const vertices: number[] = [], indices: number[] = [], materials: Material[] = [];
-  const driveGlow: ShipGlowPoint[] = [];
+  const vertices: number[] = [], indices: number[] = [], materials: AsciiMaterial[] = [];
+  const driveGlow: AsciiGlowPoint[] = [];
   function face(corners: Vector[], material: MaterialName): void {
     const normal = unit(cross(subtract(corners[1], corners[0]), subtract(corners[2], corners[0])));
     const base = vertices.length / 6;
@@ -183,12 +182,12 @@ export function buildOpenCountry(drivesOn: boolean): ShipModel {
   // Wider, shallower apertures keep the three separate drives legible in the compact glyph view.
   for (const side of [-1, 0, 1]) drive([3.16, 0.23, side * 0.92], side === 0 ? 0.37 : 0.34);
 
-  const mesh: ShipMesh = { vertices: new Float32Array(vertices), indices: new Uint32Array(indices), materials };
+  const mesh: AsciiMesh = { vertices: new Float32Array(vertices), indices: new Uint32Array(indices), materials };
   return { mesh, driveGlow };
 }
 
 /** Formation samples are only needed while the hull is assembling. */
-export function sampleShipSurface(mesh: ShipMesh): ShipPoint[] {
+export function sampleShipSurface(mesh: AsciiMesh): ShipPoint[] {
   const { vertices, indices, materials } = mesh;
   let area = 0;
   const distribution = materials.map((material, faceIndex) => {

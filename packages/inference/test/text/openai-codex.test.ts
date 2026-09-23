@@ -32,14 +32,14 @@ function bareCodexToken(): string {
 }
 
 function codexModel() {
-  const model = getBuiltinModels("openai-codex").find((candidate) => candidate.id === "gpt-5.4-mini");
+  const model = getBuiltinModels("openai-codex").find((candidate) => candidate.id === "gpt-6-astra");
   if (!model) {
-    throw new Error("missing openai-codex/gpt-5.4-mini fixture");
+    throw new Error("missing openai-codex/gpt-6-astra fixture");
   }
   return model;
 }
 
-function codexTextEvents(text = "ok", modelName = "gpt-5.4-mini"): JsonObject[] {
+function codexTextEvents(text = "ok", modelName = "gpt-6-astra"): JsonObject[] {
   return [
     {
       type: "response.created",
@@ -292,7 +292,7 @@ describe("OpenAI Codex routed fetch transport", () => {
     expect(headers.get("openai-beta")).toBe("responses=experimental");
     expect(headers.get("session-id")).toBe("session-1");
     expect(body).toMatchObject({
-      model: "gpt-5.4-mini",
+      model: "gpt-6-astra",
       stream: true,
       store: false,
       instructions: "Reply briefly.",
@@ -360,7 +360,7 @@ describe("OpenAI Codex routed fetch transport", () => {
         type: "response.completed",
         response: {
           id: "resp_failed",
-          model: "gpt-5.4-mini",
+          model: "gpt-6-astra",
           status: "failed",
           error: {
             code: "server_error",

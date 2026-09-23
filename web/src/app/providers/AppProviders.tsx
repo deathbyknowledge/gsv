@@ -45,7 +45,7 @@ export type ScopedWebQueryClient = {
 
 export function webQuerySessionScope(snapshot: SessionSnapshot): string {
   const username = snapshot.username.trim();
-  return snapshot.phase === "ready" && username ? `user:${username}` : "signed-out";
+  return snapshot.phase === "ready" && username ? `user:${JSON.stringify([snapshot.url, username])}` : "signed-out";
 }
 
 export function resolveScopedWebQueryClient(

@@ -1,0 +1,24 @@
+{
+  "identifier": "desktop",
+  "description": "Only the packaged desktop main window may control its session and native input.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-desktop-session",
+    "allow-desktop-configure",
+    "allow-desktop-store",
+    "allow-desktop-open",
+    "allow-desktop-quit",
+    "allow-machine-status",
+    "allow-machine-command",
+    "allow-control-attach",
+    "allow-control-detach",
+    "allow-control-active",
+    "allow-control-reply",
+    "allow-input-attach",
+    "allow-input-acknowledge",
+    "allow-input-command"
+  ]
+}

@@ -1,5 +1,8 @@
+import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useQuery } from "@tanstack/preact-query";
+import { memo } from "preact/compat";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -44,7 +47,6 @@ import {
   answerHistorySnapshot,
   countLabel,
   defaultPlace,
-  linkPlaceReferences,
   momentsFromConversation,
   momentTime,
   memoryPagesForMoment,
@@ -78,6 +80,8 @@ export type ZenProps = {
 };
 
 const HISTORY_LIMIT = 400;
+const EMPTY_COLLECTIONS: readonly LibraryCollection[] = [];
+const EMPTY_EXPANDED: ReadonlySet<string> = new Set();
 const RESOLVE_FRAME_MS = 60;
 /** How long a message that arrived whole takes to settle out of glyph noise: brisk for a line, longer for a page, never a wait. */
 function settleDuration(length: number): number {
@@ -105,12 +109,12 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
 }
 
 /** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
-function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
+const MomentTime = memo(function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
   const when = momentTime(timestamp, timeZone, today);
   return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
-}
+});
 
-function ActivityLine({
+const ActivityLine = memo(function ActivityLine({
   activity,
   who,
   places,
@@ -122,20 +126,21 @@ function ActivityLine({
   who: string;
   places: readonly Place[];
   open: boolean;
-  onToggle: () => void;
+  onToggle: (key: string) => void;
   onFleet: ZenProps["onFleet"];
 }) {
   const label = activity.target === null ? "process working" : placeLabel(activity.target, places);
   const running = activity.calls.find((call) => !call.finished);
   const unavailable = activity.terminal?.status === "unavailable";
   const [now, setNow] = useState(Date.now);
+  const active = useViewActive();
   const timing = !!activity.terminal && activity.live && !unavailable;
   useEffect(() => {
-    if (!timing) return;
+    if (!active || !timing) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [timing]);
+  }, [active, timing]);
   const head = activity.live && running ? (
     <>
       {!unavailable && <span class="pulse blink" />}
@@ -161,11 +166,11 @@ function ActivityLine({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={onToggle}
+        onClick={() => onToggle(activity.key)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onToggle();
+            onToggle(activity.key);
           }
         }}
       >
@@ -181,16 +186,15 @@ function ActivityLine({
       ) : null}
     </div>
   );
-}
+});
 
 /** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
-function Receipt({ receipt, who, places, collections, open, onToggle, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
+const Receipt = memo(function Receipt({ receipt, who, places, collections, open, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
   receipt: RunReceipt;
   who: string;
   places: readonly Place[];
   collections: readonly LibraryCollection[];
   open: boolean;
-  onToggle: () => void;
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
   expanded: ReadonlySet<string>;
@@ -208,7 +212,7 @@ function Receipt({ receipt, who, places, collections, open, onToggle, onMemory, 
   return (
     <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}`}>
       <div class="line">
-        <button type="button" class="receipt-toggle" aria-expanded={open} onClick={onToggle}>
+        <button type="button" class="receipt-toggle" aria-expanded={open} onClick={() => onToggleDetail(receipt.key)}>
           <span class="receipt-chevron" aria-hidden="true">›</span>
           {running ? <span class="pulse blink" /> : null}
           {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
@@ -267,7 +271,7 @@ function Receipt({ receipt, who, places, collections, open, onToggle, onMemory, 
       ) : null}
     </div>
   );
-}
+});
 
 function NoteMoment({
   moment,
@@ -302,6 +306,7 @@ function NoteMoment({
 }
 
 export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -312,9 +317,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
+    if (!active) return;
     const timer = window.setTimeout(() => setToday(Date.now()), nextDayBoundary(today, timeZone) - Date.now());
     return () => window.clearTimeout(timer);
-  }, [today, timeZone]);
+  }, [active, today, timeZone]);
 
   const [note, setNote] = useState<string | null>(null);
   const pid = useZenProcess(pidProp, setNote);
@@ -326,11 +332,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
-  const [draftText, setDraftText] = useState("");
+  const [hasDraft, setHasDraft] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = draftText !== "" || attachments.length > 0 || outbox.messages.length > 0;
+  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0;
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -356,7 +362,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
   const onPromptInput = useCallback((value: string) => {
-    setDraftText(value);
+    setHasDraft(value !== "" && value.trim() !== "$");
     const match = value.match(/^@(\S*)$/);
     setPickerQuery(match ? match[1] : null);
     setPickerIndex(0);
@@ -503,10 +509,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
   const animating = streaming || settling.size > 0 || marking;
   useEffect(() => {
-    if (!animating || reducedMotion()) return undefined;
+    if (!active || !animating || reducedMotion()) return undefined;
     const interval = window.setInterval(() => setTick((value) => value + 1), RESOLVE_FRAME_MS);
     return () => window.clearInterval(interval);
-  }, [animating]);
+  }, [active, animating]);
 
   const loadOlder = useCallback(async () => {
     await Promise.all([conversation.loadOlder(), processRuntime.loadOlderHistory()]);
@@ -515,11 +521,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
   const { browse, viewport: momentsRef, content: contentRef } = scrolling;
-  const hasMemoryRead = [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
+  const hasMemoryRead = useMemo(() => [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
     ),
-  ));
+  )), [receipts]);
   const memoryCollections = useQuery({
     queryKey: [...INSTRUMENT_MEMORY_KEY, "collections"],
     queryFn: () => listLibraryCollections(client),
@@ -531,7 +537,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
   const streamedRunsRef = useRef<Set<string>>(new Set());
   useLayoutEffect(() => {
-    if (!ready) return;
+    if (!active || !ready) return;
     for (const moment of moments) {
       if (!moment.streaming) continue;
       streamedMomentsRef.current.add(moment.id);
@@ -568,9 +574,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       for (const id of arrived) next.set(id, startedAt);
       return next;
     });
-  }, [moments, ready]);
+  }, [active, moments, ready]);
   useEffect(() => {
-    if (settling.size === 0) return;
+    if (!active || settling.size === 0) return;
     const done = [...settling].filter(([id, startedAt]) => {
       const moment = moments.find((entry) => entry.id === id);
       return !moment || Date.now() - startedAt >= settleDuration(moment.text.length);
@@ -581,17 +587,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       for (const [id] of done) next.delete(id);
       return next;
     });
-  }, [moments, settling, tick]);
+  }, [active, moments, settling, tick]);
   /* the first ready render happens before the cascade is set; nothing shows in it, so no frame ever holds the transcript unsettled */
   const cascadeUnset = ready && seenMomentsRef.current === null && !reducedMotion();
-  /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
-  const settleProgress = (moment: Moment): number | null => {
-    const startedAt = settling.get(moment.id);
-    if (startedAt === undefined) return null;
-    const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
-    if (progress >= 1) return null;
-    return Math.max(0, progress);
-  };
 
   const latest = moments[moments.length - 1];
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
@@ -630,14 +628,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where],
   );
 
+  const nativeVoice = useRef<NativeVoiceHandle>(null);
+  const nativePanels = useRef<HTMLDivElement>(null);
+
   const runDirectly = useCallback(
     (command: string) => {
       try {
         const id = sessions.start(command, where ?? defaultPlace(places), pidProp ?? "ship");
         scrolling.follow();
         setOpenActivities((current) => new Set([...current, id]));
+        return true;
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The command did not run.");
+        return false;
       }
     },
     [sessions, places, where, pidProp, scrolling.follow],
@@ -650,7 +653,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return attachments.length > 0 ? say("") : false;
+      if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
@@ -659,8 +662,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       if (intent.kind === "run") {
         if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
-        void runDirectly(intent.command);
-        return true;
+        return runDirectly(intent.command);
       }
       return say(intent.text);
     },
@@ -672,7 +674,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (inputHistory.length === 0) return;
       const nextIndex = historyIndex === null ? (direction === -1 ? inputHistory.length - 1 : null) : Math.min(inputHistory.length - 1, Math.max(0, historyIndex + direction));
       setHistoryIndex(nextIndex);
-      promptRef.current?.setValue(nextIndex === null ? "" : inputHistory[nextIndex]);
+      const empty = promptRef.current?.selection().value.startsWith("$") ? "$ " : "";
+      promptRef.current?.setValue(nextIndex === null ? empty : inputHistory[nextIndex]);
     },
     [historyIndex, inputHistory],
   );
@@ -692,17 +695,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* an approval takes the keys: the prompt lets go so y and n reach the decision */
   useEffect(() => {
-    if (pendingHil) promptRef.current?.blur();
-  }, [pendingHil]);
+    if (active && pendingHil) promptRef.current?.blur();
+  }, [active, pendingHil]);
 
   useEffect(() => {
-    if (!prefill || !connected || !pid) return;
+    if (!active || !prefill || !connected || !pid) return;
     const input = promptRef.current;
     if (!input || input.disabled) return;
+    setWhere(initialTarget ?? null);
+    setAttachments([]);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
-  }, [prefill, onPrefillUsed, connected, pid]);
+  }, [active, prefill, initialTarget, onPrefillUsed, connected, pid]);
 
   const onPromptFocus = useCallback(
     (focused: boolean) => {
@@ -712,6 +717,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   );
 
   useLayoutEffect(() => {
+    if (!active) { firstGoKey.current = null; return; }
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       const editing = editableElement(event.target);
@@ -761,14 +767,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
-      if (browse !== null && event.key === "j") {
+      if (browse !== null && (event.key === "j" || event.key === "k")) {
         event.preventDefault();
-        scrolling.select(Math.min(moments.length - 1, browse + 1));
-        return;
-      }
-      if (browse !== null && event.key === "k") {
-        event.preventDefault();
-        scrolling.select(Math.max(0, browse - 1));
+        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
         return;
       }
       // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
@@ -779,10 +780,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [active, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
+    if (!active) return;
     const onPaste = (event: ClipboardEvent) => {
       if (event.defaultPrevented || editableElement(event.target) || pendingHil) return;
       const input = promptRef.current;
@@ -796,7 +798,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addFiles, pendingHil]);
+  }, [active, addFiles, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -811,13 +813,105 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     [onFleet],
   );
 
+  // Moving the browse cursor changes row decoration, not the message, receipt or attachment content.
+  const messageBodies = useMemo(() => {
+    if (!ready) return [];
+    /** How much of a settling message is shown so far: the settled head plus the noisy tail sweeping to the end. */
+    const settleProgress = (moment: Moment): number | null => {
+      const startedAt = settling.get(moment.id);
+      if (startedAt === undefined) return null;
+      const progress = (Date.now() - startedAt) / settleDuration(moment.text.length);
+      if (progress >= 1) return null;
+      return Math.max(0, progress);
+    };
+    return moments.map((moment, index) => {
+      if (moment.role === "note") return null;
+      const isLatest = index === moments.length - 1;
+      const receipt = receipts.get(moment.id);
+      return <>
+        {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
+          {moment.role === "human" ? who : "ship"}
+          {moment.outgoing && moment.outgoing.status !== "failed" ? (
+            <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
+              <Spinner size={14} />
+            </span>
+          ) : null}
+          {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
+        </div> : null}
+        {moment.activities
+          .filter((activity) => activity.you)
+          .map((activity) => (
+            <ActivityLine
+              key={activity.key}
+              activity={activity}
+              who={who}
+              places={places}
+              open={openActivities.has(activity.key)}
+              onToggle={toggleActivity}
+              onFleet={onFleet}
+            />
+          ))}
+        {receipt?.anchorId === moment.id ? (
+          <Receipt
+            receipt={receipt}
+            who={who}
+            places={places}
+            collections={memoryCollections.data ?? EMPTY_COLLECTIONS}
+            onMemory={onMemory}
+            onFleet={onFleet}
+            open={openActivities.has(receipt.key)}
+            expanded={openActivities.has(receipt.key) ? openActivities : EMPTY_EXPANDED}
+            onToggleDetail={toggleActivity}
+            waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
+              && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
+          />
+        ) : null}
+        {moment.role === "human" ? (
+          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
+        ) : moment.text ? (
+          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
+        ) : moment.thinking || moment.streaming ? (
+          <div class="text"><ThinkingMark tick={tick} /></div>
+        ) : null}
+        {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+        {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
+          <ul class="zen-draft-attachments" aria-label="Message attachments">
+            {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
+          </ul>
+        ) : null}
+        {moment.outgoing?.status === "uploading" ? (
+          <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
+        ) : moment.outgoing?.status === "failed" ? (
+          <div class="zen-send-actions">
+            <span class="is-err" role="alert">{moment.outgoing.error}</span>
+            <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
+            <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
+          </div>
+        ) : null}
+        {isLatest && pendingHil ? (
+          <ApprovalCard
+            request={pendingHil}
+            who={who}
+            place={placeLabel(pendingHil.target, places)}
+            onInspect={() => {
+              if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+            }}
+            onDecide={(decision) => void decide(decision)}
+          />
+        ) : null}
+      </>;
+    });
+  }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
+
   /* the status line */
   const activeRun = connected ? runtime.activeRunId : null;
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
 
-  const latestMessageIndex = moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1);
+  const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
+    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
       <span>Could not load your conversation: {conversation.historyError.message}</span>
@@ -865,8 +959,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 <button type="button" onClick={scrolling.readOlder}>retry</button>
               </div>}
               {moments.map((moment, index) => {
-                const isLatest = index === moments.length - 1;
-                const receipt = receipts.get(moment.id);
                 const settleStart = settling.get(moment.id);
                 const pending = cascadeUnset || (settleStart !== undefined && Date.now() < settleStart);
                 const materialising = !cascadeUnset && settleStart !== undefined && !pending;
@@ -892,77 +984,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 }
                 return (
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
-                    {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-                      {moment.role === "human" ? who : "ship"}
-                      {moment.outgoing && moment.outgoing.status !== "failed" ? (
-                        <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
-                          <Spinner size={14} />
-                        </span>
-                      ) : null}
-                      {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
-                    </div> : null}
-                    {moment.activities
-                      .filter((activity) => activity.you)
-                      .map((activity) => (
-                        <ActivityLine
-                          key={activity.key}
-                          activity={activity}
-                          who={who}
-                          places={places}
-                          open={openActivities.has(activity.key)}
-                          onToggle={() => toggleActivity(activity.key)}
-                          onFleet={onFleet}
-                        />
-                      ))}
-                    {receipt?.anchorId === moment.id ? (
-                      <Receipt
-                        receipt={receipt}
-                        who={who}
-                        places={places}
-                        collections={memoryCollections.data ?? []}
-                        onMemory={onMemory}
-                        onFleet={onFleet}
-                        open={openActivities.has(receipt.key)}
-                        onToggle={() => toggleActivity(receipt.key)}
-                        expanded={openActivities}
-                        onToggleDetail={toggleActivity}
-                        waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
-                          && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
-                      />
-                    ) : null}
-                    {moment.role === "human" ? (
-                      <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={tick} />
-                    ) : moment.text ? (
-                      <ZenText text={linkPlaceReferences(moment.text, places)} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={tick} onClick={onTextClick} />
-                    ) : moment.thinking || moment.streaming ? (
-                      <div class="text"><ThinkingMark tick={tick} /></div>
-                    ) : null}
-                    {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
-                    {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
-                      <ul class="zen-draft-attachments" aria-label="Message attachments">
-                        {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
-                      </ul>
-                    ) : null}
-                    {moment.outgoing?.status === "uploading" ? (
-                      <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
-                    ) : moment.outgoing?.status === "failed" ? (
-                      <div class="zen-send-actions">
-                        <span class="is-err" role="alert">{moment.outgoing.error}</span>
-                        <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
-                        <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
-                      </div>
-                    ) : null}
-                    {isLatest && pendingHil ? (
-                      <ApprovalCard
-                        request={pendingHil}
-                        who={who}
-                        place={placeLabel(pendingHil.target, places)}
-                        onInspect={() => {
-                          if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                        }}
-                        onDecide={(decision) => void decide(decision)}
-                      />
-                    ) : null}
+                    {messageBodies[index]}
                   </div>
                 );
               })}
@@ -1016,7 +1038,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}
-            onInput={onPromptInput}
+            onInput={(value) => { onPromptInput(value); nativeVoice.current?.onInput(value); }}
+            interceptSubmit={() => nativeVoice.current?.interceptSubmit() ?? false}
             onKeyIntercept={onPromptKey}
             onPlace={openPicker}
             place={currentPlace}
@@ -1042,9 +1065,14 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
+            <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
+              scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
+              enabled={active && connected && pid !== null && pendingHil === null}
+              send={onSubmit} scroll={scrolling.move} />
           </div>
         </div>
       </div>
+      <div class="zen-input-panels" ref={nativePanels} />
     </main>
   );
 }

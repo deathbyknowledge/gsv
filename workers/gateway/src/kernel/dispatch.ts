@@ -329,13 +329,18 @@ async function dispatchLocal(
   const fsTransport = {
     ...deps,
     requestTarget,
-    openContactSource: async (source: Parameters<typeof openContactResourceSource>[0]) => (
-      await openContactResourceSource(source, ctx)
-    ),
+    openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
+      const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
+      await authorizeNestedOperation(contactContext, "fs.transfer.send", { ...source });
+      contactContext.requestSignal?.throwIfAborted();
+      return await openContactResourceSource(source, contactContext);
+    },
   };
 
   try {
     if (frame.call === "fs.read" && frame.args.target?.startsWith("contact:") === true) {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse(frame.args));
+      ctx.requestSignal?.throwIfAborted();
       return {
         type: "res",
         id: frame.id,
@@ -344,6 +349,8 @@ async function dispatchLocal(
       };
     }
     if (frame.call === "fs.transfer.send" && frame.args.target?.startsWith("contact:") === true) {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse(frame.args));
+      ctx.requestSignal?.throwIfAborted();
       return await handleContactResourceSend(frame.args, ctx, frame.id);
     }
     if (isRoutableSyscall(frame.call)) {

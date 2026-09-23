@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-store"
+description = "Enables the desktop_store command without any pre-configured scope."
+commands.allow = ["desktop_store"]
+
+[[permission]]
+identifier = "deny-desktop-store"
+description = "Denies the desktop_store command without any pre-configured scope."
+commands.deny = ["desktop_store"]

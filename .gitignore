@@ -15,3 +15,8 @@ docs/.vitepress/cache/
 
 # OS junk
 .DS_Store
+
+# Desktop build artifacts
+web/dist-desktop/
+host/apps/desktop/gen/
+host/apps/desktop/binaries/

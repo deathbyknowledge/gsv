@@ -3,6 +3,8 @@ use crate::{build_info, logger};
 use base64::Engine;
 use std::ffi::OsString;
 use std::fs::{self, File};
+#[cfg(target_os = "linux")]
+use std::io::IsTerminal;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -817,7 +819,11 @@ fn linger_is_enabled() -> bool {
 #[cfg(target_os = "linux")]
 fn try_enable_linger() -> Result<(), DynError> {
     let username = whoami::username();
-    let output = Command::new("sudo")
+    let mut command = Command::new("sudo");
+    if !std::io::stdin().is_terminal() {
+        command.arg("-n");
+    }
+    let output = command
         .arg("loginctl")
         .arg("enable-linger")
         .arg(&username)

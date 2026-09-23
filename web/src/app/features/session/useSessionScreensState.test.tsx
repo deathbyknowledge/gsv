@@ -22,7 +22,7 @@ async function setupScreen() {
       sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
     },
     snapshot: () => snapshot, subscribe: () => () => {},
-    setup, login, lock: () => {}, start: async () => {},
+    setup, login, lock: async () => {}, start: async () => {},
   };
   let state!: ReturnType<typeof useSessionScreensState>;
   function Harness() { state = useSessionScreensState({ session, snapshot }); return null; }

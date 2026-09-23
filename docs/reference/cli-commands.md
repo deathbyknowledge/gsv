@@ -379,7 +379,7 @@ window state, and the selected PID; `--json` prints those same redacted fields
 for scripts. The command returns an error when Desktop is not running.
 
 The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
 an explicit executable when testing a nonstandard installation.
 
 These commands use the versioned same-user IPC contract in
@@ -399,6 +399,11 @@ After installing GSV, paste the provided command:
 gsv pair CODE [--workspace PATH] [--no-install]
 gsv pair  # resume an interrupted exchange
 ```
+
+Use `gsv pair -` to read the invitation from stdin instead of exposing it in
+process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+credentials unchanged; `--no-replace` refuses to overwrite an existing machine
+credential. Desktop uses these together for integrated machine setup.
 
 The invitation supplies the gateway, account and target identity. It expires in
 ten minutes and can enroll one device. The CLI saves its credential before the

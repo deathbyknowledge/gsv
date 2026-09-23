@@ -179,12 +179,6 @@ export function visibleProcesses(processes: readonly ConsoleProcess[], selected:
   return processes.slice(0, Math.max(limit, selectedIndex + 1));
 }
 
-/** A linked process or target keeps its identity when unavailable; ordinary row navigation can leave it. */
-export function reconcileFleetSelection(selected: FleetRow | null, initialRow: FleetRow | null, visibleRows: readonly FleetRow[]): FleetRow | null {
-  if (selected && (visibleRows.includes(selected) || (selected === initialRow && (selected.startsWith("proc:") || selected.startsWith("target:"))))) return selected;
-  return initialRow && visibleRows.includes(initialRow) ? initialRow : visibleRows[0] ?? null;
-}
-
 export function ledgerRow(lineId: string): FleetRow {
   return `ledger:${lineId}`;
 }

@@ -47,6 +47,7 @@ make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
+printf 'vision-runtime-v1\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
 write_checksums
 
@@ -152,6 +153,7 @@ test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-THIRD_PARTY.md")" = "vision-runtime-v1"
 
 make_fixture gsv-linux-x64 gsv-corrupt
 if run_installer 2>/dev/null; then
@@ -173,6 +175,7 @@ make_fixture gsv-vision-darwin-x64 vision-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v2\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
+printf 'vision-runtime-v2\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 write_checksums
 cat > "$FAKE_BIN/chmod" <<'SH'
 #!/usr/bin/env sh
@@ -195,6 +198,7 @@ test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
+test "$(cat "$INSTALL_DIR/gsv-vision-THIRD_PARTY.md")" = "vision-runtime-v1"
 
 # A fresh install with no GSV_INSTALL_DIR goes to ~/.gsv/bin and puts it on
 # PATH once, however often the installer runs.
