@@ -63,6 +63,8 @@ export type AiModelConfig = {
   baseUrl?: string;
   providerStyle?: string;
   transportTarget?: string;
+  /** Saved OAuth connection in this model's credential scope; omitted uses the existing default. */
+  oauthAccountKey?: string;
   maxTokens?: number;
   contextWindowTokens?: number;
 };

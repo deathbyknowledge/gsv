@@ -8,6 +8,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 import {
   INTEGRATION_REPLY,
@@ -678,10 +679,12 @@ describe("gateway runtime integration", () => {
     if (!spawned.ok) throw new Error(spawned.error);
     await configureDeterministicAi(client, spawned.pid, ai.baseUrl);
     const finished: string[] = [];
+    const finishedRunSchema = z.object({ pid: z.string(), runId: z.string(), status: z.literal("ok") });
     const stop = client.onSignal((signal, payload) => {
-      if (signal !== "proc.run.finished" || !payload || typeof payload !== "object" || Array.isArray(payload)) return;
-      if (payload.pid === spawned.pid && payload.status === "ok" && typeof payload.runId === "string") {
-        finished.push(payload.runId);
+      if (signal !== "proc.run.finished") return;
+      const parsed = finishedRunSchema.safeParse(payload);
+      if (parsed.success && parsed.data.pid === spawned.pid) {
+        finished.push(parsed.data.runId);
       }
     });
     try {

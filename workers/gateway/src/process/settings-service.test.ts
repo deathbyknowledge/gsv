@@ -31,7 +31,8 @@ describe("Process model selection recovery", () => {
         const original = createProcessAiConfig({ modelId: "deleted", reasoning: "high" }, 100);
         process.store.state.setAiConfig(original);
         const controller = new AbortController();
-        const resolved: AiConfigResult = { ...processTestConfig(process.pid), ...(scenario === "valid" ? {} : { missingModelId: "deleted" }) };
+        const resolved: AiConfigResult = processTestConfig(process.pid);
+        if (scenario !== "valid") resolved.missingModelId = "deleted";
         const rpc = vi.spyOn(process.kernel, "kernelRpc").mockImplementation(async () => {
           if (scenario === "changed" || scenario === "same-id-new-choice") {
             process.store.state.setAiConfig(createProcessAiConfig({

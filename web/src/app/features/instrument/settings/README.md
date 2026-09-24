@@ -22,6 +22,13 @@ and mutation failures remain visible; backend authorization is unchanged.
 
 Model rows expand to show connection details. Edit and remove are available for the account's own definitions (the installation layer for root); inherited definitions remain labelled and read-only. Adding and editing share the same compact form. A name-only edit saves without inference; connection changes are tested before saving. Saved keys stay out of the input, and blank preserves a key for the same connection; replacement and removal are explicit. Definition writes preserve the complete stored layer, including entries hidden by higher layers, and reject an edit when its original definition has changed. Removing a model uses an inline confirmation, clears its personal ordering references, and lets the gateway remove its detached credential. Adding with Use first also works when a personal fallback order is already saved.
 
+Each Codex model retains its own OAuth connection reference. Adding a model or
+changing its account starts a separate sign-in. Saving assigns that connection
+to the edited model; other models keep their sign-ins. Connection status is scoped to the
+signed-in GSV account and the selected OAuth reference. When available, the
+ChatGPT email identifies the connection. Models saved before account selection
+continue to use their existing default connection.
+
 Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
 The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations and cross-Ship request management belong to Fleet. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.

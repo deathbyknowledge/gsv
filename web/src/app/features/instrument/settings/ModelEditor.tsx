@@ -77,17 +77,22 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   const fetchTargets = (targets.data ?? []).filter((target) => target.implements.some((capability) => capability === "net.fetch" || capability === "net.*" || capability === "*"));
   const transport = values["config/ai/transport_target"] || (codex ? "" : "gsv");
   const editable = connected && canConfigure(account, "sys.config.set");
-  const auth = useQuery({ queryKey: ["instrument", "codex-sign-in"], queryFn: () => checkConsoleOpenAiCodexOAuth(client), enabled: editable && active && codex });
+  const oauthAccountKey = values["config/ai/oauth_account_key"] || (initial.profile?.values["config/ai/provider"] === "openai-codex" ? "default" : "");
+  const auth = useQuery({ queryKey: ["instrument", "codex-sign-in", account.uid, oauthAccountKey], queryFn: () => checkConsoleOpenAiCodexOAuth(client, { uid: account.uid, accountKey: oauthAccountKey }), enabled: editable && active && codex && !!oauthAccountKey });
   const login = useMutation({
-    mutationFn: () => startConsoleOpenAiCodexOAuth(client),
-    onMutate: () => { setSignedIn(false); setSignInError(""); },
+    mutationFn: (accountKey: string) => startConsoleOpenAiCodexOAuth(client, { accountKey }),
+    onMutate: (accountKey) => {
+      setValues((current) => ({ ...current, "config/ai/oauth_account_key": accountKey }));
+      setSignedIn(false);
+      setSignInError("");
+    },
   });
   const authenticated = signedIn || (auth.data?.connected === true && !login.data);
   const loginUrl = signInUrl(login.data?.verificationUrl ?? null);
 
   useEffect(() => {
     const flow = login.data;
-    if (!active || !codex || !flow || signedIn || signInError) return;
+    if (!active || !codex || !flow || flow.flow.accountKey !== oauthAccountKey || signedIn || signInError) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -105,7 +110,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
     };
     timer = setTimeout(() => void poll(), Math.max(1, flow.intervalSeconds) * 1000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [active, codex, login.data, signedIn, signInError, client, cache]);
+  }, [active, codex, oauthAccountKey, login.data, signedIn, signInError, client, cache]);
 
   const save = useMutation({
     mutationFn: async (draft: { name: string; values: Record<string, string>; first: boolean; clearApiKey: boolean }) => {
@@ -163,7 +168,10 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
       <fieldset disabled={!editable || pending}>
         <label>Provider<select name="provider" value={provider} required onChange={(event) => {
           const next = event.currentTarget.value;
-          setValues({ "config/ai/provider": next });
+          setValues({
+            "config/ai/provider": next,
+            "config/ai/oauth_account_key": next === "openai-codex" ? crypto.randomUUID() : "",
+          });
           setClearApiKey(false);
           setSignedIn(false);
           setSignInError("");
@@ -173,9 +181,11 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
         {provider && <>
           {codex && <div class="settings-model-login">
             <p class="settings-muted">Use your ChatGPT subscription.</p>
-            {authenticated ? <p role="status">ChatGPT is connected.</p> : <>
-              <button class="ibtn" type="button" onClick={() => login.mutate()} disabled={login.isPending}>{login.isPending ? <LoadingState>connecting…</LoadingState> : login.data ? "start sign-in again" : "sign in with ChatGPT"}</button>
+            {authenticated && <p role="status">{auth.data?.email ? `Connected as ${auth.data.email}` : "ChatGPT is connected."}</p>}
+            <button class={authenticated ? "settings-text-action" : "ibtn"} type="button" onClick={() => login.mutate(crypto.randomUUID())} disabled={login.isPending}>{login.isPending ? <LoadingState>connecting…</LoadingState> : authenticated ? "change account" : login.data ? "start sign-in again" : "sign in with ChatGPT"}</button>
+            {!authenticated && <>
               {login.data && loginUrl && <p>Enter <strong class="settings-login-code">{login.data.userCode}</strong> at <a href={loginUrl} target="_blank" rel="noreferrer">OpenAI sign-in ↗</a>.</p>}
+              {login.data && loginUrl && <p class="settings-muted">Use the browser profile for the ChatGPT account you want.</p>}
             </>}
             {signInError && <p class="settings-error" role="alert">{signInError}</p>}
           </div>}

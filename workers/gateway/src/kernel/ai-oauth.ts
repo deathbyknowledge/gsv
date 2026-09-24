@@ -19,6 +19,7 @@ export function hasStoredAiProviderOAuthAccount(
   ctx: KernelContext,
   accountUids: readonly number[],
   provider: string,
+  accountKey = OPENAI_CODEX_ACCOUNT_KEY,
 ): boolean {
   if (provider !== OPENAI_CODEX_PROVIDER) {
     return false;
@@ -27,7 +28,7 @@ export function hasStoredAiProviderOAuthAccount(
     uid,
     "ai-provider",
     OPENAI_CODEX_PROVIDER,
-    OPENAI_CODEX_ACCOUNT_KEY,
+    accountKey,
   ) !== null);
 }
 
@@ -36,6 +37,7 @@ export async function resolveAiProviderOAuthApiKey(
   accountUids: number[],
   provider: string,
   configuredApiKey: string,
+  accountKey?: string,
 ): Promise<ResolvedAiProviderOAuthApiKey> {
   if (provider !== OPENAI_CODEX_PROVIDER) {
     return { apiKey: configuredApiKey };
@@ -46,7 +48,7 @@ export async function resolveAiProviderOAuthApiKey(
       uid,
       "ai-provider",
       OPENAI_CODEX_PROVIDER,
-      OPENAI_CODEX_ACCOUNT_KEY,
+      accountKey ?? OPENAI_CODEX_ACCOUNT_KEY,
     );
     if (!account) continue;
 
@@ -69,6 +71,9 @@ export async function resolveAiProviderOAuthApiKey(
     };
   }
 
+  if (accountKey) {
+    throw new Error("The selected ChatGPT account is not connected. Sign in again or choose another account.");
+  }
   return { apiKey: configuredApiKey };
 }
 

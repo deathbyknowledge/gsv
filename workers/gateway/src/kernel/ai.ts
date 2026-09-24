@@ -890,17 +890,20 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
   // Layered order on purpose: clients re-serialize a layer from this listing.
   const result: AiModelsResult = {
-    models: effective.map((item) => ({
-      ...item.entry,
-      source: item.source,
+    models: effective.map((item) => {
+      const hasOAuthAccount = hasStoredAiProviderOAuthAccount(
+        ctx,
+        item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
+        item.entry.provider,
+        item.entry.oauthAccountKey,
+      );
       // A stored key or a saved OAuth account in the entry's credential scope both count.
-      hasCredential: storedCredential(ctx, item).length > 0
-        || hasStoredAiProviderOAuthAccount(
-          ctx,
-          item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
-          item.entry.provider,
-        ),
-    })),
+      // An explicit OAuth reference requires that exact saved connection.
+      const hasCredential = item.entry.provider === "openai-codex" && item.entry.oauthAccountKey
+        ? hasOAuthAccount
+        : storedCredential(ctx, item).length > 0 || hasOAuthAccount;
+      return { ...item.entry, source: item.source, hasCredential };
+    }),
     preferredModelId,
   };
   if (modelOrder) result.modelOrder = modelOrder;
@@ -973,15 +976,16 @@ async function resolveStoredAiTextModelStack(
   if (!primary) {
     throw new Error("No usable AI model is configured");
   }
-  return {
+  const stack: ResolvedAiTextModelStack = {
     primary: primary.config,
-    ...(missingModelId ? { missingModelId } : {}),
     fallbacks: fallbacks.map(({ entry, config }) => ({
       modelId: entry.id,
       modelName: entry.name,
       ...config,
     })),
   };
+  if (missingModelId) stack.missingModelId = missingModelId;
+  return stack;
 }
 
 async function resolveRequestAiModelConfig(
@@ -1052,6 +1056,7 @@ async function resolveCompleteAiModelConfig(options: {
     options.systemOwned ? withRootAiCredentialScope(options.accountUids) : options.accountUids,
     provider,
     options.apiKey,
+    options.model.oauthAccountKey?.trim() || undefined,
   );
   const modelContextWindow = options.model.contextWindowTokens === undefined
     ? await resolveModelContextWindow(options.ctx, provider, model, options.generationTimeoutMs)
