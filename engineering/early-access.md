@@ -63,3 +63,30 @@ return. Exercise concurrent redemption, handle races, lost responses, reopening
 during setup, revocation, quota exhaustion, override removal, and private/public
 composition. Diagnostic events contain stage, outcome, and timing, not codes,
 credentials, email addresses, queries, or conversation content.
+
+
+## Allowance audit
+
+Commercial allowances belong to private Accounts plans and per-space overrides;
+services own live admission, durable usage and provider effects. The public SDK
+owns snapshot validation and the shared five-minute cache. The Mail adapter's
+optional `ENTITLEMENTS` binding consumes that contract. Without it an operator
+may supply deployment allowances; with it, policy failure is fail-closed.
+
+| Setting | Owner / treatment |
+| --- | --- |
+| Managed inference inclusion and monthly spend | Accounts entitlements; Inference reservations |
+| Search inclusion and monthly/minute requests | Accounts entitlements; Search atomic admissions |
+| Incoming/outgoing mail inclusion, daily messages/bytes, summary attempts | Accounts entitlements; Mail atomic daily reservations |
+| Incoming message and outgoing text size allowance | Accounts entitlements, bounded by the mail/Kernel transport ceilings |
+| Inference deployment spend ceiling, operational enable switches and model routing | Operator safety controls; retained independently of cached plan values |
+| Login/email verification, pending pairing and federation abuse bounds | Authentication/security owners; not purchasable allowances |
+| MIME/header nesting, stream/message byte ceilings, protocol buffers | Parser/transport safeguards; retained at the boundary |
+| Retry counts, operation deadlines, alarm batches, cache TTL, pagination | Runtime policy and implementation bounds |
+| Provider SDK/model limits and inference output defaults | Provider/execution configuration; not subscription plans |
+| Storage, connected machines, agents, schedules and retention quotas | No commercial allowance currently enforced; introducing these needs an explicit product contract and accounting owner |
+
+The managed deployment must omit mail allowance variables when it binds
+Entitlements. Migration 0021 in the private policy repository preserves the
+previous values. Development, composed integration tests and production use the
+same service binding. No managed service uses exported telemetry as its counter.

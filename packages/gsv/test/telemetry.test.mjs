@@ -204,3 +204,16 @@ describe("telemetry contract", () => {
     }).success, false);
   });
 });
+
+
+it("accepts service outcomes only from their owner and rejects user content", () => {
+  const input = { ...INPUT, component: "search", event: { stream: "operational", name: "web_search.request.finished",
+    properties: { outcome: "completed", stage: "settlement", admitted: true, durationMs: 10, resultCount: 5, costConfirmed: false } } };
+  const record = createTelemetryRecord(input);
+  assert.equal(telemetryRecordSchema.safeParse(record).success, true);
+  assert.equal(telemetryRecordSchema.safeParse({ ...record, component: "gateway" }).success, false);
+  for (const field of ["query", "results", "email", "exception"]) {
+    assert.equal(telemetryRecordSchema.safeParse({ ...record, event: { ...record.event,
+      properties: { ...record.event.properties, [field]: "private" } } }).success, false);
+  }
+});

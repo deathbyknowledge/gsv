@@ -10,6 +10,7 @@ import {
 import type { MailService as MailServiceContract } from "@humansandmachines/gsv/services/mail";
 import { resolveMailRecipient } from "./address";
 import { mailLimits, type MailEnv } from "./env";
+import { MAIL_MAX_MESSAGE_BYTES } from "@humansandmachines/gsv/services/mail";
 
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
@@ -134,11 +135,11 @@ export async function handleIncomingMail(
   message: ForwardableEmailMessage,
   env: MailEnv,
 ): Promise<void> {
-  const limits = mailLimits(env);
+  const maxMessageBytes = env.ENTITLEMENTS ? MAIL_MAX_MESSAGE_BYTES : mailLimits(env).maxMessageBytes;
   if (
     !Number.isSafeInteger(message.rawSize)
     || message.rawSize <= 0
-    || message.rawSize > limits.maxMessageBytes
+    || message.rawSize > maxMessageBytes
   ) {
     message.setReject("Message exceeds this mailbox's size limit");
     await cancelStream(message.raw, "Managed mail message is oversized");
@@ -185,7 +186,12 @@ export async function handleIncomingMail(
   );
   let result: Awaited<typeof intake>;
   try {
-    [result] = await Promise.all([intake, relay]);
+    // Observe relay failures immediately, including policy rejection before body consumption.
+    const observedRelay = relay.then(() => true, () => false);
+    result = await intake;
+    if (result.status === "rejected") relayController.abort();
+    const relayed = await observedRelay;
+    if (!relayed && result.status !== "rejected") throw new Error("Mail body relay failed");
   } catch (error) {
     relayController.abort(error);
     await Promise.allSettled([intake, relay]);

@@ -1,3 +1,4 @@
+import type { MailPolicy } from "../src/policy";
 import { env } from "cloudflare:workers";
 import {
   runDurableObjectAlarm,
@@ -131,6 +132,32 @@ async function interruptAfterFirstChunk(
 }
 
 describe("managed mail installation transport", () => {
+  it("reserves a cached plan's quota atomically for simultaneous arrivals", async () => {
+    const id = "installation_concurrent-quota-" + crypto.randomUUID();
+    const stub = env.MAIL_INSTALLATIONS.getByName(id);
+    const results = await Promise.all(["a", "b", "c", "d"].map((subject) => intake(stub, id, subject)));
+    expect(results.filter(({ result }) => result.status === "accepted")).toHaveLength(2);
+    expect(results.filter(({ result }) => result.status === "rejected")).toHaveLength(2);
+    expect(await stub.usage()).toMatchObject({ inboundMessages: 2 });
+  });
+
+  it("enforces a zero plan allowance and keeps suspension live with a warm cache", async () => {
+    // The fixture's policy endpoint is separate from its live directory response.
+    const bound: unknown = env.ACCOUNTS;
+    // SAFETY: AccountsTest explicitly exposes this policy-control method in vitest.config.ts.
+    const accounts = bound as { setMailPolicy(id: string, values: Record<string, number | boolean>): Promise<void> };
+    const id = "installation_plan-zero-" + crypto.randomUUID();
+    await accounts.setMailPolicy(id, { "mail.inbound.daily_messages": 0 });
+    const stub = env.MAIL_INSTALLATIONS.getByName(id);
+    expect((await intake(stub, id, "zero allowance")).result).toEqual({ status: "rejected", reason: "quota" });
+    expect(await stub.usage()).toMatchObject({ inboundMessages: 0, inboundBytes: 0 });
+    const inactiveId = "installation_became-inactive-" + crypto.randomUUID();
+    const inactive = env.MAIL_INSTALLATIONS.getByName(inactiveId);
+    await expect(intake(inactive, inactiveId, "restricted one")).rejects.toThrow("unavailable");
+    await expect(intake(inactive, inactiveId, "restricted two")).rejects.toThrow("unavailable");
+    expect(await inactive.usage()).toMatchObject({ inboundMessages: 0 });
+  });
+
   it("deduplicates exact raw bytes without double-counting daily intake", async () => {
     const installationId = "installation_mail_dedupe";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
@@ -239,7 +266,7 @@ describe("managed mail installation transport", () => {
   it("durably stages a message at the configured 16 MiB boundary", async () => {
     const installationId = "installation_mail_size_boundary";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
-    await runInDurableObject(stub, (instance) => {
+    await runInDurableObject(stub, async (instance) => {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
@@ -251,9 +278,9 @@ describe("managed mail installation transport", () => {
       const untyped: unknown = instance;
       // SAFETY: The test fixture exposes the concrete installation internals.
       const internals = untyped as {
-        limits: { dailyInboundBytes: number };
+        policy: MailPolicy;
       };
-      internals.limits.dailyInboundBytes = 64 * 1024 * 1024;
+      vi.spyOn(internals.policy, "limits").mockResolvedValue({ ...await internals.policy.limits(), dailyInboundBytes: 64 * 1024 * 1024 });
     });
     const bytes = new Uint8Array(16 * 1024 * 1024 - 1);
     const prefix = encoder.encode("Subject: size boundary\r\n\r\n");

@@ -146,6 +146,7 @@ function integrationEmailConfig(
     send_email: config.send_email,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       {
         binding: "GATEWAY",
         service: gatewayService,
