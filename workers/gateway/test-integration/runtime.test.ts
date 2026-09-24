@@ -425,6 +425,13 @@ describe("gateway runtime integration", () => {
     if (!target.ok) throw new Error(target.error);
     await configureDeterministicAi(client, personalProcesses[0]!.pid, ai.baseUrl);
     await configureDeterministicAi(client, target.pid, ai.baseUrl);
+    await client.sys.config.set({
+      key: `users/${USER_UID}/ai/tools/approval`,
+      value: JSON.stringify({
+        default: "auto",
+        rules: [{ match: "shell.exec", target: "gsv", action: "ask" }],
+      }),
+    });
 
     ai.enqueue(
       {
