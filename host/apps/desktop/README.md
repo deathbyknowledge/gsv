@@ -16,7 +16,7 @@ checksum-pinned LiteRT/XNNPACK source build.
 ```bash
 npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
 npm run gsv:build
-npm run build --workspace web -- --config vite.desktop.config.ts
+npm run build:desktop --workspace web
 cargo build --manifest-path host/Cargo.toml --locked --package desktop --package transcriber --package gestures
 ./host/target/debug/gsv-desktop
 ```

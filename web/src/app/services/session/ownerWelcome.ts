@@ -39,7 +39,7 @@ export class OwnerApiError extends Error {
 const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
 /** Save request identities before transmission so a lost response can be resumed. */
-export class DesktopWelcome {
+export class OwnerWelcome {
   constructor(private snapshot: WelcomeSnapshot, private readonly storage: WelcomeStorage,
     private readonly accountsOrigin: string, private readonly fetcher: OwnerFetch = (input, init) => fetch(input, init)) {}
 

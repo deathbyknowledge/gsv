@@ -1,5 +1,25 @@
 # Invite onboarding
 
+## Browser signup and cached plan values
+
+Browser signup owns the same invite, email verification, handle selection, and
+resume journey as desktop. Its primary action is to create a space; opening an
+existing space remains available. The shared welcome controller and screens
+own the journey, while each host owns credential storage and navigation. The
+browser stores its pending flow atomically in IndexedDB and enters the existing
+space setup screen with a fragment-only onboarding capability.
+
+Accounts serves the browser entry at `/owner/signup/`; a managed signup hostname
+may redirect there. The page uses the shared auth scene and fields. Native
+enrollment, plan administration, and billing controls remain in their existing
+surfaces. Signup never inserts or sends a conversation message.
+
+Plan values are cached for five minutes per installation. Each service still
+checks current lifecycle and operational admission for every request, and owns
+its authoritative usage counters and reservations. Inference routing and its
+operational switch are live reads, separate from the cached commercial limits.
+Expired plan snapshots cannot admit new work.
+
 The desktop welcome screen gets a person into an existing space or creates one
 from an operator-issued invite. Accounts owns verified owner identity, invite
 redemption, handle allocation, and resumable setup. The Kernel continues to own

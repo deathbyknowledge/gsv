@@ -333,6 +333,10 @@ jobs:
         if: needs.changes.outputs.installations == 'true'
         run: npm run typecheck --workspace @humansandmachines/gsv-installations
 
+      - name: Build browser signup
+        if: needs.changes.outputs.installations == 'true'
+        run: npm run build:signup --workspace web
+
       - name: Test installation services
         if: needs.changes.outputs.installations == 'true'
         run: npm test --workspace @humansandmachines/gsv-installations
@@ -687,7 +691,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
           npm run gsv:build
-          npm run build --workspace web -- --config vite.desktop.config.ts
+          npm run build:desktop --workspace web
           npm run test:run --workspace web -- src/desktop src/app/services/platform
 
       - name: Check formatting

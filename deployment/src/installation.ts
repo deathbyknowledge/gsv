@@ -35,6 +35,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     ownerIdentity?: { issuer: string; clientId: string; clientSecret?: Cloudflare.Workers.WorkerBindingProps[string] };
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
+    ownerSignupOrigin?: string;
   };
   inference: {
     workerName: string;
@@ -148,6 +149,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_ADMIN_ACCESS_AUD: accessAudience,
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
+      GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {
@@ -164,6 +166,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       crons: ["* * * * *"],
       compatibility, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
+      assets: { directory: `${props.paths.webAssets}/owner-signup`, htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     }).pipe(retain(props.allowResourceDeletion !== true));
   }
   let inference = props.services?.inferenceExecution;

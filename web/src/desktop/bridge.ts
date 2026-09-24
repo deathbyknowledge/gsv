@@ -3,7 +3,7 @@ import type { NativeCommand, NativeInput, NativeSnapshot, NativeUpdate } from ".
 import type { SessionService, SessionStorage } from "../app/services/session/sessionService";
 import type { ControlEvent, ControlReply } from "./control";
 import type { MachineCommand, MachineSnapshot, NativeMachine } from "./machineSetup";
-import type { WelcomeSnapshot, WelcomeState } from "./welcome";
+import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };

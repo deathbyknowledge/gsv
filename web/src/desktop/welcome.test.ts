@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DesktopWelcome, type WelcomeSnapshot, type WelcomeState } from "./welcome";
+import { OwnerWelcome, type WelcomeSnapshot, type WelcomeState } from "../app/services/session/ownerWelcome";
 
 function fixture() {
   let stored: WelcomeSnapshot = { revision: "initial", value: null };
@@ -8,7 +8,7 @@ function fixture() {
     stored = { revision: crypto.randomUUID(), value }; return structuredClone(stored);
   });
   const fetcher = vi.fn<typeof fetch>();
-  const reopen = () => new DesktopWelcome(structuredClone(stored), { save }, "https://gsv.space", fetcher);
+  const reopen = () => new OwnerWelcome(structuredClone(stored), { save }, "https://gsv.space", fetcher);
   return { fetcher, save, reopen, stored: () => stored };
 }
 const invite = { id: "invite_owned", state: "claimed", handle: null, origin: null, lastError: null };

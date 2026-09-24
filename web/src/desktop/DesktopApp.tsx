@@ -10,7 +10,7 @@ import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrows
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
-import { ONBOARDING_KEY } from "./welcome";
+import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import "./desktop.css";

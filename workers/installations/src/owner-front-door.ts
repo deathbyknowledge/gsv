@@ -6,11 +6,14 @@ import { ownerEmailEnabled, type InstallationOwnerEnvironment } from "./owner-se
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationOwnerApi } from "./owner-api";
 import type { InstallationCreationInvites } from "./creation-invites";
+import { handleOwnerSignupRequest } from "./owner-signup";
 
 /** Both public and commercial compositions use the same owner authentication boundary. */
 export async function handleInstallationOwnerRequest(request: Request, env: InstallationOwnerEnvironment, registryPrincipalId: string, invitations?: InstallationCreationInvites): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const emailEnabled = ownerEmailEnabled(env);
+  const signup = await handleOwnerSignupRequest(request, env, emailEnabled && Boolean(invitations));
+  if (signup) return signup;
   if (path !== "/owner" && !path.startsWith("/owner/") && !(emailEnabled && path === "/")) return null;
   if (path.startsWith("/owner/api/")) {
     if (!emailEnabled || !invitations) return unavailable();
