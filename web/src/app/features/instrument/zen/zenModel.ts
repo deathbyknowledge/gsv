@@ -41,7 +41,7 @@ export type Place = {
 };
 
 export const CLOUD_PLACE_ID = "gsv";
-export const CLOUD_PLACE_LABEL = "your cloud home";
+export const CLOUD_PLACE_LABEL = "your cloud";
 
 export function placeLabel(id: string, places: readonly Place[]): string {
   if (id === CLOUD_PLACE_ID) return CLOUD_PLACE_LABEL;

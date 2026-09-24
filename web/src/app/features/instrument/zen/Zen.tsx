@@ -23,7 +23,7 @@ import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
-import type { FleetReference } from "../fleet/fleetModel";
+import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -31,7 +31,6 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "./ApprovalCard";
-import { RunFeedback } from "./RunFeedback";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -60,6 +59,7 @@ import {
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
+  CLOUD_PLACE_LABEL,
   type Activity,
   type Moment,
   type Place,
@@ -357,7 +357,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
-    const all = [{ id: "gsv", label: "your cloud home", online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
+    const all = [{ id: "gsv", label: CLOUD_PLACE_LABEL, online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
     const needle = pickerQuery.toLowerCase();
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
   }, [pickerQuery, places]);
@@ -387,7 +387,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
     const id = where ?? CLOUD_PLACE_ID;
-    if (id === CLOUD_PLACE_ID) return { id, label: "your cloud home", online: true };
+    if (id === CLOUD_PLACE_ID) return { id, label: CLOUD_PLACE_LABEL, online: true };
     const place = places.find((entry) => entry.id === id);
     return { id, label: place?.label ?? id, online: place?.online ?? false };
   }, [places, where]);
@@ -908,9 +908,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
 
   /* the status line */
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const activeRun = connected ? runtime.activeRunId : null;
   const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = !connected || !currentPlace.online || note !== null || activeRun !== null;
+  const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -998,18 +999,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
       <div class="zen-bottom">
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
-        {showFeedback && <div class="zen-feedback">
-          {activeRun && <RunFeedback key={activeRun} model={attemptedModel}
-            place={currentPlace.label} online={currentPlace.online} awaitingApproval={pendingHil !== null} />}
-          {!connected && <span role="status">Not connected</span>}
-          {connected && !currentPlace.online ? (
-            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-              {currentPlace.label} is offline · view place
-            </button>
-          ) : null}
-          {note ? <span class="is-err" role="alert">{note}</span> : null}
-        </div>}
-        <div>
+
+        <div class="zen-composer">
           {pickerOpen ? (
             <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
               {pickerPlaces.map((place, index) => (
@@ -1037,6 +1028,14 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
+          {showFeedback && <div class="zen-feedback">
+            {activeRun !== null && <span role="status">
+              {attemptedModel && <>attempting {attemptedModel} · </>}
+              {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
+            </span>}
+            {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
+            {note ? <span class="is-err" role="alert">{note}</span> : null}
+          </div>}
           <PromptLine
             ref={promptRef}
             onFocusChange={onPromptFocus}
@@ -1045,14 +1044,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             onKeyIntercept={onPromptKey}
             onPlace={openPicker}
             place={currentPlace}
+            showPlace={false}
             dir="~"
             placeholder={
               pendingHil
                 ? "answer the approval first"
                 : !promptFocused
-                  ? "Start typing, or click here to write"
+                  ? "Start chatting, or click here to chat"
                   : currentPlace.online
-                    ? "Ask in plain words, or start with $ to run a command yourself"
+                    ? "Ask in plain words, or start with $ to run a terminal command yourself"
                     : `Ask in plain words; ${currentPlace.label} will run it when it's back`
             }
             disabled={!connected || !pid}
@@ -1071,6 +1071,31 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
               enabled={active && connected && pid !== null && pendingHil === null}
               send={onSubmit} scroll={scrolling.move} />
+            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
+          </div>
+          <div class="zen-place-section">
+            {!currentPlace.online && <div class="zen-feedback" role="status">
+              <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+                {currentPlace.label} is offline · view place
+              </button>
+            </div>}
+            <ul class="zen-places" aria-label="Choose a place for your next message or command">
+              {selectorPlaces.map((target) => {
+                const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
+                return (
+                  <li key={target.id}>
+                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                      aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
+                      aria-pressed={target.id === currentPlace.id}
+                      disabled={!target.online}
+                      onClick={() => { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); }}>
+                      <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </div>
       </div>

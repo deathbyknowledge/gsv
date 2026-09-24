@@ -13,6 +13,7 @@ export type PromptPlace = {
 export type PromptLineProps = {
   /** Where the prompt points. Shown as a chip; it is the target, not a shell prompt. */
   place: PromptPlace;
+  showPlace?: boolean;
   /** The working directory a command runs in on that place, already shortened for display. */
   dir: string;
   placeholder: string;
@@ -60,7 +61,7 @@ export function promptAfterSubmit(text: string): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -86,9 +87,9 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const field = fieldRef.current;
     const chip = chipRef.current;
     const caret = caretRef.current;
-    if (!input || !mirror || !field || !chip || !caret) return;
+    if (!input || !mirror || !field || !caret) return;
     if (!metrics.current) {
-      field.style.setProperty("--prompt-indent", `${chip.offsetWidth + 12}px`);
+      field.style.setProperty("--prompt-indent", `${chip ? chip.offsetWidth + 12 : 0}px`);
       const style = getComputedStyle(input);
       metrics.current = { fontSize: parseFloat(style.fontSize), lineHeight: parseFloat(style.lineHeight) };
       field.style.setProperty("--prompt-font-size", style.fontSize);
@@ -96,7 +97,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       mirror.style.font = style.font;
       mirror.style.letterSpacing = style.letterSpacing;
       mirror.style.textIndent = style.textIndent;
-      chip.style.top = `${Math.max(0, (metrics.current.lineHeight - chip.offsetHeight) / 2)}px`;
+      if (chip) chip.style.top = `${Math.max(0, (metrics.current.lineHeight - chip.offsetHeight) / 2)}px`;
       measured.current = null;
     }
     const { fontSize, lineHeight } = metrics.current;
@@ -134,7 +135,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       if (lineTop < input.scrollTop) input.scrollTop = lineTop;
       else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
     }
-    chip.style.transform = `translateY(${-input.scrollTop}px)`;
+    if (chip) chip.style.transform = `translateY(${-input.scrollTop}px)`;
     const visible = focused && input.selectionStart === input.selectionEnd;
     // Cursor geometry belongs to this measurement, without a component update after the frame callback.
     caret.style.transform = `translate(${left - input.scrollLeft}px, ${lineTop + (lineHeight - fontSize) / 2 - input.scrollTop}px)`;
@@ -164,7 +165,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     }
     metrics.current = null;
     measure(true);
-  }, [active, measure, disabled, command, place.label, place.online, dir]);
+  }, [active, measure, disabled, command, place.label, place.online, dir, showPlace]);
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (!active || !input) return;
@@ -271,7 +272,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   return (
     <form class={`prompt-line${command ? " is-command" : ""}${place.online ? "" : " is-offline"}`} onSubmit={submit} autocomplete="off">
       <span class="field" ref={fieldRef}>
-        <button ref={chipRef} type="button" class="chip" onClick={onPlace} title={chipTitle} aria-label={chipTitle} tabIndex={-1}>
+        {showPlace && <button ref={chipRef} type="button" class="chip" onClick={onPlace} title={chipTitle} aria-label={chipTitle} tabIndex={-1}>
           {command ? (
             <span class="dir">{dir}</span>
           ) : (
@@ -281,7 +282,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
               {place.online ? null : <span class="state">offline</span>}
             </>
           )}
-        </button>
+        </button>}
         <textarea
           ref={inputRef}
           rows={1}
