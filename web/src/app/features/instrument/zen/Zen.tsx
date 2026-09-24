@@ -907,7 +907,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
-  const showFeedback = note !== null || pendingHil !== null;
+  const activeRun = connected ? runtime.activeRunId : null;
+  const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
+  const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1025,6 +1027,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           {showFeedback && <div class="zen-feedback">
+            {activeRun !== null && <span role="status">
+              {attemptedModel && <>attempting {attemptedModel} · </>}
+              {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
+            </span>}
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
@@ -1080,7 +1086,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
                       aria-pressed={target.id === currentPlace.id}
                       disabled={!target.online}
-                      onClick={() => { setWhere(target.id); setPickerQuery(null); }}>
+                      onClick={() => { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); }}>
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
                     </button>
