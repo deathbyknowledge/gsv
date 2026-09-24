@@ -83,6 +83,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || admin.protocol !== "https:" || !admin.hostname.endsWith(`.${props.domain}`)) {
     throw new Error("Deployment requires a base domain and an HTTPS administration origin below it");
   }
+  const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
+  if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"
+    || (props.routing && !signup.hostname.endsWith(`.${props.domain}`)))) {
+    throw new Error("Signup requires an HTTPS origin below the base domain when deployment owns routing");
+  }
   let accessAudience: string | Output.Output<string> = "";
   if (props.access.kind === "cloudflare-access") {
     const { audience, teamDomain } = props.access;
@@ -235,6 +240,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsRoute`, {
       zoneId: props.routing.zoneId, pattern: `${admin.hostname}/*`, script: directory.workerName,
     }).pipe(retain(props.allowResourceDeletion !== true));
+    if (signup && signup.hostname !== admin.hostname) {
+      yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsSignupRoute`, {
+        zoneId: props.routing.zoneId, pattern: `${signup.hostname}/*`, script: directory.workerName,
+      }).pipe(retain(props.allowResourceDeletion !== true));
+    }
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {
       zoneId: props.routing.zoneId, pattern: `*.${props.domain}/*`, script: runtime.gateway.workerName,
     }).pipe(retain(props.allowResourceDeletion !== true));

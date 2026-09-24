@@ -41,4 +41,11 @@ describe("browser signup assets", () => {
     expect((await handleOwnerSignupRequest(new Request("https://other.example.com/owner/signup/"), config, true))?.status).toBe(404);
     expect((await handleOwnerSignupRequest(new Request(`${origin}/owner/signup`), config, true))?.headers.get("location")).toBe("/owner/signup/");
   });
+
+  it("keeps canonical Accounts paths available when the alias equals the Accounts origin", async () => {
+    const sharedOrigin = { ...config, GSV_OWNER_SIGNUP_ORIGIN: origin };
+    expect((await handleOwnerSignupRequest(new Request(`${origin}/owner/signup/`), sharedOrigin, true))?.status).toBe(200);
+    expect(await handleOwnerSignupRequest(new Request(`${origin}/owner/api/session`), sharedOrigin, true)).toBeNull();
+    expect(await handleOwnerSignupRequest(new Request(`${origin}/admin`), sharedOrigin, true)).toBeNull();
+  });
 });

@@ -6,7 +6,7 @@ const PATH = "/owner/signup/";
 export async function handleOwnerSignupRequest(request: Request, env: Pick<InstallationOwnerEnvironment, "GSV_ADMIN_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN" | "ASSETS">, enabled: boolean): Promise<Response | null> {
   const url = new URL(request.url);
   const alias = env.GSV_OWNER_SIGNUP_ORIGIN;
-  if (alias && url.origin === alias) {
+  if (alias && alias !== env.GSV_ADMIN_ORIGIN && url.origin === alias) {
     if (!["GET", "HEAD"].includes(request.method) || url.pathname !== "/") return new Response("Not Found", { status: 404 });
     return new Response(null, { status: 302, headers: noStoreHeaders({ location: new URL(PATH, env.GSV_ADMIN_ORIGIN).href }) });
   }

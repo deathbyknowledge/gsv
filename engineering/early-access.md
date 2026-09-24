@@ -14,6 +14,12 @@ may redirect there. The page uses the shared auth scene and fields. Native
 enrollment, plan administration, and billing controls remain in their existing
 surfaces. Signup never inserts or sends a conversation message.
 
+When `GsvDeployment` owns routing, the optional `ownerSignupOrigin` must be an
+HTTPS origin below the space base domain and gets an explicit Accounts route.
+Operator overlays own that route when `routing` is omitted. Accounts reserves
+both its administration hostname and the configured signup hostname from space
+handles, including custom aliases such as `join`.
+
 Plan values are cached for five minutes per installation. Each service still
 checks current lifecycle and operational admission for every request, and owns
 its authoritative usage counters and reservations. Inference routing and its
