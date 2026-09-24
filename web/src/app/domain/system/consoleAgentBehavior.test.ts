@@ -151,6 +151,7 @@ describe("console agent behavior", () => {
       "fs.search",
       "fs.transfer.stat",
       "fs.transfer.send",
+      "web.search",
       "sys.mcp.call",
       "mail.send",
     ]);

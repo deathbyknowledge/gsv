@@ -25,6 +25,7 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: "fs.search", target: "targets/*", action: "auto" },
     { match: "fs.transfer.stat", target: "targets/*", action: "auto" },
     { match: "fs.transfer.send", target: "targets/*", action: "auto" },
+    { match: "web.search", action: "auto" },
     { match: "sys.mcp.call", action: "ask" },
     { match: "mail.send", action: "ask" },
   ],

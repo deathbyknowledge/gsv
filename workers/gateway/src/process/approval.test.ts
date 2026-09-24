@@ -47,6 +47,7 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "mail.send").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "web.search")).toMatchObject({ action: "auto", matchedRule: "web.search" });
   });
 
   it.each(["shell.exec", "net.fetch", "fs.write", "fs.edit", "fs.delete", "fs.copy", "fs.transfer.receive"])(
