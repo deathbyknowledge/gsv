@@ -23,7 +23,7 @@ export function modelConnectionChanged(before: Record<string, string>, after: Re
   const scope = (values: Record<string, string>) => {
     const text = (field: string) => values[`config/ai/${field}`]?.trim() ?? "";
     const target = text("transport_target");
-    return [text("provider").toLowerCase(), text("model"), text("base_url"), text("provider_style").toLowerCase() || "auto", !target || target === "worker" ? "gsv" : target];
+    return [text("provider").toLowerCase(), text("model"), text("base_url"), text("provider_style").toLowerCase() || "auto", !target || target === "worker" ? "gsv" : target, text("oauth_account_key") || "default"];
   };
   return JSON.stringify(scope(before)) !== JSON.stringify(scope(after));
 }

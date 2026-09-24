@@ -111,6 +111,9 @@ describe("ConfigStore", () => {
       expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
       expect(store.get(`${stackKey}/backup/api_key`)).toBeNull();
 
+      store.set(stackKey, JSON.stringify({ version: 1, models: [{ ...primary, oauthAccountKey: "another-account" }] }));
+      expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
+
       store.set(stackKey, "");
       expect(store.getExplicit(stackKey)).toBeNull();
       expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
