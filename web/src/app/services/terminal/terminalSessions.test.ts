@@ -61,6 +61,54 @@ describe("direct shell session ownership", () => {
     expect(row().endedAt).not.toBeNull();
   });
 
+  it("finalizes a sessionless command when the connection drops under it", async () => {
+    const { owner, execute, row } = harness();
+    execute.mockReturnValueOnce(new Promise(() => {}));
+    const id = owner.start("sleep 300", "ham-chrome", "ship", false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(row()).toMatchObject({ status: "starting", endedAt: null });
+
+    owner.setConnected(false);
+    expect(row()).toMatchObject({ status: "failed", error: "Connection lost before the command finished." });
+    expect(row().endedAt).not.toBeNull();
+
+    // Nothing can reach it after the request is gone, so reconnect must not revive it.
+    owner.setConnected(true);
+    owner.targetConnected("ham-chrome");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(row()).toMatchObject({ status: "failed" });
+    await owner.stop(id);
+    expect(row()).toMatchObject({ status: "failed", actionError: "", action: null });
+  });
+
+  it("keeps a session-backed command recoverable when the connection drops", async () => {
+    const { owner, execute, row } = harness();
+    execute.mockResolvedValueOnce(result("working\n"));
+    owner.start("run tests", "macbook", "ship");
+    await vi.advanceTimersByTimeAsync(0);
+
+    owner.setConnected(false);
+    // A session handle can still be polled, so this row stays live on purpose.
+    expect(row()).toMatchObject({ status: "unavailable", endedAt: null, error: "Connection lost. The command may still be running." });
+  });
+
+  it("restores a sessionless command as finished rather than permanently live", async () => {
+    const { owner, execute, storage } = harness();
+    execute.mockReturnValueOnce(new Promise(() => {}));
+    owner.start("sleep 300", "ham-chrome", "ship", false);
+    await vi.advanceTimersByTimeAsync(0);
+    owner.dispose();
+
+    // A reload restores the journal; the request that carried the row is gone.
+    const restored = new TerminalSessions({ execute, cancel: vi.fn() }, storage);
+    owners.push(restored);
+    restored.setConnected(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const row = restored.snapshot()[0];
+    expect(row).toMatchObject({ status: "failed", sessionId: null, error: "The command\u2019s status could not be confirmed." });
+    expect(row.endedAt).not.toBeNull();
+  });
+
   it("still opens a session for targets that support one", async () => {
     const { owner, execute } = harness();
     owner.start("run tests", "macbook", "ship");

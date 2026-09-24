@@ -20,6 +20,17 @@ const OUTPUT_LIMIT = 32_000;
 const POLL_DELAY = 250;
 export const terminalFinished = (session: TerminalSession) => session.endedAt !== null;
 
+/** How a row settles when the request carrying it is interrupted. A session
+ *  handle can be polled after a reconnect, so that row stays live and merely
+ *  unavailable. Without one there is nothing left to poll or cancel, and the
+ *  owner of the request owns its completion: the row ends here rather than
+ *  leaving an activity that can never be retried, stopped, or pruned. */
+function interrupted(row: TerminalSession, pending: string, ended: string): Partial<TerminalSession> {
+  return row.sessionId
+    ? { status: "unavailable", error: pending }
+    : { status: "failed", endedAt: Date.now(), error: ended };
+}
+
 /** One owner for direct commands, independent of the currently mounted view. */
 export class TerminalSessions {
   private rows: TerminalSession[] = [];
@@ -34,7 +45,8 @@ export class TerminalSessions {
     try {
       const stored = storage?.read();
       if (stored) this.rows = z.array(sessionSchema).parse(JSON.parse(stored)).map((row) => terminalFinished(row) ? row : {
-        ...row, status: "unavailable", action: null, error: row.sessionId ? "Checking the command after reconnect…" : "The command’s status could not be confirmed.",
+        ...row, action: null,
+        ...interrupted(row, "Checking the command after reconnect…", "The command’s status could not be confirmed."),
       });
     } catch { /* A missing or unreadable local journal does not block a new command. */ }
   }
@@ -63,7 +75,8 @@ export class TerminalSessions {
     } else {
       for (const timer of this.timers.values()) clearTimeout(timer);
       this.timers.clear();
-      this.rows = this.rows.map((row) => terminalFinished(row) ? row : { ...row, status: "unavailable", error: "Connection lost. The command may still be running." });
+      this.rows = this.rows.map((row) => terminalFinished(row) ? row
+        : { ...row, ...interrupted(row, "Connection lost. The command may still be running.", "Connection lost before the command finished.") });
       this.publish();
     }
   }
@@ -123,9 +136,10 @@ export class TerminalSessions {
         return true;
       } catch (error) {
         const row = this.find(id);
+        const message = error instanceof Error ? error.message : "Could not check the command.";
         if (row) this.patch(id, row.stopRequested && !row.sessionId && controller.signal.aborted && !this.disposed
           ? { status: "stopped", endedAt: Date.now(), error: "" }
-          : { status: "unavailable", error: error instanceof Error ? error.message : "Could not check the command." });
+          : interrupted(row, message, message));
         return false;
       } finally {
         this.jobs.delete(id);
