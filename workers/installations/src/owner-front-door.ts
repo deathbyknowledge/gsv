@@ -18,7 +18,7 @@ export async function handleInstallationOwnerRequest(request: Request, env: Inst
   if (path.startsWith("/owner/api/")) {
     if (!emailEnabled || !invitations) return unavailable();
     return new InstallationOwnerApi(new InstallationOwnerAuthStore(env.INSTALLATIONS_DB, env.GSV_OWNER_AUTH_SECRET!),
-      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), invitations, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.GSV_ADMIN_ORIGIN).handle(request);
+      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), invitations, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.GSV_ADMIN_ORIGIN, env.GSV_BASE_DOMAIN).handle(request);
   }
   if (!env.ACCOUNTS_GATEWAY_RECOVERY) return unavailable();
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId);

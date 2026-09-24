@@ -11,6 +11,7 @@ import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
 import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
+import { completeDesktopOnboarding } from "./welcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import "./desktop.css";
@@ -68,7 +69,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     ws.protocol = ws.protocol === "https:" ? "wss:" : "ws:";
     const token = storage.getItem(ONBOARDING_KEY);
     const instance = createSessionService(client, { url: ws.href, storage, onboarding: token ? {
-      token, complete: async () => { storage.removeItem(ONBOARDING_KEY); await storage.flush(); },
+      token, complete: () => completeDesktopOnboarding(storage),
     } : false });
     // The service is created while App renders. Defer the parent's presentation update.
     queueMicrotask(() => setService(instance));

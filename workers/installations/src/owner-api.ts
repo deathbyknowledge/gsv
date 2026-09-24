@@ -4,6 +4,7 @@ import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } f
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationCreationInvites, type CreationInvite } from "./creation-invites";
 import { sendOwnerVerification } from "./owner-verification";
+import { parseBaseDomain } from "./domain";
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/);
 const challenge = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, email: z.string().max(254), resend: z.boolean().optional() });
@@ -12,7 +13,7 @@ const cors = { "access-control-allow-origin": "*", "access-control-allow-methods
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
   | { email: string; expiresAt: number }
-  | { email: string; expiresAt: number; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; invites: ReturnType<typeof ownedInvite>[] }
+  | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; invites: ReturnType<typeof ownedInvite>[] }
   | ReturnType<typeof ownedInvite>
   | { invite: ReturnType<typeof ownedInvite>; origin: string; handle: string; onboardingToken: string | null; expiresAt: number | null }
   | { ok: true } | { available: boolean }
@@ -22,7 +23,7 @@ type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
 export class InstallationOwnerApi {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
     private readonly invites: InstallationCreationInvites, private readonly mail: SendEmail, private readonly from: string,
-    private readonly origin: string) {}
+    private readonly origin: string, private readonly baseDomain: string) {}
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
@@ -48,7 +49,7 @@ export class InstallationOwnerApi {
       if (!session || !token) return json({ error: "Sign in to continue.", code: "signed_out" }, 401);
       if (request.method === "GET" && url.pathname === "/owner/api/session") {
         const [spaces, invites] = await Promise.all([this.owners.spaces(session.principalId), this.invites.owned(session.principalId)]);
-        return json({ email: session.email, expiresAt: session.expiresAt, spaces, invites: invites.map(ownedInvite) });
+        return json({ email: session.email, expiresAt: session.expiresAt, spaceDomain: parseBaseDomain(this.baseDomain), spaces, invites: invites.map(ownedInvite) });
       }
       if (request.method === "POST" && url.pathname === "/owner/api/logout") {
         await this.auth.logout(token);

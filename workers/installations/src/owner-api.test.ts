@@ -25,7 +25,7 @@ async function fixture() {
     code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, invites, { send }, "accounts@example.com", ORIGIN);
+  const makeApi = () => new InstallationOwnerApi(auth, owners, invites, { send }, "accounts@example.com", ORIGIN, "example.com");
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -59,12 +59,16 @@ describe("desktop owner API", () => {
     f.restart();
     expect(f.send).toHaveBeenCalledTimes(1);
     expect((await f.request("/verify", undefined, verify)).status).toBe(200);
+    const initialSession = await (await f.request("/session", f.sessionSecret)).json<{ spaceDomain: string; spaces: unknown[] }>();
+    expect(initialSession.spaceDomain).toBe("example.com");
+    expect(initialSession.spaces).toEqual([]);
     const issued = await f.invites.create({ note: "operator-only" });
     const claim = await f.request("/invites/claim", f.sessionSecret, { code: issued.code });
     expect(claim.status).toBe(200);
     expect(await claim.text()).not.toContain("operator-only");
     const handle = `test-${crypto.randomUUID()}`;
     const first = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<{ origin: string; onboardingToken: string }>();
+    expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);
     f.restart();
     const resumed = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<typeof first>();
     expect(resumed.origin).toBe(first.origin);

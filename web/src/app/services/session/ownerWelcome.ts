@@ -26,7 +26,7 @@ const loggedOutSchema = z.object({ ok: z.literal(true) });
 const invitationSchema = z.object({ id: z.string(), state: z.enum(["issued", "claimed", "provisioning", "active", "revoked", "expired"]),
   handle: z.string().nullable(), origin: z.string().nullable(), lastError: z.string().nullable() });
 export type OwnedInvite = z.infer<typeof invitationSchema>;
-const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(),
+const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(), spaceDomain: z.string().min(1),
   spaces: z.array(z.object({ handle: z.string(), canonicalOrigin: z.string(), state: z.enum(["active", "restricted"]) })), invites: z.array(invitationSchema) });
 export type OwnerSession = z.infer<typeof sessionSchema>;
 const preparationSchema = z.object({ invite: invitationSchema, origin: z.string(), handle: z.string(),
@@ -89,7 +89,14 @@ export class OwnerWelcome {
 
   async prepare(inviteId: string, handle: string): Promise<PreparedSpace> {
     await this.save({ inviteId, handle });
-    return this.request(`/invites/${encodeURIComponent(inviteId)}/space`, preparationSchema, { handle });
+    const prepared = await this.request(`/invites/${encodeURIComponent(inviteId)}/space`, preparationSchema, { handle });
+    if (!prepared.onboardingToken) await this.completeCreation();
+    return prepared;
+  }
+
+  async completeCreation(): Promise<void> {
+    if (this.state.flow !== "create") return;
+    await this.save({ flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null });
   }
 
   async signOut(): Promise<void> {

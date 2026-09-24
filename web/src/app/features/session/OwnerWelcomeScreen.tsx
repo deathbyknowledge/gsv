@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
@@ -13,14 +13,13 @@ type Step = "welcome" | "address" | "invite" | "email" | "code" | "spaces" | "ha
 type Props = {
   ready: boolean;
   resume: boolean;
-  accountsOrigin: string;
   load(): Promise<OwnerWelcome>;
   onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
   addressPanel?: ComponentChildren;
   initialStep?: "welcome" | "invite";
 };
 
-export function OwnerWelcomeScreen({ ready, resume, accountsOrigin, load, onConnect, addressPanel, initialStep = "welcome" }: Props) {
+export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome" }: Props) {
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
   const [step, setStep] = useState<Step>(initialStep);
   const [owner, setOwner] = useState<OwnerSession | null>(null);
@@ -32,7 +31,6 @@ export function OwnerWelcomeScreen({ ready, resume, accountsOrigin, load, onConn
   const [code, setCode] = useState("");
   const [handle, setHandle] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
-  const suffix = useMemo(() => `.${new URL(accountsOrigin).hostname}`, []);
 
   const run = async (operation: () => Promise<void>) => {
     if (pending.current) return;
@@ -136,7 +134,7 @@ export function OwnerWelcomeScreen({ ready, resume, accountsOrigin, load, onConn
           <TextInput label="Code" value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
             placeholder="000000" inputProps={{ autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />
         </>}
-        {step === "handle" && <TextInput label="Handle" value={handle} onChange={setHandle} disabled={busy} suffix={suffix}
+        {step === "handle" && <TextInput label="Handle" value={handle} onChange={setHandle} disabled={busy} suffix={owner ? `.${owner.spaceDomain}` : undefined}
           placeholder="your-name" status={availability === "available" ? "success" : availability === "unavailable" ? "error" : "none"}
           message={availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : ""}
           inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />}

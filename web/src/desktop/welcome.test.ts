@@ -32,7 +32,7 @@ describe("desktop invite recovery", () => {
     f.fetcher.mockImplementationOnce(async (_url, options) => {
       expect(new Headers(options?.headers).get("authorization")).toBe(`Bearer ${sessionSecret}`);
       expect(options?.credentials).toBe("omit");
-      return Response.json({ email: "tester@example.com", expiresAt: Date.now() + 60_000, spaces: [], invites: [] });
+      return Response.json({ email: "tester@example.com", expiresAt: Date.now() + 60_000, spaceDomain: "gsv.space", spaces: [], invites: [] });
     });
     expect((await client.session())?.email).toBe("tester@example.com");
     expect(f.stored().value?.inviteCode).toBe("invite_private");
@@ -70,5 +70,17 @@ describe("desktop invite recovery", () => {
     f.fetcher.mockResolvedValueOnce(Response.json({ ok: true }));
     await client.signOut();
     expect(f.stored().value).toBeNull();
+  });
+
+  it("clears a completed invite after recovering a lost setup response without signing the owner out", async () => {
+    const f = fixture();
+    const beforeSetup = f.reopen();
+    await beforeSetup.save({ flow: "create", sessionSecret: "a".repeat(64), inviteId: invite.id, handle: "new-space" });
+    const resumed = f.reopen();
+    f.fetcher.mockResolvedValueOnce(Response.json({ invite: { ...invite, state: "active", handle: "new-space", origin: "https://new-space.gsv.space" },
+      origin: "https://new-space.gsv.space", handle: "new-space", onboardingToken: null, expiresAt: null }));
+    expect((await resumed.prepare(invite.id, "new-space")).onboardingToken).toBeNull();
+    expect(f.reopen().state).toMatchObject({ flow: "open", sessionSecret: "a".repeat(64), inviteId: null, inviteCode: null, handle: null });
+    await expect(beforeSetup.save({ flow: "create", inviteId: invite.id })).rejects.toThrow("stale write");
   });
 });
