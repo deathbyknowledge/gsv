@@ -111,6 +111,9 @@ describe("ConfigStore", () => {
       expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
       expect(store.get(`${stackKey}/backup/api_key`)).toBeNull();
 
+      store.set(stackKey, JSON.stringify({ version: 1, models: [{ ...primary, oauthAccountKey: "another-account" }] }));
+      expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
+
       store.set(stackKey, "");
       expect(store.getExplicit(stackKey)).toBeNull();
       expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
@@ -234,9 +237,9 @@ describe("ConfigStore", () => {
     );
 
     expect(policy.default).toBe("auto");
-    expect(policy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
-    expect(policy.rules).toContainEqual({ match: "net.fetch", action: "ask" });
-    expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "shell.exec", target: "targets/*", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "net.fetch", target: "targets/*", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "fs.*", target: "targets/*", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
     expect(policy.rules).not.toContainEqual({ match: "mail.status", action: "ask" });
   });

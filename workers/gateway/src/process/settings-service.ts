@@ -111,16 +111,28 @@ export class ProcessSettingsService {
 
   async resolveAiConfig(signal?: AbortSignal): Promise<AiConfigResult> {
     const processConfig = this.host.store.state.getAiConfig();
-    return await this.host.kernel.kernelRpc(
+    const resolved = await this.host.kernel.kernelRpc(
       "ai.config",
       processConfig
         ? {
             modelId: processConfig.modelId,
+            inheritIfModelMissing: true,
             reasoning: processConfig.reasoning,
           }
         : {},
       signal,
     );
+    signal?.throwIfAborted();
+    const current = this.host.store.state.getAiConfig();
+    if (
+      this.initialized &&
+      resolved.missingModelId &&
+      current?.modelId === resolved.missingModelId &&
+      current.updatedAt === processConfig?.updatedAt
+    ) {
+      await this.setAiConfig({ pid: this.host.pid, modelId: null });
+    }
+    return resolved;
   }
 
   async resolveAiContext(signal?: AbortSignal): Promise<AiContextResult> {

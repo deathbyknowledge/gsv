@@ -39,6 +39,7 @@ import {
   validateConsoleModelConfig,
   type AddConsoleMcpServerInput,
   type CheckConsoleOpenAiCodexOAuthResult,
+  type CheckConsoleOpenAiCodexOAuthInput,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
   type ConsoleAdapterPairingCandidate,
@@ -68,6 +69,7 @@ import {
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
   type StartConsoleOpenAiCodexOAuthResult,
+  type StartConsoleOpenAiCodexOAuthInput,
   type ValidateConsoleModelConfigInput,
   type ValidateConsoleModelConfigResult,
 } from "./consoleService";
@@ -555,8 +557,8 @@ export function useValidateConsoleModelConfig() {
 export function useStartConsoleOpenAiCodexOAuth() {
   const { client } = useGateway();
 
-  return useMutation<StartConsoleOpenAiCodexOAuthResult, Error, void>({
-    mutationFn: () => startConsoleOpenAiCodexOAuth(client),
+  return useMutation<StartConsoleOpenAiCodexOAuthResult, Error, StartConsoleOpenAiCodexOAuthInput>({
+    mutationFn: (input) => startConsoleOpenAiCodexOAuth(client, input),
   });
 }
 
@@ -571,8 +573,8 @@ export function usePollConsoleOpenAiCodexOAuth() {
 export function useCheckConsoleOpenAiCodexOAuth() {
   const { client } = useGateway();
 
-  return useMutation<CheckConsoleOpenAiCodexOAuthResult, Error, void>({
-    mutationFn: () => checkConsoleOpenAiCodexOAuth(client),
+  return useMutation<CheckConsoleOpenAiCodexOAuthResult, Error, CheckConsoleOpenAiCodexOAuthInput>({
+    mutationFn: (input) => checkConsoleOpenAiCodexOAuth(client, input),
   });
 }
 

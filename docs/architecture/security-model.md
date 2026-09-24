@@ -99,6 +99,14 @@ tokens are managed by the Kernel's composed MCP client manager; GSV keeps separa
 user ownership metadata so MCP listing and tool calls are scoped before
 CodeMode or shell can use them.
 
+Codex model definitions select a saved connection with `oauthAccountKey` within
+their existing credential ownership scope. An omitted reference keeps the
+default connection used by older definitions. An explicit missing connection
+fails authentication rather than borrowing the default connection or a stored
+API key. Distinct references keep multiple ChatGPT sign-ins independent; token
+refresh updates only the selected connection. OAuth summaries may include the
+account email for identification, subject to the same owner authorization.
+
 Agent processes receive the AI runtime configuration they need to call the
 selected model provider, including the resolved provider key. That key is used
 by the process runtime; it is not sent to CLI devices as part of normal device
@@ -149,8 +157,11 @@ Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
-deny, or ask for matching syscalls. The default policy asks for `shell.exec`,
-`fs.delete`, `sys.mcp.call`, and `mail.send`. A background process can pause
+deny, or ask for matching syscalls. The default policy automatically permits
+native `gsv` work and reading/searching connected targets. It asks before file
+changes, shell commands, or network requests on connected targets, and before
+`sys.mcp.call` or `mail.send`. Explicit account and process policies remain
+authoritative; capability and resource checks always apply. A background process can pause
 durably for the owner's decision without gaining a direct human conversation.
 
 ## Targets and Devices

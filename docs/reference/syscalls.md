@@ -1120,6 +1120,10 @@ type ProcessSyscalls = {
 `proc.ai.config.get` and `proc.ai.config.set` read and update process-local model
 and reasoning preferences for the next run. `modelId` names an entry in the owning
 human's layered model stack and puts it first; ordinary fallbacks still apply.
+If that model is later removed, the next Process configuration resolution
+clears the missing model preference and inherits the owner's remaining stack.
+Reasoning preferences and conversation history are retained. Explicitly setting
+an unknown model is still rejected.
 `clear: true` returns both preferences to the agent/account defaults. The optional
 `proc.spawn.ai` object uses the same preferences, validated by the Kernel and
 stored with the Process identity before an initial prompt can start. Omitting

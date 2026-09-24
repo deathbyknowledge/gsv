@@ -236,6 +236,13 @@ describe("gateway process controls integration", () => {
 
         const process = await runtime.spawn(`HIL ${scenario.decision} journey`);
         await runtime.configureAi(process.pid);
+        await runtime.client.sys.config.set({
+          key: "users/1000/ai/tools/approval",
+          value: JSON.stringify({
+            default: "auto",
+            rules: [{ match: "shell.exec", target: "gsv", action: "ask" }],
+          }),
+        });
         const sent = await runtime.client.proc.send({
           pid: process.pid,
           message: `Exercise the ${scenario.decision} path.`,

@@ -1,6 +1,7 @@
 import type { ConsoleModelListing } from "./consoleSettings";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import { z } from "zod";
+import { DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
 import {
   approvalTargetFromValue,
   protectManagedMailApproval,
@@ -37,16 +38,7 @@ export const APPROVAL_ACTIONS: AgentApprovalAction[] = ["auto", "ask", "deny"];
 export const DEFAULT_REASONING_EFFORT = "medium";
 export const GLOBAL_APPROVAL_CONFIG_KEY = "config/ai/tools/approval";
 
-const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
-  default: "auto",
-  rules: [
-    { match: "shell.exec", action: "ask" },
-    { match: "net.fetch", action: "ask" },
-    { match: "fs.delete", action: "ask" },
-    { match: "sys.mcp.call", action: "ask" },
-    { match: "mail.send", action: "ask" },
-  ],
-};
+const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = DEFAULT_TOOL_APPROVAL_POLICY;
 const ownerUidSchema = z.number().finite().nullable().catch(null);
 const approvalActionSchema = z.enum(["auto", "ask", "deny"]);
 const approvalValueSchema = z.unknown();

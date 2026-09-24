@@ -242,6 +242,31 @@ const adapterConnectedSchema = z.strictObject({
   }),
 });
 
+export const integrationKindSchema = z.enum(["mcp", "ai-provider", "generic"]);
+
+// Closed allowlist so product analytics can break integrations down by
+// service without ever carrying a raw provider string or server URL. Extend it
+// when the "other" share grows; unknown services always classify as "other".
+export const integrationProviderSchema = z.enum([
+  "openai-codex",
+  "github",
+  "google",
+  "notion",
+  "linear",
+  "slack",
+  "atlassian",
+  "other",
+]);
+
+const integrationConnectedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("integration.connected"),
+  properties: z.strictObject({
+    integrationKind: integrationKindSchema,
+    provider: integrationProviderSchema,
+  }),
+});
+
 const delegationCompletedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("delegation.completed"),
@@ -263,6 +288,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   shipMessageCommittedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
+  integrationConnectedSchema,
   delegationCompletedSchema,
 ]);
 
@@ -284,6 +310,54 @@ export type InferenceFailureKind = z.infer<typeof inferenceFailureKindSchema>;
 export type InferenceFailureStage = z.infer<
   typeof inferenceFailureStageSchema
 >;
+export type IntegrationKind = z.infer<typeof integrationKindSchema>;
+export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
+
+const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
+  readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]
+> = [
+  ["openai-codex", ["openai.com"]],
+  ["github", ["github.com", "githubcopilot.com"]],
+  ["google", ["google.com", "googleapis.com"]],
+  ["notion", ["notion.com", "notion.so"]],
+  ["linear", ["linear.app"]],
+  ["slack", ["slack.com"]],
+  ["atlassian", ["atlassian.com", "atlassian.net"]],
+];
+
+function isIntegrationProvider(value: string): value is IntegrationProvider {
+  return integrationProviderSchema.safeParse(value).success;
+}
+
+/**
+ * Classify a free-form OAuth provider name into the closed provider
+ * allowlist. Anything outside the allowlist becomes "other" so a record never
+ * carries the caller-supplied string.
+ */
+export function integrationProviderFromName(name: string): IntegrationProvider {
+  const normalized = name.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return isIntegrationProvider(normalized) ? normalized : "other";
+}
+
+/**
+ * Classify an MCP server URL into the closed provider allowlist by its
+ * registrable domain. Only the allowlist value leaves this function; the URL,
+ * host, and path are never part of a telemetry record.
+ */
+export function integrationProviderFromUrl(url: string): IntegrationProvider {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return "other";
+  }
+  for (const [provider, domains] of INTEGRATION_PROVIDER_DOMAINS) {
+    for (const domain of domains) {
+      if (hostname === domain || hostname.endsWith(`.${domain}`)) return provider;
+    }
+  }
+  return "other";
+}
 
 export type TelemetryEnvironment = {
   GSV_TELEMETRY_ENABLED?: boolean | number | string;

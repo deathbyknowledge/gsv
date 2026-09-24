@@ -16,6 +16,7 @@ import { jsonObjectSchema, type JsonObject } from "@humansandmachines/gsv/protoc
 import { z } from "zod";
 import type { KernelContext } from "../context";
 import { principalOf } from "../context";
+import { emitIntegrationConnected, type IntegrationTelemetryScope } from "../integration-telemetry";
 import type {
   OAuthAccountRecord,
   OAuthConnectionKind,
@@ -51,7 +52,7 @@ const EXTRA_AUTH_RESERVED_PARAMS = new Set([
 
 type OAuthScalar = string | number | null | undefined;
 type OAuthExtraInput = Record<string, OAuthScalar> | null | undefined;
-type DeviceAccountMetadata = { authorizedAt: number; chatgptAccountId?: string };
+type DeviceAccountMetadata = { authorizedAt: number; chatgptAccountId?: string; chatgptEmail?: string };
 
 const oauthScalarSchema = z.union([z.string(), z.number(), z.null()]);
 const oauthExtraInputSchema = z.record(z.string(), oauthScalarSchema).nullable().optional();
@@ -377,6 +378,12 @@ export async function handleSysOAuthDevicePoll(
     fetcher,
   );
   const now = Date.now();
+  const firstConnection = ctx.oauth.findAccountByIdentity(
+    flow.uid,
+    flow.kind,
+    flow.provider,
+    flow.accountKey,
+  ) === null;
   const account = ctx.oauth.upsertAccount({
     uid: flow.uid,
     kind: flow.kind,
@@ -390,9 +397,15 @@ export async function handleSysOAuthDevicePoll(
     accessToken: token.accessToken,
     refreshToken: token.refreshToken,
     expiresAt: token.expiresAt,
-    metadata: deviceAccountMetadata(now, token.accountId),
+    metadata: deviceAccountMetadata(now, token.accountId, token.email),
   });
   ctx.oauth.deleteFlow(flow.flowId);
+  if (firstConnection) {
+    emitIntegrationConnected(
+      { env: ctx.env, installationId: ctx.installationId },
+      { kind: flow.kind, provider: flow.provider },
+    );
+  }
   return {
     status: "complete",
     account: summarizeAccount(account),
@@ -442,6 +455,7 @@ export async function completeOAuthCallback(
   input: OAuthCallbackInput,
   oauth: OAuthStore,
   fetcher: typeof fetch = fetch,
+  telemetry?: IntegrationTelemetryScope,
 ): Promise<OAuthCallbackResult> {
   const state = input.state?.trim();
   if (!state) {
@@ -477,6 +491,12 @@ export async function completeOAuthCallback(
   }
 
   const now = Date.now();
+  const firstConnection = oauth.findAccountByIdentity(
+    flow.uid,
+    flow.kind,
+    flow.provider,
+    flow.accountKey,
+  ) === null;
   const account = oauth.upsertAccount({
     uid: flow.uid,
     kind: flow.kind,
@@ -495,6 +515,9 @@ export async function completeOAuthCallback(
     },
   });
   oauth.deleteFlow(flow.flowId);
+  if (firstConnection && telemetry) {
+    emitIntegrationConnected(telemetry, { kind: flow.kind, provider: flow.provider });
+  }
   return { ok: true, account: summarizeAccount(account) };
 }
 
@@ -541,9 +564,10 @@ function summarizeAccount(account: OAuthAccountRecord): SysOAuthAccountSummary {
 }
 
 
-function deviceAccountMetadata(now: number, accountId: string | null): DeviceAccountMetadata {
+function deviceAccountMetadata(now: number, accountId: string | null, email: string | null): DeviceAccountMetadata {
   const metadata: DeviceAccountMetadata = { authorizedAt: now };
   if (accountId) metadata.chatgptAccountId = accountId;
+  if (email) metadata.chatgptEmail = email;
   return metadata;
 }
 

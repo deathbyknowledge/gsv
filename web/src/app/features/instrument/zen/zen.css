@@ -343,8 +343,15 @@
 .zen-approval.is-decided .q { color: var(--text-dim); }
 
 .zen-bottom {
+  min-width: 0;
   padding: 0 56px 22px;
 }
+.zen-bottom > * {
+  width: 100%;
+  max-width: min(var(--measure-response), 92%);
+  margin-inline: auto;
+}
+.zen-composer { position: relative; }
 .zen-delegated-approvals {
   max-height: 40vh;
   overflow-y: auto;
@@ -352,6 +359,39 @@
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
 .zen-delegated-approvals .fleet-approval { margin-top: 10px; }
+.zen-place-section { margin-top: 12px; }
+.zen-places {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-raised) transparent;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0 0 8px;
+  list-style: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.zen-places li { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; }
+.zen-place {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: left;
+}
+.zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
+.zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
+.zen-place:disabled { color: var(--text-dim); cursor: default; }
+.zen-place-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--idle);
+}
+.zen-place-status.is-online { background: var(--online); }
 .zen-feedback {
   display: flex;
   flex-wrap: wrap;
@@ -362,15 +402,6 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-.zen-run-status {
-  display: flex;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding-left: 2px;
-}
-.zen-run-status .is-live { color: var(--live); }
 @media (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
@@ -520,7 +551,9 @@
   position: absolute;
   left: 0;
   bottom: calc(100% - 12px);
-  min-width: 320px;
+  width: 320px;
+  max-width: 100%;
+  box-sizing: border-box;
   background: var(--panel);
   border: 1px solid var(--border-raised);
   padding: 6px;
@@ -535,7 +568,8 @@
 .zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
 .zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }
 
-.zen-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; font-size: .7rem; color: var(--text-dim); }
+.zen-compose-actions { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; padding-right: calc(15ch + 1rem); font-size: .7rem; color: var(--text-dim); }
+.zen-connection-status { position: absolute; right: 0; top: .2rem; min-height: 1.5em; white-space: nowrap; }
 .zen-send-status { display: inline-flex; margin-left: 10px; vertical-align: middle; }
 .zen-send-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem; margin-top: .65rem; font-size: .75rem; color: var(--text-dim); }
 .zen-send-actions .is-err { color: var(--error); }
