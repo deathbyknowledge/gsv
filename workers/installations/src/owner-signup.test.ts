@@ -15,7 +15,7 @@ describe("browser signup assets", () => {
     expect(response?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response?.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     const html = await response!.text();
-    const script = html.match(/src="(\/owner\/signup\/assets\/[^\"]+\.js)"/)?.[1];
+    const script = html.match(/src="(\/owner\/signup\/assets\/[^"]+\.js)"/)?.[1];
     expect(script).toBeTruthy();
     const asset = await handleOwnerSignupRequest(new Request(origin + script), config, true);
     expect(asset?.status).toBe(200);
