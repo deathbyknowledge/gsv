@@ -102,7 +102,9 @@ function readChangedPaths(argv) {
   const flag = argv.indexOf("--base");
   const base = flag >= 0 ? argv[flag + 1] : process.env.DOCS_BASE_REF;
   if (!base) return { paths: null, reason: "no base ref" };
-  const output = execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], { cwd: repositoryRoot, encoding: "utf8" });
+  // --no-renames lists both sides of a rename, so a covered file moved out of
+  // its mapped directory still surfaces under its old path.
+  const output = execFileSync("git", ["diff", "--name-only", "--no-renames", `${base}...HEAD`], { cwd: repositoryRoot, encoding: "utf8" });
   return { paths: output.split("\n").map((line) => line.trim()).filter(Boolean) };
 }
 

@@ -26,7 +26,7 @@
     },
     {
       "id": "approval-policy",
-      "paths": ["workers/gateway/src/kernel/config.ts", "workers/gateway/src/process/approval.ts"],
+      "paths": ["workers/gateway/src/kernel/config.ts", "workers/gateway/src/process/approval.ts", "packages/gsv/src/protocol/tool-approval.ts"],
       "docs": ["docs/reference/configuration.md"],
       "manual": ["pages/settings/"]
     },

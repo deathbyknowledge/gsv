@@ -135,12 +135,15 @@ Policy shape:
 
 For a call, the target is resolved before matching: `fs.*`, `shell.exec`, and `net.fetch` use the call's `target` argument; a `shell.exec` carrying a `sessionId` resolves to `targets/*`; every other syscall resolves to `gsv`.
 
-Default policy:
+Default policy (`default` is `auto`; the runtime, the Process fallback, and the permissions editor share this one definition in `@humansandmachines/gsv/protocol`):
 
-| Setting | Value |
-|---|---|
-| `default` | `auto` |
-| Rules | Ask for `shell.exec`, `net.fetch`, `fs.delete`, `sys.mcp.call`, and `mail.send`. |
+| Where | Runs automatically | Asks first |
+|---|---|---|
+| `gsv`, the cloud home | `fs.*`, `shell.exec`, `net.fetch` | — |
+| `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
+| any target | `web.search` | `sys.mcp.call`, `mail.send` |
+
+So native work in the cloud home and reads or searches on a connected target proceed without asking; changing files, running commands, or making network requests on a connected target asks first. An explicit account or process policy replaces these defaults entirely; capability grants and resource checks still apply on top.
 
 Mail is guarded separately. When `default` is `auto` and no rule covers `mail.send` at the `gsv` scope, an `ask` rule for `mail.send` is added to the policy on read, and an unmatched `mail.send` resolves to `ask` regardless. Sending mail without asking requires an explicit `auto` rule for `mail.send`, as the permissions page says.
 
