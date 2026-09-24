@@ -703,7 +703,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       code: url.searchParams.get("code"),
       error: url.searchParams.get("error"),
       errorDescription: url.searchParams.get("error_description"),
-    }, this.oauth);
+    }, this.oauth, fetch, { env: this.bindings, installationId: this.installationId });
     return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
   }
 

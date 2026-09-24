@@ -24,13 +24,25 @@ type FakeOAuth = {
   deleteAccount: ReturnType<typeof vi.fn>;
   getFlow: ReturnType<typeof vi.fn>;
   getFlowByStateHash: ReturnType<typeof vi.fn>;
+  findAccountByIdentity: ReturnType<typeof vi.fn>;
   upsertAccount: ReturnType<typeof vi.fn>;
   deleteFlow: ReturnType<typeof vi.fn>;
 };
 
-function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
+const TELEMETRY_SCOPE = {
+  env: { GSV_TELEMETRY_ENABLED: "1" },
+  installationId: "inst_test",
+};
+
+function makeContext(
+  uid: number,
+  oauth: FakeOAuth,
+  options: { telemetry?: boolean } = {},
+): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
+    installationId: TELEMETRY_SCOPE.installationId,
+    env: options.telemetry ? TELEMETRY_SCOPE.env : {},
     peer: testPeer({ kind: "human", account: {
         uid,
         gid: uid,
@@ -59,6 +71,7 @@ function createFakeOAuth(): FakeOAuth {
     deleteAccount: vi.fn(() => true),
     getFlow: vi.fn(),
     getFlowByStateHash: vi.fn(),
+    findAccountByIdentity: vi.fn(() => null),
     upsertAccount: vi.fn((input) => ({
       accountId: "acct-1",
       ...input,
@@ -352,6 +365,63 @@ describe("sys.oauth handlers", () => {
     expect(JSON.stringify(result)).not.toContain("refresh-token-1");
   });
 
+  it("reports only the first OpenAI Codex device connection as content-free telemetry", async () => {
+    const ctx = makeContext(1000, oauth, { telemetry: true });
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const accessToken = fakeJwtToken({ sub: "user-1" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "https://auth.openai.com/api/accounts/deviceauth/token") {
+        return new Response(JSON.stringify({
+          authorization_code: "authorization-code-1",
+          code_verifier: "code-verifier-1",
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        access_token: accessToken,
+        id_token: fakeCodexAccessToken("chatgpt-account-1"),
+        refresh_token: "refresh-token-1",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await handleSysOAuthDevicePoll({ flowId: "flow-1" }, ctx, fetcher);
+
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({
+        installationId: "inst_test",
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "integration.connected",
+          properties: { integrationKind: "ai-provider", provider: "openai-codex" },
+        },
+      }));
+      const serialized = JSON.stringify(log.mock.calls);
+      expect(serialized).not.toContain(accessToken);
+      expect(serialized).not.toContain("refresh-token-1");
+      expect(serialized).not.toContain("chatgpt-account-1");
+
+      oauth.findAccountByIdentity.mockReturnValue({ accountId: "acct-1" });
+      await handleSysOAuthDevicePoll({ flowId: "flow-1" }, ctx, fetcher);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("preserves an existing OpenAI Codex refresh token when refresh omits rotation", async () => {
     const accessToken = fakeCodexAccessToken("chatgpt-account-2");
     const account: OAuthAccountRecord = {
@@ -559,5 +629,53 @@ describe("sys.oauth handlers", () => {
     expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
     expect(JSON.stringify(result)).not.toContain("access-secret");
     expect(JSON.stringify(result)).not.toContain("refresh-secret");
+  });
+
+  it("reports a first OAuth callback connection but not MCP auth legs or re-authorizations", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "access-secret",
+      refresh_token: "refresh-secret",
+      token_type: "Bearer",
+      expires_in: 3600,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const complete = () => completeOAuthCallback(
+      { state: "state-value", code: "auth-code" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      oauth as Parameters<typeof completeOAuthCallback>[1],
+      fetcher,
+      TELEMETRY_SCOPE,
+    );
+
+    try {
+      oauth.getFlowByStateHash.mockReturnValue({ ...flow, kind: "generic", provider: "Acme CRM" });
+      expect((await complete()).ok).toBe(true);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({
+        installationId: "inst_test",
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "integration.connected",
+          properties: { integrationKind: "generic", provider: "other" },
+        },
+      }));
+      const serialized = JSON.stringify(log.mock.calls);
+      expect(serialized).not.toContain("Acme");
+      expect(serialized).not.toContain("access-secret");
+      expect(serialized).not.toContain("refresh-secret");
+      expect(serialized).not.toContain("client-123");
+
+      oauth.getFlowByStateHash.mockReturnValue({ ...flow, kind: "mcp-server", provider: "notion" });
+      expect((await complete()).ok).toBe(true);
+      expect(log).toHaveBeenCalledTimes(1);
+
+      oauth.getFlowByStateHash.mockReturnValue(flow);
+      oauth.findAccountByIdentity.mockReturnValue({ accountId: "acct-1" });
+      expect((await complete()).ok).toBe(true);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -4,6 +4,9 @@ import { describe, it, mock } from "node:test";
 import {
   createTelemetryRecord,
   emitTelemetry,
+  integrationProviderFromName,
+  integrationProviderFromUrl,
+  integrationProviderSchema,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -202,5 +205,62 @@ describe("telemetry contract", () => {
         },
       },
     }).success, false);
+  });
+});
+
+describe("integration.connected", () => {
+  it("accepts the closed kind and provider enums and rejects anything else", () => {
+    const base = {
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "product",
+        name: "integration.connected",
+        properties: { integrationKind: "mcp", provider: "notion" },
+      },
+    };
+    assert.equal(telemetryRecordSchema.safeParse(createTelemetryRecord(base)).success, true);
+    for (const properties of [
+      { integrationKind: "mcp-server", provider: "notion" },
+      { integrationKind: "mcp", provider: "mcp.notion.com" },
+      { integrationKind: "mcp", provider: "notion", url: "https://mcp.notion.com" },
+      { integrationKind: "mcp" },
+    ]) {
+      assert.throws(() => createTelemetryRecord({
+        ...base,
+        event: { ...base.event, properties },
+      }));
+    }
+  });
+
+  it("classifies OAuth provider names into the allowlist", () => {
+    assert.equal(integrationProviderFromName("openai-codex"), "openai-codex");
+    assert.equal(integrationProviderFromName(" OpenAI_Codex "), "openai-codex");
+    assert.equal(integrationProviderFromName("GitHub"), "github");
+    assert.equal(integrationProviderFromName("acme-internal"), "other");
+    assert.equal(integrationProviderFromName("other"), "other");
+    assert.equal(integrationProviderFromName(""), "other");
+  });
+
+  it("classifies MCP server URLs by registrable domain only", () => {
+    assert.equal(integrationProviderFromUrl("https://mcp.notion.com/mcp"), "notion");
+    assert.equal(integrationProviderFromUrl("https://api.githubcopilot.com/mcp/"), "github");
+    assert.equal(integrationProviderFromUrl("https://mcp.linear.app/sse"), "linear");
+    assert.equal(integrationProviderFromUrl("https://team.atlassian.net/mcp"), "atlassian");
+    assert.equal(integrationProviderFromUrl("https://notion.com.evil.example/mcp"), "other");
+    assert.equal(integrationProviderFromUrl("https://mcp.example.com/mcp"), "other");
+    assert.equal(integrationProviderFromUrl("http://localhost:3000/mcp"), "other");
+    assert.equal(integrationProviderFromUrl("http://127.0.0.1/mcp"), "other");
+    assert.equal(integrationProviderFromUrl("not a url"), "other");
+  });
+
+  it("only ever returns allowlist members", () => {
+    for (const value of [
+      integrationProviderFromName("https://mcp.notion.com/private/path"),
+      integrationProviderFromUrl("https://user:secret@mcp.example.com/private/path"),
+    ]) {
+      assert.equal(integrationProviderSchema.safeParse(value).success, true);
+      assert.equal(value, "other");
+    }
   });
 });
