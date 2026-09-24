@@ -1,20 +1,11 @@
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
-import { MAIL_SEND, NET_FETCH } from "../syscalls/constants";
+import { MAIL_SEND } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
+import { DEFAULT_TOOL_APPROVAL_POLICY, type ToolApprovalAction, type ToolApprovalPolicy, type ToolApprovalRule } from "@humansandmachines/gsv/protocol";
 
-type ToolApprovalAction = "auto" | "ask" | "deny";
-
-export type ToolApprovalRule = {
-  match: string;
-  target?: string;
-  action: ToolApprovalAction;
-};
-
-export type ToolApprovalPolicy = {
-  default: ToolApprovalAction;
-  rules: ToolApprovalRule[];
-};
+export { DEFAULT_TOOL_APPROVAL_POLICY };
+export type { ToolApprovalPolicy, ToolApprovalRule };
 
 export type ToolApprovalResolution = {
   action: ToolApprovalAction;
@@ -43,16 +34,6 @@ export function takePurpose(args: JsonObject): ToolArgsWithPurpose {
   return { args: rest, purpose: Array.from(text).slice(0, PURPOSE_MAX_CHARACTERS).join("") };
 }
 
-export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
-  default: "auto",
-  rules: [
-    { match: "shell.exec", action: "ask" },
-    { match: NET_FETCH, action: "ask" },
-    { match: "fs.delete", action: "ask" },
-    { match: "sys.mcp.call", action: "ask" },
-    { match: MAIL_SEND, action: "ask" },
-  ],
-};
 const approvalActionSchema = z.enum(["auto", "ask", "deny"]);
 const approvalValueSchema = z.unknown();
 type ApprovalWireValue = z.input<typeof approvalValueSchema>;

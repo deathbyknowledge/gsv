@@ -20,9 +20,8 @@ import {
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
-import { MAIL_SEND } from "../syscalls/constants";
 import { normalizeTimezone } from "./timezone";
-import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
+import { DEFAULT_SHELL_EXEC_TIMEOUT_MS, DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
   isAiModelStackConfigKey,
@@ -39,16 +38,7 @@ import {
 // Per-user overrides go under "users/{uid}/" at /sys/users/{uid}/*.
 // =============================================================================
 
-const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
-  default: "auto",
-  rules: [
-    { match: "shell.exec", action: "ask" },
-    { match: "net.fetch", action: "ask" },
-    { match: "fs.delete", action: "ask" },
-    { match: "sys.mcp.call", action: "ask" },
-    { match: MAIL_SEND, action: "ask" },
-  ],
-});
+const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify(DEFAULT_TOOL_APPROVAL_POLICY);
 
 type SystemConfigDefaults = { readonly [key: string]: string };
 

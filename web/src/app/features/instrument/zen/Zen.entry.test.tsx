@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -12,7 +12,7 @@ import { createSessionService } from "../../../services/session/sessionService";
 import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
 import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChatConversation";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
-import { PromptLine } from "../shared/PromptLine";
+import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
 import { ZenText } from "./ZenText";
@@ -23,6 +23,8 @@ let hasMore: boolean;
 let ownerUid: number;
 let gateway: string;
 let shipPid: string;
+let activeRunId: string | null;
+let runContext: ProcContextState | null;
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
@@ -48,6 +50,8 @@ beforeEach(() => {
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
+  activeRunId = null;
+  runContext = null;
   signals.clear();
   statuses.clear();
   send.mockReset();
@@ -74,6 +78,7 @@ beforeEach(() => {
     if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
       format: 2, records: [], messages: [], messageCount: 0, cursor: "epoch:1", hasMore: false,
+      activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
       historyRevision: 1, historyGeneration: 1, historyResetRevision: 0 } };
     if (call === "proc.observe" || call === "proc.unobserve") return { data: { ok: true, pid: shipPid } };
     if (call === "conversation.send") return { data: await send(sendArgs.parse(args)) };
@@ -88,7 +93,8 @@ async function mountedZen(pid?: string, initialTarget?: string) {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   const draftChange = vi.fn();
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet: () => {}, onDraftChange: draftChange }); return null; }
+  const onFleet = vi.fn();
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -103,7 +109,7 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     // SAFETY: The VNode was selected by the exact component whose props type P describes.
     return node.props as P;
   };
-  return { render, props, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+  return { render, props, onFleet, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
@@ -111,6 +117,74 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it("selects the next send's place and returns focus without discarding the draft", async () => {
+    send.mockReturnValue(deferred<ConversationSendResult>().promise);
+    const zen = await mountedZen(undefined, "laptop");
+    try {
+      const prompt = () => zen.props(PromptLine);
+      const focus = vi.fn();
+      const setValue = vi.fn();
+      const input: PromptLineHandle = {
+        disabled: false, chip: null, focus, setValue,
+        selection: () => ({ value: "Keep this draft", start: 15, end: 15 }),
+        append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
+      };
+      zen.props(NativeVoiceControls).prompt.current = input;
+      await act(() => { prompt().onInput?.("Keep this draft"); });
+      const cloud = () => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+      await act(() => { cloud().props.onClick!(); });
+      expect(focus).toHaveBeenCalledOnce();
+      expect(setValue).not.toHaveBeenCalled();
+      expect(prompt().place.id).toBe("gsv");
+      expect(prompt().showPlace).toBe(false);
+      expect(zen.dirty()).toBe(true);
+      expect(zen.onFleet).not.toHaveBeenCalled();
+      await act(() => { prompt().onSubmit("Keep this draft"); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
+        text: "Keep this draft", selectedTarget: "gsv",
+      })));
+    } finally { await zen.unmount(); }
+  });
+
+  it.each([
+    { target: "gsv", readiness: "your cloud ready", status: "completed", queuedCount: 0 },
+    { target: "laptop", readiness: "laptop offline", status: "aborted", queuedCount: 1 },
+  ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
+    runContext = {
+      revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
+      contextWindowTokens: 1000, maxOutputTokens: 100, estimatedInputTokens: 100,
+      inputTokens: 100, confirmedInputTokens: 100, estimatedTrailingInputTokens: 0,
+      inputBudgetTokens: 900, remainingInputTokens: 800, availableInputTokens: 900,
+      pressure: 0.1, level: "ok", source: "estimate", updatedAt: 1,
+    };
+    send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
+    const zen = await mountedZen(undefined, target);
+    const text = () => zen.text().replace(/\s+/g, " ");
+    try {
+      expect(text()).not.toContain(readiness);
+      expect(text()).not.toContain("attempting");
+      await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
+
+      activeRunId = "active-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(text()).toContain(readiness));
+      expect(text()).not.toContain("previous-model");
+
+      runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
+      await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
+      await vi.waitFor(() => expect(text()).toContain("attempting active-model"));
+      expect(text()).toContain(readiness);
+
+      activeRunId = null;
+      await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
+      await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      expect(text()).not.toContain("attempting");
+    } finally { await zen.unmount(); }
+  });
+
   it.each(["$ pwd", "!pwd"])("routes a finalized native %s prompt to the terminal without sending it to Ship", async (text) => {
     const zen = await mountedZen();
     try {

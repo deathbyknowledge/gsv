@@ -19,7 +19,9 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
-        <Wordmark />
+        <button type="button" aria-label="GSV · Open Zen" onClick={() => onNavigate("zen")}>
+          <Wordmark />
+        </button>
         <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
