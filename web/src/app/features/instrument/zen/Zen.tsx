@@ -105,7 +105,7 @@ function reducedMotion(): boolean {
 }
 
 function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets>>): Place[] {
-  return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
+  return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online, kind: target.kind }));
 }
 
 /** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
@@ -634,7 +634,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const runDirectly = useCallback(
     (command: string) => {
       try {
-        const id = sessions.start(command, where ?? defaultPlace(places), pidProp ?? "ship");
+        const target = where ?? defaultPlace(places);
+        const supportsSessions = places.find((place) => place.id === target)?.kind !== "browser";
+        const id = sessions.start(command, target, pidProp ?? "ship", supportsSessions);
         scrolling.follow();
         setOpenActivities((current) => new Set([...current, id]));
         return true;

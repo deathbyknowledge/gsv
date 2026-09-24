@@ -20,6 +20,17 @@ const OUTPUT_LIMIT = 32_000;
 const POLL_DELAY = 250;
 export const terminalFinished = (session: TerminalSession) => session.endedAt !== null;
 
+/** How a row settles when the request carrying it is interrupted. A session
+ *  handle can be polled after a reconnect, so that row stays live and merely
+ *  unavailable. Without one there is nothing left to poll or cancel, and the
+ *  owner of the request owns its completion: the row ends here rather than
+ *  leaving an activity that can never be retried, stopped, or pruned. */
+function interrupted(row: TerminalSession, pending: string, ended: string): Partial<TerminalSession> {
+  return row.sessionId
+    ? { status: "unavailable", error: pending }
+    : { status: "failed", endedAt: Date.now(), error: ended };
+}
+
 /** One owner for direct commands, independent of the currently mounted view. */
 export class TerminalSessions {
   private rows: TerminalSession[] = [];
@@ -34,7 +45,8 @@ export class TerminalSessions {
     try {
       const stored = storage?.read();
       if (stored) this.rows = z.array(sessionSchema).parse(JSON.parse(stored)).map((row) => terminalFinished(row) ? row : {
-        ...row, status: "unavailable", action: null, error: row.sessionId ? "Checking the command after reconnect…" : "The command’s status could not be confirmed.",
+        ...row, action: null,
+        ...interrupted(row, "Checking the command after reconnect…", "The command’s status could not be confirmed."),
       });
     } catch { /* A missing or unreadable local journal does not block a new command. */ }
   }
@@ -63,15 +75,18 @@ export class TerminalSessions {
     } else {
       for (const timer of this.timers.values()) clearTimeout(timer);
       this.timers.clear();
-      this.rows = this.rows.map((row) => terminalFinished(row) ? row : { ...row, status: "unavailable", error: "Connection lost. The command may still be running." });
+      this.rows = this.rows.map((row) => terminalFinished(row) ? row
+        : { ...row, ...interrupted(row, "Connection lost. The command may still be running.", "Connection lost before the command finished.") });
       this.publish();
     }
   }
 
-  start(command: string, target: string, scope: string): string {
+  start(command: string, target: string, scope: string, supportsSessions = true): string {
     if (!this.connected || this.disposed) throw new Error("Connect before running a command.");
     const id = `you:${crypto.randomUUID()}`;
-    const sessionId = target === "gsv" ? null : crypto.randomUUID();
+    // Browser targets run one command at a time and reject sessions outright,
+    // so they take the same sessionless path the cloud target does.
+    const sessionId = target === "gsv" || !supportsSessions ? null : crypto.randomUUID();
     const rows: TerminalSession[] = [...this.rows, { id, scope, target, command, sessionId, startedAt: Date.now(), endedAt: null,
       status: "starting", output: "", truncated: false, error: "", actionError: "", draft: "", inputOpen: false, action: null, stopRequested: false }];
     if (sessionId) {
@@ -84,7 +99,7 @@ export class TerminalSessions {
     }
     this.rows = rows;
     this.publish();
-    const input: TerminalCommandInput = { input: command, target, background: target !== "gsv", yieldMs: 1_000 };
+    const input: TerminalCommandInput = { input: command, target, background: sessionId !== null, yieldMs: 1_000 };
     if (sessionId) { input.sessionId = sessionId; input.start = true; }
     void this.execute(id, input);
     return id;
@@ -121,9 +136,10 @@ export class TerminalSessions {
         return true;
       } catch (error) {
         const row = this.find(id);
+        const message = error instanceof Error ? error.message : "Could not check the command.";
         if (row) this.patch(id, row.stopRequested && !row.sessionId && controller.signal.aborted && !this.disposed
           ? { status: "stopped", endedAt: Date.now(), error: "" }
-          : { status: "unavailable", error: error instanceof Error ? error.message : "Could not check the command." });
+          : interrupted(row, message, message));
         return false;
       } finally {
         this.jobs.delete(id);
@@ -178,7 +194,9 @@ export class TerminalSessions {
     this.patch(id, { action: "stop", actionError: "" });
     const job = this.jobs.get(id);
     if (row.action === "input" || job?.starting) job?.controller.abort(new Error("Stopping the command"));
-    if (!row.sessionId && row.target === "gsv") {
+    // A sessionless command is a foreground request with nothing to cancel
+    // server-side: aborting it is the only way to stop it, whatever the target.
+    if (!row.sessionId) {
       this.patch(id, { stopRequested: true });
       this.jobs.get(id)?.controller.abort(new Error("Command stopped"));
     }

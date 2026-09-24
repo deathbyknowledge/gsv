@@ -63,11 +63,21 @@ export async function executeTerminalCommand(
     const response = await client.request("shell.exec", requestArgs, { signal });
     return normalizeTranscriptEntry(response.data, startedAt, input);
   } catch (error) {
-    if (input.start && error instanceof GsvClientError) {
-      const legacyDaemon = error.message === `Unknown shell session: ${input.sessionId}`;
-      if (legacyDaemon || rejectedStartSchema.safeParse(error.details).success) {
-        const message = legacyDaemon ? "Update GSV on this computer before running commands here." : error.message;
-        return normalizeTranscriptEntry({ status: "failed", error: message, output: "" }, startedAt, input);
+    if (error instanceof GsvClientError) {
+      if (input.start) {
+        const legacyDaemon = error.message === `Unknown shell session: ${input.sessionId}`;
+        if (legacyDaemon || rejectedStartSchema.safeParse(error.details).success) {
+          const message = legacyDaemon ? "Update GSV on this computer before running commands here." : error.message;
+          return normalizeTranscriptEntry({ status: "failed", error: message, output: "" }, startedAt, input);
+        }
+      } else if (!input.sessionId) {
+        // A sessionless command leaves nothing behind to poll or cancel, so a
+        // rejected request is its terminal outcome rather than an uncertain
+        // start to be recovered. There is no marker to wait for either: the
+        // Kernel attaches shellStart "rejected" only to a start:true frame.
+        // Cancellation rejects with the abort reason rather than a
+        // GsvClientError, so Stop still owns its own outcome.
+        return normalizeTranscriptEntry({ status: "failed", error: error.message, output: "" }, startedAt, input);
       }
     }
     throw error;
