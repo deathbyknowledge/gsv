@@ -19,7 +19,7 @@ export async function handleOwnerSignupRequest(request: Request, env: Pick<Insta
     return new Response(null, { status: 302, headers: noStoreHeaders({ location: PATH }) });
   }
   const index = url.pathname === PATH;
-  url.pathname = index ? "/index.html" : `/${url.pathname.slice(PATH.length)}`;
+  url.pathname = `/owner-signup/${index ? "index.html" : url.pathname.slice(PATH.length)}`;
   url.search = "";
   const asset = await env.ASSETS.fetch(new Request(url, request));
   const headers = new Headers(asset.headers);

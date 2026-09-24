@@ -60,7 +60,7 @@ generate_types "$ROOT_DIR/workers/adapters/email" "wrangler.jsonc" "email" "Mana
 generate_types "$ROOT_DIR/workers/adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
 generate_types "$ROOT_DIR/workers/adapters/slack" "wrangler.managed.jsonc" "slack" "ManagedSlackEnv"
 
-run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" --assets "$ROOT_DIR/web/dist/owner-signup"
+run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" --assets "$ROOT_DIR/web/dist"
 run_wrangler "$INFERENCE_DIR" "wrangler.jsonc" "inference"
 run_wrangler "$ROOT_DIR/workers/ripgit" "wrangler.managed.jsonc" "ripgit"
 run_wrangler "$ROOT_DIR/workers/gateway" "wrangler.managed.jsonc" "gateway"

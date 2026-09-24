@@ -166,7 +166,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       crons: ["* * * * *"],
       compatibility, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
-      assets: { directory: `${props.paths.webAssets}/owner-signup`, htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
+      assets: { directory: props.paths.webAssets, htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     }).pipe(retain(props.allowResourceDeletion !== true));
   }
   let inference = props.services?.inferenceExecution;
