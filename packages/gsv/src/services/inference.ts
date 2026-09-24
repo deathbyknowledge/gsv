@@ -129,6 +129,13 @@ export interface InferencePolicyService {
   getInferencePolicy(installationId: string): Promise<ManagedInferencePolicy>;
 }
 
+/** Live admission and routing; plan allowances are read through EntitlementsService. */
+export type InferenceAdmission = Omit<ManagedInferencePolicy, "monthlyLimitNanoUsd">;
+
+export interface InferenceAdmissionService {
+  getInferenceAdmission(installationId: string): Promise<InferenceAdmission>;
+}
+
 export interface InferenceUsageService {
   recordInferenceUsage(events: ManagedInferenceUsageEvent[]): Promise<void>;
 }

@@ -231,6 +231,7 @@ function integrationManagedInferenceConfig(
     migrations: config.migrations,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       { binding: "INSTALLATION_DIRECTORY", service: ACCOUNTS_WORKER },
       { binding: "AI", service: DEPENDENCY_WORKER },
     ],
