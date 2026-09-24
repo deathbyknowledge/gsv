@@ -136,6 +136,14 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
     size: "large",
   },
   {
+    key: "config/ai/oauth_account_key",
+    label: "Account",
+    description: "Saved sign-in used by this model.",
+    kind: "select",
+    options: [],
+    size: "large",
+  },
+  {
     key: "config/ai/max_tokens",
     label: "Max tokens",
     description: "Upper bound for generated response size.",
@@ -768,6 +776,7 @@ function normalizeCanonicalModel(
     baseUrl: z.string().optional(),
     providerStyle: z.string().optional(),
     transportTarget: z.string().optional(),
+    oauthAccountKey: z.string().optional(),
     maxTokens: z.number().int().positive().optional(),
     contextWindowTokens: z.number().int().positive().optional(),
   }).safeParse(raw);
@@ -786,6 +795,7 @@ function normalizeCanonicalModel(
       "config/ai/base_url": parsed.data.baseUrl ?? "",
       "config/ai/provider_style": parsed.data.providerStyle ?? "",
       "config/ai/transport_target": parsed.data.transportTarget ?? "",
+      "config/ai/oauth_account_key": parsed.data.oauthAccountKey ?? "",
       "config/ai/max_tokens": parsed.data.maxTokens ?? "",
       "config/ai/context_window_tokens": parsed.data.contextWindowTokens ?? "",
       "config/ai/api_key": "",
@@ -828,6 +838,7 @@ interface CanonicalModelValues {
   baseUrl?: string;
   providerStyle?: string;
   transportTarget?: string;
+  oauthAccountKey?: string;
   maxTokens?: number;
   contextWindowTokens?: number;
 }
@@ -836,6 +847,7 @@ function canonicalModelValues(values: SettingsRecord): CanonicalModelValues {
   const baseUrl = cleanValue(values["config/ai/base_url"]);
   const providerStyle = cleanValue(values["config/ai/provider_style"]);
   const transportTarget = cleanValue(values["config/ai/transport_target"]);
+  const oauthAccountKey = cleanValue(values["config/ai/oauth_account_key"]);
   const maxTokens = optionalPositiveInt(values["config/ai/max_tokens"]);
   const contextWindowTokens = optionalPositiveInt(
     values["config/ai/context_window_tokens"],
@@ -847,6 +859,7 @@ function canonicalModelValues(values: SettingsRecord): CanonicalModelValues {
   if (baseUrl) result.baseUrl = baseUrl;
   if (providerStyle) result.providerStyle = providerStyle;
   if (transportTarget) result.transportTarget = transportTarget;
+  if (oauthAccountKey) result.oauthAccountKey = oauthAccountKey;
   if (maxTokens) result.maxTokens = maxTokens;
   if (contextWindowTokens) result.contextWindowTokens = contextWindowTokens;
   return result;

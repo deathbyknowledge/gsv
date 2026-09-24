@@ -16,6 +16,7 @@ const storedAiModelEntrySchema = z.object({
   baseUrl: optionalTextSchema,
   providerStyle: optionalTextSchema,
   transportTarget: optionalTextSchema,
+  oauthAccountKey: z.string().trim().min(1).max(200).optional(),
   maxTokens: positiveIntegerSchema,
   contextWindowTokens: positiveIntegerSchema,
 }).strict();
@@ -53,15 +54,16 @@ export function isAiModelStackConfigKey(key: string): boolean {
 }
 
 export function isSameAiModelCredentialScope(
-  left: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget">,
-  right: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget">,
+  left: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget" | "oauthAccountKey">,
+  right: Pick<AiModelEntry, "provider" | "model" | "baseUrl" | "providerStyle" | "transportTarget" | "oauthAccountKey">,
 ): boolean {
   return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase() &&
     left.model.trim() === right.model.trim() &&
     normalizeOptionalText(left.baseUrl) === normalizeOptionalText(right.baseUrl) &&
     (normalizeOptionalText(left.providerStyle)?.toLowerCase() ?? "auto") ===
       (normalizeOptionalText(right.providerStyle)?.toLowerCase() ?? "auto") &&
-    normalizeTransportTarget(left.transportTarget) === normalizeTransportTarget(right.transportTarget);
+    normalizeTransportTarget(left.transportTarget) === normalizeTransportTarget(right.transportTarget) &&
+    (normalizeOptionalText(left.oauthAccountKey) ?? "default") === (normalizeOptionalText(right.oauthAccountKey) ?? "default");
 }
 
 export function parseAiModelStack(raw: string | null | undefined): AiModelStack | null {
@@ -179,6 +181,7 @@ function copyModelEntry(model: z.infer<typeof storedAiModelEntrySchema>): AiMode
   if (model.baseUrl) entry.baseUrl = model.baseUrl;
   if (model.providerStyle) entry.providerStyle = model.providerStyle;
   if (model.transportTarget) entry.transportTarget = model.transportTarget;
+  if (model.oauthAccountKey) entry.oauthAccountKey = model.oauthAccountKey;
   if (model.maxTokens !== undefined) entry.maxTokens = model.maxTokens;
   if (model.contextWindowTokens !== undefined) {
     entry.contextWindowTokens = model.contextWindowTokens;

@@ -108,6 +108,11 @@ typing responsiveness while retaining the stars, overlays and interface glows.
 This is the default for both web and desktop; the star cadence and colors remain
 the same.
 
+The background uses a seeded sphere with a fixed viewing direction and angular
+scale. Resizing reveals or crops the same sky around its centre. Projection is
+cached; only visible glyphs are mounted, and resize retains their elements and
+twinkle phase. The sphere is not recomputed during animation.
+
 Zen opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Zen's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Keys lists navigation and appearance controls plus shortcuts for the current view, separating Zen browse and input behavior. Zen browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Keys. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
 Zen follows the bottom until the reader scrolls away. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Selecting a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Zen, while the shared conversation hook owns page retention.

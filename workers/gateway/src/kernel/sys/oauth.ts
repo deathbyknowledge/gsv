@@ -51,7 +51,7 @@ const EXTRA_AUTH_RESERVED_PARAMS = new Set([
 
 type OAuthScalar = string | number | null | undefined;
 type OAuthExtraInput = Record<string, OAuthScalar> | null | undefined;
-type DeviceAccountMetadata = { authorizedAt: number; chatgptAccountId?: string };
+type DeviceAccountMetadata = { authorizedAt: number; chatgptAccountId?: string; chatgptEmail?: string };
 
 const oauthScalarSchema = z.union([z.string(), z.number(), z.null()]);
 const oauthExtraInputSchema = z.record(z.string(), oauthScalarSchema).nullable().optional();
@@ -390,7 +390,7 @@ export async function handleSysOAuthDevicePoll(
     accessToken: token.accessToken,
     refreshToken: token.refreshToken,
     expiresAt: token.expiresAt,
-    metadata: deviceAccountMetadata(now, token.accountId),
+    metadata: deviceAccountMetadata(now, token.accountId, token.email),
   });
   ctx.oauth.deleteFlow(flow.flowId);
   return {
@@ -541,9 +541,10 @@ function summarizeAccount(account: OAuthAccountRecord): SysOAuthAccountSummary {
 }
 
 
-function deviceAccountMetadata(now: number, accountId: string | null): DeviceAccountMetadata {
+function deviceAccountMetadata(now: number, accountId: string | null, email: string | null): DeviceAccountMetadata {
   const metadata: DeviceAccountMetadata = { authorizedAt: now };
   if (accountId) metadata.chatgptAccountId = accountId;
+  if (email) metadata.chatgptEmail = email;
   return metadata;
 }
 
