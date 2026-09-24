@@ -82,8 +82,8 @@ An agent, Process, or the owner may prefer an entry from any layer by its stable
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `medium` | Reasoning mode hint: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Unsupported values are clamped to the nearest model-supported level at generation time. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/skills/index_mode` | `users/{uid}/ai/skills/index_mode` | `summary` | Skill index included in standing context: ids and descriptions with `summary`, ids only with `names`, or omitted with `off`. Live discovery remains available in every mode. |
-| `config/ai/generation/timeout_ms` | — | `180000` | Maximum time to wait for one model generation before the run is released. |
-| `config/ai/generation/streaming` | — | `auto` | `auto` streams when the provider supports it; `off` forces final-output only. |
+| `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for one model generation before the run is released. |
+| `config/ai/generation/streaming` | `users/{uid}/ai/generation/streaming` | `auto` | `auto` streams when the provider supports it; `off` forces final-output only. |
 
 Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
 

@@ -24,8 +24,20 @@ test("a product change without docs is missing", () => {
   assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
 });
 
-test("a product change with a docs change is documented", () => {
+test("a product change with a change to one of its own pages is documented", () => {
   assert.equal(evaluate([settingsFile, "docs/how-to/bring-your-own-model.md"], "", "", entries).status, "documented");
+});
+
+test("an unrelated docs change does not cover a product change", () => {
+  const result = evaluate([settingsFile, "docs/architecture/telemetry.md"], "", "", entries);
+  assert.equal(result.status, "missing");
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
+});
+
+test("only the entries left undocumented are reported", () => {
+  const result = evaluate([settingsFile, "host/apps/cli/src/cli.rs", "docs/reference/cli-commands.md"], "", "", entries);
+  assert.equal(result.status, "missing");
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
 });
 
 test("an unmapped change is clean", () => {

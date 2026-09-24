@@ -237,7 +237,7 @@ Documentation is an output of the change, not a follow-up. A change to product-f
 
 - Docs: `npm run docs:check`
 
-That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without touching `docs/`. `tools/docs/coverage-map.json` maps source paths to the pages that own them. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
+That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without changing one of the pages that own it. `tools/docs/coverage-map.json` maps source paths to those pages; when a new page takes over a surface, add it there. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
 
 ## Deployment model
 

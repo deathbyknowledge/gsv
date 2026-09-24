@@ -58,8 +58,13 @@ export function bodyOverride(body) {
   return null;
 }
 
-/** Decide for a set of changed paths. Returns { status, entries, override }. */
+/**
+ * Decide for a set of changed paths. Returns { status, entries, override }.
+ * An entry counts as documented only when one of its own pages changed; an
+ * unrelated edit elsewhere under docs/ does not cover it.
+ */
 export function evaluate(changed, labels, body, entries) {
+  const changedSet = new Set(changed);
   const matched = entries
     .map((entry) => ({
       entry,
@@ -67,21 +72,23 @@ export function evaluate(changed, labels, body, entries) {
     }))
     .filter((match) => match.files.length > 0);
   if (matched.length === 0) return { status: "clean", entries: [] };
-  if (changed.some((path) => path.startsWith("docs/"))) return { status: "documented", entries: matched };
+  const undocumented = matched.filter(({ entry }) => !entry.docs.some((doc) => changedSet.has(doc)));
+  if (undocumented.length === 0) return { status: "documented", entries: matched };
   const override = labelOverride(labels) ?? bodyOverride(body);
-  if (override) return { status: "waived", entries: matched, override };
-  return { status: "missing", entries: matched };
+  if (override) return { status: "waived", entries: undocumented, override };
+  return { status: "missing", entries: undocumented };
 }
 
 export function formatMissing(matched) {
-  const lines = ["docs currency: these changes touch documented surfaces but no docs/ file changed."];
+  const lines = ["docs currency: these changes touch documented surfaces without changing the pages that own them."];
   for (const { entry, files } of matched) {
     for (const file of files) lines.push(`  ${entry.id.padEnd(18)}${file}`);
     for (const doc of entry.docs) lines.push(`    expects ${doc}`);
     for (const page of entry.manual ?? []) lines.push(`    manual  ${page} (deathbyknowledge/gsv-manual)`);
   }
   lines.push(
-    `Update the pages above, or add the ${SKIP_LABEL} label, or put a line in the`,
+    "Update one of the pages above (or add the page that now owns the surface to",
+    `tools/docs/coverage-map.json), or add the ${SKIP_LABEL} label, or put a line in the`,
     "pull request body starting with \"Docs:\" that says why (see",
     ".github/pull_request_template.md).",
   );

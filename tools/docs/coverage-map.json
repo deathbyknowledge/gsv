@@ -1,5 +1,5 @@
 {
-  "$comment": "Product-facing source paths and the documentation that owns them. A pull request that changes a listed path must change docs/ too, or carry the docs-not-needed label, or say why in a line of the pull request body that starts with Docs:. The manual entries name pages in deathbyknowledge/gsv-manual, which agents read in every install.",
+  "$comment": "Product-facing source paths and the documentation that owns them. A pull request that changes a listed path must change one of that entry's docs pages too, or carry the docs-not-needed label, or say why in a line of the pull request body that starts with Docs:. The manual entries name pages in deathbyknowledge/gsv-manual, which agents read in every install.",
   "entries": [
     {
       "id": "settings-ui",
