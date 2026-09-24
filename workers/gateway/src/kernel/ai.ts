@@ -142,6 +142,7 @@ type AiModelStackConfig = Pick<
 type ResolvedAiTextModelStack = {
   primary: AiModelStackConfig;
   fallbacks: AiConfigFallback[];
+  missingModelId?: string;
 };
 
 type AiMediaModelConfig = {
@@ -241,6 +242,7 @@ export async function handleAiConfig(
     accountUids: accountConfigUids,
     modelConfig: input.modelConfig,
     modelId: input.modelId,
+    inheritIfModelMissing: input.inheritIfModelMissing,
     reasoning: input.reasoning,
   });
   const primary = textModels.primary;
@@ -299,6 +301,7 @@ export async function handleAiConfig(
     media,
   };
   if (primary.baseUrl) result.baseUrl = primary.baseUrl;
+  if (textModels.missingModelId) result.missingModelId = textModels.missingModelId;
   if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
   if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
   return result;
@@ -793,6 +796,7 @@ async function resolveAiTextModelStack(options: {
   accountUids: number[];
   modelConfig: AiConfigArgs["modelConfig"];
   modelId: string | null | undefined;
+  inheritIfModelMissing?: boolean;
   reasoning: string | null | undefined;
 }): Promise<ResolvedAiTextModelStack> {
   const ownerUid = resolveAiModelOwnerUid(options.ctx, options.uid, options.owner);
@@ -909,6 +913,7 @@ async function resolveStoredAiTextModelStack(
     uid: number;
     accountUids: number[];
     modelId: string | null | undefined;
+    inheritIfModelMissing?: boolean;
     reasoning: string | null | undefined;
   },
   effective: readonly EffectiveAiModelEntry[],
@@ -916,13 +921,13 @@ async function resolveStoredAiTextModelStack(
 ): Promise<ResolvedAiTextModelStack> {
   const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
   const requestedModelId = normalizeOptionalString(options.modelId);
-  if (
-    requestedModelId &&
+  const missingModelId = requestedModelId &&
     !effective.some((item) => item.entry.id.toLowerCase() === requestedModelId.toLowerCase())
-  ) {
+    ? requestedModelId : undefined;
+  if (missingModelId && !options.inheritIfModelMissing) {
     throw new Error(`AI model not found: ${requestedModelId}`);
   }
-  const preferredModelId = requestedModelId
+  const preferredModelId = (missingModelId ? undefined : requestedModelId)
     ?? resolvePreferredAiModelId(options.ctx, options.accountUids, effective);
   const models = orderEffectiveAiModels(effective, preferredModelId, modelOrder);
   const reasoning = normalizeOptionalString(options.reasoning)
@@ -970,6 +975,7 @@ async function resolveStoredAiTextModelStack(
   }
   return {
     primary: primary.config,
+    ...(missingModelId ? { missingModelId } : {}),
     fallbacks: fallbacks.map(({ entry, config }) => ({
       modelId: entry.id,
       modelName: entry.name,

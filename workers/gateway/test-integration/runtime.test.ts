@@ -672,6 +672,46 @@ describe("gateway runtime integration", () => {
     });
   });
 
+  it("continues an existing process after its selected model is removed", async () => {
+    const client = await setupClient();
+    const spawned = await client.proc.spawn({ label: "model recovery", interactive: true });
+    if (!spawned.ok) throw new Error(spawned.error);
+    await configureDeterministicAi(client, spawned.pid, ai.baseUrl);
+    const finished: string[] = [];
+    const stop = client.onSignal((signal, payload) => {
+      if (signal !== "proc.run.finished" || !payload || typeof payload !== "object" || Array.isArray(payload)) return;
+      if (payload.pid === spawned.pid && payload.status === "ok" && typeof payload.runId === "string") {
+        finished.push(payload.runId);
+      }
+    });
+    try {
+      const before = await client.proc.send({ pid: spawned.pid, message: "before removing the model" });
+      if (!before.ok) throw new Error(before.error);
+      await waitFor(() => finished.includes(before.runId), "initial run");
+      await client.sys.config.set({
+        key: `users/${USER_UID}/ai/models`,
+        value: JSON.stringify({ version: 1, models: [{
+          id: "replacement", name: "Replacement", provider: "custom", model: MODEL_ID,
+          baseUrl: ai.baseUrl, providerStyle: "openai-chat-completions", transportTarget: "gsv",
+        }] }),
+      });
+      await client.sys.config.set({ key: `users/${USER_UID}/ai/models/replacement/api_key`, value: "fixture-only" });
+      const after = await client.proc.send({ pid: spawned.pid, message: "after removing the model" });
+      if (!after.ok) throw new Error(after.error);
+      await waitFor(() => finished.includes(after.runId), "run with inherited model");
+      const config = await client.proc.ai.config.get({ pid: spawned.pid });
+      expect(config).toMatchObject({ ok: true, config: { reasoning: "off" } });
+      if (!config.ok) throw new Error(config.error);
+      expect(config.config).not.toHaveProperty("modelId");
+      const history = await client.proc.history({ pid: spawned.pid });
+      if (!history.ok) throw new Error(history.error);
+      const serialized = JSON.stringify(history.messages);
+      expect(serialized).toContain("before removing the model");
+      expect(serialized).toContain("after removing the model");
+      expect(serialized).toContain(INTEGRATION_REPLY);
+    } finally { stop(); }
+  });
+
   async function setupClient(): Promise<GSVClient> {
     const oneShot = new GSVClient();
     await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.setup", { onboardingToken: "integration-onboarding-default",

@@ -144,6 +144,8 @@ export type AiConfigArgs = {
   modelConfig?: Omit<AiModelConfig, "apiKey"> & { apiKey?: string };
   /** Stable model entry preference; it only reorders the owner's stack. */
   modelId?: string;
+  /** Reconcile a previously saved Process preference after its model was removed. */
+  inheritIfModelMissing?: boolean;
   /** Request or Process-local reasoning preference. */
   reasoning?: string;
 };
@@ -167,6 +169,8 @@ export type AiTextExecutor =
     };
 
 export type AiConfigResult = {
+  /** Saved preference absent from the owner's stack; the returned config inherits its defaults. */
+  missingModelId?: string;
   /** Owning human's identity when the process runs as a distinct agent account. */
   owner?: ProcessIdentity | null;
   executor: AiTextExecutor;

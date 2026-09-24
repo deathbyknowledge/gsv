@@ -1564,6 +1564,39 @@ describe("handleAiConfig", () => {
     }))).rejects.toThrow("AI model not found: missing");
   });
 
+  it("reconciles a deleted Process model preference against the owner's current order", async () => {
+    const result = await handleAiConfig({
+      modelId: "deleted-codex",
+      reasoning: "high",
+      inheritIfModelMissing: true,
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [
+        { id: "first", name: "First", provider: "workers-ai", model: "@cf/first" },
+        { id: "preferred", name: "Preferred", provider: "workers-ai", model: "@cf/preferred" },
+      ] }),
+      "users/1000/ai/model_order": JSON.stringify(["deleted-codex", "preferred", "first"]),
+    }, { uid: 2000, ownerUid: 1000, processId: "proc:reconcile" }));
+    expect(result).toMatchObject({ model: "@cf/preferred", reasoning: "high", missingModelId: "deleted-codex" });
+    expect(result.fallbacks?.map((item) => item.model)).toEqual(["@cf/first", "default"]);
+  });
+
+  it("inherits the included model when the last custom model was deleted", async () => {
+    const result = await handleAiConfig({ modelId: "deleted", inheritIfModelMissing: true }, makeAiConfigContext());
+    expect(result).toMatchObject({ provider: "gsv", model: "default", missingModelId: "deleted" });
+  });
+
+  it("preserves an available Process selection during reconciliation", async () => {
+    const result = await handleAiConfig({ modelId: "gsv-included", inheritIfModelMissing: true }, makeAiConfigContext());
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result).not.toHaveProperty("missingModelId");
+  });
+
+  it("does not treat malformed model configuration as a removed selection", async () => {
+    await expect(handleAiConfig({ modelId: "deleted", inheritIfModelMissing: true }, makeAiConfigContext({
+      "users/1000/ai/models": "broken",
+    }))).rejects.toThrow("Invalid AI model stack");
+  });
+
   it("uses the canonical system stack when the owner has no text-model config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/models": JSON.stringify({
