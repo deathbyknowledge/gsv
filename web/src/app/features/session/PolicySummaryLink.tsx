@@ -13,28 +13,27 @@ type PolicySummaryLinkProps = {
 
 export function PolicySummaryLink({ title, href, introduction, points }: PolicySummaryLinkProps) {
   const id = useId();
-  const linkRef = useRef<HTMLAnchorElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number>();
   const openOnPointerDown = useRef(false);
-  const touchPointer = useRef(false);
   const [open, setOpen] = useState(false);
 
   const clearTimer = () => window.clearTimeout(timerRef.current);
   const place = () => {
-    const link = linkRef.current;
+    const trigger = triggerRef.current;
     const panel = panelRef.current;
-    if (!link || !panel) return;
-    const placement = resolvePlacement(link.getBoundingClientRect(), panel.offsetWidth, panel.offsetHeight, "top-end");
+    if (!trigger || !panel) return;
+    const placement = resolvePlacement(trigger.getBoundingClientRect(), panel.offsetWidth, panel.offsetHeight, "top-end");
     panel.style.left = `${placement.left}px`;
     panel.style.top = `${Math.max(8, Math.min(placement.top, window.innerHeight - panel.offsetHeight - 8))}px`;
   };
   const show = () => {
     clearTimer();
-    const link = linkRef.current;
+    const trigger = triggerRef.current;
     const panel = panelRef.current;
-    if (!link || !panel) return;
-    const theme = getComputedStyle(link);
+    if (!trigger || !panel) return;
+    const theme = getComputedStyle(trigger);
     for (const property of ["--gsv-font-prose", "--panel", "--border", "--text", "--text-dim", "--accent", "--void"]) {
       panel.style.setProperty(property, theme.getPropertyValue(property));
     }
@@ -44,14 +43,12 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
   const leave = () => {
     clearTimer();
     timerRef.current = window.setTimeout(() => {
-      if (document.activeElement !== linkRef.current && !panelRef.current?.contains(document.activeElement)) {
+      if (document.activeElement !== triggerRef.current && !panelRef.current?.contains(document.activeElement)) {
         panelRef.current?.hidePopover();
       }
     }, 150);
   };
-  const click = (event: JSX.TargetedMouseEvent<HTMLAnchorElement>) => {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
-      || (event.detail !== 0 ? !touchPointer.current : window.matchMedia("(hover: hover) and (pointer: fine)").matches)) return;
+  const click = (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     if (event.detail === 0 ? panelRef.current?.matches(":popover-open") : openOnPointerDown.current) panelRef.current?.hidePopover();
     else show();
@@ -69,10 +66,9 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
   }, [open]);
 
   return <>
-    <a ref={linkRef} href={href} target="_blank" rel="noopener noreferrer"
+    <button ref={triggerRef} type="button" class="gsv-policy-summary-trigger"
       aria-haspopup="dialog" aria-expanded={open} aria-controls={id} aria-describedby={`${id}-description`}
-      onPointerDown={(event) => {
-        touchPointer.current = event.pointerType === "touch" || event.pointerType === "pen";
+      onPointerDown={() => {
         openOnPointerDown.current = panelRef.current?.matches(":popover-open") ?? false;
       }}
       onClick={click} onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) show(); }} onBlur={leave}
@@ -80,7 +76,7 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
         if (event.pointerType !== "mouse") return;
         clearTimer();
         timerRef.current = window.setTimeout(show, 300);
-      }} onPointerLeave={(event) => { if (event.pointerType === "mouse") leave(); }}>{title}</a>
+      }} onPointerLeave={(event) => { if (event.pointerType === "mouse") leave(); }}>{title}</button>
     {createPortal(<>
       <span id={`${id}-description`} class="gsv-tt-desc" aria-hidden="true">{introduction} {points.join(" ")}</span>
       <div ref={panelRef} id={id} popover="auto" role="dialog" aria-labelledby={`${id}-title`}

@@ -60,23 +60,24 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
             <p>GSV is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.</p>
           </div>
           <div class={`gsv-setup-consent${consentError ? " is-error" : ""}`}>
-            <label for={consentId}>
+            <div class="gsv-setup-consent-row">
               <input id={consentId} type="checkbox" required checked={consent} disabled={busy}
+                aria-labelledby={`${consentId}-label`}
                 aria-invalid={consentError ? true : undefined}
                 aria-describedby={consentError ? `${consentId}-error` : undefined}
                 onChange={(event) => onConsent(event.currentTarget.checked)} />
-              <span>I confirm that I’m 18 or older and agree to the <PolicySummaryLink title="Terms of Service" href="https://gsv.space/terms"
+              <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label><PolicySummaryLink title="Terms of Service" href="https://gsv.space/terms"
                 introduction="Your agreement with Humans & Machines, Inc."
                 points={[
                   "Covers acceptable use, third-party services, ownership, and account termination.",
                   "Includes disclaimers and limits on liability.",
-                ]} /> and acknowledge the <PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
+                ]} /> <label for={consentId}>and acknowledge the </label><PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
                 introduction="How Humans & Machines, Inc. handles your data."
                 points={[
                   "Explains how conversations, files, connected-service information, and technical data are processed to run GSV.",
                   "Personal data is not sold. Private GSV content is not used for behavioral advertising or general-purpose AI training unless you opt in.",
                 ]} />.</span>
-            </label>
+            </div>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">{consentError}</p> : null}
           </div>
         </div>}

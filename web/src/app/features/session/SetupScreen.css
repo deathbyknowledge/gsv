@@ -15,13 +15,12 @@
 .gsv-setup-agreement { display: grid; gap: 24px; font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.55; }
 .gsv-setup-disclosure { display: grid; gap: 12px; color: var(--text-dim); }
 .gsv-setup-disclosure p { margin: 0; }
-.gsv-setup-consent label { display: flex; align-items: flex-start; gap: 10px; color: var(--text); cursor: pointer; }
+.gsv-setup-consent-row { display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
+.gsv-setup-consent label { cursor: pointer; }
 .gsv-setup-consent input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
 .gsv-setup-consent input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .gsv-setup-consent.is-error input { outline: 2px solid var(--error); outline-offset: 3px; }
 .gsv-setup-consent input:disabled { cursor: not-allowed; }
-.gsv-setup-consent a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
-.gsv-setup-consent a:hover { color: var(--accent-bright); }
 .gsv-setup-consent-error { margin: 6px 0 0 26px; color: var(--error); }
 .gsv-setup-actions { display: flex; justify-content: flex-end; gap: 16px; padding-top: 8px; }
 .gsv-setup-actions button:first-child:not(:only-child) { margin-right: auto; }
