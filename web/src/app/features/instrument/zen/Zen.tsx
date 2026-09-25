@@ -828,7 +828,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     return moments.map((moment, index) => {
       if (moment.role === "note") return null;
-      const isLatest = index === moments.length - 1;
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
@@ -890,22 +889,24 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
           </div>
         ) : null}
-        {isLatest && pendingHil ? (
-          <ApprovalCard
-            request={pendingHil}
-            who={who}
-            place={placeLabel(pendingHil.target, places)}
-            onInspect={() => {
-              if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-            }}
-            onDecide={(decision) => void decide(decision)}
-          />
-        ) : null}
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
+
+  /* the approval slot sits under the latest moment, outside the memo: its buttons write policy and must never go stale */
+  const approvalSlot = pendingHil ? (
+    <ApprovalCard
+      request={pendingHil}
+      who={who}
+      place={placeLabel(pendingHil.target, places)}
+      onInspect={() => {
+        if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+      }}
+      onDecide={(decision) => void decide(decision)}
+    />
+  ) : null;
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
@@ -988,6 +989,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 return (
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
+                    {index === moments.length - 1 ? approvalSlot : null}
                   </div>
                 );
               })}
