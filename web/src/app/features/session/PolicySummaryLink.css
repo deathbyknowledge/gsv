@@ -1,0 +1,38 @@
+.gsv-policy-summary-trigger {
+  appearance: none;
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gsv-policy-summary-trigger:hover { color: var(--accent-bright); }
+.gsv-policy-summary-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-policy-summary {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--void) 45%, transparent);
+}
+.gsv-policy-summary:popover-open { display: grid; gap: 12px; }
+.gsv-policy-summary h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.gsv-policy-summary p { margin: 0; color: var(--text-dim); }
+.gsv-policy-summary ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+.gsv-policy-summary a { color: var(--accent); text-underline-offset: 3px; }
+.gsv-policy-summary a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
