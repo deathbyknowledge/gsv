@@ -31,7 +31,7 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
   const consentId = useId();
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
-      <div class="gsv-setup-head">
+      <div class={`gsv-setup-head${step === "consent" ? " is-consent" : ""}`}>
         <div class="gsv-setup-meta">
           <p class="gsv-setup-space">{space}</p>
           <p class="gsv-setup-progress">Step {step === "credentials" ? 1 : 2} of 2</p>
@@ -74,8 +74,8 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
                 ]} /> <label for={consentId}>and acknowledge the </label><PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
                 introduction="How Humans & Machines, Inc. handles your data."
                 points={[
-                  "Explains how conversations, files, connected-service information, and technical data are processed to run GSV.",
-                  "Personal data is not sold. Private GSV content is not used for behavioral advertising or general-purpose AI training unless you opt in.",
+                  "Hosted GSV processes conversations, files, and connected-service data to carry out your requests, using Cloudflare and other service providers.",
+                  "Explains data retention and your privacy rights, including how to request access, corrections, or deletion at hello@humansandmachin.es.",
                 ]} />.</span>
             </div>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">{consentError}</p> : null}
