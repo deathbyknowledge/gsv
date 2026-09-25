@@ -74,7 +74,7 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
                 ]} /> <label for={consentId}>and acknowledge the </label><PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
                 introduction="How Humans & Machines, Inc. handles your data."
                 points={[
-                  "We do not sell or rent your personal information. GSV processes your data to carry out your requests and to operate and protect the service.",
+                  "We do not sell or rent your personal information. We do not use your private conversations, files, or connected-account content to train general-purpose AI models.",
                   "Explains when data is shared with service providers, how long it is kept, and how to request access, corrections, or deletion at hello@humansandmachin.es.",
                 ]} />.</span>
             </div>
