@@ -37,3 +37,6 @@
   /* The 80 glyph rows at 1cqi need 80% of the width in height, plus breathing room. */
   .gsv-auth-illustration { aspect-ratio: 1.2; }
 }
+@media (max-width: 600px) {
+  .gsv-auth-scene.gsv-auth-surface-setup .gsv-auth-illustration { width: 160px; justify-self: center; }
+}

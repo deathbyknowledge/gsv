@@ -6,8 +6,25 @@ import { useSessionScreensState } from "./useSessionScreensState";
 
 afterEach(() => vi.unstubAllGlobals());
 
+type SetupHistoryState = { gsvSetupConsent: boolean };
+
 async function setupScreen() {
   vi.stubGlobal("document", {});
+  const events = new EventTarget();
+  let historyState: SetupHistoryState = { gsvSetupConsent: false };
+  vi.stubGlobal("window", {
+    history: {
+      get state() { return historyState; },
+      replaceState: (state: SetupHistoryState) => { historyState = state; },
+      pushState: (state: SetupHistoryState) => { historyState = state; },
+      back: () => {
+        historyState = { gsvSetupConsent: false };
+        events.dispatchEvent(new Event("popstate"));
+      },
+    },
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
+  });
   const root = createTestRoot("Session account form");
   let snapshot: SessionSnapshot = {
     phase: "setup", url: "wss://space.example/ws", username: "",
@@ -30,6 +47,12 @@ async function setupScreen() {
   await render();
   return {
     state: () => state, setup, login,
+    async visitConsentStep() {
+      await act(() => {
+        historyState = { gsvSetupConsent: true };
+        events.dispatchEvent(new Event("popstate"));
+      });
+    },
     async change(next: Partial<SessionSnapshot>) { snapshot = { ...snapshot, ...next }; await render(); },
     unmount: () => root.unmount(),
   };
@@ -46,6 +69,18 @@ describe("minimal account setup", () => {
       });
       expect(screen.state().setup.consent).toBe(false);
       expect(screen.state().setup.consentError).toBeNull();
+      expect(screen.state().setup.step).toBe("credentials");
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.state().setup.step).toBe("consent");
+      expect(screen.state().setup.consentError).toBeNull();
+      expect(screen.setup).not.toHaveBeenCalled();
+      await act(() => { screen.state().setup.onBack(); });
+      expect(screen.state().setup).toMatchObject({ step: "credentials", username: "alice", password: "password123", passwordConfirm: "password123" });
+      await screen.visitConsentStep();
+      expect(screen.state().setup.step).toBe("consent");
+      expect(screen.setup).not.toHaveBeenCalled();
+      await act(() => { screen.state().setup.onBack(); });
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).not.toHaveBeenCalled();
       expect(screen.state().setup.consentError).toBe("Confirm your age and agreement to continue.");
@@ -62,11 +97,13 @@ describe("minimal account setup", () => {
 
       await screen.change({ phase: "authenticating" });
       expect(screen.state()).toMatchObject({ visibleView: "setup", busy: true });
+      await act(() => { screen.state().setup.onBack(); });
+      expect(screen.state().setup.step).toBe("consent");
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledOnce();
 
       await screen.change({ phase: "setup", message: "Please try again." });
-      expect(screen.state().setup).toMatchObject({ username: "alice", password: "password123", passwordConfirm: "password123", consent: true, error: "Please try again." });
+      expect(screen.state().setup).toMatchObject({ step: "consent", username: "alice", password: "password123", passwordConfirm: "password123", consent: true, error: "Please try again." });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledTimes(2);
     } finally { await screen.unmount(); }
@@ -82,6 +119,7 @@ describe("minimal account setup", () => {
         screen.state().setup.onConsent(true);
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await screen.change({ phase: "authenticating" });
       await screen.change({ phase: "locked", username: "alice", message: "Connection interrupted." });
       expect(screen.state().visibleView).toBe("login");
@@ -89,6 +127,7 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.password).toBe("");
       expect(screen.state().setup.passwordConfirm).toBe("");
       expect(screen.state().setup.consent).toBe(false);
+      expect(screen.state().setup.step).toBe("credentials");
 
       await act(() => { screen.state().login.onPassword("password123"); });
       await act(() => { screen.state().login.onSubmit(new Event("submit")); });
@@ -108,10 +147,14 @@ describe("minimal account setup", () => {
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).not.toHaveBeenCalled();
+      expect(screen.state().setup.step).toBe("credentials");
       expect(screen.state().setup.fieldErrors.passwordConfirm).toBe("Passwords do not match.");
 
       await act(() => { screen.state().setup.onPasswordConfirm("password123"); });
       expect(screen.state().setup.fieldErrors.passwordConfirm).toBeUndefined();
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).not.toHaveBeenCalled();
+      expect(screen.state().setup.step).toBe("consent");
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
         username: "alice", password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",

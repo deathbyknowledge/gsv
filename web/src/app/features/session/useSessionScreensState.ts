@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import { z } from "zod";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
 
@@ -6,6 +7,8 @@ type UseSessionScreensStateOptions = {
   session: SessionService;
   snapshot: SessionSnapshot;
 };
+
+const setupHistoryStateSchema = z.object({ gsvSetupConsent: z.boolean() });
 
 export function useSessionScreensState({ session, snapshot }: UseSessionScreensStateOptions) {
   const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
@@ -19,12 +22,24 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
+  const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
   const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
     : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
     : snapshot.phase === "booting" ? "booting" : "login";
+
+  useEffect(() => {
+    if (visibleView !== "setup") return;
+    window.history.replaceState({ gsvSetupConsent: false }, "");
+    const onPopState = () => {
+      const state = setupHistoryStateSchema.safeParse(window.history.state);
+      setSetupStep(state.success && state.data.gsvSetupConsent ? "consent" : "credentials");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [visibleView]);
 
   // Sync login username from snapshot (e.g. after first-boot setup creates the
   // account) but only if the user hasn't manually edited or cleared the field.
@@ -36,11 +51,15 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (busy) return;
     const root = screenRef.current;
     if (!root || visibleView === "ready" || visibleView === "booting") return;
+    if (visibleView === "setup" && setupStep === "consent") {
+      root.querySelector<HTMLElement>("[data-setup-heading]")?.focus();
+      return;
+    }
     const prefix = visibleView === "setup" ? "setup" : "session";
     const username = root.querySelector<HTMLInputElement>(`[data-${prefix}-username]`);
     if (username && !username.value) username.focus({ preventScroll: true });
     else root.querySelector<HTMLInputElement>(`[data-${prefix}-password]`)?.focus({ preventScroll: true });
-  }, [busy, visibleView]);
+  }, [busy, visibleView, setupStep]);
 
   useEffect(() => {
     if (snapshot.phase !== "authenticating") setPendingAction(null);
@@ -50,6 +69,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupTouched({});
       setSetupConsent(false);
       setSetupConsentTouched(false);
+      setSetupStep("credentials");
     }
     if (snapshot.phase === "ready") setLoginPassword("");
   }, [snapshot.phase]);
@@ -72,8 +92,17 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (busy) return;
     const account = { username: setupUsername, password: setupPassword };
     setSetupTouched({ username: true, password: true, passwordConfirm: true });
+    if (Object.keys(setupErrors).length > 0) {
+      setSetupStep("credentials");
+      return;
+    }
+    if (setupStep === "credentials") {
+      window.history.pushState({ gsvSetupConsent: true }, "");
+      setSetupStep("consent");
+      return;
+    }
     setSetupConsentTouched(true);
-    if (Object.keys(setupErrors).length > 0 || !setupConsent) return;
+    if (!setupConsent) return;
     setLoginValidationError(null);
     setLoginUsername(account.username);
     setLoginUsernameTouched(false);
@@ -96,6 +125,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       onSubmit: submitLogin,
     },
     setup: {
+      step: setupStep,
       error: snapshot.phase === "setup" ? snapshot.message : null,
       fieldErrors: {
         username: setupTouched.username ? setupErrors.username : undefined,
@@ -111,6 +141,11 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
       onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },
+      onBack: () => {
+        if (busy) return;
+        window.history.back();
+        setSetupStep("credentials");
+      },
       onFieldBlur: (field: keyof SetupAccount) => { setSetupTouched((touched) => ({ ...touched, [field]: true })); },
       onSubmit: submitSetup,
     },
