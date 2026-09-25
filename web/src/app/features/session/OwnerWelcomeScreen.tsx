@@ -4,6 +4,7 @@ import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
 import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
+import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
@@ -131,10 +132,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     <h1>{opening ? "Open your space" : titles[step]}</h1>
     {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
       <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
+        <WelcomeIllustration kind="create" />
         <span class="desktop-welcome-choice-title">Create your space <span aria-hidden="true">→</span></span>
         <span class="desktop-welcome-detail">Use an invite code</span>
       </button>
       <button class="desktop-welcome-choice" type="button" aria-label="Open your space" disabled={!ready || busy} onClick={() => start("open")}>
+        <WelcomeIllustration kind="open" />
         <span class="desktop-welcome-choice-title">Open your space <span aria-hidden="true">→</span></span>
       </button>
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
