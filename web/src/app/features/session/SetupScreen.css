@@ -11,5 +11,16 @@
 .gsv-setup-head .gsv-setup-space { color: var(--accent); font-family: var(--gsv-font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .gsv-setup-form { display: flex; flex-direction: column; gap: 20px; }
 .gsv-setup-note { margin: -4px 0 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: 14px; }
+.gsv-setup-agreement { display: grid; gap: 12px; font-family: var(--gsv-font-prose); font-size: 13px; line-height: 1.45; }
+.gsv-setup-disclosure { display: grid; gap: 6px; color: var(--text-dim); }
+.gsv-setup-disclosure p { margin: 0; }
+.gsv-setup-consent label { display: flex; align-items: flex-start; gap: 10px; color: var(--text); cursor: pointer; }
+.gsv-setup-consent input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+.gsv-setup-consent input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-setup-consent.is-error input { outline: 2px solid var(--error); outline-offset: 3px; }
+.gsv-setup-consent input:disabled { cursor: not-allowed; }
+.gsv-setup-consent a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.gsv-setup-consent a:hover { color: var(--accent-bright); }
+.gsv-setup-consent-error { margin: 6px 0 0 26px; color: var(--error); }
 .gsv-setup-actions { padding-top: 8px; }
 .gsv-setup-actions button:disabled { opacity: .45; cursor: not-allowed; }

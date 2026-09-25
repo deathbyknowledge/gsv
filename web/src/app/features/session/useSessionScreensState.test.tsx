@@ -36,7 +36,7 @@ async function setupScreen() {
 }
 
 describe("minimal account setup", () => {
-  it("submits credentials and inferred timezone, retaining the form after a retryable failure", async () => {
+  it("requires consent before submitting credentials, retaining the form after a retryable failure", async () => {
     const screen = await setupScreen();
     try {
       await act(() => {
@@ -44,6 +44,17 @@ describe("minimal account setup", () => {
         screen.state().setup.onPassword("password123");
         screen.state().setup.onPasswordConfirm("password123");
       });
+      expect(screen.state().setup.consent).toBe(false);
+      expect(screen.state().setup.consentError).toBeNull();
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).not.toHaveBeenCalled();
+      expect(screen.state().setup.consentError).toBe("Confirm your age and agreement to continue.");
+      await act(() => { screen.state().setup.onConsent(true); });
+      expect(screen.state().setup.consentError).toBeNull();
+      await act(() => { screen.state().setup.onConsent(false); });
+      await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).not.toHaveBeenCalled();
+      await act(() => { screen.state().setup.onConsent(true); });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
         username: "alice", password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -55,7 +66,7 @@ describe("minimal account setup", () => {
       expect(screen.setup).toHaveBeenCalledOnce();
 
       await screen.change({ phase: "setup", message: "Please try again." });
-      expect(screen.state().setup).toMatchObject({ username: "alice", password: "password123", passwordConfirm: "password123", error: "Please try again." });
+      expect(screen.state().setup).toMatchObject({ username: "alice", password: "password123", passwordConfirm: "password123", consent: true, error: "Please try again." });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledTimes(2);
     } finally { await screen.unmount(); }
@@ -68,6 +79,7 @@ describe("minimal account setup", () => {
         screen.state().setup.onUsername("Alice");
         screen.state().setup.onPassword("password123");
         screen.state().setup.onPasswordConfirm("password123");
+        screen.state().setup.onConsent(true);
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await screen.change({ phase: "authenticating" });
@@ -76,6 +88,7 @@ describe("minimal account setup", () => {
       expect(screen.state().login).toMatchObject({ username: "alice", password: "", error: "Connection interrupted." });
       expect(screen.state().setup.password).toBe("");
       expect(screen.state().setup.passwordConfirm).toBe("");
+      expect(screen.state().setup.consent).toBe(false);
 
       await act(() => { screen.state().login.onPassword("password123"); });
       await act(() => { screen.state().login.onSubmit(new Event("submit")); });
@@ -91,6 +104,7 @@ describe("minimal account setup", () => {
         screen.state().setup.onUsername("alice");
         screen.state().setup.onPassword("password123");
         screen.state().setup.onPasswordConfirm("password124");
+        screen.state().setup.onConsent(true);
       });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).not.toHaveBeenCalled();

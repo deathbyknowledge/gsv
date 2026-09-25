@@ -17,6 +17,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupUsername, setSetupUsername] = useState(snapshot.username);
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
+  const [setupConsent, setSetupConsent] = useState(false);
+  const [setupConsentTouched, setSetupConsentTouched] = useState(false);
   const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
@@ -46,6 +48,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPassword("");
       setSetupPasswordConfirm("");
       setSetupTouched({});
+      setSetupConsent(false);
+      setSetupConsentTouched(false);
     }
     if (snapshot.phase === "ready") setLoginPassword("");
   }, [snapshot.phase]);
@@ -68,7 +72,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (busy) return;
     const account = { username: setupUsername, password: setupPassword };
     setSetupTouched({ username: true, password: true, passwordConfirm: true });
-    if (Object.keys(setupErrors).length > 0) return;
+    setSetupConsentTouched(true);
+    if (Object.keys(setupErrors).length > 0 || !setupConsent) return;
     setLoginValidationError(null);
     setLoginUsername(account.username);
     setLoginUsernameTouched(false);
@@ -100,9 +105,12 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       username: setupUsername,
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
+      consent: setupConsent,
+      consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
       onUsername: (value: string) => { setSetupUsername(value.toLowerCase()); },
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
+      onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },
       onFieldBlur: (field: keyof SetupAccount) => { setSetupTouched((touched) => ({ ...touched, [field]: true })); },
       onSubmit: submitSetup,
     },
