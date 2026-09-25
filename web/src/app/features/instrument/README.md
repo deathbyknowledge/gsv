@@ -28,9 +28,7 @@ address entry; email discovers owned spaces, while an address connects to that
 space's own login. The welcome and invite screens use the full composition
 without the login ship. Their two columns stack on narrow windows; invite,
 verification and handle forms stay centered. The web signup entry uses the same
-invite flow. The first choice has an assembling world and the second an opening
-orbital aperture. These original models live in `session/backgrounds/welcomeScene.ts`
-and use the shared ASCII renderer, cached idle views and reduced-motion support.
+invite flow.
 
 The session layout also owns one ASCII Open Country ship: a broad habitat hull,
 landscape, observation deck and three recessed stern drives. Setup forms it from
