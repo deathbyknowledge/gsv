@@ -1210,68 +1210,84 @@ export class ProcessHistory {
     options: HistoryCompactionOptions = {},
   ): Promise<ProcHistoryCompactResult> {
     const telemetryStartedAt = Date.now();
-    const pid = this.host.pid;
-    const request = validateCompactionRequest(args);
-    if ("ok" in request) return request;
-    const snapshot = this.captureCompactionSnapshot(request, options);
-    if ("ok" in snapshot) return snapshot;
-    const resolvedSummary = await this.resolveCompactionSummary(request, snapshot, options);
-    if (!resolvedSummary.ok) return resolvedSummary;
-    if (this.compactionStopped(options)) return compactionFailure("Compaction was cancelled");
-    const installed = await this.installCompaction(snapshot, resolvedSummary.summary, options);
-    if ("ok" in installed) return installed;
-    const { segment, summaryMessageId, archivedTo } = installed;
+    let stage: "admission" | "summary" | "archive" = "admission";
+    let committed = false;
+    try {
+      const pid = this.host.pid;
+      const request = validateCompactionRequest(args);
+      if ("ok" in request) return request;
+      const snapshot = this.captureCompactionSnapshot(request, options);
+      if ("ok" in snapshot) return snapshot;
+      stage = "summary";
+      const resolvedSummary = await this.resolveCompactionSummary(request, snapshot, options);
+      if (!resolvedSummary.ok) return resolvedSummary;
+      if (this.compactionStopped(options)) return compactionFailure("Compaction was cancelled");
+      stage = "archive";
+      const installed = await this.installCompaction(snapshot, resolvedSummary.summary, options);
+      if ("ok" in installed) return installed;
+      const { segment, summaryMessageId, archivedTo } = installed;
+      committed = true;
 
-    await this.host.resources
-      .deleteUnreferencedActiveMedia(snapshot.selectedMediaKeys)
-      .catch((error) => {
-        console.warn(
-          `[Process] Failed to clean compacted history media for ${pid}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+      const telemetryProperties: CompactionTelemetryProperties = {
+        trigger: options.telemetryTrigger ?? "manual",
+        durationMs: Math.max(0, Date.now() - telemetryStartedAt),
+        archivedMessages: snapshot.selected.length,
+      };
+      const contextPressure = options.contextPressure ?? snapshot.contextPressure;
+      if (contextPressure !== undefined) {
+        telemetryProperties.contextPressure = contextPressure;
+      }
+      emitTelemetry(this.host.env, {
+        installationId: this.host.installationId,
+        component: "gateway",
+        event: {
+          stream: "operational",
+          name: "process.compaction.completed",
+          properties: telemetryProperties,
+        },
       });
-    const lifecycleEvent: JsonObject = {
-      event: "history.compacted",
-      pid,
-      generation: snapshot.generation,
-      segment,
-      archivedMessages: snapshot.selected.length,
-      archivedTo,
-      summaryMessageId,
-    };
-    if (options.reason) {
-      lifecycleEvent.reason = options.reason;
-    }
-    await this.emitProcessLifecycle(lifecycleEvent);
 
-    const telemetryProperties: CompactionTelemetryProperties = {
-      trigger: options.telemetryTrigger ?? "manual",
-      durationMs: Math.max(0, Date.now() - telemetryStartedAt),
-      archivedMessages: snapshot.selected.length,
-    };
-    const contextPressure = options.contextPressure ?? snapshot.contextPressure;
-    if (contextPressure !== undefined) {
-      telemetryProperties.contextPressure = contextPressure;
-    }
-    emitTelemetry(this.host.env, {
-      installationId: this.host.installationId,
-      component: "gateway",
-      event: {
-        stream: "operational",
-        name: "process.compaction.completed",
-        properties: telemetryProperties,
-      },
-    });
+      await this.host.resources
+        .deleteUnreferencedActiveMedia(snapshot.selectedMediaKeys)
+        .catch((error) => {
+          console.warn(
+            `[Process] Failed to clean compacted history media for ${pid}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+      const lifecycleEvent: JsonObject = {
+        event: "history.compacted",
+        pid,
+        generation: snapshot.generation,
+        segment,
+        archivedMessages: snapshot.selected.length,
+        archivedTo,
+        summaryMessageId,
+      };
+      if (options.reason) {
+        lifecycleEvent.reason = options.reason;
+      }
+      await this.emitProcessLifecycle(lifecycleEvent);
 
-    return {
-      ok: true,
-      pid,
-      segment,
-      archivedMessages: snapshot.selected.length,
-      archivedTo,
-      summaryMessageId,
-    };
+      return {
+        ok: true,
+        pid,
+        segment,
+        archivedMessages: snapshot.selected.length,
+        archivedTo,
+        summaryMessageId,
+      };
+    } finally {
+      if (!committed) emitTelemetry(this.host.env, {
+        installationId: this.host.installationId, component: "gateway",
+        event: { stream: "operational", name: "process.compaction.failed", properties: {
+          trigger: options.telemetryTrigger ?? "manual", stage,
+          outcome: this.compactionStopped(options) ? "aborted" : stage === "admission" ? "rejected" : "failed",
+          durationMs: Math.max(0, Date.now() - telemetryStartedAt),
+        } },
+      });
+    }
   }
 
   async generateHistoryCompactionSummary(

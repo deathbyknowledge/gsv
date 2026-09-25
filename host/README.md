@@ -31,7 +31,7 @@ for ownership and lifecycle details.
 
 ```bash
 npm run gsv:build
-npm run build --workspace web -- --config vite.desktop.config.ts
+npm run build:desktop --workspace web
 cd host
 cargo build --workspace
 ```

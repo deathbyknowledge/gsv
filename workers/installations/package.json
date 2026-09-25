@@ -25,7 +25,9 @@
     "./owner-identity": "./src/owner-identity.ts",
     "./owner-http": "./src/owner-http.ts",
     "./owner-service": "./src/owner-service.ts",
-    "./owner-front-door": "./src/owner-front-door.ts"
+    "./owner-front-door": "./src/owner-front-door.ts",
+    "./creation-invites": "./src/creation-invites.ts",
+    "./admin/invites": "./src/admin/invites.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

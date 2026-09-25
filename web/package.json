@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && npm run build:signup",
+    "build:signup": "vite build --config vite.signup.config.ts",
+    "build:desktop": "vite build --config vite.desktop.config.ts",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "test": "vitest",

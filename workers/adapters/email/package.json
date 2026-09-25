@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@humansandmachines/gsv": "file:../../../packages/gsv",
-    "postal-mime": "^3.0.0"
+    "postal-mime": "^3.0.0",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",

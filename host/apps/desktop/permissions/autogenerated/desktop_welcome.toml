@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-welcome"
+description = "Enables the desktop_welcome command without any pre-configured scope."
+commands.allow = ["desktop_welcome"]
+
+[[permission]]
+identifier = "deny-desktop-welcome"
+description = "Denies the desktop_welcome command without any pre-configured scope."
+commands.deny = ["desktop_welcome"]

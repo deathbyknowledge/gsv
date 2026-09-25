@@ -1,3 +1,4 @@
+import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
@@ -17,7 +18,6 @@ import {
   requireShellOptionValue,
 } from "./common";
 
-const MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
 type MailSendOptions = { to?: string; subject?: string; message?: string; bodyPath?: string; deliveryId?: string; replyToMessageId?: string };
 type MailSearchOptions = { query: string; limit: number; offset: number };
 type MailPageOptions = { limit: number; offset: number };

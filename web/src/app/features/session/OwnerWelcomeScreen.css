@@ -1,0 +1,5 @@
+.desktop-welcome .gsv-ti-affix { letter-spacing: 0; }
+.desktop-welcome-submit { display: flex; justify-content: center; align-items: center; min-height: 44px; }
+.desktop-welcome-detail { margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.desktop-welcome-links { display: flex; gap: 24px; justify-content: space-between; }
+.desktop-welcome-address { width: 100%; }

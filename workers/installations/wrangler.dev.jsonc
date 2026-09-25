@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-installations-dev",
   "main": "src/index.ts",
+  "assets": { "directory": "../../web/dist", "binding": "ASSETS", "html_handling": "none", "not_found_handling": "none", "run_worker_first": true },
   "compatibility_date": "2026-07-29",
   "compatibility_flags": [
     "nodejs_compat"

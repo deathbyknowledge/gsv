@@ -92,7 +92,7 @@ export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 export type SessionServiceOptions = {
   url?: string;
   storage?: SessionStorage;
-  onboarding?: boolean;
+  onboarding?: false | { token: string; complete(): Promise<void> };
 };
 
 function readStored(key: string, storage?: SessionStorage): string | null {
@@ -246,7 +246,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken(storage);
-  let installationOnboardingToken = options.onboarding === false ? null : readInstallationOnboardingToken();
+  let installationOnboardingToken = options.onboarding ? options.onboarding.token
+    : options.onboarding === false ? null : readInstallationOnboardingToken();
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
@@ -697,8 +698,15 @@ export function createSessionService(client: SessionClient, options: SessionServ
     }
 
     if (installationOnboardingToken) {
-      clearInstallationOnboardingToken();
       installationOnboardingToken = null;
+      try {
+        if (options.onboarding) await options.onboarding.complete();
+        else clearInstallationOnboardingToken();
+      } catch (error) {
+        if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username,
+          connectionId: null, message: "Account created. Sign in to continue." });
+        throw error;
+      }
     }
     if (setupGeneration !== reconnectGeneration) return result;
 

@@ -4,12 +4,22 @@ import { InstallationOwnerHttp } from "./owner-http";
 import { OwnerIdentityProvider } from "./owner-identity";
 import { ownerEmailEnabled, type InstallationOwnerEnvironment } from "./owner-service";
 import { InstallationOwnerStore } from "./owner-store";
+import { InstallationOwnerApi } from "./owner-api";
+import type { InstallationCreationInvites } from "./creation-invites";
+import { handleOwnerSignupRequest } from "./owner-signup";
 
 /** Both public and commercial compositions use the same owner authentication boundary. */
-export async function handleInstallationOwnerRequest(request: Request, env: InstallationOwnerEnvironment, registryPrincipalId: string): Promise<Response | null> {
+export async function handleInstallationOwnerRequest(request: Request, env: InstallationOwnerEnvironment, registryPrincipalId: string, invitations?: InstallationCreationInvites): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const emailEnabled = ownerEmailEnabled(env);
+  const signup = await handleOwnerSignupRequest(request, env, emailEnabled && Boolean(invitations));
+  if (signup) return signup;
   if (path !== "/owner" && !path.startsWith("/owner/") && !(emailEnabled && path === "/")) return null;
+  if (path.startsWith("/owner/api/")) {
+    if (!emailEnabled || !invitations) return unavailable();
+    return new InstallationOwnerApi(new InstallationOwnerAuthStore(env.INSTALLATIONS_DB, env.GSV_OWNER_AUTH_SECRET!),
+      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), invitations, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.GSV_ADMIN_ORIGIN, env.GSV_BASE_DOMAIN).handle(request);
+  }
   if (!env.ACCOUNTS_GATEWAY_RECOVERY) return unavailable();
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId);
   if (emailEnabled && path !== "/owner/callback" && !path.startsWith("/owner/identity/")) {

@@ -139,6 +139,18 @@ type MessageFixture = {
 };
 
 describe("managed mail email handler", () => {
+  it("settles a plan rejection even when the relay was cancelled before intake consumed it", async () => {
+    const incoming = message(encoder.encode("Subject: synthetic\r\n\r\nbody"));
+    const intake = vi.fn(async (_installation, _envelope, body) => {
+      await body.stream.cancel();
+      return { status: "rejected", reason: "quota" };
+    });
+    const fixture = environment({ directoryResult: { found: true, state: "active", installationId: "installation_hank",
+      handle: "hank", canonicalOrigin: "https://hank.gsv.space" }, intake });
+    await handleIncomingMail(incoming.value, fixture.env);
+    expect(incoming.reject).toHaveBeenCalledWith("Mailbox quota exceeded");
+  });
+
   it("resolves an active address before allocating its installation object", async () => {
     const raw = encoder.encode("Subject: hello\r\n\r\nbody");
     const incoming = message(raw);
