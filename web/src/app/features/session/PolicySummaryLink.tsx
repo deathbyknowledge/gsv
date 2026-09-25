@@ -50,8 +50,27 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
   };
   const click = (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    if (event.detail === 0 ? panelRef.current?.matches(":popover-open") : openOnPointerDown.current) panelRef.current?.hidePopover();
+    if (event.detail === 0) {
+      show();
+      panelRef.current?.querySelector<HTMLAnchorElement>("a")?.focus();
+    } else if (openOnPointerDown.current) panelRef.current?.hidePopover();
     else show();
+  };
+  const enterSummary = (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Tab" && !event.shiftKey && panelRef.current?.matches(":popover-open")) {
+      event.preventDefault();
+      panelRef.current.querySelector<HTMLAnchorElement>("a")?.focus();
+    }
+  };
+  const leaveSummary = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape" && event.key !== "Tab") return;
+    if (event.key === "Escape" || event.shiftKey) event.preventDefault();
+    if (event.key === "Escape") event.stopPropagation();
+    // Restore the form's tab order before the browser advances on Tab.
+    // Focus can reveal the preview again, so hide it after moving focus.
+    triggerRef.current?.focus();
+    panelRef.current?.hidePopover();
+    clearTimer();
   };
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
@@ -71,7 +90,7 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
       onPointerDown={() => {
         openOnPointerDown.current = panelRef.current?.matches(":popover-open") ?? false;
       }}
-      onClick={click} onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) show(); }} onBlur={leave}
+      onClick={click} onKeyDown={enterSummary} onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) show(); }} onBlur={leave}
       onPointerEnter={(event) => {
         if (event.pointerType !== "mouse") return;
         clearTimer();
@@ -81,6 +100,7 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
       <span id={`${id}-description`} class="gsv-tt-desc" aria-hidden="true">{introduction} {points.join(" ")}</span>
       <div ref={panelRef} id={id} popover="auto" role="dialog" aria-labelledby={`${id}-title`}
         class="gsv-policy-summary" onToggle={(event) => setOpen(event.newState === "open")}
+        onKeyDown={leaveSummary}
         onPointerEnter={clearTimer} onPointerLeave={(event) => { if (event.pointerType === "mouse") leave(); }} onFocusIn={clearTimer} onFocusOut={leave}>
         <h2 id={`${id}-title`}>{title}</h2>
         <p>{introduction}</p>
