@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationCreationInvites } from "./creation-invites";
@@ -15,7 +15,22 @@ async function owner() {
 }
 const handle = () => `space-${crypto.randomUUID()}`;
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("space creation invites", () => {
+  it("returns the issued code without requiring a separate read after the write", async () => {
+    const prepare = db.prepare.bind(db);
+    const read = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      if (sql.trimStart().startsWith("SELECT")) throw new Error("Directory reads unavailable");
+      return prepare(sql);
+    });
+    const issued = await invites.create({ note: "  cohort two  ", policyRef: "early-access", expiresAt: Date.now() + 60_000 });
+    read.mockRestore();
+    expect((await invites.list()).find((invite) => invite.id === issued.invite.id)).toEqual(issued.invite);
+    expect(issued.invite).toMatchObject({ note: "cohort two", policyRef: "early-access", state: "issued" });
+    expect((await invites.claim(issued.code, await owner())).id).toBe(issued.invite.id);
+  });
+
   it("stores a hash, lets only one verified owner claim a code, and permits an exact replay", async () => {
     const issued = await invites.create({ note: "cohort one" });
     const [a, b] = await Promise.all([owner(), owner()]);

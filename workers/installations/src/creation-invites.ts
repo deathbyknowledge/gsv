@@ -40,12 +40,16 @@ export class InstallationCreationInvites {
       policyRef: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/).nullable().optional() }).parse(value);
     if (input.expiresAt !== undefined && input.expiresAt !== null && input.expiresAt <= now) throw new Error("Invite expiry must be in the future");
     const token = await createOpaqueToken("invite");
-    const id = `invite_${crypto.randomUUID()}`;
+    const invite: CreationInvite = {
+      id: `invite_${crypto.randomUUID()}`, prefix: token.prefix, policyRef: input.policyRef ?? null, note: input.note ?? "",
+      state: "issued", createdAt: now, expiresAt: input.expiresAt ?? null, claimedAt: null, principalId: null,
+      installationId: null, handle: null, canonicalOrigin: null, lastError: null,
+    };
     await this.db.prepare(`INSERT INTO installation_creation_invites
       (id, token_hash, token_prefix, policy_ref, note, created_at, expires_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, token.hash, token.prefix, input.policyRef ?? null, input.note ?? "", now, input.expiresAt ?? null, now).run();
-    return { invite: await this.require(id), code: token.raw };
+      .bind(invite.id, token.hash, invite.prefix, invite.policyRef, invite.note, invite.createdAt, invite.expiresAt, now).run();
+    return { invite, code: token.raw };
   }
 
   async list(): Promise<CreationInvite[]> {

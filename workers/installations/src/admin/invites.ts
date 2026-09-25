@@ -21,6 +21,8 @@ export class InstallationInvitesAdminHttp {
     const json = (value: InviteAdminReply, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
     try {
       let issuedCode: string | undefined;
+      let plans: Awaited<ReturnType<InvitePolicy["choices"]>> | undefined;
+      let invites: CreationInvite[];
       if (request.method === "POST") {
         requireAdminMutationOrigin(request, this.origin);
         if (revoke) {
@@ -31,15 +33,18 @@ export class InstallationInvitesAdminHttp {
         const value = api ? await readJsonObject(request) : { note: form?.get("note") ?? "", policyRef: form?.get("policyRef") || null,
           expiresAt: form?.get("expiresAt") ? Date.parse(form.get("expiresAt")! + "Z") : null };
         const input = z.strictObject({ note: z.string().max(160).optional(), policyRef: z.string().nullable().optional(), expiresAt: z.number().int().positive().nullable().optional() }).parse(value);
-        const plans = await this.policy?.choices();
+        plans = await this.policy?.choices();
         if (plans ? !plans.some((plan) => plan.id === input.policyRef) : input.policyRef) throw new Error("Choose an available plan.");
+        invites = api ? [] : await this.invitations.list();
         const issued = await this.invitations.create(input);
         if (api) return json(issued, 201);
         issuedCode = issued.code;
-      } else if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
-      const invites = await this.invitations.list();
-      if (api) return json({ invites });
-      const plans = await this.policy?.choices();
+        invites = [issued.invite, ...invites].slice(0, 200);
+      } else if (request.method === "GET") {
+        invites = await this.invitations.list();
+        if (api) return json({ invites });
+        plans = await this.policy?.choices();
+      } else return new Response("Method Not Allowed", { status: 405 });
       const rows = invites.map((invite) => `<tr><td>${escapeHtml(invite.prefix)}…</td><td>${escapeHtml(invite.note)}</td>
         <td>${escapeHtml(invite.state)}${invite.lastError ? `<br>${escapeHtml(invite.lastError.replaceAll("_", " "))}` : ""}</td>
         <td>${invite.installationId ? `<a href="/admin/installations/${encodeURIComponent(invite.installationId)}">${escapeHtml(invite.handle ?? "Space")}</a>` : "—"}</td>
