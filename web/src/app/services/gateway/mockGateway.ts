@@ -21,12 +21,11 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
- *   /setup-again   forget that the first-approval walkthrough was seen, so the next approval shows it
- *   /no-config     drop the account's settings grant, so the walkthrough only explains (reload restores it)
  *   anything else is committed as your message and answered briefly a second later
  *
- * Settings written through sys.config.set live in this tab: the walkthrough's policy and its mark
- * show up in Settings → permissions until reload.
+ * Settings written through sys.config.set live in this tab until reload: the first approval opens the
+ * walkthrough, its choices and the card's always allow show up in Settings → permissions, and show it
+ * again there brings the walkthrough back at the next approval.
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
@@ -588,16 +587,6 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
   const approval = approvalFor(trigger);
   if (approval) {
     await askApproval(run, approval);
-    return;
-  }
-  if (trigger === "/setup-again") {
-    world.config.delete(`users/${OWNER.uid}/ui/approval-setup`);
-    await send(run, "Forgotten. The next approval starts with the walkthrough again.", true);
-    return;
-  }
-  if (trigger === "/no-config") {
-    delete accounts[0].capabilities;
-    await send(run, "Your account can no longer change settings in this tab; reload to get that back.", true);
     return;
   }
   if (trigger === "/think") {

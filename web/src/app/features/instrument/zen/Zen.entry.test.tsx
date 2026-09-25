@@ -12,6 +12,7 @@ import { createSessionService } from "../../../services/session/sessionService";
 import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
 import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChatConversation";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
+import { consoleConfigQueryKey } from "../../../services/system/useConsoleData";
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { ApprovalCard } from "./ApprovalCard";
@@ -140,6 +141,7 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
+    async refreshConfig() { await act(async () => { await cache.invalidateQueries({ queryKey: consoleConfigQueryKey }); }); },
   };
 }
 
@@ -434,6 +436,25 @@ describe("Zen conversation entry", () => {
         expect(setup(zen).saving).toBe(false);
         expect(configWrites).toEqual([]);
         expect(approvalCard(zen)).toBeNull();
+      } finally { await zen.unmount(); }
+    });
+
+    it("comes back at the next approval once the mark is cleared again", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onSkip(); });
+        await expectCard(zen);
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await vi.waitFor(() => expect(approvalCard(zen)).toBeNull());
+        await askApproval();
+        await expectCard(zen);
+        configEntries = [];
+        await zen.refreshConfig();
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await askApproval();
+        await expectSetup(zen);
       } finally { await zen.unmount(); }
     });
 

@@ -46,12 +46,14 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
   const stageRef = useRef(stage);
   stageRef.current = stage;
 
+  /* opens when an approval is pending and the mark is unset; once nothing is pending, whatever stage it reached is
+     forgotten, so the next approval reads the mark afresh (show it again in Settings clears it) */
   useEffect(() => {
     if (stage === "idle" && due && pending) {
       setChoices({});
       setError(null);
       setStage("step1");
-    } else if (!pending && stage !== "idle" && stage !== "done" && stage !== "saving") {
+    } else if (!pending && stage !== "idle" && stage !== "saving") {
       setStage("idle");
     }
   }, [due, pending, stage]);
