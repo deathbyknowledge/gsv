@@ -2,17 +2,22 @@
   position: relative;
   width: 100%;
   min-width: 0;
-  aspect-ratio: 1.45;
-  container-type: inline-size;
-  pointer-events: none;
+  aspect-ratio: 1.35;
+  container-type: size;
+  cursor: grab;
+  touch-action: none;
   user-select: none;
 }
+.gsv-auth-illustration.is-compact { max-width: 480px; align-self: center; }
+.gsv-auth-illustration[data-dragging] { cursor: grabbing; }
+.gsv-auth-illustration:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette] {
-  --ascii-nebula: color-mix(in srgb, var(--glyph) 64%, transparent);
-  --ascii-foreground: var(--glyph);
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 72%, transparent);
+  --ascii-foreground: color-mix(in srgb, var(--glyph) 68%, var(--accent-bright));
   --ascii-stars: var(--accent-bright);
-  --ascii-foreground-glow: 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent);
-  --ascii-star-glow: 0 0 6px color-mix(in srgb, var(--accent) 28%, transparent);
+  --ascii-foreground-glow: none;
+  --ascii-star-glow: none;
+  --ascii-glitch-glow: none;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -26,14 +31,14 @@
 }
 .gsv-auth-ship .gsv-ascii-galaxy-pre {
   font-family: "Departure Mono", monospace;
-  font-size: min(9px, 1cqi);
+  font-size: min(9px, 1.28cqi, 1.6cqb);
   line-height: 1;
 }
-.gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {
-  --ascii-foreground-glow: none;
-  --ascii-star-glow: none;
+.gsv-auth-illustration.is-compact .gsv-ascii-galaxy-pre {
+  font-size: min(6.6667px, 1.28cqi, 1.6cqb);
 }
-@media (max-width: 900px) {
-  /* The 80 glyph rows at 1cqi need 80% of the width in height, plus breathing room. */
-  .gsv-auth-illustration { aspect-ratio: 1.2; }
+.gsv-auth-ship.gsv-ascii-galaxy[data-ascii-palette="light"] {
+  --ascii-nebula: color-mix(in srgb, var(--accent-bright) 82%, transparent);
+  --ascii-foreground: var(--accent-bright);
+  --ascii-stars: var(--text-hi);
 }

@@ -12,6 +12,9 @@
 .desktop-welcome-choice-title > span { color: var(--accent); }
 .desktop-welcome-choice:not(:disabled):hover .desktop-welcome-choice-title { color: var(--accent); }
 .desktop-welcome-choice:focus-visible { outline: 1px solid var(--accent); outline-offset: 8px; }
+.desktop-welcome-choice-interactive { cursor: default; }
+.desktop-welcome-choice-interactive .desktop-welcome-choice-title { padding: 0; border: 0; background: transparent; color: inherit; font-family: inherit; text-align: left; }
+.desktop-welcome-choice-interactive .desktop-welcome-choice-title:focus-visible { outline: 1px solid var(--accent); outline-offset: 8px; }
 .desktop-welcome button:disabled { opacity: .45; cursor: not-allowed; }
 .desktop-welcome-back { align-self: flex-start; min-height: 32px; }
 .desktop-welcome .gsv-ti-affix { letter-spacing: 0; }
