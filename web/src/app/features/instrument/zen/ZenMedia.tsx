@@ -22,11 +22,12 @@ export function ZenMedia({ media, processId, onReady }: { media: unknown; proces
     ? descriptor.filename : kind === "document" ? "attachment" : kind;
   const opensAsImage = /^image\/(png|jpeg|gif|webp|avif|bmp|x-icon)$/i.test(descriptor.mimeType ?? "");
   const { source, error, available, retry } = useChatMediaSource(descriptor, processId);
+  const downloadTarget = source.startsWith("blob:") ? undefined : "_blank";
   return <figure class={`zen-media is-${kind}`}>
     {error ? <p class="zen-media-error" role="alert">Could not load {filename}. <button type="button" onClick={() => void retry()}>retry</button></p>
       : !available ? <p class="zen-media-error">{filename} is unavailable.</p>
       : source ? <>
-        {kind === "image" && <a class="zen-media-image" href={source} download={opensAsImage ? undefined : filename} target={opensAsImage ? "_blank" : undefined} rel="noreferrer"
+        {kind === "image" && <a class="zen-media-image" href={source} download={opensAsImage ? undefined : filename} target={opensAsImage ? "_blank" : downloadTarget} rel="noreferrer"
           onClick={preview && opensAsImage ? (event) => {
             event.preventDefault();
             preview({ source, filename, description: descriptor.description || filename });
@@ -35,7 +36,7 @@ export function ZenMedia({ media, processId, onReady }: { media: unknown; proces
         {kind === "audio" && <audio controls preload="metadata" src={source} />}
       </> : <LoadingState>Loading {filename}…</LoadingState>}
     <figcaption>
-      {source ? <a href={source} download={filename} rel="noreferrer">{filename}</a> : <span>{filename}</span>}
+      {source ? <a href={source} download={filename} target={downloadTarget} rel="noreferrer">{filename}</a> : <span>{filename}</span>}
       <span>{formatChatMediaSize(descriptor.size)}</span>
     </figcaption>
     {descriptor.transcription && <details><summary>transcription</summary><p>{descriptor.transcription}</p></details>}

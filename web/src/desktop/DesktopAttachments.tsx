@@ -29,7 +29,7 @@ function AttachmentPreview({ image, close, feedback }: { image: ImagePreview; cl
     onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => event.stopPropagation()}>
     <header>
       <span>{image.filename}</span>
-      {source && <a href={source} download={image.filename}>download</a>}
+      {source && <a href={source} download={image.filename} target={source.startsWith("blob:") ? undefined : "_blank"} rel="noreferrer">download</a>}
       <button type="button" autoFocus onClick={close} aria-label="Close preview">close <kbd>esc</kbd></button>
     </header>
     <div class="desktop-attachment-image">

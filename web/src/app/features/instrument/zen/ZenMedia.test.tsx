@@ -11,7 +11,7 @@ import { ZenMedia } from "./ZenMedia";
 let root: ReturnType<typeof createTestRoot>;
 afterEach(async () => { await root?.unmount(); vi.unstubAllGlobals(); });
 
-async function links(desktop: boolean, type: "image" | "document", mimeType: string) {
+async function links(desktop: boolean, type: "image" | "document", mimeType: string, url?: string) {
   let tree: ComponentChildren;
   const preview = vi.fn();
   vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null } }));
@@ -19,7 +19,7 @@ async function links(desktop: boolean, type: "image" | "document", mimeType: str
   const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   cache.setQueryData(chatProcessMediaQueryKey({ key: "image", pid: "proc:test" }), { blob: new Blob(["fixture"], { type: mimeType }) });
   function Harness() {
-    tree = ZenMedia({ media: { type, mimeType, key: "image", filename: "attachment.png" }, processId: "proc:test" });
+    tree = ZenMedia({ media: { type, mimeType, key: "image", filename: "attachment.png", url }, processId: "proc:test" });
     return null;
   }
   root = createTestRoot("Attachment actions");
@@ -48,6 +48,13 @@ describe("attachment opening", () => {
     expect(preview).toHaveBeenCalledExactlyOnceWith({ source: expect.stringMatching(/^blob:/), filename: "attachment.png", description: "attachment.png" });
     expect(anchors[1].props).toMatchObject({ download: "attachment.png" });
     expect(anchors[1].props.target).toBeUndefined();
+  });
+
+  it.each([false, true])("keeps legacy remote files outside the current app (desktop: %s)", async (desktop) => {
+    const source = "https://attachments.example/report.html";
+    const { anchors } = await links(desktop, "document", "text/html", source);
+    expect(anchors[0].props).toMatchObject({ href: source, download: "attachment.png", target: "_blank", rel: "noreferrer" });
+    expect(anchors[0].props.onClick).toBeUndefined();
   });
 
   it.each([["image", "image/svg+xml"], ["document", "text/html"]] as const)("downloads %s %s without opening executable content", async (type, mimeType) => {

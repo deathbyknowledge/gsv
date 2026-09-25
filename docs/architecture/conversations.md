@@ -139,6 +139,8 @@ files to the system Downloads folder. Audio and video retain their inline player
 active formats such as HTML and SVG remain downloads rather than executable previews. A Desktop
 image preview retains its own temporary URL until it closes, so navigating away from the source
 message cannot invalidate an open preview; closing it or signing out releases that URL.
+Older messages may link directly to a remote file. Those links open separately in the browser;
+native saves apply to the attachment blobs resolved by the authenticated frontend.
 
 ## Authorization
 
