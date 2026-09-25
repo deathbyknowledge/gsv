@@ -136,10 +136,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         <span class="desktop-welcome-choice-title">Create your space <span aria-hidden="true">→</span></span>
         <span class="desktop-welcome-detail">Use an invite code</span>
       </button>
-      <button class="desktop-welcome-choice" type="button" aria-label="Open your space" disabled={!ready || busy} onClick={() => start("open")}>
+      <div class="desktop-welcome-choice desktop-welcome-choice-interactive">
         <WelcomeIllustration kind="open" />
-        <span class="desktop-welcome-choice-title">Open your space <span aria-hidden="true">→</span></span>
-      </button>
+        <button class="desktop-welcome-choice-title" type="button" aria-label="Open your space" disabled={!ready || busy} onClick={() => start("open")}>
+          Open your space <span aria-hidden="true">→</span>
+        </button>
+      </div>
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
       <div class="desktop-welcome-primary">
       {opening && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}

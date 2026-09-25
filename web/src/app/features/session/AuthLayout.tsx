@@ -30,7 +30,7 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
         </button>
       </header>
       <div class="gsv-auth-composition">
-        {layout === "ship" && <AuthShip arrival={setup} theme={theme} />}
+        {layout === "ship" && <AuthShip theme={theme} />}
         <div class="gsv-auth-panels">
           <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
         </div>
