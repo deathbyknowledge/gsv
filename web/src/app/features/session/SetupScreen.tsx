@@ -74,8 +74,8 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
                 ]} /> <label for={consentId}>and acknowledge the </label><PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
                 introduction="How Humans & Machines, Inc. handles your data."
                 points={[
-                  "Hosted GSV processes conversations, files, and connected-service data to carry out your requests, using Cloudflare and other service providers.",
-                  "Explains data retention and your privacy rights, including how to request access, corrections, or deletion at hello@humansandmachin.es.",
+                  "We do not sell or rent your personal information. GSV processes your data to carry out your requests and to operate and protect the service.",
+                  "Explains when data is shared with service providers, how long it is kept, and how to request access, corrections, or deletion at hello@humansandmachin.es.",
                 ]} />.</span>
             </div>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">{consentError}</p> : null}
