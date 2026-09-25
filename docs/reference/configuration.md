@@ -143,7 +143,9 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
 | any target | `web.search` | `sys.mcp.call`, `mail.send` |
 
-So native work in the cloud home and reads or searches on a connected target proceed without asking; changing files, running commands, or making network requests on a connected target asks first. An explicit account or process policy replaces these defaults entirely; capability grants and resource checks still apply on top.
+So native work in the cloud home and reads or searches on a connected target proceed without asking; changing files, running commands, or making network requests on a connected target asks first. Capability grants and resource checks still apply on top.
+
+A stored policy may leave either field out. An omitted `default` is `auto`, and an omitted `rules` keeps the built-in rules above, so `{"default":"deny"}` alone still runs native cloud-home work automatically. To replace every built-in rule, set `rules` explicitly, using `[]` for none. A value that is not valid JSON, or not an object, falls back to the built-in policy.
 
 Mail is guarded separately. When `default` is `auto` and no rule covers `mail.send` at the `gsv` scope, an `ask` rule for `mail.send` is added to the policy on read, and an unmatched `mail.send` resolves to `ask` regardless. Sending mail without asking requires an explicit `auto` rule for `mail.send`, as the permissions page says.
 

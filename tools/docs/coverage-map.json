@@ -299,7 +299,8 @@
       ],
       "docs": [
         "docs/how-to/connect-devices.md",
-        "docs/architecture/targets.md"
+        "docs/architecture/targets.md",
+        "docs/reference/hardware-tools.md"
       ],
       "manual": [
         "pages/devices-workplaces/"
@@ -320,6 +321,64 @@
       "manual": [
         "pages/apps-desktop/",
         "pages/devices-workplaces/index.md"
+      ]
+    },
+    {
+      "id": "web-search",
+      "paths": [
+        "workers/gateway/src/drivers/native/web-search.ts",
+        "workers/gateway/src/drivers/native/shell/web.ts"
+      ],
+      "docs": [
+        "docs/reference/web-search.md",
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/reference/shell-codemode-network.md"
+      ]
+    },
+    {
+      "id": "machine",
+      "paths": [
+        "host/apps/machine/**"
+      ],
+      "docs": [
+        "docs/how-to/connect-devices.md",
+        "docs/architecture/targets.md",
+        "docs/reference/hardware-tools.md",
+        "docs/how-to/install-host-apps.md"
+      ],
+      "manual": [
+        "pages/devices-workplaces/"
+      ]
+    },
+    {
+      "id": "browser-extension",
+      "paths": [
+        "extension/**"
+      ],
+      "docs": [
+        "docs/how-to/browse-web.md",
+        "docs/architecture/targets.md",
+        "docs/reference/hardware-tools.md"
+      ],
+      "manual": [
+        "pages/devices-workplaces/browser-targets.md"
+      ]
+    },
+    {
+      "id": "accounts",
+      "paths": [
+        "workers/installations/src/**"
+      ],
+      "docs": [
+        "docs/architecture/installation-directory.md",
+        "docs/how-to/operate-gsv.md",
+        "docs/get-started/index.md",
+        "docs/architecture/security-model.md"
+      ],
+      "manual": [
+        "pages/accounts-access/"
       ]
     }
   ]

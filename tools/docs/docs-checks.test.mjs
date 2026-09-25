@@ -47,6 +47,14 @@ test("the desktop app and its native helpers are covered", () => {
   assert.equal(evaluate(["host/helpers/gestures/src/control.rs", "docs/how-to/install-host-apps.md"], "", "", entries).status, "documented");
 });
 
+test("web search, the machine daemon, the extension, and Accounts are covered", () => {
+  assert.equal(evaluate(["workers/gateway/src/drivers/native/web-search.ts"], "", "", entries).status, "missing");
+  assert.equal(evaluate(["host/apps/machine/src/device/enrollment.rs", "docs/how-to/browse-web.md"], "", "", entries).status, "missing");
+  assert.equal(evaluate(["extension/src/background/pairing.ts", "docs/how-to/browse-web.md"], "", "", entries).status, "documented");
+  assert.equal(evaluate(["workers/installations/src/creation-invites.ts"], "", "", entries).status, "missing");
+  assert.equal(evaluate(["workers/installations/src/onboarding.ts", "docs/architecture/installation-directory.md"], "", "", entries).status, "documented");
+});
+
 test("gateway syscall implementations are covered", () => {
   assert.equal(evaluate(["workers/gateway/src/kernel/sys/mcp.ts"], "", "", entries).status, "missing");
   assert.equal(evaluate(["workers/gateway/src/kernel/people.ts"], "", "", entries).status, "missing");
