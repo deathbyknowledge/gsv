@@ -258,20 +258,17 @@ for model history.
 
 ## Human-in-the-Loop Approval
 
-Tool approval is profile-configured with JSON at
-`config/ai/profile/{profile}/tools/approval`. If no policy is configured, GSV
-defaults to:
-
-- Auto-allow most tools.
-- Ask before `shell.exec`.
-- Ask before `fs.delete`.
-- Ask before `sys.mcp.call`.
-
-Rules can match exact syscalls or wildcard domains and can inspect facts such as
-profile, target type, tags, paths, commands, and argument prefixes. The approval
-engine tags risky operations, including destructive commands, hidden paths,
-paths outside cwd/home, remote device targets, privileged commands, and network
-commands.
+The Process resolves each tool call against the account's approval policy:
+`users/{uid}/ai/tools/approval` when the account has one, else the installation
+default at `config/ai/tools/approval`, else the built-in policy shared through
+`@humansandmachines/gsv/protocol`. The built-in policy runs native work in the
+cloud home and reads or searches on connected targets automatically, and asks
+before commands, file changes and network requests on a connected target, before
+`sys.mcp.call`, and before `mail.send`. Rules match an exact syscall or a domain
+wildcard and are scoped by the resolved execution target; the most specific
+target wins, then an exact match, then list order. The policy shape, precedence
+and defaults are specified in
+[Tool Approval Policy](../reference/configuration.md#tool-approval-policy).
 
 Approval outcomes are:
 
@@ -282,7 +279,13 @@ Approval outcomes are:
 The run pauses while a HIL request is pending. Web, Desktop, and CLI receive
 `proc.run.hil.requested`; an exact adapter route receives the same structured
 request in `adapter.send`. Decisions resume through `proc.hil` with the exact
-pending `requestId`. Each peer owns presentation.
+pending `requestId`. Each peer owns presentation. Zen shows the request as a
+card with the model's `purpose` and the raw request folded beneath; the first
+approval an account sees there opens the Ship's one-time walkthrough of what
+runs on its own and what to ask about, which writes ordinary rules into the
+account policy, and the card's always-allow control writes a rule for exactly
+that syscall and resolved target before approving. Messenger controls that
+approve "always" remember the call for that Process only.
 Telegram and Slack render native controls; adapters without controls use a
 safe handoff that shows the action and directs the user to Chat. A native
 callback is bound durably to the exact request, linked actor, route generation,

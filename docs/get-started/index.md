@@ -43,7 +43,7 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has four views:
 
-- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Zen** is your Ship conversation, and where you inspect what a run did. The first time your Ship needs your approval it walks you through what it does on its own and lets you decide, once per kind of action, whether it should ask; you can bring that back from **Settings → permissions**.
 - **Fleet** lists your places, processes, contacts and responsibilities, the ledger of actions and their outcomes, and recently touched files.
 - **Memory** shows your personal knowledge pages.
 - **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.

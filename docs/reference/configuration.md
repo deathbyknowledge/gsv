@@ -151,6 +151,15 @@ Mail is guarded separately. When `default` is `auto` and no rule covers `mail.se
 
 Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
 
+### The first-approval walkthrough and always allow
+
+The web console writes the account override in two more places, both as ordinary rules of the shape above:
+
+- The first time an approval reaches a person in Zen, the Ship explains what it does on its own and offers one choice, **allow** or **ask**, for each kind of action it asks about: running commands on your machines (`shell.exec` on `targets/*`), changing files on your machines (`fs.*` on `targets/*`; reads and searches keep their own rules), deleting files (`fs.delete` on `gsv` and on `targets/*`), fetching web pages through your machines (`net.fetch` on `targets/*`), connected tools (`sys.mcp.call`) and sending email (`mail.send` on `gsv`). Each row starts on what the account's policy does today. Saving writes rules only for the rows the person changed, starting from the current override, or the inherited policy when there is none; `default` is never changed. Skipping writes nothing.
+- The approval card's **always allow this** control writes `{ "match": "<syscall>", "target": "<resolved target>", "action": "auto" }` for exactly the call being asked about, then approves it. A rule for one machine wins over `targets/*`.
+
+Whether the walkthrough has run is held at `users/{uid}/ui/approval-setup` as `done` or `skipped`; **Settings → permissions** can clear it with *show it again*, which changes no rule. Because the override replaces the installation default rather than layering over it, an account that has saved either way keeps the rules it composed even if the installation default changes later.
+
 ## Runtime Config Keys
 
 | Key | Default | Description |
