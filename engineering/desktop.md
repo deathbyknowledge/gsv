@@ -35,7 +35,9 @@ filesystem, remote-webview or credential-export bridge.
 Session writes are serialized, origin-bound and generation-fenced. Native input
 has its own expiring lease, bounded intent delivery and explicit acknowledgement.
 Suspension, disconnect or view changes cancel input authority. Quit flushes the
-session, closes local control, and waits for helper shutdown.
+session, closes local control, and waits for helper shutdown. The root frontend
+owns one close listener across welcome, sign-in and connected views. Reloading
+after disconnect must install that listener again even with no configured space.
 
 ## Welcome and space creation
 
@@ -100,7 +102,8 @@ not write into the prompt. Input feedback updates its own small component;
 there is no periodic conversation render or gateway refetch loop.
 
 Linux windows omit the native title bar. The space-name menu provides the
-connection and Quit controls within Instrument.
+connection and Quit controls within Instrument. Welcome also exposes Quit in its
+header; both actions follow the same window-close path.
 
 The star field has no per-star blurred halo. The dark background avoids the
 banded gradient. On NVIDIA Linux systems the app defaults WebKit GPU painting

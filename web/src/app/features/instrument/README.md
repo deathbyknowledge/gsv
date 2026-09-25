@@ -22,6 +22,14 @@ installation capability and signs in immediately after creating the account.
 Failed account creation keeps the form available for retry. If only sign-in
 fails, the ordinary login form shows the error with the created username filled.
 
+Before choosing a space, Desktop presents two equal paths: create a space with
+an invite, or open an existing space. Open shows email sign-in beside direct
+address entry; email discovers owned spaces, while an address connects to that
+space's own login. The welcome and invite screens use the full composition
+without the login ship. Their two columns stack on narrow windows; invite,
+verification and handle forms stay centered. The web signup entry uses the same
+invite flow.
+
 The session layout also owns one ASCII Open Country ship: a broad habitat hull,
 landscape, observation deck and three recessed stern drives. Setup forms it from
 particles; sign-in and recovery show the same ship already formed with gentle
