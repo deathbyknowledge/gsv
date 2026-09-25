@@ -25,6 +25,7 @@
     "lint:fix": "oxlint . --deny-warnings --report-unused-disable-directives --fix",
     "protocol:generate": "node --preserve-symlinks ./tools/protocol/generate-gateway-wire-validator.mjs && node --preserve-symlinks ./tools/protocol/generate-host-protocol-types.mjs",
     "protocol:check": "node --preserve-symlinks ./tools/protocol/generate-gateway-wire-validator.mjs --check && node --preserve-symlinks ./tools/protocol/generate-host-protocol-types.mjs --check && node ./tools/protocol/check-syscall-docs.mjs && node --test ./tools/protocol/generation.test.mjs",
+    "docs:check": "node ./tools/docs/check-docs-links.mjs && node ./tools/docs/check-docs-publishable.mjs && node --test ./tools/docs/docs-checks.test.mjs && node ./tools/docs/check-docs-currency.mjs",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",

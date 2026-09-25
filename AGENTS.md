@@ -234,6 +234,12 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
+Documentation is an output of the change, not a follow-up. A change to product-facing behaviour updates `docs/` in the same pull request, and the GSV Manual (`deathbyknowledge/gsv-manual`, which every installation imports for its agents) in its own pull request when the operating model or a user workflow moved.
+
+- Docs: `npm run docs:check`
+
+That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without changing one of the pages that own it. `tools/docs/coverage-map.json` maps source paths to those pages; when a new page takes over a surface, add it there. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
+
 ## Deployment model
 
 - Operator stack: build and inspect `npm run deployment:plan`, then apply `npm run deployment:deploy` with the existing operator configuration and Alchemy state.
@@ -261,6 +267,7 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 - Architecture: `docs/architecture/`
 - Rust CLI, daemon, Desktop, and local IPC: `docs/architecture/rust-host-applications.md`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
+- Public documentation and its currency rule: `docs/` and `tools/docs/coverage-map.json`
 - Web product and app design: `engineering/builtin-app-design.md`
 
 Read the relevant detailed guide before changing that subsystem; do not duplicate its full policy here.

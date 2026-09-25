@@ -32,6 +32,17 @@ Generated namespace methods and `client.call()` are data-only.
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
 
+### Tool purpose
+
+When a Process calls a syscall through one of its capability tools, the tool
+accepts one extra argument, `purpose`: a single sentence written for the person,
+saying why the call is being made. It is a tool argument, not a syscall
+argument. It never appears in a wire `args` object and is not part of any
+signature below: the runtime lifts it off the arguments before dispatch,
+collapses whitespace, and caps it at 400 characters. The person sees it in an
+approval prompt and in the corresponding [ledger](../architecture/ledger.md)
+line. It is optional; a call without one is admitted the same way.
+
 ## Shared Records
 
 These aliases are used below to keep each syscall signature readable.
@@ -1395,7 +1406,7 @@ lowercase hex characters. The receiving client persists a separate random
 `gsv_machine_` credential with a 64-character hex suffix before redemption.
 Its durable machine token has no automatic expiry; explicit device removal or
 token revocation disconnects it. Creation and redemption secrets are excluded
-from ledger arguments. See [device invitations](https://github.com/deathbyknowledge/gsv/blob/main/engineering/device-pairing.md).
+from ledger arguments. The device-pairing design notes in the repository describe the invitation flow.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client

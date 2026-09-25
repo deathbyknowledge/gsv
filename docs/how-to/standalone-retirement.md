@@ -15,8 +15,7 @@ separate singleton runtime or per-person messenger application setup.
   `cb237d34f1e8ed7c1ee45a1274cc3a28b4a2f12a`. This includes fixes after v0.5.0;
   it is a source snapshot, not a newly published binary release.
 
-The preserved source passed all 18 CI jobs. The published release's seven
-downloaded artifact checksums and six archive layouts were verified before
+The preserved source and the published release artifacts were verified before
 cutover. Those checks do not claim a new live deployment of the old release.
 
 ## Existing standalone operators
@@ -36,8 +35,8 @@ objects to a new space. The current runtime does not reassign or erase that data
 
 Keep the same resource names, Durable Object namespaces, storage prefixes and
 Alchemy state. The cutover preserves those physical identities. Complete any
-required [Accounts migration ownership handoff](../../deployment/installation-migration-adoption.md)
-and [Mail queue reader upgrade](../../deployment/mail-queue-upgrade.md) before
+required [Accounts migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md)
+and [Mail queue reader upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md) before
 deploying their dependent writers. Removing standalone does not replace either
 upgrade protocol.
 

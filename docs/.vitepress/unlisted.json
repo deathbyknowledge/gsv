@@ -1,0 +1,6 @@
+{
+  "$comment": "Pages that are intentionally live but absent from the sidebar. Everything else under docs/ must be reachable from the sidebar in config.ts; a page nobody can navigate to is a page nobody maintains.",
+  "pages": {
+    "index.md": "Site home, reachable from the site root and the top navigation"
+  }
+}

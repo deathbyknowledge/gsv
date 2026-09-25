@@ -11,10 +11,16 @@ signs you in and opens **Ship**, your conversation with your personal agent.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
+If you were given an **invite code** instead, open the operator's signup page
+(or **Create a space** in the Desktop app), enter the code, verify your email
+with the six-digit code it sends, and choose the handle your space will live at.
+The same code resumes the same space if the browser or app is interrupted, and
+it works once.
+
 Owner sign-in on **My spaces** lists spaces you own. It is separate from your
 account inside each space. Signing in alone does not create a space or grant
-operator administration rights. The operator creates spaces explicitly and
-issues their setup invitations.
+operator administration rights. Spaces come from an operator's setup invitation
+or an invite code.
 
 ## Run your own operator
 
@@ -35,11 +41,12 @@ Existing standalone deployments should read the
 
 ## Look around
 
-- **Zen** contains your Ship conversation and activity inspection.
-- **Fleet** lists machines, processes and contacts.
+The web console is called **Instrument** and has four views:
+
+- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Fleet** lists your places, processes, contacts and responsibilities, the ledger of actions and their outcomes, and recently touched files.
 - **Memory** shows your personal knowledge pages.
-- **Ledger** shows actions and their outcomes.
-- **Settings** contains models, permissions, messengers and MCP connections.
+- **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.
 
 ## Next steps
 
@@ -47,6 +54,7 @@ Existing standalone deployments should read the
 - [Bring your own model](/how-to/bring-your-own-model).
 - [Connect a messenger](/how-to/messengers).
 - [Add integrations](/how-to/integrations).
-- [Web access](/how-to/browse-web).
+- [Browse the web](/how-to/browse-web).
+- [Invite people](/how-to/invite-people).
 - [Examples](/examples/index).
 - [FAQ](/get-started/faq).

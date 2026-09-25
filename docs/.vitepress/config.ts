@@ -21,7 +21,7 @@ export default defineConfig({
     "/tutorials/setting-up-an-adapter": "/how-to/messengers",
 
     // top-level orphans
-    "/process-spawn-handoff-model": "/architecture/process-handoffs",
+    "/process-spawn-handoff-model": "/architecture/process-ipc-and-scheduler",
     "/context-memory-knowledge-architecture": "/architecture/context-and-knowledge",
 
     // how-to renames
@@ -33,7 +33,8 @@ export default defineConfig({
     "/how-to/run-a-device": "/how-to/connect-devices",
     "/how-to/configure-agent": "/how-to/",
     "/how-to/set-up-cron": "/how-to/",
-    "/how-to/write-a-package-app": "/how-to/applications",
+    "/how-to/write-a-package-app": "/how-to/",
+    "/how-to/pr-previews": "/how-to/",
 
     // why orphans
     "/why/examples": "/examples/",
@@ -124,14 +125,17 @@ export default defineConfig({
           items: [
             { text: "Overview", link: "/how-to/" },
             { text: "Deploy / Update / Remove", link: "/how-to/deploy" },
+            { text: "Deploy with Alchemy", link: "/how-to/deploy-with-alchemy" },
+            { text: "Operate a GSV Deployment", link: "/how-to/operate-gsv" },
+            { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
             { text: "Run GSV for Your Organisation", link: "/how-to/organisations" },
+            { text: "Invite People", link: "/how-to/invite-people" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Connect Devices", link: "/how-to/connect-devices" },
             { text: "Connect a Messenger", link: "/how-to/messengers" },
             { text: "Bring Your Own Model", link: "/how-to/bring-your-own-model" },
             { text: "Integrations (MCP)", link: "/how-to/integrations" },
             { text: "Browse the Web", link: "/how-to/browse-web" },
-            { text: "Applications", link: "/how-to/applications" },
           ],
         },
       ],
@@ -146,10 +150,10 @@ export default defineConfig({
             { text: "Syscalls", link: "/reference/syscalls" },
             { text: "Configuration", link: "/reference/configuration" },
             { text: "Context Files", link: "/reference/context-files" },
-            { text: "Hardware Tools", link: "/reference/hardware-tools" },
+            { text: "Target Tools", link: "/reference/hardware-tools" },
+            { text: "Web Search", link: "/reference/web-search" },
             { text: "Routing", link: "/reference/routing" },
             { text: "Storage", link: "/reference/r2-storage" },
-            { text: "Package SDK", link: "/reference/package-sdk" },
           ],
         },
       ],
@@ -161,11 +165,40 @@ export default defineConfig({
             { text: "Architecture Overview", link: "/architecture/" },
             { text: "The Agent Loop", link: "/architecture/agent-loop" },
             { text: "Process IPC and Scheduler", link: "/architecture/process-ipc-and-scheduler" },
+            { text: "Process History", link: "/architecture/process-history" },
+            { text: "Responsibilities and Context Epochs", link: "/architecture/responsibilities-and-context-epochs" },
+          ],
+        },
+        {
+          text: "Context and Memory",
+          collapsed: true,
+          items: [
             { text: "Context Compaction & Memory", link: "/architecture/context-compaction" },
             { text: "Context and Knowledge", link: "/architecture/context-and-knowledge" },
-            { text: "Process Handoffs", link: "/architecture/process-handoffs" },
+            { text: "Conversations", link: "/architecture/conversations" },
+          ],
+        },
+        {
+          text: "Surfaces and Peers",
+          collapsed: true,
+          items: [
             { text: "The Adapter Model", link: "/architecture/adapter-model" },
+            { text: "Unified Protocol Peers", link: "/architecture/unified-protocol-peers" },
+            { text: "Interaction Surface Bindings", link: "/architecture/interaction-surface-bindings" },
+            { text: "Targets", link: "/architecture/targets" },
+            { text: "Rust Host Applications", link: "/architecture/rust-host-applications" },
+            { text: "Resource References", link: "/architecture/resource-references" },
+          ],
+        },
+        {
+          text: "Operations",
+          collapsed: true,
+          items: [
             { text: "Security Model", link: "/architecture/security-model" },
+            { text: "The Ledger", link: "/architecture/ledger" },
+            { text: "Services", link: "/architecture/services" },
+            { text: "Telemetry", link: "/architecture/telemetry" },
+            { text: "Installation Directory", link: "/architecture/installation-directory" },
           ],
         },
       ],

@@ -6,11 +6,13 @@ For everyday use, we recommend connecting your own provider key. You'll get bett
 
 ## Add a model
 
-1. Go to **GSV → Settings → Models → New model.**
-2. Follow the instructions for your provider and paste your key.
-3. Make it **primary** so your agents try it first.
+1. Open **Settings → preferences** and click **add model** under **Model order.**
+2. Enter your provider's details and key, then save.
+3. Click **use first** on the new entry so your agents try it first.
 
-You can keep several complete model configurations. Their order is their fallback order, and an agent or Process can prefer any entry by its stable ID.
+The list under **Model order** is the fallback order: the top entry is labelled **First choice** and the rest **Fallback 1**, **Fallback 2**, and so on. The first model is tried first; if it cannot complete the reply, the next model takes over. Drag a row, or use the arrows, to reorder. Each row's **details** shows how it connects, its endpoint, and its output and context limits.
+
+Your models are stored at `users/{uid}/ai/models`, layered ahead of the installation list at `config/ai/models` and the deployment's base models; see the [configuration reference](/reference/configuration#ai-model-config). An agent or Process can prefer any entry by its stable ID.
 
 Cloudflare's available models are listed at [developers.cloudflare.com/workers-ai/models](https://developers.cloudflare.com/workers-ai/models).
 ## See also

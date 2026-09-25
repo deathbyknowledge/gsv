@@ -49,8 +49,8 @@ profiles.
 ## Deployment boundary
 
 Producers emit one structured record only when `GSV_TELEMETRY_ENABLED` is set by
-their deployment. A Tail Worker or another deployment-owned consumer may accept
-those records and export them to a backend. It must validate the shared schema,
+their deployment. A deployment-owned log consumer may accept those records and
+export them to a backend. It must validate the shared schema,
 verify that the producing Worker is allowed to emit the claimed component, and
 discard every surrounding log, request, header, exception, and trace field.
 Because the transport record carries an installation ID until the consumer
@@ -59,11 +59,10 @@ console or invocation logs. `GsvRuntime` applies that non-persistent
 observability policy when the telemetry seam is enabled unless the deployment
 explicitly supplies a different policy.
 
-The managed deployment uses a Tail Worker to translate operational records to
-PostHog Logs and product records to PostHog Capture. PostHog knowledge and
-credentials stay in that deployment repository. Self-hosters can leave the seam
-disabled or attach a consumer for their own backend without changing GSV core.
-
+A deployment can attach a log-forwarding consumer that translates operational
+records and product records for its own observability backend. Backend
+knowledge and credentials stay in that deployment, not in GSV core. Self-hosters
+can leave the seam disabled or attach a consumer for their own backend.
 
 ## Coverage and failure boundaries
 
@@ -91,8 +90,8 @@ Ordinary callback retries do not emit another terminal outbound event.
 The managed consumer bounds export batches and HTTP deadlines, and reports
 invalid telemetry counts without including the rejected record. Its own export
 errors remain in its operator logs. Producer console/invocation logs are not
-persisted. Public records remain vendor-neutral; PostHog credentials and OTLP /
-Capture translation remain wholly in infrastructure.
+persisted. Public records remain vendor-neutral; backend credentials and export
+translation remain wholly in infrastructure.
 
 This pipeline is best effort. It is not a durable event bus, quota counter or
 billing ledger. Services persist their own usage before invoking providers and
