@@ -157,7 +157,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     Response::from_json(&serde_json::json!({
         "name": "ripgit",
-        "version": "0.6.0",
+        "version": "0.6.1",
         "description": "Git remote backed by Cloudflare Durable Objects"
     }))
 }

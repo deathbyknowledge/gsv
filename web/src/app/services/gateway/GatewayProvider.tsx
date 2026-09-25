@@ -18,7 +18,7 @@ type GatewayProviderProps = {
 
 const WEB_PEER: GsvPeerInfo = {
   id: "gsv-ui",
-  version: "0.6.0",
+  version: "0.6.1",
   platform: "browser",
 };
 
