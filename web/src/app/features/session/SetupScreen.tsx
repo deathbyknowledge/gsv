@@ -1,9 +1,13 @@
 import { useId } from "preact/hooks";
 import { TextInput } from "../../components/ui/TextInput";
+import { Hint } from "../../components/ui/Tooltip";
 import { AuthLayout } from "./AuthLayout";
 import { SessionError } from "./SessionChrome";
 import { USERNAME_FORMAT_DESCRIPTION, type SetupAccount, type SetupAccountErrors } from "./sessionDomain";
 import "./SetupScreen.css";
+
+const TERMS_SUMMARY = "In short: GSV is an 18+ free Early Access AI assistant provided by Humans and Machines, Inc. It can take real actions on your behalf—such as accessing files, running commands, using connected services, sending messages, and interacting with websites—so users are responsible for the permissions they grant and for reviewing consequential actions. Because it is beta software, features may change, fail, or behave unexpectedly. The Terms also cover acceptable use, third-party services, ownership, account termination, disclaimers, and limits on liability. For the full Terms of Service, see gsv.space/terms.";
+const PRIVACY_SUMMARY = "In short: The policy covers the Humans & Machines websites, newsletter, self-hosted GSV, and hosted GSV. Hosted GSV may process conversations, files, agent state, connected-service information, credentials, email/messages, and technical data needed to perform tasks. Core infrastructure runs on Cloudflare; managed AI inference uses Cloudflare Workers AI; limited pseudonymous telemetry goes to PostHog; web-search queries may go to Exa; and newsletter emails use Buttondown. Humans and Machines does not sell personal data or use private GSV content for behavioral advertising or general-purpose AI training unless a user explicitly opts in. Users can contact hello@humansandmachin.es for privacy requests, including access or deletion. For the full Privacy Policy, see gsv.space/privacy.";
 
 type SetupScreenProps = {
   visible: boolean;
@@ -31,7 +35,7 @@ export function SetupScreen({ visible, busy, space, username, password, password
       <div class="gsv-setup-head">
         <p class="gsv-setup-space">{space}</p>
         <h1 id="setup-heading">Welcome to your space</h1>
-        <p>Create your sign-in, then start talking with your Ship.</p>
+        <p>Create your sign-in for this space, and let's make your life easier.</p>
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
         <TextInput label="Username" value={username} disabled={busy} info={USERNAME_FORMAT_DESCRIPTION}
@@ -46,7 +50,6 @@ export function SetupScreen({ visible, busy, space, username, password, password
           status={fieldErrors.passwordConfirm ? "error" : "none"} message={fieldErrors.passwordConfirm}
           placeholder="Enter your password again" onChange={onPasswordConfirm}
           inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true, onBlur: () => onFieldBlur("passwordConfirm") }} />
-        <p class="gsv-setup-note">This sign-in is for this space.</p>
         <div class="gsv-setup-agreement">
           <div class="gsv-setup-disclosure">
             <p>GSV is an AI assistant that can use your computer and connected services to get things done.</p>
@@ -59,7 +62,7 @@ export function SetupScreen({ visible, busy, space, username, password, password
                 aria-invalid={consentError ? true : undefined}
                 aria-describedby={consentError ? `${consentId}-error` : undefined}
                 onChange={(event) => onConsent(event.currentTarget.checked)} />
-              <span>I confirm that I’m 18 or older and agree to the <a href="https://gsv.space/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and acknowledge the <a href="https://gsv.space/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span>
+              <span>I confirm that I’m 18 or older and agree to the <Hint text={TERMS_SUMMARY} position="top-end" maxWidth={480}><a href="https://gsv.space/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a></Hint> and acknowledge the <Hint text={PRIVACY_SUMMARY} position="top-end" maxWidth={480}><a href="https://gsv.space/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a></Hint>.</span>
             </label>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">{consentError}</p> : null}
           </div>

@@ -391,6 +391,7 @@ function TooltipBubble({
   bubbleRef,
   theme,
   text,
+  maxWidth,
 }: {
   open: boolean;
   shown: boolean;
@@ -398,10 +399,12 @@ function TooltipBubble({
   bubbleRef: RefObject<HTMLSpanElement>;
   theme: JSX.CSSProperties;
   text: string;
+  maxWidth?: number;
 }) {
   if (!open) return null;
   const sideClass = placement ? SIDE_CLASS[placement.side] : "";
   const style: JSX.CSSProperties = { ...theme };
+  if (maxWidth !== undefined) style.maxWidth = `min(${maxWidth}px, calc(100vw - 40px))`;
   if (placement) {
     style.left = `${placement.left}px`;
     style.top = `${placement.top}px`;
@@ -443,7 +446,7 @@ export function Tooltip({
       >
         {bare ? children : trigger}
       </button>
-      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
@@ -461,6 +464,8 @@ export interface HintProps {
   text: string;
   /** Which side the bubble opens on (default "top"). */
   position?: TooltipPosition;
+  /** Wider bubbles keep longer descriptions readable while fitting the viewport. */
+  maxWidth?: number;
   /** The interactive control to attach the tooltip to. Rendered as-is (no extra
    *  wrapper button) so it stays a single focusable element. */
   children: ComponentChildren;
@@ -474,7 +479,7 @@ export interface HintProps {
  *  description span, so the description exists the moment focus lands. Use this
  *  to give icon buttons a styled, explanatory tooltip in place of native
  *  `title`. */
-export function Hint({ text, position = "top", children }: HintProps) {
+export function Hint({ text, position = "top", maxWidth, children }: HintProps) {
   const bubbleId = useId();
   const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
   const child = isValidElement(children)
@@ -486,7 +491,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]} gsv-hint`}>
       {child}
-      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
@@ -494,6 +499,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
         bubbleRef={bubbleRef}
         theme={theme}
         text={text}
+        maxWidth={maxWidth}
       />
     </span>
   );
