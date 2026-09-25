@@ -1,4 +1,5 @@
 mod control;
+mod downloads;
 mod input;
 mod machine;
 mod session;
@@ -396,13 +397,18 @@ fn main() {
             let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .data_directory(directory.join("webview"))
                 .on_navigation(trusted_navigation)
+                .on_download(downloads::handle)
                 .on_new_window(|url, _| {
                     let _ = open_external(url.as_str());
                     tauri::webview::NewWindowResponse::Deny
                 });
             #[cfg(target_os = "linux")]
             let window = window.decorations(false);
-            window.build()?;
+            let window = window.build()?;
+            #[cfg(target_os = "linux")]
+            downloads::track_completion(&window)?;
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             Ok(())
         })
         .build(tauri::generate_context!())

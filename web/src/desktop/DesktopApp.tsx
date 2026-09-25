@@ -10,6 +10,7 @@ import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrows
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
+import { DesktopAttachments } from "./DesktopAttachments";
 import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
 import { completeDesktopOnboarding } from "./welcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
@@ -85,7 +86,9 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit }: {
       onDisconnect={() => setConfirmation(true)} onQuit={onQuit} />
       {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
         request={machineRequest} storage={storage} />}</>}>
-      <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
+      <DesktopAttachments active={!locked}>
+        <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
+      </DesktopAttachments>
     </PlatformIdentityProvider>
   </>;
 }
@@ -118,6 +121,7 @@ export function DesktopApp() {
   useEffect(() => {
     // Relative recovery routes belong to the chosen gateway's external browser.
     const links = (event: MouseEvent) => {
+      if (event.defaultPrevented) return;
       const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
       if (!anchor) return;
       const url = new URL(anchor.href, window.location.href);
@@ -131,8 +135,8 @@ export function DesktopApp() {
       event.preventDefault(); event.stopImmediatePropagation();
       void openInBrowser(url.href).catch(() => setError("Could not open your browser."));
     };
-    document.addEventListener("click", links, true);
-    return () => document.removeEventListener("click", links, true);
+    document.addEventListener("click", links);
+    return () => document.removeEventListener("click", links);
   }, [mock, session?.origin]);
 
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">

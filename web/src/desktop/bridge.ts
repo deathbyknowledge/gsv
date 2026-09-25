@@ -40,6 +40,9 @@ declare global {
           onCloseRequested(handler: (event: { preventDefault(): void }) => void): Promise<() => void>;
         };
       };
+      event: {
+        listen<T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void>;
+      };
     };
   }
 }
