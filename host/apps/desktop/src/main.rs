@@ -394,6 +394,7 @@ fn main() {
                 control_task: Mutex::new(Some(control_task)),
                 exiting: AtomicBool::new(false),
             });
+            app.manage(downloads::Downloads::default());
             let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .data_directory(directory.join("webview"))
                 .on_navigation(trusted_navigation)

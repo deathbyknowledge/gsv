@@ -76,13 +76,21 @@ machine runtime in the CLI process.
 The frontend owns the sole authenticated gateway connection, conversations,
 Process observation, drafts, approvals, attachments and retained screen state.
 Rust owns native input, private session persistence, external browser navigation,
-window lifecycle and the same-user `desktop-protocol` control server.
+attachment downloads, window lifecycle and the same-user `desktop-protocol` control server.
 
 The installed binary is `gsv-desktop`; the app is GSV with bundle identity
 `space.gsv.desktop`. There is no second desktop renderer or gateway client.
 Desktop credentials are isolated from CLI and driver credentials. Only the
 bundled main window can invoke the narrow native bridge. Space changes reset
 native input and invalidate frontend control and credential writes.
+
+Attachment reads stay in the authenticated frontend. The native download handler accepts only
+blob URLs owned by the bundled app, confines suggested filenames to the system Downloads folder,
+and reserves filenames until transfers finish, including simultaneous downloads of the same blob.
+Existing files are never replaced. WebKit owns the transfer; the frontend receives only its
+completion status. On Linux, completion is tracked per download through WebKit signals so a failed
+transfer cannot mark a later successful download as failed. The bridge does not expose arbitrary
+filesystem writes or add another gateway connection.
 
 `desktop-native` supervises `gsv-transcribe` for local capture and speech
 inference, and `gsv-vision` for local camera capture, LiteRT/XNNPACK inference
