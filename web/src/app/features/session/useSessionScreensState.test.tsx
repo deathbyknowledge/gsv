@@ -6,21 +6,34 @@ import { useSessionScreensState } from "./useSessionScreensState";
 
 afterEach(() => vi.unstubAllGlobals());
 
-type SetupHistoryState = { gsvSetupConsent: boolean };
+type SetupHistoryState = { gsvSetupConsent: boolean } | null;
+type HistoryEntry = { url: string; state: SetupHistoryState };
 
-async function setupScreen() {
+async function setupScreen(path = "/") {
   vi.stubGlobal("document", {});
   const events = new EventTarget();
-  let historyState: SetupHistoryState = { gsvSetupConsent: false };
+  const entries: HistoryEntry[] = [
+    { url: "https://space.example/previous", state: null },
+    { url: `https://space.example${path}`, state: null },
+  ];
+  let index = 1;
+  const traverse = (offset: number) => queueMicrotask(() => {
+    index += offset;
+    events.dispatchEvent(new Event("popstate"));
+  });
   vi.stubGlobal("window", {
+    get location() { return new URL(entries[index]!.url); },
     history: {
-      get state() { return historyState; },
-      replaceState: (state: SetupHistoryState) => { historyState = state; },
-      pushState: (state: SetupHistoryState) => { historyState = state; },
-      back: () => {
-        historyState = { gsvSetupConsent: false };
-        events.dispatchEvent(new Event("popstate"));
+      get state() { return entries[index]!.state; },
+      replaceState: (state: SetupHistoryState, _unused: string, url?: string) => {
+        entries[index] = { state, url: new URL(url ?? entries[index]!.url, entries[index]!.url).href };
       },
+      pushState: (state: SetupHistoryState) => {
+        entries.splice(index + 1, entries.length, { state, url: entries[index]!.url });
+        index++;
+      },
+      back: () => traverse(-1),
+      forward: () => traverse(1),
     },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
@@ -48,10 +61,7 @@ async function setupScreen() {
   return {
     state: () => state, setup, login,
     async visitConsentStep() {
-      await act(() => {
-        historyState = { gsvSetupConsent: true };
-        events.dispatchEvent(new Event("popstate"));
-      });
+      await act(() => window.history.forward());
     },
     async change(next: Partial<SessionSnapshot>) { snapshot = { ...snapshot, ...next }; await render(); },
     unmount: () => root.unmount(),
@@ -59,6 +69,46 @@ async function setupScreen() {
 }
 
 describe("minimal account setup", () => {
+  it.each(["/", "/onboarding"])("collapses the completed wizard before the next browser Back from %s", async (path) => {
+    const screen = await setupScreen(path);
+    await act(() => {
+      screen.state().setup.onUsername("alice");
+      screen.state().setup.onPassword("password123");
+      screen.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    // Capability setup rewrites the current entry before the ready screen
+    // unmounts SessionScreens, without delivering a ready snapshot to its hook.
+    window.history.replaceState(window.history.state, "", "/");
+    await screen.unmount();
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+    await act(() => window.history.back());
+    expect(window.location.pathname).toBe("/previous");
+    await act(() => window.history.forward());
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+  });
+
+  it("does not navigate back when leaving the first step or a different route", async () => {
+    const screen = await setupScreen();
+    await screen.unmount();
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+
+    const next = await setupScreen();
+    await act(() => {
+      next.state().setup.onUsername("alice");
+      next.state().setup.onPassword("password123");
+      next.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => next.state().setup.onSubmit(new Event("submit")));
+    window.history.pushState(null, "");
+    window.history.replaceState(null, "", "/recover");
+    await next.unmount();
+    expect(window.location.pathname).toBe("/recover");
+  });
+
   it("requires consent before submitting credentials, retaining the form after a retryable failure", async () => {
     const screen = await setupScreen();
     try {
@@ -128,6 +178,8 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.passwordConfirm).toBe("");
       expect(screen.state().setup.consent).toBe(false);
       expect(screen.state().setup.step).toBe("credentials");
+      expect(window.location.pathname).toBe("/");
+      expect(window.history.state).toBeNull();
 
       await act(() => { screen.state().login.onPassword("password123"); });
       await act(() => { screen.state().login.onSubmit(new Event("submit")); });

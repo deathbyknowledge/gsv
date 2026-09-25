@@ -38,7 +38,23 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupStep(state.success && state.data.gsvSetupConsent ? "consent" : "credentials");
     };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      const state = setupHistoryStateSchema.safeParse(window.history.state);
+      if (!state.success) return;
+      const destination = window.location.href;
+      window.history.replaceState(null, "");
+      if (!state.data.gsvSetupConsent) return;
+      // Restore the completed URL before route listeners observe the original
+      // wizard entry. Capability setup may already have replaced /onboarding.
+      window.addEventListener("popstate", () => {
+        const previous = setupHistoryStateSchema.safeParse(window.history.state);
+        if (previous.success && !previous.data.gsvSetupConsent) {
+          window.history.replaceState(null, "", destination);
+        }
+      }, { once: true, capture: true });
+      window.history.back();
+    };
   }, [visibleView]);
 
   // Sync login username from snapshot (e.g. after first-boot setup creates the
