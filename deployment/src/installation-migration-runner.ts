@@ -1,5 +1,5 @@
 import * as z from "zod/mini";
-import { unstable_splitSqlQuery } from "wrangler";
+import { splitInstallationMigrationSql } from "./installation-migration-statements.ts";
 import { ADOPTION_STATE_TABLE, adoptionDigest, quoteAdoptionIdentifier as quote } from "./installation-migration-adoption-state.ts";
 import { assertMigrationFreeze, readMigrationFreeze, readMigrationSchema } from "./installation-migration-freeze.ts";
 import { migrationD1Read, type MigrationD1Database, type MigrationD1Statement } from "./installation-migration-d1.ts";
@@ -112,7 +112,9 @@ export async function runOwnedInstallationMigrations(input: {
       // REST emits one result per SQL statement, while D1 bindings emit one per
       // batch item. Wrangler's parser preserves trigger bodies and quoted/comment
       // semicolons while giving both transports the same statement boundaries.
-      statements.push(...unstable_splitSqlQuery(next.sql).map((sql) => ({ sql })), {
+      // SQLite's completion rules also handle END) in CASE expressions, which
+      // can make Wrangler combine several complete triggers into one entry.
+      statements.push(...splitInstallationMigrationSql(next.sql).map((sql) => ({ sql })), {
         sql: `INSERT INTO ${quote(ledgers[next.owner])} (id, name, applied_at) VALUES (?, ?, datetime('now'))`,
         params: [nextIds.get(next.owner)!, next.name],
       }, { sql: `INSERT INTO ${SOURCE_TABLE} (owner, name, sha256) VALUES (?, ?, ?)`,
