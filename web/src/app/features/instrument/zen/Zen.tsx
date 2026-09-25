@@ -3,6 +3,7 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
 import { useQuery } from "../../../services/navigation/viewQueries";
+import { useQueryClient } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -16,7 +17,11 @@ import { useChatConversation } from "../../../services/chat/hooks/useChatConvers
 import { useChatOutbox } from "../../../services/chat/hooks/useChatOutbox";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
-import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
+import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
+import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
+import { approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
+import { defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
+import { canConfigure } from "../settings/settingsModel";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -31,6 +36,8 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalSetup } from "./ApprovalSetup";
+import { useApprovalSetup } from "./useApprovalSetup";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -700,6 +707,37 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (active && pendingHil) promptRef.current?.blur();
   }, [active, pendingHil]);
 
+  /* the first approval opens the Ship's walkthrough instead; its choices and the always-allow key write the account policy */
+  const cache = useQueryClient();
+  const self = accounts.data?.find((account) => account.relation === "self") ?? null;
+  const policyEditable = self !== null && canConfigure(self, "sys.config.set");
+  const configEntry = (key: string) => config.data?.find((entry) => entry.key === key)?.value ?? "";
+  const policyOverride = self ? configEntry(accountApprovalKey(self.uid)) : "";
+  const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
+  const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";
+  const refreshConfig = useCallback(() => cache.invalidateQueries({ queryKey: consoleConfigQueryKey }), [cache]);
+  const setup = useApprovalSetup({
+    client, uid: self?.uid ?? null, due: setupDue, pending: pendingHil !== null, editable: policyEditable,
+    inherited: policyInherited, override: policyOverride, onSaved: refreshConfig,
+  });
+  const [alwaysAllow, setAlwaysAllow] = useState<{ requestId: string; saving: boolean; error: string | null } | null>(null);
+  const allowAlways = useCallback(async () => {
+    if (!pid || !pendingHil || !self) return;
+    const request = pendingHil;
+    setAlwaysAllow({ requestId: request.requestId, saving: true, error: null });
+    try {
+      const base = parseApprovalPolicy(policyOverride || policyInherited);
+      const next = protectManagedMailApproval(upsertApprovalRule(base, approvalRuleForRequest(request.syscall, request.target)));
+      await saveAccountApprovalPolicy(client, self.uid, policyOverride, serializeApprovalPolicy(next));
+      await refreshConfig();
+    } catch (error) {
+      setAlwaysAllow({ requestId: request.requestId, saving: false, error: error instanceof Error ? error.message : "The rule did not save." });
+      return;
+    }
+    setAlwaysAllow(null);
+    await decide("approve");
+  }, [client, decide, pendingHil, pid, policyInherited, policyOverride, refreshConfig, self]);
+
   useEffect(() => {
     if (!active || !prefill || !connected || !pid) return;
     const input = promptRef.current;
@@ -739,9 +777,20 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         }
         return;
       }
-      if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
+      if (setup.open && !typing && (event.key === "c" || event.key === "s")) {
+        event.preventDefault();
+        if (event.key === "c") setup.continueFlow();
+        else setup.skip();
+        return;
+      }
+      if (pendingHil && !setup.open && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
         void decide(event.key === "y" ? "approve" : "deny");
+        return;
+      }
+      if (pendingHil && !setup.open && !typing && event.key === "a" && policyEditable && !alwaysAllow?.saving) {
+        event.preventDefault();
+        void allowAlways();
         return;
       }
       if (typing) return;
@@ -782,7 +831,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [active, allowAlways, alwaysAllow?.saving, browse, decide, latest, moments, receipts, pendingHil, policyEditable, scrolling.page, scrolling.select, scrolling.stopFollowing, setup.continueFlow, setup.open, setup.skip, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
@@ -826,7 +875,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (progress >= 1) return null;
       return Math.max(0, progress);
     };
-    return moments.map((moment, index) => {
+    return moments.map((moment) => {
       if (moment.role === "note") return null;
       const receipt = receipts.get(moment.id);
       return <>
@@ -896,7 +945,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
   /* the approval slot sits under the latest moment, outside the memo: its buttons write policy and must never go stale */
-  const approvalSlot = pendingHil ? (
+  const approvalSlot = pendingHil && setup.open ? (
+    <ApprovalSetup
+      step={setup.step}
+      choices={setup.choices}
+      current={currentApprovalChoices(parseApprovalPolicy(policyOverride || policyInherited))}
+      editable={policyEditable}
+      saving={setup.saving}
+      error={setup.error}
+      onChoose={setup.choose}
+      onContinue={setup.continueFlow}
+      onSkip={setup.skip}
+    />
+  ) : pendingHil ? (
     <ApprovalCard
       request={pendingHil}
       who={who}
@@ -905,6 +966,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
       }}
       onDecide={(decision) => void decide(decision)}
+      onAlwaysAllow={policyEditable ? () => void allowAlways() : undefined}
+      alwaysAllowSaving={alwaysAllow?.requestId === pendingHil.requestId && alwaysAllow.saving}
+      alwaysAllowError={alwaysAllow?.requestId === pendingHil.requestId ? alwaysAllow.error : null}
     />
   ) : null;
 
@@ -1050,7 +1114,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             dir="~"
             placeholder={
               pendingHil
-                ? "answer the approval first"
+                ? setup.open ? "one moment" : "answer the approval first"
                 : !promptFocused
                   ? "Start chatting, or click here to chat"
                   : currentPlace.online

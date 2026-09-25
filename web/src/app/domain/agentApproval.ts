@@ -104,6 +104,7 @@ export function currentApprovalChoices(policy: ApprovalPolicyValue): Record<Appr
     category.id,
     category.rules.some((rule) => resolveApprovalAction(policy, rule.match, rule.target ?? "gsv") === "ask") ? "ask" : "auto",
   ] as const);
+  // SAFETY: APPROVAL_CATEGORIES lists every ApprovalCategoryId exactly once, so the entries cover the record.
   return Object.fromEntries(entries) as Record<ApprovalCategoryId, ApprovalChoice>;
 }
 

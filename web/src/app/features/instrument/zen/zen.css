@@ -341,6 +341,21 @@
   box-shadow: none;
 }
 .zen-approval.is-decided .q { color: var(--text-dim); }
+.zen-approval .consequence { margin: 8px 0 0; color: var(--text-dim); }
+.zen-approval .consequence.is-err { color: var(--error, var(--update)); }
+
+/* the setup card: the same box, with a row per kind of action and a pick on each */
+.zen-approval.is-setup .ask + .ask { margin-top: 8px; }
+.zen-approval .rows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.zen-approval .rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label pick" "example pick"; column-gap: 12px; align-items: center; }
+.zen-approval .row-label { grid-area: label; color: var(--text-hi); }
+.zen-approval .row-example { grid-area: example; color: var(--text-dim); font-size: 12px; }
+.zen-approval .row-pick { grid-area: pick; display: flex; gap: 6px; }
+.zen-approval .row-pick .ibtn[aria-pressed="true"] { color: var(--text-hi); border-color: var(--update); }
+.zen-approval .row-pick .ibtn[aria-pressed="false"] { color: var(--text-dim); }
+@media (max-width: 560px) {
+  .zen-approval .rows li { grid-template-columns: 1fr; grid-template-areas: "label" "example" "pick"; row-gap: 4px; }
+}
 
 .zen-bottom {
   min-width: 0;

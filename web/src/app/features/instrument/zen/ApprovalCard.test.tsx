@@ -69,11 +69,11 @@ describe("approval card", () => {
     const text = collectText(failed);
     expect(text).toContain("the rule was not saved: offline");
     expect(text).toContain("run it once");
-    const buttons = collectNodes(failed).filter((node) => node.type === "button" && typeof node.props.disabled === "boolean");
+    const buttons = collectNodes(failed).filter((node) => node.type === "button" && node.props.disabled !== undefined);
     expect(buttons).toHaveLength(3);
     for (const button of buttons) expect(button.props.disabled).toBe(false);
     const saving = ApprovalCard({ ...props, request, onAlwaysAllow: () => {}, alwaysAllowSaving: true });
-    const held = collectNodes(saving).filter((node) => node.type === "button" && typeof node.props.disabled === "boolean");
+    const held = collectNodes(saving).filter((node) => node.type === "button" && node.props.disabled !== undefined);
     expect(held).toHaveLength(3);
     for (const button of held) expect(button.props.disabled).toBe(true);
     expect(collectText(saving)).toContain("saving the rule");
