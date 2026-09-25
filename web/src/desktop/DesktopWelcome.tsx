@@ -8,5 +8,5 @@ export function DesktopWelcome(props: {
   onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
 }) {
   return <OwnerWelcomeScreen {...props} load={loadDesktopWelcome}
-    addressPanel={<DesktopConnect ready={props.ready} onConnect={props.onConnect} />} />;
+    addressPanel={({ connect, disabled }) => <DesktopConnect ready={props.ready} disabled={disabled} onConnect={connect} />} />;
 }

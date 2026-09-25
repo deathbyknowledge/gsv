@@ -1,8 +1,9 @@
 import type { ComponentChildren } from "preact";
+import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TextInput } from "../../components/ui/TextInput";
 import { OwnerWelcome, type WelcomeSnapshot } from "../../services/session/ownerWelcome";
-import { collectNodes, createTestRoot } from "../../testing/testHarness";
+import { collectNodes, collectText, createTestRoot, deferred } from "../../testing/testHarness";
 import { OwnerWelcomeScreen } from "./OwnerWelcomeScreen";
 
 beforeEach(() => vi.stubGlobal("document", {}));
@@ -52,9 +53,56 @@ describe("owner welcome", () => {
     }
     try {
       await root.render(<Harness />);
-      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props.label === "Open your space")?.props.disabled).toBe(false));
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Open your space")?.props.disabled).toBe(false));
       expect(fetcher).not.toHaveBeenCalled();
       expect(onConnect).not.toHaveBeenCalled();
+    } finally { await root.unmount(); }
+  });
+
+  it("starts with two choices, then offers email and direct address together", async () => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
+    const fetcher = vi.fn<typeof fetch>();
+    const connection = deferred<void>();
+    const onConnect = vi.fn(() => connection.promise);
+    const addressPanel = vi.fn(({ disabled, connect }: { disabled: boolean; connect(origin: string): Promise<void> }) =>
+      <button type="button" disabled={disabled} onClick={() => connect("https://custom.example.com")}>Direct address</button>);
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => {
+      snapshot = { revision: crypto.randomUUID(), value };
+      return structuredClone(snapshot);
+    } }, "https://accounts.example.com", fetcher);
+    const root = createTestRoot("Owner welcome choices");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, load: async () => client, onConnect, addressPanel });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      const choice = (label: string) => collectNodes(tree).find((node) => node.props["aria-label"] === label)!;
+      await vi.waitFor(() => expect(choice("Create your space")?.props.disabled).toBe(false));
+      expect(choice("Open your space")).toBeDefined();
+      expect(addressPanel).not.toHaveBeenCalled();
+      expect(collectNodes(tree).some((node) => node.type === TextInput)).toBe(false);
+
+      await act(() => { choice("Create your space").props.onClick?.(); });
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Invite code")?.props.disabled).toBe(false));
+      expect(addressPanel).not.toHaveBeenCalled();
+      await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Back")?.props.onClick?.(); });
+      await act(() => { choice("Open your space").props.onClick?.(); });
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Email")?.props.disabled).toBe(false));
+      expect(collectText(tree)).toContain("Sign in with email");
+      expect(collectText(tree)).toContain("Enter a space address");
+      expect(addressPanel).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false }));
+      expect(fetcher).not.toHaveBeenCalled();
+
+      let connected: Promise<void>;
+      await act(() => { connected = addressPanel.mock.lastCall![0].connect("https://custom.example.com"); });
+      expect(addressPanel).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: true }));
+      await addressPanel.mock.lastCall![0].connect("https://other.example.com");
+      expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://custom.example.com");
+      await act(async () => { connection.resolve(); await connected; });
+      expect(addressPanel).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false }));
+      expect(fetcher).not.toHaveBeenCalled();
     } finally { await root.unmount(); }
   });
 });

@@ -157,7 +157,7 @@ export function DesktopApp() {
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
     {session && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
-      <AuthScene setup={false}><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
+      <AuthScene layout="welcome"><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
         setError(null);
         const next = await invoke("desktop_configure", { origin, onboardingToken });
         window.sessionStorage.clear(); window.localStorage.clear(); setResumeSetup(false); setSession(next);
