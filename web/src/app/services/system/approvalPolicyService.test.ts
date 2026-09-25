@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { saveApprovalPolicy } from "./permissionService";
+import { markApprovalSetup, saveAccountApprovalPolicy } from "./approvalPolicyService";
 import { GSVClient } from "@humansandmachines/gsv/client";
 
 describe("permission policy replacement", () => {
@@ -11,7 +11,7 @@ describe("permission policy replacement", () => {
     const client = new GSVClient();
     vi.spyOn(client.sys.config, "get").mockResolvedValue({ entries: [{ key, value: legacy }] });
     const save = vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
-    await saveApprovalPolicy(client, 1000, legacy, value);
+    await saveAccountApprovalPolicy(client, 1000, legacy, value);
     expect(client.sys.config.get).toHaveBeenCalledWith({ key });
     expect(save).toHaveBeenCalledExactlyOnceWith({ key, value });
   });
@@ -20,7 +20,7 @@ describe("permission policy replacement", () => {
     const client = new GSVClient();
     vi.spyOn(client.sys.config, "get").mockResolvedValue({ entries: [{ key, value: replacement }] });
     const save = vi.spyOn(client.sys.config, "set");
-    await expect(saveApprovalPolicy(client, 1000, legacy, "")).rejects.toThrow("changed elsewhere");
+    await expect(saveAccountApprovalPolicy(client, 1000, legacy, "")).rejects.toThrow("changed elsewhere");
     expect(save).not.toHaveBeenCalled();
   });
 
@@ -28,8 +28,16 @@ describe("permission policy replacement", () => {
     const client = new GSVClient();
     const get = vi.spyOn(client.sys.config, "get");
     const save = vi.spyOn(client.sys.config, "set");
-    await expect(saveApprovalPolicy(client, 1000, "", legacy)).rejects.toThrow("not valid");
+    await expect(saveAccountApprovalPolicy(client, 1000, "", legacy)).rejects.toThrow("not valid");
     expect(get).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("marks the walkthrough on the account's ui key and clears it with a blank", async () => {
+    const client = new GSVClient();
+    const save = vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
+    await markApprovalSetup(client, 1000, "skipped");
+    await markApprovalSetup(client, 1000, "");
+    expect(save.mock.calls).toEqual([[{ key: "users/1000/ui/approval-setup", value: "skipped" }], [{ key: "users/1000/ui/approval-setup", value: "" }]]);
   });
 });

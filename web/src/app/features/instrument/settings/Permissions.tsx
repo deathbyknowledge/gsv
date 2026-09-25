@@ -1,9 +1,9 @@
-import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
+import { accountApprovalKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
@@ -18,7 +18,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   const config = useQuery({ queryKey: SETTINGS_CONFIG_KEY, queryFn: () => loadConsoleConfig(client), enabled: connected && active });
   const targetQuery = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected && active });
   const targets = (targetQuery.data ?? []).map((target) => ({ id: target.deviceId, label: target.label }));
-  const key = `users/${account.uid}/ai/tools/approval`;
+  const key = accountApprovalKey(account.uid);
   const original = config.data?.find((entry) => entry.key === key)?.value ?? "";
   const inherited = defaultApprovalPolicyForConfig(config.data ?? []);
   const [draft, setDraft] = useState<{ inherited: boolean; policy: SettingsPolicy; base: string } | null>(null);
@@ -31,7 +31,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   useSettingsDirty(dirty, onDirty);
   const editable = connected && !!config.data && !config.isError && canConfigure(account, "sys.config.set") && policy !== null;
   const save = useMutation({
-    mutationFn: (value: string) => saveApprovalPolicy(client, account.uid, draft?.base ?? original, value),
+    mutationFn: (value: string) => saveAccountApprovalPolicy(client, account.uid, draft?.base ?? original, value),
     onError: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
