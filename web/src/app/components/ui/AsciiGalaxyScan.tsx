@@ -19,6 +19,7 @@ export type AsciiGalaxyScanProps = {
   frameRate?: number;
   fontSize?: number;
   palette?: ColorTheme;
+  inline?: boolean;
 };
 
 type Point = {

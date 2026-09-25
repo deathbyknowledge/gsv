@@ -25,9 +25,13 @@ fails, the ordinary login form shows the error with the created username filled.
 Before choosing a space, Desktop presents two equal paths: create a space with
 an invite, or open an existing space. Open shows email sign-in beside direct
 address entry; email discovers owned spaces, while an address connects to that
-space's own login. The welcome and invite screens use the full composition
-without the login ship. Their two columns stack on narrow windows; invite,
-verification and handle forms stay centered. The web signup entry uses the same
+space's own login. The welcome choices pair Create with the existing galaxy
+forming GSV, and Open with the same Open Country ship assembling from particles.
+Both use the shared ASCII animation host at 18 fps, pause while hidden, and show
+completed stills for reduced motion. Glyph frames fit their panels at every
+size and use no blurred shadows. The illustrations leave with the choices;
+invite, verification and handle forms stay centered in the full composition.
+The two columns stack on narrow windows. The web signup entry uses the same
 invite flow.
 
 The session layout also owns one ASCII Open Country ship: a broad habitat hull,
