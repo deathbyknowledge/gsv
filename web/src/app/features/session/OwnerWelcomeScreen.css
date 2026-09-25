@@ -7,7 +7,7 @@
 .desktop-welcome-columns > :last-child { border-left: 1px solid var(--border); padding-left: clamp(24px, 5vw, 64px); }
 .desktop-welcome-primary, .desktop-welcome-address { min-width: 0; }
 .desktop-welcome-choices { min-height: 240px; }
-.desktop-welcome-choice { display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 18px; padding: 72px 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.desktop-welcome-choice { display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 18px; padding: 16px 0 32px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .desktop-welcome-choice-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; font-size: clamp(18px, 2vw, 24px); line-height: 1.5; }
 .desktop-welcome-choice-title > span { color: var(--accent); }
 .desktop-welcome-choice:not(:disabled):hover .desktop-welcome-choice-title { color: var(--accent); }
