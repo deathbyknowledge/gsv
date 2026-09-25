@@ -133,6 +133,15 @@ Process history keeps its existing lifecycle and archive policy. Conversation hi
 activity can therefore rotate independently without conflating what the user saw with how the work
 was performed.
 
+Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
+use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
+files to the system Downloads folder. Audio and video retain their inline players. Documents and
+active formats such as HTML and SVG remain downloads rather than executable previews. A Desktop
+image preview retains its own temporary URL until it closes, so navigating away from the source
+message cannot invalidate an open preview; closing it or signing out releases that URL.
+Older messages may link directly to a remote file. Those links open separately in the browser;
+native saves apply to the attachment blobs resolved by the authenticated frontend.
+
 ## Authorization
 
 Public `conversation.*` syscalls require a direct authenticated user client. Process callers cannot
