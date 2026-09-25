@@ -25,6 +25,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -65,7 +66,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!ready) return;
     let mounted = true;
     void run(async () => {
-      const client = await load();
+      let client: OwnerWelcome;
+      try { client = await load(); }
+      catch {
+        if (mounted) setLoadError("Could not load sign-in. Try again.");
+        return;
+      }
       if (!mounted) return;
       setFlow(client);
       setEmail(client.state.challenge?.email ?? ""); setInviteCode(client.state.inviteCode ?? "");
@@ -185,8 +191,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         }) })}
       </div>}
     </div>}
-    {error && <p class="gsv-login-error" role="alert">{error}</p>}
+    {(error || loadError) && <p class="gsv-login-error" role="alert">{error || loadError}</p>}
     {step !== "welcome" && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>Back</button>}
-    {step === "welcome" && error && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
+    {(loadError || (step === "welcome" && error)) && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
   </section></AuthLayout>;
 }

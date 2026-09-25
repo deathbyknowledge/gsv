@@ -10,6 +10,37 @@ beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owner welcome", () => {
+  it("keeps sign-in recovery available through direct address and Back after loading fails", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("window", { location: { reload } });
+    const load = vi.fn(async () => { throw new Error("Storage unavailable"); });
+    const onConnect = vi.fn(async () => { throw new Error("Offline"); });
+    const addressPanel = vi.fn(({ disabled, connect }: { disabled: boolean; connect(origin: string): Promise<void> }) =>
+      <button type="button" disabled={disabled} onClick={() => connect("https://custom.example.com")}>Direct address</button>);
+    const root = createTestRoot("Owner welcome load recovery");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, load, onConnect, addressPanel });
+      return null;
+    }
+    const button = (label: string) => collectNodes(tree).find((node) => node.type === "button"
+      && (node.props["aria-label"] === label || collectText(node) === label))!;
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
+      await act(() => { button("Open your space").props.onClick?.(); });
+      expect(button("Retry")).toBeDefined();
+      expect(collectText(tree)).toContain("Could not load sign-in");
+      await act(async () => { await addressPanel.mock.lastCall![0].connect("https://custom.example.com"); });
+      expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://custom.example.com");
+      expect(button("Retry")).toBeDefined();
+      await act(() => { button("Back").props.onClick?.(); });
+      expect(collectText(tree)).toContain("Could not load sign-in");
+      await act(() => { button("Retry").props.onClick?.(); });
+      expect(reload).toHaveBeenCalledOnce();
+    } finally { await root.unmount(); }
+  });
+
   it("previews the configured space domain when Accounts uses a separate hostname", async () => {
     const invite = { id: "invite_fixture", state: "claimed", handle: null, origin: null, lastError: null };
     let snapshot: WelcomeSnapshot = { revision: "initial", value: {
