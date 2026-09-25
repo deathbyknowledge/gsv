@@ -304,6 +304,23 @@
       "manual": [
         "pages/devices-workplaces/"
       ]
+    },
+    {
+      "id": "desktop",
+      "paths": [
+        "host/apps/desktop/**",
+        "web/src/desktop/**",
+        "web/src/app/services/platform/**",
+        "host/helpers/**"
+      ],
+      "docs": [
+        "docs/how-to/install-host-apps.md",
+        "docs/architecture/rust-host-applications.md"
+      ],
+      "manual": [
+        "pages/apps-desktop/",
+        "pages/devices-workplaces/index.md"
+      ]
     }
   ]
 }

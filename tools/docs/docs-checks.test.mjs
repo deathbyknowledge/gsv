@@ -40,6 +40,13 @@ test("timezone, the model resolver, and each Instrument view have their own owne
   assert.deepEqual(memory.entries.map((match) => match.entry.id), ["instrument-memory"]);
 });
 
+test("the desktop app and its native helpers are covered", () => {
+  const result = evaluate(["web/src/desktop/DesktopMachineSetup.tsx", "docs/how-to/connect-devices.md"], "", "", entries);
+  assert.equal(result.status, "missing");
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["desktop"]);
+  assert.equal(evaluate(["host/helpers/gestures/src/control.rs", "docs/how-to/install-host-apps.md"], "", "", entries).status, "documented");
+});
+
 test("gateway syscall implementations are covered", () => {
   assert.equal(evaluate(["workers/gateway/src/kernel/sys/mcp.ts"], "", "", entries).status, "missing");
   assert.equal(evaluate(["workers/gateway/src/kernel/people.ts"], "", "", entries).status, "missing");
