@@ -1,3 +1,4 @@
+import { MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
 import {
   bodyToBytes,
   type ManagedOutboundMailClaim,
@@ -8,11 +9,12 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { mailAddressForHandle } from "./address";
 import type { MailEnv, MailLimits } from "./env";
+import type { MailPolicy } from "./policy";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import type { MailRetirement } from "./retirement";
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
-const ABSOLUTE_MAX_TEXT_BYTES = 1024 * 1024;
 const CLAIM_RESERVATION_MS = 5 * 60 * 1000;
 const INITIAL_CLAIM_RETRY_MS = 5_000;
 const MAX_CLAIM_RETRY_MS = 60 * 60 * 1000;
@@ -64,7 +66,7 @@ export class OutboundDeliveryCoordinator {
     private readonly ctx: DurableObjectState,
     private readonly env: MailEnv,
     private readonly installationId: string,
-    private readonly limits: MailLimits,
+    private readonly policy: MailPolicy,
     private readonly retirement: MailRetirement,
   ) {}
 
@@ -122,6 +124,7 @@ export class OutboundDeliveryCoordinator {
         row.fingerprint,
         now,
       );
+      this.emitTerminal(this.requireByReference({ version: 1, outboundId: row.outbound_id, fingerprint: row.fingerprint }));
     }
   }
 
@@ -213,23 +216,7 @@ export class OutboundDeliveryCoordinator {
         );
         return;
       }
-      if (!this.limits.outboundEnabled) {
-        row = this.insertTerminal(
-          reference,
-          null,
-          "failed",
-          "outbound_disabled",
-        );
-        await this.notify(row);
-        return;
-      }
       this.insertClaiming(reference);
-    }
-
-    if (!this.limits.outboundEnabled) {
-      this.setTerminal(reference, "failed", "outbound_disabled");
-      await this.notify(this.requireByReference(reference));
-      return;
     }
 
     await this.scheduleNextAlarm();
@@ -247,20 +234,17 @@ export class OutboundDeliveryCoordinator {
   private async processDueClaim(row: OutboundRow, now: number): Promise<void> {
     if (this.retirement.retired) return;
     const reference = rowReference(row);
-    if (!this.limits.outboundEnabled) {
-      this.setTerminal(reference, "failed", "outbound_disabled");
-      await this.notify(this.requireByReference(reference));
-      return;
-    }
     let reserved = this.reserveClaim(reference, now);
     if (!reserved) return;
     await this.scheduleNextAlarm();
 
     let expectedFrom: string;
+    let limits: MailLimits;
     try {
-      const installation = await this.env.ACCOUNTS.resolveInstallation(
-        this.installationId,
-      );
+      const [installation, allowance] = await Promise.all([
+        this.env.ACCOUNTS.resolveInstallation(this.installationId), this.policy.limits(),
+      ]);
+      limits = allowance;
       if (this.retirement.retired) return;
       if (!installation.found) {
         this.setTerminal(reference, "failed", "installation_inactive");
@@ -285,6 +269,11 @@ export class OutboundDeliveryCoordinator {
     } catch (error) {
       if (this.retirement.retired) return;
       this.deferClaim(reference, reserved.claim_attempts, String(error));
+      return;
+    }
+    if (!limits.outboundEnabled) {
+      this.setTerminal(reference, "failed", "outbound_disabled");
+      await this.notify(this.requireByReference(reference));
       return;
     }
     if (reserved.expected_from === null) {
@@ -336,6 +325,7 @@ export class OutboundDeliveryCoordinator {
           reference,
           claim,
           expectedFrom,
+          limits,
         );
       } catch (error) {
         if (this.retirement.retired) return;
@@ -349,7 +339,20 @@ export class OutboundDeliveryCoordinator {
       }
 
       if (this.retirement.retired) return;
-      if (!this.reserveAttempt(reference, outbound.draft.textSize)) {
+      try {
+        limits = await this.policy.limits();
+      } catch (error) {
+        if (!this.retirement.retired) this.deferClaim(reference, reserved.claim_attempts, String(error));
+        return;
+      }
+      if (this.retirement.retired) return;
+      if (!limits.outboundEnabled || outbound.draft.textSize > limits.maxOutboundTextBytes) {
+        this.setTerminal(reference, "failed", !limits.outboundEnabled ? "outbound_disabled" : "invalid_draft");
+        await this.notify(this.requireByReference(reference));
+        return;
+      }
+      if (!this.reserveAttempt(reference, outbound.draft.textSize, limits)) {
+        this.emitTerminal(this.requireByReference(reference));
         await this.notify(this.requireByReference(reference));
         return;
       }
@@ -381,6 +384,7 @@ export class OutboundDeliveryCoordinator {
     reference: ManagedOutboundMailReference,
     claim: ManagedOutboundMailClaim,
     expectedFrom: string,
+    limits: MailLimits,
   ): Promise<ValidatedOutbound> {
     if (!claim || claim.constructor !== Object) {
       throw new InvalidDraftError();
@@ -398,7 +402,7 @@ export class OutboundDeliveryCoordinator {
       || draft.textSize <= 0
       || draft.textSize > Math.min(
         ABSOLUTE_MAX_TEXT_BYTES,
-        this.limits.maxOutboundTextBytes,
+        limits.maxOutboundTextBytes,
       )
       || !validAddress(draft.from)
       || draft.from !== expectedFrom
@@ -414,7 +418,7 @@ export class OutboundDeliveryCoordinator {
     }
     const bytes = await bodyToBytes(
       claim.body,
-      Math.min(ABSOLUTE_MAX_TEXT_BYTES, this.limits.maxOutboundTextBytes),
+      Math.min(ABSOLUTE_MAX_TEXT_BYTES, limits.maxOutboundTextBytes),
       this.retirement.cancellation.signal,
     );
     if (bytes.byteLength !== draft.textSize) {
@@ -456,6 +460,7 @@ export class OutboundDeliveryCoordinator {
   private reserveAttempt(
     reference: ManagedOutboundMailReference,
     textSize: number,
+    limits: MailLimits,
   ): boolean {
     return this.ctx.storage.transactionSync(() => {
       const row = this.requireByReference(reference);
@@ -478,8 +483,8 @@ export class OutboundDeliveryCoordinator {
         day,
       ).one();
       if (
-        usage.outbound_messages + 1 > this.limits.dailyOutboundMessages
-        || usage.outbound_bytes + textSize > this.limits.dailyOutboundBytes
+        usage.outbound_messages + 1 > limits.dailyOutboundMessages
+        || usage.outbound_bytes + textSize > limits.dailyOutboundBytes
       ) {
         this.ctx.storage.sql.exec(
           `UPDATE mail_outbound_deliveries
@@ -593,6 +598,9 @@ export class OutboundDeliveryCoordinator {
       phase: "outbound_claim",
       errorType: error instanceof Error ? error.name : "Error",
     }));
+    emitTelemetry(this.env, { installationId: this.installationId, component: "mail", event: {
+      stream: "operational", name: "mail.work.deferred", properties: { stage: "outbound_claim", reason: "unavailable" },
+    } });
   }
 
   private insertClaiming(
@@ -637,7 +645,9 @@ export class OutboundDeliveryCoordinator {
       now,
       now,
     );
-    return this.requireByReference(reference);
+    const terminal = this.requireByReference(reference);
+    this.emitTerminal(terminal);
+    return terminal;
   }
 
   private mirrorGatewayCompletion(
@@ -673,6 +683,7 @@ export class OutboundDeliveryCoordinator {
     errorCode: string | null,
     providerMessageId: string | null = null,
   ): void {
+    const previous = this.requireByReference(reference);
     const now = Date.now();
     this.ctx.storage.sql.exec(
       `UPDATE mail_outbound_deliveries
@@ -689,6 +700,7 @@ export class OutboundDeliveryCoordinator {
       reference.outboundId,
       reference.fingerprint,
     );
+    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference));
   }
 
   private setTerminal(
@@ -697,6 +709,7 @@ export class OutboundDeliveryCoordinator {
     errorCode: string | null,
     providerMessageId: string | null = null,
   ): void {
+    const previous = this.requireByReference(reference);
     const now = Date.now();
     this.ctx.storage.sql.exec(
       `UPDATE mail_outbound_deliveries
@@ -713,6 +726,18 @@ export class OutboundDeliveryCoordinator {
       reference.outboundId,
       reference.fingerprint,
     );
+    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference));
+  }
+
+  private emitTerminal(row: OutboundRow): void {
+    if (!isTerminal(row.state)) return;
+    const reason = row.state === "accepted" ? "none" : row.state === "unknown" ? "provider_unknown"
+      : row.error_code === "outbound_disabled" ? "disabled" : row.error_code === "outbound_quota" ? "quota"
+      : row.error_code === "installation_inactive" ? "inactive" : "invalid";
+    emitTelemetry(this.env, { installationId: this.installationId, component: "mail",
+      event: { stream: "operational", name: "mail.delivery.finished", properties: {
+        outcome: row.state, reason, durationMs: Math.max(0, row.updated_at - row.created_at),
+      } } });
   }
 
   private async notify(row: OutboundRow): Promise<void> {
@@ -765,6 +790,9 @@ export class OutboundDeliveryCoordinator {
         phase: "outbound_completion",
         errorType: error instanceof Error ? error.name : "Error",
       }));
+      emitTelemetry(this.env, { installationId: this.installationId, component: "mail", event: {
+        stream: "operational", name: "mail.work.deferred", properties: { stage: "outbound_callback", reason: "unavailable" },
+      } });
     }
   }
 

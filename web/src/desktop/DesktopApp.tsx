@@ -9,7 +9,9 @@ import { createSessionService, type SessionService } from "../app/services/sessi
 import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import { DesktopMachineSetup } from "./DesktopMachineSetup";
-import { DesktopConnect } from "./DesktopConnect";
+import { DesktopWelcome } from "./DesktopWelcome";
+import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
+import { completeDesktopOnboarding } from "./welcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import "./desktop.css";
@@ -65,7 +67,10 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
     configureGatewayOrigin(origin);
     const ws = new URL("/ws", origin);
     ws.protocol = ws.protocol === "https:" ? "wss:" : "ws:";
-    const instance = createSessionService(client, { url: ws.href, storage, onboarding: false });
+    const token = storage.getItem(ONBOARDING_KEY);
+    const instance = createSessionService(client, { url: ws.href, storage, onboarding: token ? {
+      token, complete: () => completeDesktopOnboarding(storage),
+    } : false });
     // The service is created while App renders. Defer the parent's presentation update.
     queueMicrotask(() => setService(instance));
     return instance;
@@ -117,6 +122,7 @@ function ConnectedDesktop({ session, mock, onError }: { session: DesktopSession;
 export function DesktopApp() {
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resumeSetup, setResumeSetup] = useState(false);
   const mock = import.meta.env.DEV && new URLSearchParams(window.location.search).get("mock") === "1";
   useEffect(() => {
     void invoke("desktop_session").then((value) => {
@@ -124,6 +130,7 @@ export function DesktopApp() {
         "gsv.ui.session.token.v1": JSON.stringify({ username: "esteve", tokenId: "desktop-mock", token: "mock-session-token", expiresAt: null }),
       } };
       setSession(value);
+      setResumeSetup(!mock && !!value.values[ONBOARDING_KEY]);
     }).catch(() => setError("Open this frontend with GSV Desktop."));
   }, [mock]);
 
@@ -149,11 +156,11 @@ export function DesktopApp() {
 
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
-    {session && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
-      <AuthScene setup={false}><DesktopConnect ready={!!session} onConnect={async (origin) => {
+    {session && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} mock={mock} onError={setError} /> :
+      <AuthScene setup={false}><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
         setError(null);
-        const next = await invoke("desktop_configure", { origin });
-        window.sessionStorage.clear(); window.localStorage.clear(); setSession(next);
+        const next = await invoke("desktop_configure", { origin, onboardingToken });
+        window.sessionStorage.clear(); window.localStorage.clear(); setResumeSetup(false); setSession(next);
       }} /></AuthScene>}
   </div></BrowserNavigationProvider>;
 }

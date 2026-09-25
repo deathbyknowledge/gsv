@@ -63,3 +63,40 @@ The managed deployment uses a Tail Worker to translate operational records to
 PostHog Logs and product records to PostHog Capture. PostHog knowledge and
 credentials stay in that deployment repository. Self-hosters can leave the seam
 disabled or attach a consumer for their own backend without changing GSV core.
+
+
+## Coverage and failure boundaries
+
+The component allowlist includes Gateway, Accounts, Inference, Search and Mail.
+Event ownership is validated as well as the producing Worker: a mail producer
+cannot emit an inference or activation event. The deployment must wire both the
+producer switch and tail consumer; schema support alone does not export anything.
+
+- Gateway: terminal runs, compaction completion and failure stage, delegation,
+  committed messages, target/adapter connection and adapter transport outcomes.
+- Accounts: activation. This is not a full signup funnel; anonymous invite/email
+  steps intentionally do not invent an installation identity or export addresses.
+- Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
+  workload and failure stage, plus entitlement-refresh health.
+- Search: admission rejection, cancellation, provider/settlement failure and
+  completion, latency, result count and whether the provider confirmed cost.
+- Mail: accepted, duplicate and rejected intake; terminal outbound acceptance,
+  failure or unknown delivery; deferred processing; entitlement-refresh health.
+
+A provider accepting outgoing mail does not prove recipient delivery. Unknown
+outcomes stay unknown. A successful intake does not mean summarization has
+completed; mail summary generation also uses Inference's `mail-intake` workload.
+Ordinary callback retries do not emit another terminal outbound event.
+
+The managed consumer bounds export batches and HTTP deadlines, and reports
+invalid telemetry counts without including the rejected record. Its own export
+errors remain in its operator logs. Producer console/invocation logs are not
+persisted. Public records remain vendor-neutral; PostHog credentials and OTLP /
+Capture translation remain wholly in infrastructure.
+
+This pipeline is best effort. It is not a durable event bus, quota counter or
+billing ledger. Services persist their own usage before invoking providers and
+settle it independently of telemetry availability. Runtime crashes before a
+terminal event, exporter outages, and anonymous signup progress require separate
+platform monitoring or an explicitly designed additional event contract; they
+must not be "fixed" by forwarding raw exceptions or arbitrary logs.

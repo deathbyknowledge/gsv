@@ -1,7 +1,7 @@
 import { installationDeletionRequestSchema, type InstallationDeletionRequest, type InstallationDeletionReceipt, type InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 
 type Tombstone = { installation_id: string; operation_id: string; phase: "quiesced" | "erasing" | "live-erased" | "erased"; updated_at: number; backup_expires_at: number | null };
-const TABLES = ["installation_owner_attempts", "installation_onboarding_claims", "memberships", "hostnames", "provisioning_operations", "installation_deletion_inventories", "installation_deletion_observations", "installation_deletion_inspections"] as const;
+const TABLES = ["installation_creation_invites", "installation_owner_attempts", "installation_onboarding_claims", "memberships", "hostnames", "provisioning_operations", "installation_deletion_inventories", "installation_deletion_observations", "installation_deletion_inspections"] as const;
 export const DEFAULT_D1_BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000 + 60_000;
 
 /** Accounts owns directory rows; shared principals and operator credentials survive. */

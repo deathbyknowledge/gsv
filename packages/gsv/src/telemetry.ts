@@ -65,6 +65,8 @@ export const telemetryComponentSchema = z.enum([
   "gateway",
   "accounts",
   "inference",
+  "search",
+  "mail",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -276,6 +278,54 @@ const delegationCompletedSchema = z.strictObject({
 });
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("process.compaction.failed"),
+    properties: z.strictObject({
+      trigger: z.enum(["manual", "auto-preflight", "auto-provider-overflow"]),
+      stage: z.enum(["admission", "summary", "archive"]),
+      outcome: z.enum(["failed", "aborted", "rejected"]), durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("entitlements.refresh.finished"),
+    properties: z.strictObject({
+      outcome: z.enum(["refreshed", "unavailable", "invalid"]), durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("web_search.request.finished"),
+    properties: z.strictObject({
+      outcome: z.enum(["completed", "failed", "cancelled", "rejected"]),
+      stage: z.enum(["policy", "admission", "provider", "settlement"]),
+      durationMs: nonNegativeIntegerSchema, admitted: z.boolean(),
+      resultCount: z.optional(nonNegativeIntegerSchema),
+      costNanoUsd: z.optional(nonNegativeIntegerSchema),
+      costConfirmed: z.boolean(),
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("mail.intake.finished"),
+    properties: z.strictObject({
+      outcome: z.enum(["accepted", "duplicate", "rejected", "error"]),
+      reason: z.optional(z.enum(["invalid", "quota", "disabled", "size"])),
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("mail.delivery.finished"),
+    properties: z.strictObject({
+      outcome: z.enum(["accepted", "failed", "unknown"]),
+      reason: z.enum(["none", "disabled", "quota", "inactive", "invalid", "provider_unknown"]),
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("mail.work.deferred"),
+    properties: z.strictObject({
+      stage: z.enum(["storage", "summary", "completion", "outbound_claim", "outbound_callback"]),
+      reason: z.enum(["quota", "unavailable"]),
+    }),
+  }),
   processRunFinishedSchema,
   processCompactionCompletedSchema,
   adapterIngressFinishedSchema,
@@ -292,6 +342,31 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   delegationCompletedSchema,
 ]);
 
+// The owning component is part of the allowlist, not a claim made by an arbitrary producer.
+export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
+export const telemetryEventComponents = {
+  "entitlements.refresh.finished": ["inference", "search", "mail"],
+  "web_search.request.finished": ["search"],
+  "mail.intake.finished": ["mail"],
+  "mail.delivery.finished": ["mail"],
+  "mail.work.deferred": ["mail"],
+  "process.run.finished": ["gateway"],
+  "process.compaction.completed": ["gateway"],
+  "process.compaction.failed": ["gateway"],
+  "adapter.ingress.finished": ["gateway"],
+  "adapter.delivery.finished": ["gateway"],
+  "adapter.route_delivery.failed": ["gateway"],
+  "delegation.finished": ["gateway"],
+  "inference.request.finished": ["inference"],
+  "inference.provider_attempt.failed": ["inference"],
+  "installation.activated": ["accounts"],
+  "ship.message.committed": ["gateway"],
+  "target.connected": ["gateway"],
+  "adapter.connected": ["gateway"],
+  "integration.connected": ["gateway"],
+  "delegation.completed": ["gateway"],
+} satisfies TelemetryEventOwnership;
+
 export const telemetryRecordSchema = z.strictObject({
   marker: z.literal(GSV_TELEMETRY_MARKER),
   version: z.literal(GSV_TELEMETRY_VERSION),
@@ -300,7 +375,7 @@ export const telemetryRecordSchema = z.strictObject({
   installationId: installationIdSchema,
   component: telemetryComponentSchema,
   event: telemetryEventSchema,
-});
+}).check(z.refine((record) => telemetryEventComponents[record.event.name].some((component) => component === record.component)));
 
 export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;

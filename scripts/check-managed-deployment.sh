@@ -16,13 +16,14 @@ run_wrangler() {
   local component_dir="$1"
   local config="$2"
   local output="$3"
+  shift 3
   (
     cd "$component_dir"
     npm exec --workspaces=false -- wrangler deploy \
       --config "$config" \
       --minify \
       --dry-run \
-      --outdir "$OUTPUT_DIR/$output"
+      --outdir "$OUTPUT_DIR/$output" "$@"
   )
 }
 
@@ -59,7 +60,7 @@ generate_types "$ROOT_DIR/workers/adapters/email" "wrangler.jsonc" "email" "Mana
 generate_types "$ROOT_DIR/workers/adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
 generate_types "$ROOT_DIR/workers/adapters/slack" "wrangler.managed.jsonc" "slack" "ManagedSlackEnv"
 
-run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts"
+run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" --assets "$ROOT_DIR/web/dist"
 run_wrangler "$INFERENCE_DIR" "wrangler.jsonc" "inference"
 run_wrangler "$ROOT_DIR/workers/ripgit" "wrangler.managed.jsonc" "ripgit"
 run_wrangler "$ROOT_DIR/workers/gateway" "wrangler.managed.jsonc" "gateway"

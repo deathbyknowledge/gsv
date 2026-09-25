@@ -87,6 +87,23 @@ describe("account setup", () => {
     expect(window.localStorage.getItem("gsv.ui.gateway.username")).toBe("alice");
   });
 
+  it("keeps desktop setup authorization in native storage and clears it before local sign-in", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, "unrelated-browser-capability");
+    const client = createSetupClient();
+    const complete = vi.fn(async () => { expect(client.connect).not.toHaveBeenCalled(); });
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete } });
+    await service.start();
+    expect(service.snapshot().phase).toBe("setup");
+    client.requestOnce.mockRejectedValueOnce(new Error("interrupted"));
+    await expect(service.setup({ username: "alice", password: "setup password" })).rejects.toThrow("interrupted");
+    expect(complete).not.toHaveBeenCalled();
+    await service.setup({ username: "alice", password: "setup password" });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(service.snapshot().phase).toBe("ready");
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe("unrelated-browser-capability");
+  });
+
   it("retains setup authorization when account creation fails so the user can retry", async () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
@@ -106,6 +123,17 @@ describe("account setup", () => {
     expect(client.requestOnce).toHaveBeenNthCalledWith(2, "wss://example.test/ws", "sys.setup", { ...input, onboardingToken });
     expect(service.snapshot().phase).toBe("ready");
     expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+  });
+
+  it("offers sign-in if native completion could not be saved after creating the account", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete: async () => { throw new Error("Disk full"); } } });
+    await expect(service.setup({ username: "alice", password: "setup password" })).rejects.toThrow("Disk full");
+    expect(service.snapshot().phase).toBe("locked");
+    await service.login({ username: "alice", password: "setup password" });
+    expect(service.snapshot().phase).toBe("ready");
+    expect(client.requestOnce).toHaveBeenCalledOnce();
   });
 
   it("offers ordinary sign-in if connecting fails after account creation", async () => {

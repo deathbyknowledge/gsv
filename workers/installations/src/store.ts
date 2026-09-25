@@ -113,10 +113,12 @@ export class AccountStore {
     operationId: string;
     handle: string;
     provisionVersion?: number;
+    creationInviteId?: string;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
+    const inviteId = input.creationInviteId === undefined ? null : parseOpaqueId(input.creationInviteId, "invitationId");
     const existing = await this.getReservationByOperation(operationId);
     if (existing) {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
@@ -144,7 +146,9 @@ export class AccountStore {
            )
            SELECT ?, id, ?, ?, 'reserved', ?, ?, ?
            FROM principals
-           WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL`,
+           WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
+             AND (? IS NULL OR EXISTS (SELECT 1 FROM installation_creation_invites c
+               WHERE c.id = ? AND c.principal_id = principals.id AND c.revoked_at IS NULL AND c.installation_id IS NULL))`,
         ).bind(
           identity.installationId,
           identity.handle,
@@ -153,6 +157,8 @@ export class AccountStore {
           reservationExpiresAt,
           now,
           principalId,
+          inviteId,
+          inviteId,
         ),
         this.db.prepare(
           `INSERT INTO hostnames (
@@ -170,6 +176,9 @@ export class AccountStore {
              attempt, last_error, updated_at
            ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?)`,
         ).bind(operationId, identity.installationId, principalId, now),
+        ...(inviteId ? [this.db.prepare(`UPDATE installation_creation_invites SET installation_id = ?, updated_at = ?
+          WHERE id = ? AND principal_id = ? AND revoked_at IS NULL AND installation_id IS NULL`)
+          .bind(identity.installationId, now, inviteId, principalId)] : []),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -548,6 +557,9 @@ export class AccountStore {
          SET state = 'provisioning'
          WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'
            AND (reservation_expires_at > ? OR EXISTS (
+             SELECT 1 FROM installation_creation_invites c WHERE c.installation_id = installations.id
+               AND c.principal_id = installations.owner_principal_id AND c.revoked_at IS NULL
+           ) OR EXISTS (
              SELECT 1 FROM installation_reset_operations r
              WHERE r.operation_id = ? AND r.replacement_installation_id = installations.id
            ))`,

@@ -6,6 +6,7 @@ export const OPERATOR_REGISTRY_PRINCIPAL_ID = "principal_operator_registry";
 export type InstallationOwnerEnvironment = {
   INSTALLATIONS_DB: D1Database;
   GSV_ADMIN_ORIGIN: string;
+  GSV_BASE_DOMAIN: string;
   GSV_OWNER_OIDC_ISSUER?: string;
   GSV_OWNER_OIDC_CLIENT_ID?: string;
   ACCOUNTS_GATEWAY_RECOVERY?: InstallationRecoveryGatewayService;
@@ -13,6 +14,8 @@ export type InstallationOwnerEnvironment = {
   OWNER_EMAIL?: SendEmail;
   GSV_OWNER_EMAIL_FROM?: string;
   GSV_OWNER_AUTH_SECRET?: string;
+  GSV_OWNER_SIGNUP_ORIGIN?: string;
+  ASSETS?: Fetcher;
 };
 
 export function ownerEmailEnabled(env: InstallationOwnerEnvironment): boolean {

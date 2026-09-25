@@ -9,6 +9,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryResult, InstallationState } from "@humansandmachines/gsv/services/directory";
 import { describe, expect, it, vi } from "vitest";
+import type { MailPolicy } from "../src/policy";
 import type { MailEnv } from "../src/env";
 import { handleOutboundCommand } from "../src/index";
 import { MailInstallation } from "../src/mail-installation";
@@ -24,11 +25,7 @@ type OutboundPayload = {
 };
 
 type OutboundInternals = {
-  limits: {
-    outboundEnabled: boolean;
-    dailyOutboundMessages: number;
-    dailyOutboundBytes: number;
-  };
+  policy: MailPolicy;
   outbound: {
     send(outbound: OutboundPayload): Promise<EmailSendResult>;
   };
@@ -237,7 +234,8 @@ describe("managed outbound mail delivery", () => {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
       const untyped: unknown = instance;
       // SAFETY: The test fixture exposes the concrete outbound internals.
-      (untyped as OutboundInternals).limits.outboundEnabled = false;
+      const policy = (untyped as OutboundInternals).policy;
+      vi.spyOn(policy, "limits").mockResolvedValue({ ...await policy.limits(), outboundEnabled: false });
       await instance.deliverOutbound(
         context(installationId),
         reference("outbound-disabled"),
@@ -337,7 +335,8 @@ describe("managed outbound mail delivery", () => {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
       const untyped: unknown = instance;
       // SAFETY: The test fixture exposes the concrete outbound internals.
-      (untyped as OutboundInternals).limits.dailyOutboundBytes = 1;
+      const policy = (untyped as OutboundInternals).policy;
+      vi.spyOn(policy, "limits").mockResolvedValue({ ...await policy.limits(), dailyOutboundBytes: 1 });
       await instance.deliverOutbound(
         context(installationId),
         reference("outbound-byte-quota"),

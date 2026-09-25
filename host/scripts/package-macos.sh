@@ -69,7 +69,7 @@ version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml
 [[ -n "$version" ]] || die "could not read the workspace version"
 
 if ((skip_build == 0)); then
-  (cd "$repository_root" && npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts)
+  (cd "$repository_root" && npm run gsv:build && npm run build:desktop --workspace web)
   export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
   cargo_args=(
     --locked

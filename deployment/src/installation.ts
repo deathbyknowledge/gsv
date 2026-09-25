@@ -35,6 +35,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     ownerIdentity?: { issuer: string; clientId: string; clientSecret?: Cloudflare.Workers.WorkerBindingProps[string] };
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
+    ownerSignupOrigin?: string;
   };
   inference: {
     workerName: string;
@@ -81,6 +82,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   if (domain.hostname !== props.domain || domain.pathname !== "/" || admin.origin !== props.adminOrigin
     || admin.protocol !== "https:" || !admin.hostname.endsWith(`.${props.domain}`)) {
     throw new Error("Deployment requires a base domain and an HTTPS administration origin below it");
+  }
+  const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
+  if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"
+    || (props.routing && !signup.hostname.endsWith(`.${props.domain}`)))) {
+    throw new Error("Signup requires an HTTPS origin below the base domain when deployment owns routing");
   }
   let accessAudience: string | Output.Output<string> = "";
   if (props.access.kind === "cloudflare-access") {
@@ -148,6 +154,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_ADMIN_ACCESS_AUD: accessAudience,
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
+      GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {
@@ -164,6 +171,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       crons: ["* * * * *"],
       compatibility, workersDev: false, observability,
       tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined, env: bindings,
+      assets: { directory: props.paths.webAssets, htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     }).pipe(retain(props.allowResourceDeletion !== true));
   }
   let inference = props.services?.inferenceExecution;
@@ -232,6 +240,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsRoute`, {
       zoneId: props.routing.zoneId, pattern: `${admin.hostname}/*`, script: directory.workerName,
     }).pipe(retain(props.allowResourceDeletion !== true));
+    if (signup && signup.hostname !== admin.hostname) {
+      yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsSignupRoute`, {
+        zoneId: props.routing.zoneId, pattern: `${signup.hostname}/*`, script: directory.workerName,
+      }).pipe(retain(props.allowResourceDeletion !== true));
+    }
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {
       zoneId: props.routing.zoneId, pattern: `*.${props.domain}/*`, script: runtime.gateway.workerName,
     }).pipe(retain(props.allowResourceDeletion !== true));
