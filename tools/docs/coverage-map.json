@@ -8,10 +8,22 @@
         "web/src/app/features/instrument/settings/ModelEditor.tsx",
         "web/src/app/features/instrument/settings/modelProfiles.ts",
         "web/src/app/features/instrument/settings/modelStack.ts",
-        "web/src/app/features/instrument/settings/Timezone.tsx"
+        "workers/gateway/src/kernel/ai.ts"
       ],
       "docs": [
         "docs/how-to/bring-your-own-model.md",
+        "docs/reference/configuration.md"
+      ],
+      "manual": [
+        "pages/settings/"
+      ]
+    },
+    {
+      "id": "settings-timezone",
+      "paths": [
+        "web/src/app/features/instrument/settings/Timezone.tsx"
+      ],
+      "docs": [
         "docs/reference/configuration.md"
       ],
       "manual": [
@@ -104,20 +116,55 @@
       ]
     },
     {
-      "id": "instrument-views",
+      "id": "instrument-shell",
       "paths": [
-        "web/src/app/features/instrument/Instrument.tsx",
-        "web/src/app/features/instrument/fleet/**",
-        "web/src/app/features/instrument/memory/**",
-        "web/src/app/features/instrument/zen/**"
+        "web/src/app/features/instrument/Instrument.tsx"
       ],
       "docs": [
-        "docs/get-started/index.md",
+        "docs/get-started/index.md"
+      ],
+      "manual": [
+        "pages/apps-desktop/"
+      ]
+    },
+    {
+      "id": "instrument-fleet",
+      "paths": [
+        "web/src/app/features/instrument/fleet/**"
+      ],
+      "docs": [
         "docs/how-to/connect-devices.md",
-        "docs/how-to/browse-web.md"
+        "docs/how-to/browse-web.md",
+        "docs/how-to/invite-people.md",
+        "docs/architecture/ledger.md"
       ],
       "manual": [
         "pages/apps-desktop/",
+        "pages/devices-workplaces/"
+      ]
+    },
+    {
+      "id": "instrument-memory",
+      "paths": [
+        "web/src/app/features/instrument/memory/**"
+      ],
+      "docs": [
+        "docs/architecture/context-and-knowledge.md"
+      ],
+      "manual": [
+        "pages/files-knowledge/"
+      ]
+    },
+    {
+      "id": "instrument-zen",
+      "paths": [
+        "web/src/app/features/instrument/zen/**"
+      ],
+      "docs": [
+        "docs/architecture/conversations.md",
+        "docs/architecture/agent-loop.md"
+      ],
+      "manual": [
         "pages/agents-assistants/"
       ]
     },

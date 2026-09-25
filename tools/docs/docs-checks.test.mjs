@@ -30,6 +30,16 @@ test("a change to one settings surface is not covered by another surface's page"
   assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-people"]);
 });
 
+test("timezone, the model resolver, and each Instrument view have their own owners", () => {
+  const tz = evaluate(["web/src/app/features/instrument/settings/Timezone.tsx", "docs/how-to/bring-your-own-model.md"], "", "", entries);
+  assert.equal(tz.status, "missing");
+  assert.deepEqual(tz.entries.map((match) => match.entry.id), ["settings-timezone"]);
+  assert.equal(evaluate(["workers/gateway/src/kernel/ai.ts"], "", "", entries).status, "missing");
+  const memory = evaluate(["web/src/app/features/instrument/memory/Memory.tsx", "docs/how-to/connect-devices.md"], "", "", entries);
+  assert.equal(memory.status, "missing");
+  assert.deepEqual(memory.entries.map((match) => match.entry.id), ["instrument-memory"]);
+});
+
 test("gateway syscall implementations are covered", () => {
   assert.equal(evaluate(["workers/gateway/src/kernel/sys/mcp.ts"], "", "", entries).status, "missing");
   assert.equal(evaluate(["workers/gateway/src/kernel/people.ts"], "", "", entries).status, "missing");
