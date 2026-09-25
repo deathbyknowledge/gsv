@@ -12,6 +12,7 @@
 .gsv-setup-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .gsv-setup-head .gsv-setup-progress { flex: none; font-size: 12px; }
 .gsv-setup-form { display: flex; flex-direction: column; gap: 20px; }
+.gsv-setup-form .gsv-ti-input::placeholder { opacity: .75; }
 .gsv-setup-agreement { display: grid; gap: 24px; font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.55; }
 .gsv-setup-disclosure { display: grid; gap: 12px; color: var(--text-dim); }
 .gsv-setup-disclosure p { margin: 0; }
