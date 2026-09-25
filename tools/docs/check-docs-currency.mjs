@@ -82,7 +82,7 @@ export function evaluate(changed, labels, body, entries) {
 export function formatMissing(matched) {
   const lines = ["docs currency: these changes touch documented surfaces without changing the pages that own them."];
   for (const { entry, files } of matched) {
-    for (const file of files) lines.push(`  ${entry.id.padEnd(18)}${file}`);
+    for (const file of files) lines.push(`  ${entry.id.padEnd(22)}${file}`);
     for (const doc of entry.docs) lines.push(`    expects ${doc}`);
     for (const page of entry.manual ?? []) lines.push(`    manual  ${page} (deathbyknowledge/gsv-manual)`);
   }

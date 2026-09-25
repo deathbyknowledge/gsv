@@ -2,16 +2,106 @@
   "$comment": "Product-facing source paths and the documentation that owns them. A pull request that changes a listed path must change one of that entry's docs pages too, or carry the docs-not-needed label, or say why in a line of the pull request body that starts with Docs:. The manual entries name pages in deathbyknowledge/gsv-manual, which agents read in every install.",
   "entries": [
     {
-      "id": "settings-ui",
-      "paths": ["web/src/app/features/instrument/settings/**"],
+      "id": "settings-models",
+      "paths": [
+        "web/src/app/features/instrument/settings/Preferences.tsx",
+        "web/src/app/features/instrument/settings/ModelEditor.tsx",
+        "web/src/app/features/instrument/settings/modelProfiles.ts",
+        "web/src/app/features/instrument/settings/modelStack.ts",
+        "web/src/app/features/instrument/settings/Timezone.tsx"
+      ],
       "docs": [
         "docs/how-to/bring-your-own-model.md",
-        "docs/how-to/integrations.md",
-        "docs/how-to/invite-people.md",
-        "docs/how-to/messengers.md",
         "docs/reference/configuration.md"
       ],
-      "manual": ["pages/settings/", "pages/accounts-access/", "pages/integrations/"]
+      "manual": [
+        "pages/settings/"
+      ]
+    },
+    {
+      "id": "settings-permissions",
+      "paths": [
+        "web/src/app/features/instrument/settings/Permissions.tsx",
+        "web/src/app/features/instrument/settings/permissionModel.ts",
+        "web/src/app/features/instrument/settings/permissionService.ts"
+      ],
+      "docs": [
+        "docs/reference/configuration.md"
+      ],
+      "manual": [
+        "pages/settings/"
+      ]
+    },
+    {
+      "id": "settings-instructions",
+      "paths": [
+        "web/src/app/features/instrument/settings/Instructions.tsx"
+      ],
+      "docs": [
+        "docs/reference/context-files.md"
+      ],
+      "manual": [
+        "pages/files-knowledge/"
+      ]
+    },
+    {
+      "id": "settings-messengers",
+      "paths": [
+        "web/src/app/features/instrument/settings/MessengerConnections.tsx",
+        "web/src/app/features/instrument/settings/Telegram.tsx",
+        "web/src/app/features/instrument/settings/messengerConnectionsService.ts",
+        "web/src/app/features/instrument/settings/messengers/**"
+      ],
+      "docs": [
+        "docs/how-to/messengers.md"
+      ],
+      "manual": [
+        "pages/integrations/adapters-routing.md"
+      ]
+    },
+    {
+      "id": "settings-mcp",
+      "paths": [
+        "web/src/app/features/instrument/settings/Mcp.tsx",
+        "web/src/app/features/instrument/settings/mcpHeaders.ts",
+        "workers/gateway/src/kernel/sys/mcp.ts",
+        "workers/gateway/src/kernel/mcp-*.ts"
+      ],
+      "docs": [
+        "docs/how-to/integrations.md"
+      ],
+      "manual": [
+        "pages/integrations/mcp-oauth.md"
+      ]
+    },
+    {
+      "id": "settings-people",
+      "paths": [
+        "web/src/app/features/instrument/settings/People.tsx",
+        "web/src/app/features/instrument/settings/OwnerAccess.tsx",
+        "workers/gateway/src/kernel/people.ts",
+        "workers/gateway/src/kernel/sys/owner.ts"
+      ],
+      "docs": [
+        "docs/how-to/invite-people.md"
+      ],
+      "manual": [
+        "pages/accounts-access/"
+      ]
+    },
+    {
+      "id": "settings-shell",
+      "paths": [
+        "web/src/app/features/instrument/settings/Settings.tsx",
+        "web/src/app/features/instrument/settings/settingsModel.ts",
+        "web/src/app/features/instrument/settings/settingsService.ts"
+      ],
+      "docs": [
+        "docs/get-started/index.md"
+      ],
+      "manual": [
+        "pages/settings/index.md"
+      ]
     },
     {
       "id": "instrument-views",
@@ -21,50 +111,152 @@
         "web/src/app/features/instrument/memory/**",
         "web/src/app/features/instrument/zen/**"
       ],
-      "docs": ["docs/get-started/index.md", "docs/how-to/connect-devices.md", "docs/how-to/browse-web.md"],
-      "manual": ["pages/apps-desktop/", "pages/agents-assistants/"]
+      "docs": [
+        "docs/get-started/index.md",
+        "docs/how-to/connect-devices.md",
+        "docs/how-to/browse-web.md"
+      ],
+      "manual": [
+        "pages/apps-desktop/",
+        "pages/agents-assistants/"
+      ]
     },
     {
       "id": "approval-policy",
-      "paths": ["workers/gateway/src/kernel/config.ts", "workers/gateway/src/process/approval.ts", "packages/gsv/src/protocol/tool-approval.ts"],
-      "docs": ["docs/reference/configuration.md"],
-      "manual": ["pages/settings/"]
+      "paths": [
+        "workers/gateway/src/kernel/config.ts",
+        "workers/gateway/src/process/approval.ts",
+        "packages/gsv/src/protocol/tool-approval.ts",
+        "workers/gateway/src/kernel/tool-approval.ts"
+      ],
+      "docs": [
+        "docs/reference/configuration.md"
+      ],
+      "manual": [
+        "pages/settings/"
+      ]
     },
     {
       "id": "native-shell",
-      "paths": ["workers/gateway/src/drivers/native/shell/**", "workers/gateway/src/drivers/native/man-pages.ts"],
-      "docs": ["docs/reference/cli-commands.md"],
-      "manual": ["pages/reference/command-map.md", "pages/reference/shell-codemode-network.md"]
+      "paths": [
+        "workers/gateway/src/drivers/native/shell/**",
+        "workers/gateway/src/drivers/native/man-pages.ts"
+      ],
+      "docs": [
+        "docs/reference/cli-commands.md"
+      ],
+      "manual": [
+        "pages/reference/command-map.md",
+        "pages/reference/shell-codemode-network.md"
+      ]
     },
     {
       "id": "agent-tools",
-      "paths": ["workers/gateway/src/process/tools/**"],
-      "docs": ["docs/reference/syscalls.md", "docs/architecture/agent-loop.md"],
-      "manual": ["pages/reference/command-map.md"]
+      "paths": [
+        "workers/gateway/src/process/tools/**"
+      ],
+      "docs": [
+        "docs/reference/syscalls.md",
+        "docs/architecture/agent-loop.md"
+      ],
+      "manual": [
+        "pages/reference/command-map.md"
+      ]
     },
     {
       "id": "cli",
-      "paths": ["host/apps/cli/**"],
-      "docs": ["docs/reference/cli-commands.md"],
-      "manual": ["pages/reference/command-map.md"]
+      "paths": [
+        "host/apps/cli/**"
+      ],
+      "docs": [
+        "docs/reference/cli-commands.md"
+      ],
+      "manual": [
+        "pages/reference/command-map.md"
+      ]
     },
     {
       "id": "protocol",
-      "paths": ["packages/gsv/src/protocol/**"],
-      "docs": ["docs/reference/syscalls.md", "docs/reference/websocket-protocol.md"],
-      "manual": []
+      "paths": [
+        "packages/gsv/src/protocol/**",
+        "workers/gateway/src/syscalls/**",
+        "workers/gateway/src/kernel/dispatch.ts"
+      ],
+      "docs": [
+        "docs/reference/syscalls.md",
+        "docs/reference/websocket-protocol.md"
+      ],
+      "manual": [],
+      "$comment": "The public declarations and the Gateway implementations behind them."
     },
     {
       "id": "adapters",
-      "paths": ["workers/adapters/**"],
-      "docs": ["docs/how-to/messengers.md", "docs/architecture/adapter-model.md"],
-      "manual": ["pages/integrations/adapters-routing.md"]
+      "paths": [
+        "workers/adapters/**"
+      ],
+      "docs": [
+        "docs/how-to/messengers.md",
+        "docs/architecture/adapter-model.md"
+      ],
+      "manual": [
+        "pages/integrations/adapters-routing.md"
+      ]
     },
     {
       "id": "skills",
-      "paths": ["skills/**"],
+      "paths": [
+        "skills/**"
+      ],
       "docs": [],
-      "manual": ["pages/reference/", "pages/agents-assistants/", "pages/files-knowledge/"]
+      "manual": [
+        "pages/reference/",
+        "pages/agents-assistants/",
+        "pages/files-knowledge/"
+      ]
+    },
+    {
+      "id": "kernel-syscalls",
+      "paths": [
+        "workers/gateway/src/kernel/sys/**"
+      ],
+      "docs": [
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/reference/command-map.md"
+      ],
+      "$comment": "Syscall handlers; mcp.ts and owner.ts are also owned by the settings entries above."
+    },
+    {
+      "id": "ledger",
+      "paths": [
+        "workers/gateway/src/kernel/ledger.ts",
+        "workers/gateway/src/kernel/ledger-feed.ts",
+        "workers/gateway/src/kernel/sys/ledger.ts"
+      ],
+      "docs": [
+        "docs/architecture/ledger.md"
+      ],
+      "manual": [
+        "pages/agents-assistants/ledger.md"
+      ]
+    },
+    {
+      "id": "targets-pairing",
+      "paths": [
+        "workers/gateway/src/kernel/sys/pair.ts",
+        "workers/gateway/src/kernel/device-pairings.ts",
+        "workers/gateway/src/kernel/targets.ts",
+        "workers/gateway/src/kernel/target-registry.ts",
+        "workers/gateway/src/kernel/sys/target.ts"
+      ],
+      "docs": [
+        "docs/how-to/connect-devices.md",
+        "docs/architecture/targets.md"
+      ],
+      "manual": [
+        "pages/devices-workplaces/"
+      ]
     }
   ]
 }

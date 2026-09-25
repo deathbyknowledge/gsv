@@ -12,7 +12,9 @@ confirming a short-lived code while signed in. You do not need to create a bot
 or paste its token into the space. If a code expires, message the app again.
 
 The previous WhatsApp linked-device adapter is no longer bundled. There is no
-WhatsApp connection or QR setup flow in this deployment model.
+WhatsApp connection or QR setup flow in this deployment model, and the console
+no longer links to a WhatsApp guide; a WhatsApp Business connection is separate
+future work.
 
 ## Telegram
 

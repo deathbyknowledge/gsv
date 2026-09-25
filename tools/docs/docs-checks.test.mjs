@@ -21,7 +21,19 @@ test("globs match nested paths and single segments", () => {
 test("a product change without docs is missing", () => {
   const result = evaluate([settingsFile], "", "", entries);
   assert.equal(result.status, "missing");
-  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-models"]);
+});
+
+test("a change to one settings surface is not covered by another surface's page", () => {
+  const result = evaluate(["web/src/app/features/instrument/settings/People.tsx", "docs/how-to/bring-your-own-model.md"], "", "", entries);
+  assert.equal(result.status, "missing");
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-people"]);
+});
+
+test("gateway syscall implementations are covered", () => {
+  assert.equal(evaluate(["workers/gateway/src/kernel/sys/mcp.ts"], "", "", entries).status, "missing");
+  assert.equal(evaluate(["workers/gateway/src/kernel/people.ts"], "", "", entries).status, "missing");
+  assert.equal(evaluate(["workers/gateway/src/syscalls/codemode.ts"], "", "", entries).status, "missing");
 });
 
 test("a product change with a change to one of its own pages is documented", () => {
@@ -31,13 +43,13 @@ test("a product change with a change to one of its own pages is documented", () 
 test("an unrelated docs change does not cover a product change", () => {
   const result = evaluate([settingsFile, "docs/architecture/telemetry.md"], "", "", entries);
   assert.equal(result.status, "missing");
-  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-models"]);
 });
 
 test("only the entries left undocumented are reported", () => {
   const result = evaluate([settingsFile, "host/apps/cli/src/cli.rs", "docs/reference/cli-commands.md"], "", "", entries);
   assert.equal(result.status, "missing");
-  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-ui"]);
+  assert.deepEqual(result.entries.map((match) => match.entry.id), ["settings-models"]);
 });
 
 test("an unmapped change is clean", () => {
