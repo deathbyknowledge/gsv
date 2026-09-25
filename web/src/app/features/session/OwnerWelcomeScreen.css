@@ -1,5 +1,28 @@
+.desktop-welcome { width: min(420px, 100%); display: flex; flex-direction: column; gap: 32px; }
+.desktop-welcome-wide { width: 100%; }
+.desktop-welcome h1 { margin: 0; color: var(--text); font-size: 22px; font-weight: 400; line-height: 1.5; }
+.desktop-welcome h2 { margin: 0 0 24px; color: var(--text); font-size: 16px; font-weight: 400; line-height: 1.5; }
+.desktop-welcome-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desktop-welcome-columns > :first-child { padding-right: clamp(24px, 5vw, 64px); }
+.desktop-welcome-columns > :last-child { border-left: 1px solid var(--border); padding-left: clamp(24px, 5vw, 64px); }
+.desktop-welcome-primary, .desktop-welcome-address { min-width: 0; }
+.desktop-welcome-choices { min-height: 240px; }
+.desktop-welcome-choice { display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 18px; padding: 12px 0 32px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.desktop-welcome-choice-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; font-size: clamp(18px, 2vw, 24px); line-height: 1.5; }
+.desktop-welcome-choice-title > span { color: var(--accent); }
+.desktop-welcome-choice:not(:disabled):hover .desktop-welcome-choice-title { color: var(--accent); }
+.desktop-welcome-choice:focus-visible { outline: 1px solid var(--accent); outline-offset: 8px; }
+.desktop-welcome button:disabled { opacity: .45; cursor: not-allowed; }
+.desktop-welcome-back { align-self: flex-start; min-height: 32px; }
 .desktop-welcome .gsv-ti-affix { letter-spacing: 0; }
 .desktop-welcome-submit { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 .desktop-welcome-detail { margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
 .desktop-welcome-links { display: flex; gap: 24px; justify-content: space-between; }
-.desktop-welcome-address { width: 100%; }
+@media (max-width: 760px) {
+  .desktop-welcome { gap: 24px; }
+  .desktop-welcome-columns { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .desktop-welcome-columns > :first-child { padding-right: 0; }
+  .desktop-welcome-columns > :last-child { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 32px; }
+  .desktop-welcome-choices { min-height: 0; gap: 0; }
+  .desktop-welcome-choice { padding-block: 32px; }
+}

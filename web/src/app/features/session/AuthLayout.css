@@ -35,6 +35,14 @@
   overflow: auto;
 }
 .gsv-auth-panels { position: relative; min-width: 0; }
+.gsv-auth-scene-welcome .gsv-auth-composition {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: safe center;
+  justify-items: stretch;
+  max-width: 1280px;
+  padding: 40px clamp(24px, 5vw, 64px);
+}
+.gsv-auth-scene-welcome .gsv-auth-panels { width: 100%; }
 .gsv-auth-panels .session-screen,
 .gsv-auth-panels .gsv-auth-surface-shared {
   position: relative;

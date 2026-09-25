@@ -1,0 +1,38 @@
+.welcome-illustration {
+  display: block;
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1.35;
+  align-self: center;
+  container-type: size;
+  pointer-events: none;
+  user-select: none;
+}
+.welcome-illustration-scene.gsv-ascii-galaxy[data-ascii-palette] {
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 56%, transparent);
+  --ascii-foreground: var(--glyph);
+  --ascii-stars: var(--accent-bright);
+  --ascii-star-glow: none;
+  --ascii-foreground-glow: none;
+  --ascii-glitch-glow: none;
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.welcome-illustration-scene .gsv-ascii-galaxy-pre {
+  font-family: "Departure Mono", monospace;
+  font-size: min(5px, 1.05cqi, 1.35cqb);
+  line-height: 1;
+}
+.welcome-illustration-ship .gsv-ascii-galaxy-pre {
+  font-size: min(5px, .96cqi, 1.2cqb);
+}

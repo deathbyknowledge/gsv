@@ -2,20 +2,20 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
-import { SectionHeader } from "../../components/ui/SectionHeader";
 import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
+import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
-type Step = "welcome" | "address" | "invite" | "email" | "code" | "spaces" | "handle";
+type Step = "welcome" | "invite" | "email" | "code" | "spaces" | "handle";
 type Props = {
   ready: boolean;
   resume: boolean;
   load(): Promise<OwnerWelcome>;
   onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
-  addressPanel?: ComponentChildren;
+  addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
   initialStep?: "welcome" | "invite";
 };
 
@@ -26,6 +26,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -66,7 +67,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!ready) return;
     let mounted = true;
     void run(async () => {
-      const client = await load();
+      let client: OwnerWelcome;
+      try { client = await load(); }
+      catch {
+        if (mounted) setLoadError("Could not load sign-in. Try again.");
+        return;
+      }
       if (!mounted) return;
       setFlow(client);
       setEmail(client.state.challenge?.email ?? ""); setInviteCode(client.state.inviteCode ?? "");
@@ -86,12 +92,11 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     return () => { active = false; clearTimeout(timer); };
   }, [step, handle, flow]);
 
-  if (step === "address") return <div class="desktop-welcome-address">{addressPanel}
-    <button class="gsv-auth-link" type="button" onClick={() => setStep("welcome")}>Back</button></div>;
   const titles = {
     welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", handle: "Choose your handle",
-  } satisfies Record<Exclude<Step, "address">, string>;
+  } satisfies Record<Step, string>;
   const start = (intent: "open" | "create") => void run(async () => {
+    if (intent === "open") setStep("email");
     if (!flow) return;
     await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null });
     if (intent === "create") setStep("invite");
@@ -116,15 +121,29 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   };
   const actionDisabled = !flow || busy || (step === "invite" ? !inviteCode.trim() : step === "email" ? !email.trim()
     : step === "code" ? code.length !== 6 : step === "handle" ? !handle.trim() || availability === "unavailable" : false);
+  const opening = step === "spaces" || (step === "email" && flow?.state.flow !== "create");
+  const split = opening && !!addressPanel;
+  const back = () => {
+    setError("");
+    setStep(step === "code" ? "email" : step === "email" && flow?.state.flow === "create" ? "invite" : "welcome");
+  };
 
-  return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class="gsv-login-panel desktop-welcome">
-    <SectionHeader title={titles[step]} titleSize="title" divider />
-    <div class="gsv-login-body">
+  return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
+    <h1>{opening ? "Open your space" : titles[step]}</h1>
+    {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
+      <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
+        <WelcomeIllustration kind="create" />
+        <span class="desktop-welcome-choice-title">Create your space <span aria-hidden="true">→</span></span>
+        <span class="desktop-welcome-detail">Use an invite code</span>
+      </button>
+      <button class="desktop-welcome-choice" type="button" aria-label="Open your space" disabled={!ready || busy} onClick={() => start("open")}>
+        <WelcomeIllustration kind="open" />
+        <span class="desktop-welcome-choice-title">Open your space <span aria-hidden="true">→</span></span>
+      </button>
+    </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
+      <div class="desktop-welcome-primary">
+      {opening && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
-        {step === "welcome" && <>
-          <Button label="Open your space" block disabled={!flow || busy} onClick={() => start("open")} />
-          <Button label="Create your space" variant="secondary" block disabled={!flow || busy} onClick={() => start("create")} />
-        </>}
         {step === "invite" && <TextInput label="Invite code" value={inviteCode} onChange={setInviteCode} disabled={busy}
           placeholder="Paste your code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 128 }} />}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
@@ -148,8 +167,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           {!owner?.spaces.length && !owner?.invites.some((invite) => ["claimed", "provisioning"].includes(invite.state)) && <p class="desktop-welcome-detail">No spaces yet.</p>}
           <Button label="Use an invite" disabled={busy} block onClick={() => start("create")} />
         </>}
-        {error && <p class="gsv-login-error" role="alert">{error}</p>}
-        {!["welcome", "spaces"].includes(step) && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" disabled={actionDisabled}>
+        {step !== "spaces" && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={step === "email" ? "Send code" : "Continue"} disabled={actionDisabled}>
           {busy ? <Spinner /> : <span class="gsv-btn-label">{step === "email" ? "Send code" : "Continue"}</span>}
         </button>}
         {step === "code" && <div class="desktop-welcome-links">
@@ -164,13 +182,20 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           })}>Send again</button>
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => { setError(""); setCode(""); setStep("email"); }}>Change email</button>
         </div>}
-        {addressPanel && ["welcome", "email", "spaces"].includes(step) && <button class="gsv-auth-link" type="button" disabled={busy} onClick={() => { setError(""); setStep("address"); }}>Enter a space address</button>}
-        {owner && step !== "welcome" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
+        {owner && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
           await flow!.signOut(); setOwner(null); setEmail(""); setCode(""); setInviteCode(""); setStep("welcome");
         })}>Sign out</button>}
-        {step !== "welcome" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => { setError(""); setStep("welcome"); }}>Back</button>}
-        {step === "welcome" && error && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
       </form>
-    </div>
+      </div>
+      {split && <div class="desktop-welcome-address"><h2>Enter a space address</h2>
+        {addressPanel!({ disabled: busy, connect: (origin) => run(async () => {
+          try { await onConnect(origin); }
+          catch { throw new Error("Could not open this space. Try again."); }
+        }) })}
+      </div>}
+    </div>}
+    {(error || loadError) && <p class="gsv-login-error" role="alert">{error || loadError}</p>}
+    {step !== "welcome" && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>Back</button>}
+    {(loadError || (step === "welcome" && error)) && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
   </section></AuthLayout>;
 }
