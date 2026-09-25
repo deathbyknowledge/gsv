@@ -11,10 +11,16 @@ signs you in and opens **Ship**, your conversation with your personal agent.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
+If you were given an **invite code** instead, open the operator's signup page
+(or **Create a space** in the Desktop app), enter the code, verify your email
+with the six-digit code it sends, and choose the handle your space will live at.
+The same code resumes the same space if the browser or app is interrupted, and
+it works once.
+
 Owner sign-in on **My spaces** lists spaces you own. It is separate from your
 account inside each space. Signing in alone does not create a space or grant
-operator administration rights. The operator creates spaces explicitly and
-issues their setup invitations.
+operator administration rights. Spaces come from an operator's setup invitation
+or an invite code.
 
 ## Run your own operator
 

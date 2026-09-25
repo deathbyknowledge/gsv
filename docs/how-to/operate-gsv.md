@@ -68,6 +68,14 @@ Choose **New space**, reserve its handle, and give the person the resulting
 one-time setup link. They use that link to create their local account and
 root password. Further spaces use this same administration flow.
 
+To let a person choose their own handle, open **Invites** in administration
+instead and choose **Create invite** with a note, a plan, and an optional
+expiry. Copy the code it shows; it is stored hashed and is not shown again.
+The person redeems it once at `<admin-origin>/owner/signup/` (or the configured
+public signup alias, or from the Desktop app), verifies their email, and picks
+an available handle; a claimed invite links to its space in the list, and an
+unclaimed one can be revoked.
+
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
 person's email and opens **My spaces**. Signing in there does not create a
 space or grant operator administration. To add an existing space to that
