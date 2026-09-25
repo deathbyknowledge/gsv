@@ -21,7 +21,12 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
+ *   /setup-again   forget that the first-approval walkthrough was seen, so the next approval shows it
+ *   /no-config     drop the account's settings grant, so the walkthrough only explains (reload restores it)
  *   anything else is committed as your message and answered briefly a second later
+ *
+ * Settings written through sys.config.set live in this tab: the walkthrough's policy and its mark
+ * show up in Settings → permissions until reload.
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
@@ -124,7 +129,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["*"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -241,8 +246,10 @@ type World = {
   /** The last context the Process announced and its monotonic revision; history reads return it, as the gateway's do. */
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
+  /** Settings written through sys.config.set, as the gateway would hold them; empty until something is saved. */
+  config: Map<string, string>;
 };
-const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set(), config: new Map() };
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -583,6 +590,16 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     await askApproval(run, approval);
     return;
   }
+  if (trigger === "/setup-again") {
+    world.config.delete(`users/${OWNER.uid}/ui/approval-setup`);
+    await send(run, "Forgotten. The next approval starts with the walkthrough again.", true);
+    return;
+  }
+  if (trigger === "/no-config") {
+    delete accounts[0].capabilities;
+    await send(run, "Your account can no longer change settings in this tab; reload to get that back.", true);
+    return;
+  }
   if (trigger === "/think") {
     const callId = `call-${run.runId}-${world.recordId + 1}`;
     await think(run, RUN[0], callId);
@@ -652,6 +669,7 @@ const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
+const configSetArgs = z.object({ key: z.string(), value: z.string() });
 const abortArgs = z.object({ pid: z.string().optional() });
 
 function respond<T>(id: string, data: T): string {
@@ -673,7 +691,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "sys.token.revoke": return respond(id, { revoked: true });
     case "sys.token.list": return respond(id, { tokens: [] });
-    case "sys.config.get": return respond(id, { entries: [] });
+    case "sys.config.get": return respond(id, { entries: [...world.config].map(([key, value]) => ({ key, value })) });
+    case "sys.config.set": {
+      const { key, value } = configSetArgs.parse(args);
+      if (value.trim()) world.config.set(key, value);
+      else world.config.delete(key);
+      return respond(id, { ok: true });
+    }
     case "account.list": return respond(id, { accounts });
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
