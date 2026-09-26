@@ -29,8 +29,7 @@ async function listAccountContextFiles(
             const file = await ripgit.readPath(repo, `context.d/${directories[index]}${entry.name}`);
             return file.kind === "file" ? TEXT_DECODER.decode(file.bytes) : null;
           },
-        })) : [])
-        .sort((left, right) => left.name.localeCompare(right.name));
+        })) : []);
     }
   }
 
@@ -44,8 +43,7 @@ async function listAccountContextFiles(
         const stored = await input.storage.get(object.key);
         return stored ? stored.text() : null;
       },
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    }));
 }
 
 export async function collectAccountContext(
@@ -61,7 +59,12 @@ export async function collectAccountContext(
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
-  const contextFiles = await listAccountContextFiles(input, account);
+  const contextFiles = (await listAccountContextFiles(input, account)).sort((left, right) => {
+    const leftScoped = left.name.includes("/");
+    const rightScoped = right.name.includes("/");
+    if (leftScoped !== rightScoped) return leftScoped ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  });
   let usedBytes = 0;
   for (const file of contextFiles) {
     const text = (await file.read())?.trim();

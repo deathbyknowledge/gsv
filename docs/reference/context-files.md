@@ -20,8 +20,11 @@ discovery. Start unfamiliar tasks with
 `man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
 matching command, skill, target, or connected integration.
 
-Context files are loaded lexically within each layer, include only non-empty
-`.md` files, and are bounded by `config/ai/max_context_bytes`.
+Context includes only non-empty `.md` files. System files are loaded lexically.
+Each account layer loads the selected role directory first, then shared root
+files, with lexical ordering within each group. Both groups share the account's
+`config/ai/max_context_bytes` budget, so a large shared file cannot crowd out
+the role and voice instructions that precede it.
 
 Each context root may also contain `ship/*.md` and `worker/*.md`. Root files
 are shared; only the matching role directory is loaded. Other nested directories
@@ -75,6 +78,8 @@ attached to the same account. The rename retains its UID, groups, settings, proc
 home and repository paths, so an upgraded account can still have `/home/algo`
 as its home. New accounts normally use `/home/ship`. Use the account's reported
 home or `~` rather than constructing a path from its username.
+Rewriting `/etc/passwd` preserves retained repository ownership by UID and
+rejects another account reusing that repository namespace or home path.
 
 ## Skills: `skills.d/`
 

@@ -457,6 +457,45 @@ describe("createHomeContextProvider", () => {
       "alpha",
     ]);
   });
+
+  it.each(["ship", "worker"] as const)("retains %s role and voice before shared files fill the account budget", async (role) => {
+    const other = role === "ship" ? "worker" : "ship";
+    const files = new Map([
+      ["00-shared.md", "Shared context fills the budget."],
+      [`${other}/00-role.md`, "Unselected role"],
+      [`${role}/05-voice.md`, "Role voice"],
+      [`${role}/00-role.md`, "Role policy"],
+    ]);
+    const input = makeInput({
+      role,
+      config: { ...CONFIG, maxContextBytes: 32 },
+      storage: {
+        async list({ prefix }) {
+          return { objects: [...files.keys()].map((name) => ({ key: `${prefix}${name}` })) };
+        },
+        async get(key) {
+          const content = files.get(key.slice("root/context.d/".length));
+          return content ? { text: async () => content } : null;
+        },
+      },
+    });
+    const provider = createHomeContextProvider();
+    const fromR2 = await provider.collect(input);
+    const fromRipgit = await provider.collect({ ...input, ripgit: {
+      async readPath(_repo, path) {
+        const name = path.slice("context.d".length).replace(/^\//, "");
+        const content = files.get(name);
+        if (content) return { kind: "file", bytes: new TextEncoder().encode(content), size: content.length };
+        const prefix = name ? `${name}/` : "";
+        const names = [...files.keys()].filter((file) => file.startsWith(prefix))
+          .map((file) => file.slice(prefix.length)).filter((file) => !file.includes("/"));
+        return { kind: "tree", entries: names.map((file) => ({ name: file, mode: "100644", hash: file, type: "blob" })) };
+      },
+    } });
+    expect(fromR2.map((section) => section.name)).toEqual([`${role}/00-role.md`, `${role}/05-voice.md`]);
+    expect(fromR2.map((section) => section.text)).toEqual(["Role policy", "Role voice"]);
+    expect(fromRipgit).toEqual(fromR2);
+  });
 });
 
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
