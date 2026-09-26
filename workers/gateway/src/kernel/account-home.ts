@@ -1,5 +1,5 @@
 import { RipgitClient, RipgitConflictError, type RipgitApplyOp } from "../fs/ripgit/client";
-import { accountHomeRepoRef } from "../fs/ripgit/repos";
+import { accountHomeRepoRef, ensureHomeRepoRevision } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
@@ -12,7 +12,7 @@ import {
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
-import { migratePersonalContext, PERSONAL_CONTEXT_MIGRATION_MARKER } from "./personal-context-migration";
+import { migratePersonalContext } from "./personal-context-migration";
 import type { AuthStore } from "./auth-store";
 
 const TEXT_ENCODER = new TextEncoder();
@@ -80,13 +80,7 @@ export async function ensureAccountHomeLayout(
 
 async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdentity, options: HomeLayoutOptions): Promise<void> {
   const repo = accountHomeRepoRef(identity);
-  let head = (await client.refs(repo)).heads.main;
-  if (!head) {
-    // Establish a revision without touching files, then fence all content writes.
-    const initialized = await client.apply(repo, identity.username, `${identity.username}@gsv.local`, "gsv: initialize home", [], { allowEmpty: true });
-    if (!initialized.head) throw new Error("Home initialization did not produce a repository revision");
-    head = initialized.head;
-  }
+  const head = await ensureHomeRepoRevision(client, repo, identity.username);
   const snapshot = { ...repo, branch: head };
   const [
     contextDir,
@@ -97,7 +91,6 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
     commitmentsContext,
     memoryContext,
     skillsDir,
-    migrationMarker,
   ] = await Promise.all([
     client.readPath(snapshot, "context.d"),
     client.readPath(snapshot, "context.d/00-boot.md"),
@@ -107,7 +100,6 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
     client.readPath(snapshot, "context.d/10-commitments.md"),
     client.readPath(snapshot, "context.d/15-memory.md"),
     client.readPath(snapshot, "skills.d"),
-    client.readPath(snapshot, PERSONAL_CONTEXT_MIGRATION_MARKER),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -120,9 +112,6 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {
-      if (migrationMarker.kind === "missing") {
-        ops.push({ type: "put", path: PERSONAL_CONTEXT_MIGRATION_MARKER, contentBytes: [] });
-      }
       const retiringGeneratedBootContext = maybeDeleteGeneratedTextFile(
         ops,
         "context.d/00-boot.md",

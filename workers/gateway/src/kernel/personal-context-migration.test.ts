@@ -75,11 +75,13 @@ describe("personal context migration", () => {
     expect([...files.keys()].every((name) => name.startsWith("context.d/ship/") || name === PERSONAL_CONTEXT_MIGRATION_MARKER)).toBe(true);
   });
 
-  it("refuses a stale write and retries with the latest user edit", async () => {
-    const state = fixture({ "context.d/00-role.md": LEGACY_PERSONAL_INTELLIGENCE_CONTEXT });
+  it.each([false, true])("retries a concurrent legacy edit when a legacy file initially exists: %s", async (existing) => {
+    const state = fixture(existing ? { "context.d/00-role.md": LEGACY_PERSONAL_INTELLIGENCE_CONTEXT } : {});
     state.editDuringApply();
     await migratePersonalContext(state.client, repo, "ship");
     expect(state.files.get("context.d/ship/00-role.md")).toBe("Edited during migration");
+    expect(state.files.has("context.d/00-role.md")).toBe(false);
+    expect(state.files.has(PERSONAL_CONTEXT_MIGRATION_MARKER)).toBe(true);
     expect(state.fetch.mock.calls.filter(([input]) => String(input).endsWith("/apply"))).toHaveLength(2);
   });
 });

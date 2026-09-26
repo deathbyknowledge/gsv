@@ -1,5 +1,6 @@
 import { RipgitConflictError } from "../fs/ripgit/client";
 import type { RipgitClient, RipgitRepoRef, RipgitApplyOp } from "../fs/ripgit/client";
+import { ensureHomeRepoRevision } from "../fs/ripgit/repos";
 import { LEGACY_PERSONAL_INTELLIGENCE_CONTEXT, LEGACY_PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/legacy-personal-intelligence";
 import { PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/personal-intelligence";
 
@@ -17,18 +18,13 @@ export async function migratePersonalContext(client: RipgitClient, repo: RipgitR
 }
 
 async function migrateHomeRevision(client: RipgitClient, repo: RipgitRepoRef, username: string): Promise<void> {
-  if ((await client.readPath(repo, PERSONAL_CONTEXT_MIGRATION_MARKER)).kind !== "missing") return;
+  const head = await ensureHomeRepoRevision(client, repo, username);
+  const snapshot = { ...repo, branch: head };
+  if ((await client.readPath(snapshot, PERSONAL_CONTEXT_MIGRATION_MARKER)).kind !== "missing") return;
   const seeds = [
     { name: "00-role.md", old: LEGACY_PERSONAL_INTELLIGENCE_CONTEXT, current: PERSONAL_INTELLIGENCE_CONTEXT },
     { name: "05-voice.md", old: LEGACY_PERSONAL_INTELLIGENCE_VOICE_CONTEXT, current: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
   ];
-  const legacy = await Promise.all(seeds.map(({ name }) => client.readPath(repo, `context.d/${name}`)));
-  if (!legacy.some((file) => file.kind === "file")) return;
-
-  const head = (await client.refs(repo)).heads[repo.branch ?? "main"];
-  if (!head) throw new Error("Cannot migrate personal context without a home revision");
-  const snapshot = { ...repo, branch: head };
-  if ((await client.readPath(snapshot, PERSONAL_CONTEXT_MIGRATION_MARKER)).kind !== "missing") return;
   const ops: RipgitApplyOp[] = [];
   for (const seed of seeds) {
     const from = `context.d/${seed.name}`;
@@ -55,8 +51,6 @@ async function migrateHomeRevision(client: RipgitClient, repo: RipgitRepoRef, us
     }
     ops.push({ type: "delete", path: from });
   }
-  if (ops.length > 0) {
-    ops.push({ type: "put", path: PERSONAL_CONTEXT_MIGRATION_MARKER, contentBytes: [] });
-    await client.apply(repo, username, `${username}@gsv.local`, "gsv: scope Ship context", ops, { expectedHead: head });
-  }
+  ops.push({ type: "put", path: PERSONAL_CONTEXT_MIGRATION_MARKER, contentBytes: [] });
+  await client.apply(repo, username, `${username}@gsv.local`, "gsv: scope Ship context", ops, { expectedHead: head });
 }

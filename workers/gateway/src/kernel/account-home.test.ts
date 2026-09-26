@@ -32,8 +32,9 @@ describe("home context seeding", () => {
           expect(body.allowEmpty).toBe(true);
           return Response.json({ ok: true, head: commit() });
         }
-        writes += 1;
-        if (writes === 1) {
+        const scaffolding = body.ops.some((op) => op.type === "put" && op.path === "skills.d/.dir");
+        if (scaffolding) writes += 1;
+        if (scaffolding && writes === 1) {
           for (const name of customized) files.set(`context.d/${name}`, `Customized ${name}`);
           commit();
         }
