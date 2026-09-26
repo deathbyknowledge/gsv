@@ -440,14 +440,14 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (identity.account.uid === 0 || identity.calls.includes("*")) {
     return true;
   }
-  if (repo.owner === identity.account.username || repo.owner === accountRepoOwner(identity.account)) {
+  if (repo.owner === accountRepoOwner(identity.account)) {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
   const owner = ctx.auth.getPasswdByUid(ownerUid);
   if (
     owner &&
-    (owner.username === repo.owner || accountRepoOwner(owner) === repo.owner) &&
+    accountRepoOwner(owner) === repo.owner &&
     ownerUid !== identity.account.uid &&
     canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.account)
   ) {
@@ -456,8 +456,8 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (ownerUid !== identity.account.uid) {
     return false;
   }
-  const target = ctx.auth.getPasswdByUsername(repo.owner) ?? ctx.auth.getPasswdByRepoOwner(repo.owner);
-  return !!target && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
+  const target = ctx.auth.getPasswdByRepoOwner(repo.owner) ?? ctx.auth.getPasswdByUsername(repo.owner);
+  return !!target && accountRepoOwner(target) === repo.owner && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
 }
 
 function toSummary(

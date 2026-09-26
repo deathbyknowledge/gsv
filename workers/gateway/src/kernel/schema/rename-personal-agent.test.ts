@@ -15,6 +15,7 @@ import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { createAccountHomeBackend } from "../../fs/backends/account-home";
 import { GsvFs } from "../../fs/gsv-fs";
+import { canReadRepo, canWriteRepo, handleRepoApply, handleRepoRead } from "../repo";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
 
 function seed(sql: SqlStorage, storage: DurableObjectStorage, username = "algo") {
@@ -135,6 +136,30 @@ describe("personal agent rename", () => {
       auth.importPasswd(auth.serializePasswd() + "other:x:1002:1002:Other:/home/other:/bin/init\n");
       expect(accountHomeRepoRef(auth.getPasswdByUid(1001)!)).toEqual({ owner: "algo", repo: "home" });
       expect(accountHomeRepoRef(auth.getPasswdByUid(1002)!)).toEqual({ owner: "other", repo: "home" });
+    });
+  });
+
+  it.each([
+    { actorUid: 1001, ownerUid: 1000 },
+    { actorUid: 1000, ownerUid: 1000 },
+    { actorUid: 1002, ownerUid: 1001 },
+  ])("keeps repository grants on the retained namespace for actor $actorUid owned by $ownerUid", async ({ actorUid, ownerUid }) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      const auth = seed(sql, storage);
+      runKernelSqlMigrations(storage);
+      auth.addUser({ username: "helper", uid: 1002, gid: 1002, home: "/home/helper", gecos: "Helper", shell: "/bin/init" });
+      auth.addGroup({ name: "helper", gid: 1002, members: ["ship"] });
+      // SAFETY: these authorization checks need only the caller, auth, and private-by-default visibility; denied syscalls must never reach Ripgit.
+      const ctx = { auth, callerOwnerUid: ownerUid, config: { get: () => null }, peer: testPeer({
+        account: accountIdentity(auth, auth.getPasswdByUid(actorUid)!), calls: ["repo.read", "repo.apply"],
+      }) } as KernelContext;
+      expect(canWriteRepo("algo/private", ctx)).toBe(true);
+      expect(canReadRepo("algo/private", ctx)).toBe(true);
+      expect(canWriteRepo("ship/private", ctx)).toBe(false);
+      expect(canReadRepo("ship/private", ctx)).toBe(false);
+      await expect(handleRepoRead({ repo: "ship/private", path: "README.md" }, ctx)).rejects.toThrow("Forbidden");
+      await expect(handleRepoApply({ repo: "ship/private", message: "Must not write", ops: [] }, ctx)).rejects.toThrow("Forbidden");
     });
   });
 
