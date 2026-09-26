@@ -8,6 +8,10 @@ import { canOwnerDelegateRunAs } from "../account-access";
 import { isUsernameAvailable } from "../accounts";
 import { accountIdentity } from "../accounts";
 import { ProcessRegistry } from "../processes";
+import { ScheduleStore } from "../scheduler";
+import { createCronFileService } from "../crontab";
+import type { KernelContext } from "../context";
+import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { createAccountHomeBackend } from "../../fs/backends/account-home";
 import { GsvFs } from "../../fs/gsv-fs";
@@ -105,13 +109,50 @@ describe("personal agent rename", () => {
     });
   });
 
-  it.each(["account", "group", "home", "custom-agent", "unmapped"])("preserves existing names when %s prevents a default rename", async (collision) => {
+  it("keeps scheduled run-as identities and crontab management attached to the renamed account", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      const auth = seed(sql, storage);
+      const schedules = new ScheduleStore(sql);
+      const principal = { kind: "process" as const, uid: 1001, username: "algo", pid: "proc:existing" };
+      const base = { ownerUid: 1000, creator: principal, runAs: principal, name: "Scheduled work", enabled: true,
+        expression: { kind: "every" as const, everyMs: 60_000 }, now: 1 };
+      const inherited = schedules.create({ ...base, target: { kind: "process.spawn", prompt: "Do work" } });
+      const explicit = schedules.create({ ...base, target: { kind: "process.spawn", runAs: "algo", prompt: "Do other work" } });
+      const other = schedules.create({ ...base, target: { kind: "process.spawn", runAs: "person", prompt: "Unrelated selector" } });
+      const cron = schedules.create({ ...base, target: { kind: "command.exec", command: "whoami" } });
+      const content = "* * * * * whoami\n";
+      schedules.upsertCronFile({ path: "/var/spool/cron/algo", ownerUid: 1001, content, now: 1 });
+      schedules.linkCronFileSchedule("/var/spool/cron/algo", cron.id);
+
+      runKernelSqlMigrations(storage);
+      runKernelSqlMigrations(storage);
+      expect(schedules.get(inherited.id)).toMatchObject({ runAs: { ...principal, username: "ship" }, state: inherited.state });
+      expect(schedules.get(explicit.id)?.target).toMatchObject({ runAs: "ship" });
+      expect(schedules.get(other.id)?.target).toMatchObject({ runAs: "person" });
+      expect(schedules.getCronFile("/var/spool/cron/algo")).toBeNull();
+      expect(schedules.cronFileScheduleIds("/var/spool/cron/algo")).toEqual([]);
+      expect(schedules.cronFileScheduleIds("/var/spool/cron/ship")).toEqual([cron.id]);
+      // SAFETY: these crontab list/read/remove paths use only auth, the actor, and the schedule store; no wake is armed.
+      const ctx = { auth, schedules, peer: testPeer({ kind: "human", account: accountIdentity(auth, auth.getPasswdByUid(1001)!), calls: ["sys.sched.*"] }) } as KernelContext;
+      const crontabs = createCronFileService(ctx);
+      expect(crontabs.listUserCrontabs()).toEqual(["ship"]);
+      expect(crontabs.readUserCrontab("ship")).toBe(content);
+      expect(await crontabs.removeUserCrontab("ship")).toBe(true);
+      expect(schedules.get(cron.id)).toBeNull();
+      expect(schedules.cronFileScheduleIds("/var/spool/cron/ship")).toEqual([]);
+      expect(schedules.get(inherited.id)).not.toBeNull();
+    });
+  });
+
+  it.each(["account", "group", "home", "crontab", "custom-agent", "unmapped"])("preserves existing names when %s prevents a default rename", async (collision) => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       const auth = seed(sql, storage, collision === "custom-agent" ? "friday" : "algo");
       if (collision === "account" || collision === "home") {
         auth.addUser({ username: collision === "account" ? "ship" : "custom", uid: 1002, gid: 1002, home: "/home/ship", gecos: "Custom", shell: "/bin/init" });
       } else if (collision === "group") auth.addGroup({ name: "ship", gid: 1002, members: [] });
+      else if (collision === "crontab") new ScheduleStore(sql).upsertCronFile({ path: "/var/spool/cron/ship", ownerUid: 1002, content: "# Keep", now: 1 });
       else if (collision === "unmapped") sql.exec("DELETE FROM personal_agents");
       const before = auth.getPasswdEntries();
       runKernelSqlMigrations(storage);

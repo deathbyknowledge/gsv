@@ -1,4 +1,4 @@
-import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
+import { RipgitClient, RipgitConflictError, type RipgitApplyOp } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
@@ -12,11 +12,18 @@ import {
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
-import { migratePersonalContext } from "./personal-context-migration";
+import { migratePersonalContext, PERSONAL_CONTEXT_MIGRATION_MARKER } from "./personal-context-migration";
 import type { AuthStore } from "./auth-store";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+
+type HomeLayoutOptions = {
+  seedPromptContext?: boolean;
+  personalAgent?: boolean;
+  cleanupGeneratedPromptContext?: boolean;
+  beforeRetiringGeneratedBootContext?: () => void;
+};
 
 // Reconciliation is durable in the home. This cache only avoids repeated reads
 // during the same Kernel lifetime; failures remain retryable.
@@ -49,12 +56,7 @@ export async function ensurePersonalPromptContext(
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
-  options: {
-    seedPromptContext?: boolean;
-    personalAgent?: boolean;
-    cleanupGeneratedPromptContext?: boolean;
-    beforeRetiringGeneratedBootContext?: () => void;
-  } = {},
+  options: HomeLayoutOptions = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
 
@@ -67,6 +69,25 @@ export async function ensureAccountHomeLayout(
   if (options.personalAgent && options.seedPromptContext) {
     await migratePersonalContext(client, repo, identity.username);
   }
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await scaffoldHomeRevision(client, identity, options);
+    } catch (error) {
+      if (!(error instanceof RipgitConflictError) || attempt >= 2) throw error;
+    }
+  }
+}
+
+async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdentity, options: HomeLayoutOptions): Promise<void> {
+  const repo = accountHomeRepoRef(identity);
+  let head = (await client.refs(repo)).heads.main;
+  if (!head) {
+    // Establish a revision without touching files, then fence all content writes.
+    const initialized = await client.apply(repo, identity.username, `${identity.username}@gsv.local`, "gsv: initialize home", [], { allowEmpty: true });
+    if (!initialized.head) throw new Error("Home initialization did not produce a repository revision");
+    head = initialized.head;
+  }
+  const snapshot = { ...repo, branch: head };
   const [
     contextDir,
     bootContext,
@@ -76,15 +97,17 @@ export async function ensureAccountHomeLayout(
     commitmentsContext,
     memoryContext,
     skillsDir,
+    migrationMarker,
   ] = await Promise.all([
-    client.readPath(repo, "context.d"),
-    client.readPath(repo, "context.d/00-boot.md"),
-    client.readPath(repo, options.personalAgent ? "context.d/ship/00-role.md" : "context.d/00-role.md"),
-    client.readPath(repo, "context.d/00-style.md"),
-    client.readPath(repo, options.personalAgent ? "context.d/ship/05-voice.md" : "context.d/05-voice.md"),
-    client.readPath(repo, "context.d/10-commitments.md"),
-    client.readPath(repo, "context.d/15-memory.md"),
-    client.readPath(repo, "skills.d"),
+    client.readPath(snapshot, "context.d"),
+    client.readPath(snapshot, "context.d/00-boot.md"),
+    client.readPath(snapshot, options.personalAgent ? "context.d/ship/00-role.md" : "context.d/00-role.md"),
+    client.readPath(snapshot, "context.d/00-style.md"),
+    client.readPath(snapshot, options.personalAgent ? "context.d/ship/05-voice.md" : "context.d/05-voice.md"),
+    client.readPath(snapshot, "context.d/10-commitments.md"),
+    client.readPath(snapshot, "context.d/15-memory.md"),
+    client.readPath(snapshot, "skills.d"),
+    client.readPath(snapshot, PERSONAL_CONTEXT_MIGRATION_MARKER),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -97,6 +120,9 @@ export async function ensureAccountHomeLayout(
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {
+      if (migrationMarker.kind === "missing") {
+        ops.push({ type: "put", path: PERSONAL_CONTEXT_MIGRATION_MARKER, contentBytes: [] });
+      }
       const retiringGeneratedBootContext = maybeDeleteGeneratedTextFile(
         ops,
         "context.d/00-boot.md",
@@ -196,6 +222,7 @@ export async function ensureAccountHomeLayout(
     `${identity.username}@gsv.local`,
     "gsv: scaffold home layout",
     ops,
+    { expectedHead: head },
   );
 }
 

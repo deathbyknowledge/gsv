@@ -14,6 +14,8 @@ export const KERNEL_V053_RENAME_PERSONAL_AGENT_TO_SHIP: SqlMigration = {
       WHERE username = 'algo' AND uid IN (SELECT agent_uid FROM personal_agents)
         AND NOT EXISTS (SELECT 1 FROM passwd WHERE username = 'ship' OR home = '/home/ship')
         AND NOT EXISTS (SELECT 1 FROM groups WHERE name = 'ship')
+        AND NOT EXISTS (SELECT 1 FROM cron_files WHERE path = '/var/spool/cron/ship')
+        AND NOT EXISTS (SELECT 1 FROM cron_file_schedules WHERE path = '/var/spool/cron/ship')
         AND EXISTS (SELECT 1 FROM groups WHERE name = 'algo' AND groups.gid = passwd.gid)`,
     `UPDATE shadow SET username = 'ship'
       WHERE username = 'algo' AND EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
@@ -23,6 +25,16 @@ export const KERNEL_V053_RENAME_PERSONAL_AGENT_TO_SHIP: SqlMigration = {
       WHERE EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
     `UPDATE processes SET username = 'ship', repo_owner = 'algo'
       WHERE uid IN (SELECT uid FROM personal_agent_rename_v053)`,
+    `UPDATE schedules SET run_as_json = json_set(run_as_json, '$.username', 'ship')
+      WHERE json_extract(run_as_json, '$.uid') IN (SELECT uid FROM personal_agent_rename_v053)`,
+    `UPDATE schedules SET target_json = json_set(target_json, '$.runAs', 'ship')
+      WHERE json_extract(target_json, '$.kind') = 'process.spawn'
+        AND json_extract(target_json, '$.runAs') = 'algo'
+        AND EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
+    `UPDATE cron_file_schedules SET path = '/var/spool/cron/ship'
+      WHERE path = '/var/spool/cron/algo' AND EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
+    `UPDATE cron_files SET path = '/var/spool/cron/ship'
+      WHERE path = '/var/spool/cron/algo' AND EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
     `UPDATE passwd SET username = 'ship', repo_owner = 'algo',
       gecos = CASE WHEN gecos IN ('Algo', 'algo') OR gecos = (
         SELECT owner.username || '''s agent' FROM personal_agents

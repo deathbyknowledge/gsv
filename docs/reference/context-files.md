@@ -62,7 +62,7 @@ context, or lengthy execution helps. Accepted unfinished outcomes go into `r12y`
 before delegation or yielding; acknowledgment need not wait for bookkeeping.
 Workers receive their assignment policy without Ship's public voice constraints.
 
-Upgrades move the personal account's former `00-role.md` and `05-voice.md`
+The one-time upgrade moves the personal account's former `00-role.md` and `05-voice.md`
 into `ship/`. Untouched generated files receive the new defaults. Customized
 files retain their contents; an occupied destination keeps both versions under
 distinct names in `ship/`. Effective changes close and archive the old context
@@ -70,7 +70,8 @@ epoch when the process next refreshes its standing context.
 
 The default personal account is now `ship`. An existing personal account named
 `algo` is renamed when `ship` is available; custom account names and name
-collisions are preserved. The rename retains its UID, groups, settings, processes, and physical
+collisions are preserved. Existing schedules and the account's crontab stay
+attached to the same account. The rename retains its UID, groups, settings, processes, and physical
 home and repository paths, so an upgraded account can still have `/home/algo`
 as its home. New accounts normally use `/home/ship`. Use the account's reported
 home or `~` rather than constructing a path from its username.

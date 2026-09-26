@@ -609,7 +609,7 @@ resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string
     // Execution must keep the account without depending on that pid still being
     // alive as the spawn parent.
     return record.runAs.kind === "process" || record.runAs.kind === "service"
-      ? record.runAs.username
+      ? String(record.runAs.uid)
       : undefined;
   }
 

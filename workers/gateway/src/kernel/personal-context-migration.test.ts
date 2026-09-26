@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
-import { migratePersonalContext } from "./personal-context-migration";
+import { migratePersonalContext, PERSONAL_CONTEXT_MIGRATION_MARKER } from "./personal-context-migration";
 import { LEGACY_PERSONAL_INTELLIGENCE_CONTEXT, LEGACY_PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/legacy-personal-intelligence";
 import { PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/personal-intelligence";
 
@@ -54,6 +54,10 @@ describe("personal context migration", () => {
     expect(files.get("context.d/10-personal.md")).toBe("Custom shared context");
     expect(files.has("context.d/00-role.md")).toBe(false);
     expect(files.has("context.d/05-voice.md")).toBe(false);
+    expect(files.has(PERSONAL_CONTEXT_MIGRATION_MARKER)).toBe(true);
+    files.set("context.d/00-role.md", "New shared instructions after upgrade");
+    await migratePersonalContext(client, repo, "ship");
+    expect(files.get("context.d/00-role.md")).toBe("New shared instructions after upgrade");
     expect(fetch.mock.calls.filter(([input]) => String(input).endsWith("/apply"))).toHaveLength(1);
   });
 
@@ -68,7 +72,7 @@ describe("personal context migration", () => {
     expect(files.get("context.d/ship/00-role.md")).toBe("Existing scoped policy");
     expect(files.get("context.d/ship/05-voice.md")).toBe("Custom voice");
     expect([...files].find(([name]) => name.startsWith("context.d/ship/00-role.previous-"))?.[1]).toBe(original);
-    expect([...files.keys()].every((name) => name.startsWith("context.d/ship/"))).toBe(true);
+    expect([...files.keys()].every((name) => name.startsWith("context.d/ship/") || name === PERSONAL_CONTEXT_MIGRATION_MARKER)).toBe(true);
   });
 
   it("refuses a stale write and retries with the latest user edit", async () => {
