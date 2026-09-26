@@ -13,6 +13,7 @@ export const KERNEL_V053_RENAME_PERSONAL_AGENT_TO_SHIP: SqlMigration = {
       SELECT uid, gid FROM passwd
       WHERE username = 'algo' AND uid IN (SELECT agent_uid FROM personal_agents)
         AND NOT EXISTS (SELECT 1 FROM passwd WHERE username = 'ship' OR home = '/home/ship')
+        AND NOT EXISTS (SELECT 1 FROM shadow WHERE username = 'ship')
         AND NOT EXISTS (SELECT 1 FROM groups WHERE name = 'ship')
         AND NOT EXISTS (SELECT 1 FROM cron_files WHERE path = '/var/spool/cron/ship')
         AND NOT EXISTS (SELECT 1 FROM cron_file_schedules WHERE path = '/var/spool/cron/ship')

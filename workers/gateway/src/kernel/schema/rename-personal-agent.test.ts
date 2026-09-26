@@ -145,18 +145,21 @@ describe("personal agent rename", () => {
     });
   });
 
-  it.each(["account", "group", "home", "crontab", "custom-agent", "unmapped"])("preserves existing names when %s prevents a default rename", async (collision) => {
+  it.each(["account", "shadow", "group", "home", "crontab", "custom-agent", "unmapped"])("preserves existing names when %s prevents a default rename", async (collision) => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       const auth = seed(sql, storage, collision === "custom-agent" ? "friday" : "algo");
       if (collision === "account" || collision === "home") {
         auth.addUser({ username: collision === "account" ? "ship" : "custom", uid: 1002, gid: 1002, home: "/home/ship", gecos: "Custom", shell: "/bin/init" });
       } else if (collision === "group") auth.addGroup({ name: "ship", gid: 1002, members: [] });
+      else if (collision === "shadow") auth.setShadow(makeShadowEntry("ship", "reserved-credential"));
       else if (collision === "crontab") new ScheduleStore(sql).upsertCronFile({ path: "/var/spool/cron/ship", ownerUid: 1002, content: "# Keep", now: 1 });
       else if (collision === "unmapped") sql.exec("DELETE FROM personal_agents");
       const before = auth.getPasswdEntries();
+      const credentials = sql.exec("SELECT * FROM shadow ORDER BY username").toArray();
       runKernelSqlMigrations(storage);
       expect(auth.getPasswdEntries()).toEqual(before);
+      expect(sql.exec("SELECT * FROM shadow ORDER BY username").toArray()).toEqual(credentials);
       expect(accountHomeRepoRef(auth.getPasswdByUid(1001)!)).toEqual({ owner: collision === "custom-agent" ? "friday" : "algo", repo: "home" });
     });
   });
