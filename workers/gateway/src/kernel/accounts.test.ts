@@ -110,6 +110,7 @@ function createCtx() {
   const ripgit = {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
+      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "test-head" }, tags: {} });
       if (url.pathname.endsWith("/apply")) {
         const parts = url.pathname.split("/").filter(Boolean);
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -120,6 +121,11 @@ function createCtx() {
           repo,
           ...body,
         });
+        for (const op of body.ops) {
+          const key = `${owner}:${op.path}`;
+          if (op.type === "put") ripgitFiles.set(key, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
+          else if (op.type === "delete") ripgitFiles.delete(key);
+        }
         return new Response(JSON.stringify({ ok: true, head: "test-head" }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -307,8 +313,8 @@ describe("handleAccountCreate", () => {
       title: "Get to know the user and finish initial GSV setup",
       dedupeKey: "onboarding.initial",
     }));
-    const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
-    const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
+    const roleContextOp = agentOps.find((op) => op.path === "context.d/ship/00-role.md");
+    const voiceContextOp = agentOps.find((op) => op.path === "context.d/ship/05-voice.md");
     expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
     expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
@@ -319,7 +325,7 @@ describe("handleAccountCreate", () => {
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
-    expect(agentOps).not.toContainEqual(
+    expect(agentOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }),
     );
     expect(agentOps).not.toContainEqual(
@@ -443,11 +449,11 @@ describe("handleAccountCreate", () => {
     );
 
     const personalAgent = passwd.find((u) => u.uid === result.personalAgent?.uid);
-    expect(personalAgent?.username).toBe("algo");
-    expect(personalAgent?.gecos).toBe("Algo");
+    expect(personalAgent?.username).toBe("ship");
+    expect(personalAgent?.gecos).toBe("Ship");
   });
 
-  it("leaves existing personal agent context untouched during a hard cutover", async () => {
+  it("moves customized Ship context while preserving other personal agent files", async () => {
     const state = createCtx();
     provisionExistingPersonalAgent(state);
     const existingPaths = [
@@ -476,7 +482,7 @@ describe("handleAccountCreate", () => {
     expect(state.passwd.find((u) => u.username === "friday")?.gecos).toBe("Friday");
     const ops = state.ripgitApplyBodies.flatMap((body) => body.ops);
     expect(ops).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),
+      expect.objectContaining({ type: "put", path: "context.d/ship/05-voice.md" }),
     ]));
     expect(ops).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
@@ -485,7 +491,9 @@ describe("handleAccountCreate", () => {
       type: "delete",
       path: "context.d/10-commitments.md",
     });
-    for (const path of existingPaths) {
+    expect(state.ripgitFiles.get("friday:context.d/ship/00-role.md")).toBe("Existing context.d/00-role.md");
+    expect(state.ripgitFiles.has("friday:context.d/00-role.md")).toBe(false);
+    for (const path of existingPaths.filter((path) => path !== "context.d/00-role.md")) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
   });

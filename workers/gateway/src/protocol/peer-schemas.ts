@@ -18,6 +18,7 @@ export const processIdentitySchema = z.object({
   gid: z.number().int(),
   gids: z.array(z.number().int()),
   username: z.string(),
+  repoOwner: z.string().optional(),
   home: z.string(),
   cwd: z.string(),
 }) satisfies z.ZodType<ProcessIdentity>;

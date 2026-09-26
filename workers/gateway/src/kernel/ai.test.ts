@@ -137,6 +137,7 @@ function makeContext(
       }, calls: options.capabilities ?? ["*"] }),
     processId: options.processId,
     procs: {
+      get: vi.fn(() => null),
       getOwnerUid: vi.fn((processId: string) =>
         processId === options.processId ? ownerUid : null
       ),
@@ -407,6 +408,7 @@ describe("handleAiConfig", () => {
         }, calls: options.capabilities ?? ["*"] }),
       config: makeTestConfig(config),
       auth: {
+        isPersonalAgentUid: vi.fn(() => false),
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
           ? {
               uid: ownerUid,
@@ -420,6 +422,7 @@ describe("handleAiConfig", () => {
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
       },
       procs: {
+        get: vi.fn(() => null),
         getOwnerUid: vi.fn(() => ownerUid),
       },
       targets: {
@@ -508,6 +511,20 @@ describe("handleAiConfig", () => {
     }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
     await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
     await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+  });
+
+  it("selects Ship context from the registered process, independently of its account", async () => {
+    const ctx = makeAiConfigContext({}, { uid: 2000, ownerUid: 1000, processId: "proc:role" });
+    // SAFETY: role selection only reads the canonical-controller flag from this registry fixture.
+    vi.mocked(ctx.procs.get).mockReturnValue({ isPersonalController: true } as ReturnType<typeof ctx.procs.get>);
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ processRole: "ship", identity: { uid: 2000 } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ processRole: "ship" });
+    // SAFETY: same registered account, now represented by an ordinary worker Process.
+    vi.mocked(ctx.procs.get).mockReturnValue({ isPersonalController: false } as ReturnType<typeof ctx.procs.get>);
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ processRole: "worker", identity: { uid: 2000 } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ processRole: "worker" });
+    vi.mocked(ctx.procs.get).mockReturnValue(null);
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ processRole: "worker" });
   });
 
   it("resolves the generation streaming switch", async () => {

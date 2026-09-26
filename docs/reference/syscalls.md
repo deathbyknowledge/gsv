@@ -59,6 +59,7 @@ type ProcessIdentity = {
   gid: number;
   gids: number[];
   username: string;
+  repoOwner?: string; // Kernel-owned repository namespace retained after renaming
   home: string;
   cwd: string;
   workspaceId: string | null;
@@ -1753,7 +1754,11 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-and the skill index. An omitted `targets` or `skillIndex` means that catalog
+the skill index, the current registered identity, and the Kernel-selected
+`processRole` (`ship` or `worker`). `ai.config` includes that identity and role
+at bootstrap too. These are derived from the calling process, not caller-selected
+arguments. Process selects the worker role for a bounded IPC call and records
+the effective role in its context epoch manifest. An omitted `targets` or `skillIndex` means that catalog
 could not be refreshed; Process retains its last observed projection. An empty
 array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and

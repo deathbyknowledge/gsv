@@ -96,6 +96,7 @@ describe("mail shell command", () => {
         getPasswdByUsername: (username: string) => (
           humans.find((entry) => entry.username === username) ?? null
         ),
+        getPasswdByHome: (home: string) => humans.find((entry) => entry.home === home) ?? null,
         getPersonalAgentUid: (uid: number) => uid === 1000 ? personalAgent.uid : null,
         isPersonalAgentUid: (uid: number) => uid === personalAgent.uid,
         getGroupByGid: (gid: number) => {

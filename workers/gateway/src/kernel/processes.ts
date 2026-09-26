@@ -30,6 +30,7 @@ export type ProcessRecord = {
   gid: number;
   gids: number[];
   username: string;
+  repoOwner?: string;
   home: string;
   cwd: string;
   state: ProcessState;
@@ -87,8 +88,8 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, is_personal_controller, gid, gids, username, home, cwd, state, active_run_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, interactive, is_personal_controller, gid, gids, username, repo_owner, home, cwd, state, active_run_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -98,6 +99,7 @@ export class ProcessRegistry {
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
+      identity.repoOwner ?? null,
       identity.home,
       opts.cwd ?? identity.cwd,
       opts.label ?? null,
@@ -121,10 +123,11 @@ export class ProcessRegistry {
       gid: number;
       gids: string;
       username: string;
+      repo_owner: string | null;
       home: string;
       cwd: string | null;
     }>(
-      "SELECT uid, gid, gids, username, home, cwd FROM processes WHERE process_id = ?",
+      "SELECT uid, gid, gids, username, repo_owner, home, cwd FROM processes WHERE process_id = ?",
       processId,
     )];
 
@@ -136,6 +139,7 @@ export class ProcessRegistry {
       gid: row.gid,
       gids: JSON.parse(row.gids),
       username: row.username,
+      repoOwner: row.repo_owner ?? undefined,
       home: row.home,
       cwd: row.cwd ?? row.home,
     };
@@ -183,12 +187,13 @@ export class ProcessRegistry {
 
     this.sql.exec(
       `UPDATE processes
-         SET uid = ?, gid = ?, gids = ?, username = ?, home = ?, cwd = ?
+         SET uid = ?, gid = ?, gids = ?, username = ?, repo_owner = ?, home = ?, cwd = ?
        WHERE process_id = ?`,
       identity.uid,
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
+      identity.repoOwner ?? null,
       identity.home,
       nextCwd,
       processId,
@@ -306,6 +311,7 @@ type ProcessRow = {
   gid: number;
   gids: string;
   username: string;
+  repo_owner: string | null;
   home: string;
   cwd: string | null;
   state: string;
@@ -328,6 +334,7 @@ function toRecord(row: ProcessRow): ProcessRecord {
     gid: row.gid,
     gids: JSON.parse(row.gids),
     username: row.username,
+    repoOwner: row.repo_owner ?? undefined,
     home: row.home,
     cwd: row.cwd ?? row.home,
     state: normalizeProcessState(row.state),

@@ -5,6 +5,8 @@ export type ProcessIdentity = {
   gid: number;
   gids: number[];
   username: string;
+  /** Stable repository namespace retained when an account is renamed. Kernel-owned. */
+  repoOwner?: string;
   home: string;
   cwd: string;
 };

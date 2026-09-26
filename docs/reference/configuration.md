@@ -97,6 +97,11 @@ config/ai/context.d/*.md
 
 Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section.
 
+Root Markdown files apply to every process. `context.d/ship/*.md` applies to
+the canonical Ship process, and `context.d/worker/*.md` applies to other
+processes and bounded IPC calls. The same role selection applies to account
+and owner context roots; see [Context files](./context-files.md).
+
 Use numeric prefixes to make ordering explicit:
 
 ```text

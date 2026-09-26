@@ -25,6 +25,7 @@ export type AuthIdentity = {
   gids: number[];
   username: string;
   home: string;
+  repoOwner?: string;
 };
 
 export type AuthResult =
@@ -175,25 +176,36 @@ export class AuthStore {
   // ---------------------------------------------------------------------------
 
   getPasswdEntries(): PasswdEntry[] {
-    return this.sql.exec<PasswdEntry>(
-      "SELECT username, uid, gid, gecos, home, shell FROM passwd ORDER BY uid",
-    ).toArray();
+    return this.sql.exec<PasswdRow>("SELECT * FROM passwd ORDER BY uid").toArray().map(passwdEntry);
   }
 
   getPasswdByUsername(username: string): PasswdEntry | null {
-    const rows = this.sql.exec<PasswdEntry>(
-      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE username = ?",
+    const rows = this.sql.exec<PasswdRow>(
+      "SELECT * FROM passwd WHERE username = ?",
       username,
     ).toArray();
-    return rows[0] ?? null;
+    return rows[0] ? passwdEntry(rows[0]) : null;
   }
 
   getPasswdByUid(uid: number): PasswdEntry | null {
-    const rows = this.sql.exec<PasswdEntry>(
-      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE uid = ?",
+    const rows = this.sql.exec<PasswdRow>(
+      "SELECT * FROM passwd WHERE uid = ?",
       uid,
     ).toArray();
-    return rows[0] ?? null;
+    return rows[0] ? passwdEntry(rows[0]) : null;
+  }
+
+  getPasswdByHome(home: string): PasswdEntry | null {
+    const row = this.sql.exec<PasswdRow>(
+      "SELECT * FROM passwd WHERE home = ?",
+      home,
+    ).toArray()[0];
+    return row ? passwdEntry(row) : null;
+  }
+
+  getPasswdByRepoOwner(owner: string): PasswdEntry | null {
+    const row = this.sql.exec<PasswdRow>("SELECT * FROM passwd WHERE repo_owner = ?", owner).toArray()[0];
+    return row ? passwdEntry(row) : null;
   }
 
   addUser(entry: PasswdEntry): void {
@@ -201,9 +213,10 @@ export class AuthStore {
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
     );
+    if (entry.repoOwner) this.sql.exec("UPDATE passwd SET repo_owner = ? WHERE uid = ?", entry.repoOwner, entry.uid);
   }
 
-  updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
+  updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username" | "repoOwner">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
 
@@ -390,6 +403,7 @@ export class AuthStore {
       identity: {
         uid: user.uid, gid: user.gid, gids,
         username: user.username, home: user.home,
+        repoOwner: user.repoOwner,
       },
     };
   }
@@ -467,6 +481,7 @@ export class AuthStore {
         gids,
         username: user.username,
         home: user.home,
+        repoOwner: user.repoOwner,
       },
       kind: tokenRow.kind,
       peerId: tokenRow.peer_id,
@@ -626,8 +641,9 @@ export class AuthStore {
 
   importPasswd(raw: string): void {
     const entries = parsePasswd(raw);
+    const owners = new Map(this.getPasswdEntries().map((entry) => [entry.uid, entry.repoOwner]));
     this.sql.exec("DELETE FROM passwd");
-    for (const e of entries) this.addUser(e);
+    for (const entry of entries) this.addUser({ ...entry, repoOwner: owners.get(entry.uid) });
   }
 
   importShadow(raw: string): void {
@@ -664,6 +680,13 @@ export class AuthStore {
       .replace(/=+$/g, "");
     return `gsv_${kind}_${base64}`;
   }
+}
+
+type PasswdRow = Omit<PasswdEntry, "repoOwner"> & { repo_owner?: string | null };
+
+function passwdEntry(row: PasswdRow): PasswdEntry {
+  const { repo_owner, ...entry } = row;
+  return repo_owner ? { ...entry, repoOwner: repo_owner } : entry;
 }
 
 function mapTokenRow(row: {

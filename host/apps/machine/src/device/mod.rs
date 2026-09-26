@@ -1865,6 +1865,7 @@ mod tests {
                         gid: 1000,
                         gids: vec![1000],
                         username: "u".to_string(),
+                        repo_owner: None,
                         home: "/home/u".to_string(),
                         cwd: "/home/u".to_string(),
                     },

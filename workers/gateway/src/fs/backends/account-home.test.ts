@@ -104,6 +104,9 @@ const auth = {
       .map((identity) => getPasswdByUid(identity.uid)!);
   },
   getPasswdByUid,
+  getPasswdByHome(home: string) {
+    return this.getPasswdEntries().find((entry) => entry.home === home) ?? null;
+  },
   getPasswdByUsername(username: string) {
     if (username === ALICE.username) return getPasswdByUid(ALICE.uid);
     if (username === PERSONAL_AGENT.username) return getPasswdByUid(PERSONAL_AGENT.uid);

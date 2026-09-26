@@ -219,6 +219,8 @@ function makeContext(options?: {
   };
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   const defaultAuth = {
+    isPersonalAgentUid: vi.fn(() => false),
+    getPasswdByRepoOwner: vi.fn(() => null),
     getPasswdByUid: vi.fn((uid: number) => uid === identity.uid
       ? {
         username: identity.username,

@@ -28,7 +28,13 @@ export type AiToolsResult = {
 /** Internal prompt-relevant snapshot used to keep a Process epoch current. */
 export type AiContextArgs = Record<string, never>;
 
+export type ProcessContextRole = "ship" | "worker";
+
 export type AiContextResult = {
+  /** Kernel-selected role; account identity does not imply the Ship role. */
+  processRole?: ProcessContextRole;
+  /** Current registered run-as identity, including account renames. */
+  identity?: ProcessIdentity;
   /** Omitted when discovery is incomplete; retain the last observed target projection. */
   targets?: AiToolsTarget[];
   mcpServers: string[];
@@ -171,6 +177,8 @@ export type AiTextExecutor =
     };
 
 export type AiConfigResult = {
+  processRole?: ProcessContextRole;
+  identity?: ProcessIdentity;
   /** Saved preference absent from the owner's stack; the returned config inherits its defaults. */
   missingModelId?: string;
   /** Owning human's identity when the process runs as a distinct agent account. */

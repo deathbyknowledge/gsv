@@ -8,12 +8,43 @@ import {
 } from "../prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
+  PERSONAL_INTELLIGENCE_MEMORY_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
+import { migratePersonalContext } from "./personal-context-migration";
+import type { AuthStore } from "./auth-store";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+
+// Reconciliation is durable in the home. This cache only avoids repeated reads
+// during the same Kernel lifetime; failures remain retryable.
+const reconciledPersonalHomes = new WeakMap<AuthStore, Map<number, Promise<void>>>();
+
+export async function ensurePersonalPromptContext(
+  auth: AuthStore,
+  env: Pick<Env, "STORAGE" | "RIPGIT">,
+  identity: ProcessIdentity,
+  beforeRetiringGeneratedBootContext: () => void,
+): Promise<void> {
+  let homes = reconciledPersonalHomes.get(auth);
+  if (!homes) {
+    homes = new Map();
+    reconciledPersonalHomes.set(auth, homes);
+  }
+  let pending = homes.get(identity.uid);
+  if (!pending) {
+    pending = ensureAccountHomeLayout(env, identity, { personalAgent: true, seedPromptContext: true, beforeRetiringGeneratedBootContext });
+    homes.set(identity.uid, pending);
+  }
+  try {
+    await pending;
+  } catch (error) {
+    homes.delete(identity.uid);
+    throw error;
+  }
+}
 
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
@@ -32,7 +63,10 @@ export async function ensureAccountHomeLayout(
   }
 
   const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity.username);
+  const repo = accountHomeRepoRef(identity);
+  if (options.personalAgent && options.seedPromptContext) {
+    await migratePersonalContext(client, repo, identity.username);
+  }
   const [
     contextDir,
     bootContext,
@@ -45,9 +79,9 @@ export async function ensureAccountHomeLayout(
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
-    client.readPath(repo, "context.d/00-role.md"),
+    client.readPath(repo, options.personalAgent ? "context.d/ship/00-role.md" : "context.d/00-role.md"),
     client.readPath(repo, "context.d/00-style.md"),
-    client.readPath(repo, "context.d/05-voice.md"),
+    client.readPath(repo, options.personalAgent ? "context.d/ship/05-voice.md" : "context.d/05-voice.md"),
     client.readPath(repo, "context.d/10-commitments.md"),
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "skills.d"),
@@ -74,13 +108,13 @@ export async function ensureAccountHomeLayout(
       }
       maybePutTextFile(
         ops,
-        "context.d/00-role.md",
+        "context.d/ship/00-role.md",
         roleContext,
         PERSONAL_INTELLIGENCE_CONTEXT,
       );
       maybePutTextFile(
         ops,
-        "context.d/05-voice.md",
+        "context.d/ship/05-voice.md",
         voiceContext,
         PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
       );
@@ -102,6 +136,9 @@ export async function ensureAccountHomeLayout(
         memoryContext,
         DEFAULT_MEMORY_CONTEXT_TEMPLATE,
       );
+      if (memoryContext.kind === "missing" || (memoryContext.kind === "file" && TEXT_DECODER.decode(memoryContext.bytes) === DEFAULT_MEMORY_CONTEXT_TEMPLATE)) {
+        ops.push({ type: "put", path: "context.d/15-memory.md", contentBytes: Array.from(TEXT_ENCODER.encode(PERSONAL_INTELLIGENCE_MEMORY_CONTEXT)) });
+      }
     } else {
       maybePutTextFile(
         ops,

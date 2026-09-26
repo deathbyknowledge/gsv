@@ -123,6 +123,7 @@ export class ProcessSettingsService {
       signal,
     );
     signal?.throwIfAborted();
+    this.refreshIdentity(resolved.identity);
     const current = this.host.store.state.getAiConfig();
     if (
       this.initialized &&
@@ -136,7 +137,20 @@ export class ProcessSettingsService {
   }
 
   async resolveAiContext(signal?: AbortSignal): Promise<AiContextResult> {
-    return await this.host.kernel.kernelRpc("ai.context", {}, signal);
+    const context = await this.host.kernel.kernelRpc("ai.context", {}, signal);
+    signal?.throwIfAborted();
+    this.refreshIdentity(context.identity);
+    return context;
+  }
+
+  private refreshIdentity(identity: ProcessIdentity | undefined): void {
+    if (!identity || !this.initialized) return;
+    const current = this.identity;
+    if (identity.uid !== current.uid) throw new Error("Kernel changed the Process run-as uid");
+    const refreshed = { ...identity, cwd: current.cwd };
+    if (JSON.stringify(refreshed) !== JSON.stringify(current)) {
+      this.host.store.state.setValue("identity", JSON.stringify(refreshed));
+    }
   }
 
   startTitleGeneration(message: string): Promise<void> | null {

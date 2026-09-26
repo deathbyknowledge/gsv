@@ -80,7 +80,9 @@ function renderContextSections(sections: PromptSection[]): string {
     const tag = contextRootTagName(root.key);
     lines.push(`<${tag} path="${escapeAttribute(normalizePromptPath(root.location))}">`);
     for (const section of rootSections) {
-      lines.push(`<${section.name}>`, section.text.trim(), `</${section.name}>`, "");
+      const name = section.name.includes("/") ? `context path="${escapeAttribute(section.name)}"` : section.name;
+      const end = section.name.includes("/") ? "context" : section.name;
+      lines.push(`<${name}>`, section.text.trim(), `</${end}>`, "");
     }
     while (lines[lines.length - 1] === "") {
       lines.pop();

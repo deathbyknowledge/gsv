@@ -257,6 +257,7 @@ export class KernelMountBackend implements MountBackend {
           gid: proc.gid,
           gids: proc.gids,
           username: proc.username,
+          repoOwner: proc.repoOwner,
           home: proc.home,
           cwd: proc.cwd,
         }, null, 2) + "\n";

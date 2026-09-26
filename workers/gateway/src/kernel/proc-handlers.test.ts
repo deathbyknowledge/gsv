@@ -146,7 +146,7 @@ describe("proc handlers", () => {
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
-      procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000 })), spawn: vi.fn() },
+      procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000, repoOwner: "original-name" })), spawn: vi.fn() },
       broadcastToUserUid: vi.fn(),
       runRoutes: { inheritProcessApprovalRoute: vi.fn() },
       config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
@@ -156,7 +156,7 @@ describe("proc handlers", () => {
     expect(result.ok).toBe(true);
     expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity", "proc.send"]);
     expect(sendFrameToProcessMock.mock.calls[0][2].args).toMatchObject({
-      identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
+      identity: { uid: 2000, repoOwner: "original-name" }, ai: { modelId, reasoning: "high" },
     });
     expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
     expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(IDENTITY.uid, "proc.changed", expect.objectContaining({ changes: ["created"] }));

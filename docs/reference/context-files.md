@@ -23,6 +23,13 @@ matching command, skill, target, or connected integration.
 Context files are loaded lexically within each layer, include only non-empty
 `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
+Each context root may also contain `ship/*.md` and `worker/*.md`. Root files
+are shared; only the matching role directory is loaded. Other nested directories
+are not prompt sources. The Kernel identifies Ship by its canonical process
+record, independently of the account name. All other processes use worker
+context; a bounded IPC call also uses worker context even when addressed to Ship.
+This selects instructions, not permissions or another account.
+
 ## Program and User Context
 
 An agent's own `~/context.d/*.md` is program context: its role, voice, and
@@ -34,8 +41,10 @@ to refer to the agent's own home.
 Conventional files include:
 
 ```text
-<agent home>/context.d/00-role.md
-<agent home>/context.d/05-voice.md
+<agent home>/context.d/15-memory.md
+<agent home>/context.d/ship/00-role.md
+<agent home>/context.d/ship/05-voice.md
+<agent home>/context.d/worker/20-work.md
 <human home>/context.d/10-personal.md
 ```
 
@@ -46,6 +55,25 @@ occasionally relevant personal information belongs in the human-owned
 in the Kernel `r12y` responsibility ledger rather than either context or memory
 layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
 context file.
+
+Ship's default policy acknowledges substantial work promptly, permits simple
+lookups and short sequences directly, and delegates when parallelism, separate
+context, or lengthy execution helps. Accepted unfinished outcomes go into `r12y`
+before delegation or yielding; acknowledgment need not wait for bookkeeping.
+Workers receive their assignment policy without Ship's public voice constraints.
+
+Upgrades move the personal account's former `00-role.md` and `05-voice.md`
+into `ship/`. Untouched generated files receive the new defaults. Customized
+files retain their contents; an occupied destination keeps both versions under
+distinct names in `ship/`. Effective changes close and archive the old context
+epoch when the process next refreshes its standing context.
+
+The default personal account is now `ship`. An existing personal account named
+`algo` is renamed when `ship` is available; custom account names and name
+collisions are preserved. The rename retains its UID, groups, settings, processes, and physical
+home and repository paths, so an upgraded account can still have `/home/algo`
+as its home. New accounts normally use `/home/ship`. Use the account's reported
+home or `~` rather than constructing a path from its username.
 
 ## Skills: `skills.d/`
 

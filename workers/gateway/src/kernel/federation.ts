@@ -2074,6 +2074,7 @@ async function openGrantedResource(
     gids: ctx.auth.resolveGids(account.username, account.gid),
     username: account.username,
     home: account.home,
+    repoOwner: account.repoOwner,
     cwd: account.home,
   };
   const peer = kernelPeerContext({

@@ -1,0 +1,57 @@
+import { RipgitConflictError } from "../fs/ripgit/client";
+import type { RipgitClient, RipgitRepoRef, RipgitApplyOp } from "../fs/ripgit/client";
+import { LEGACY_PERSONAL_INTELLIGENCE_CONTEXT, LEGACY_PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/legacy-personal-intelligence";
+import { PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT } from "../prompts/personal-intelligence";
+
+/** Move Ship policy out of shared context without overwriting an owner's edits. */
+export async function migratePersonalContext(client: RipgitClient, repo: RipgitRepoRef, username: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await migrateHomeRevision(client, repo, username);
+    } catch (error) {
+      if (!(error instanceof RipgitConflictError) || attempt >= 2) throw error;
+    }
+  }
+}
+
+async function migrateHomeRevision(client: RipgitClient, repo: RipgitRepoRef, username: string): Promise<void> {
+  const seeds = [
+    { name: "00-role.md", old: LEGACY_PERSONAL_INTELLIGENCE_CONTEXT, current: PERSONAL_INTELLIGENCE_CONTEXT },
+    { name: "05-voice.md", old: LEGACY_PERSONAL_INTELLIGENCE_VOICE_CONTEXT, current: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
+  ];
+  const legacy = await Promise.all(seeds.map(({ name }) => client.readPath(repo, `context.d/${name}`)));
+  if (!legacy.some((file) => file.kind === "file")) return;
+
+  const head = (await client.refs(repo)).heads[repo.branch ?? "main"];
+  if (!head) throw new Error("Cannot migrate personal context without a home revision");
+  const snapshot = { ...repo, branch: head };
+  const ops: RipgitApplyOp[] = [];
+  for (const seed of seeds) {
+    const from = `context.d/${seed.name}`;
+    const file = await client.readPath(snapshot, from);
+    if (file.kind !== "file") continue;
+    const original = new TextDecoder().decode(file.bytes);
+    const generated = original === seed.old;
+    const bytes = generated ? new TextEncoder().encode(seed.current) : file.bytes;
+    let to = `context.d/ship/${seed.name}`;
+    const destination = await client.readPath(snapshot, to);
+    if (destination.kind !== "missing" && !generated) {
+      if (destination.kind !== "file" || new TextDecoder().decode(destination.bytes) !== original) {
+        const hash = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+        const digest = Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        to = `context.d/ship/${seed.name.slice(0, -3)}.previous-${digest}.md`;
+        const previous = await client.readPath(snapshot, to);
+        if (previous.kind !== "missing" && (previous.kind !== "file" || new TextDecoder().decode(previous.bytes) !== original)) {
+          throw new Error("Personal context migration destination is occupied");
+        }
+        if (previous.kind === "missing") ops.push({ type: "put", path: to, contentBytes: Array.from(bytes) });
+      }
+    } else if (destination.kind === "missing") {
+      ops.push({ type: "put", path: to, contentBytes: Array.from(bytes) });
+    }
+    ops.push({ type: "delete", path: from });
+  }
+  if (ops.length > 0) {
+    await client.apply(repo, username, `${username}@gsv.local`, "gsv: scope Ship context", ops, { expectedHead: head });
+  }
+}

@@ -16,6 +16,8 @@ export type PasswdEntry = {
   gecos: string;
   home: string;
   shell: string;
+  /** Kernel-owned metadata, omitted from the Unix passwd representation. */
+  repoOwner?: string;
 };
 
 export function parsePasswd(raw: string): PasswdEntry[] {

@@ -1073,6 +1073,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         gids: this.auth.resolveGids(account.username, account.gid),
         username: account.username,
         home: account.home,
+        repoOwner: account.repoOwner,
         cwd: account.home,
       };
       const calls = ["proc.hil"].filter((call) =>

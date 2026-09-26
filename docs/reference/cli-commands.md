@@ -24,6 +24,11 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
+The default personal agent account is `ship`. Use `proc agents --json` inside
+the GSV shell to discover actual run-as names before choosing `--as ACCOUNT`.
+Existing custom names are preserved, and renamed accounts retain their original
+home; use `~` for files rather than deriving a home path from the username.
+
 ```bash
 gsv chat [MESSAGE] [--pid PID]
 gsv shell

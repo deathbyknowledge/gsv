@@ -29,7 +29,7 @@ import type { KernelContext, PrincipalView } from "./context";
 import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
-import { accountHomeRepoRef } from "../fs/ripgit/repos";
+import { accountHomeRepoRef, accountRepoOwner } from "../fs/ripgit/repos";
 import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
 import * as z from "zod/mini";
@@ -79,7 +79,7 @@ export function handleRepoList(
     });
   };
 
-  add(toSummary(accountHomeRepoRef(identity.account.username), "home", ctx));
+  add(toSummary(accountHomeRepoRef(identity.account), "home", ctx));
 
   for (const row of ctx.config.list("repos")) {
     const parsed = parseRegisteredRepoKey(row.key);
@@ -440,14 +440,14 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (identity.account.uid === 0 || identity.calls.includes("*")) {
     return true;
   }
-  if (repo.owner === identity.account.username) {
+  if (repo.owner === identity.account.username || repo.owner === accountRepoOwner(identity.account)) {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
   const owner = ctx.auth.getPasswdByUid(ownerUid);
   if (
     owner &&
-    owner.username === repo.owner &&
+    (owner.username === repo.owner || accountRepoOwner(owner) === repo.owner) &&
     ownerUid !== identity.account.uid &&
     canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.account)
   ) {
@@ -456,7 +456,7 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (ownerUid !== identity.account.uid) {
     return false;
   }
-  const target = ctx.auth.getPasswdByUsername(repo.owner);
+  const target = ctx.auth.getPasswdByUsername(repo.owner) ?? ctx.auth.getPasswdByRepoOwner(repo.owner);
   return !!target && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
 }
 

@@ -349,9 +349,64 @@ describe("createSkillIndexProvider", () => {
 });
 
 describe("createHomeContextProvider", () => {
+  it.each(["ship", "worker"] as const)("selects %s context across system, account and owner without changing identity", async (role) => {
+    const other = role === "ship" ? "worker" : "ship";
+    const files = new Map([
+      ["root:context.d/shared.md", "Shared account instructions"],
+      ["root:context.d/ship/00-role.md", "Only Ship instructions"],
+      ["root:context.d/worker/00-role.md", "Only worker instructions"],
+      ["hank:context.d/preferences.md", "Shared owner preferences"],
+      ["hank:context.d/ship/voice.md", "Only Ship voice"],
+      ["hank:context.d/worker/work.md", "Only worker detail"],
+    ]);
+    const input = makeInput({
+      role,
+      ownerIdentity: OWNER_IDENTITY,
+      config: { ...CONFIG, maxContextBytes: 8192, systemContextFiles: [
+        { name: "facts.md", text: "Shared system facts" },
+        { name: "ship/role.md", text: "System Ship policy" },
+        { name: "worker/role.md", text: "System worker policy" },
+        { name: "unknown/nested.md", text: "Not selected" },
+      ] },
+      ripgit: {
+        async readPath(repo, path) {
+          const content = files.get(`${repo.owner}:${path}`);
+          if (content) return { kind: "file", bytes: new TextEncoder().encode(content), size: content.length };
+          const names = [...files.keys()].filter((key) => key.startsWith(`${repo.owner}:${path}/`))
+            .map((key) => key.slice(`${repo.owner}:${path}/`.length)).filter((name) => !name.includes("/"));
+          return { kind: "tree", entries: names.map((name) => ({ name, mode: "100644", hash: name, type: "blob" })) };
+        },
+      },
+    });
+    const snapshot = await assembleSystemPromptSnapshot(input);
+    expect(snapshot.prompt).toContain("Shared account instructions");
+    expect(snapshot.prompt).toContain("Shared owner preferences");
+    expect(snapshot.prompt).toContain("Shared system facts");
+    expect(snapshot.prompt).toContain(role === "ship" ? "Only Ship voice" : "Only worker detail");
+    expect(snapshot.prompt).not.toContain(other === "ship" ? "Only Ship" : "Only worker");
+    expect(snapshot.prompt).not.toContain(other === "ship" ? "System Ship" : "System worker");
+    expect(snapshot.prompt).not.toContain("Not selected");
+    expect(snapshot.sources.some((source) => source.name === `${role}/00-role.md`)).toBe(true);
+    expect(input.identity).toEqual(IDENTITY);
+
+    const fromR2 = await assembleSystemPromptSnapshot({ ...input, ripgit: null, storage: {
+      async list({ prefix }) {
+        const home = prefix.startsWith("root/") ? "root" : "hank";
+        return { objects: [...files.keys()].filter((key) => key.startsWith(`${home}:`))
+          .map((key) => ({ key: `${prefix}${key.slice(`${home}:context.d/`.length)}` })) };
+      },
+      async get(key) {
+        const home = key.startsWith("root/") ? "root" : "hank";
+        const content = files.get(`${home}:context.d/${key.split("/context.d/")[1]}`);
+        return content ? { text: async () => content } : null;
+      },
+    } });
+    expect(fromR2).toEqual(snapshot);
+  });
+
   it("loads sorted context files within budget", async () => {
     const provider = createHomeContextProvider();
-    const homeRepo = accountHomeRepoRef(IDENTITY.username);
+    const homeRepo = accountHomeRepoRef(IDENTITY);
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },

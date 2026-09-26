@@ -48,7 +48,9 @@ describe("retiring passkey storage", () => {
       }
       sql.exec("INSERT INTO group_capabilities (gid, capability) VALUES (200, 'account.passkey.*')");
       const tables = ["passwd", "shadow", "auth_tokens", "account_access", "account_owner_links", "account_recovery_claims"];
-      const snapshot = () => tables.map((table) => sql.exec(`SELECT * FROM ${table}`).toArray());
+      const snapshot = () => tables.map((table) => table === "passwd"
+        ? auth.getPasswdEntries()
+        : sql.exec(`SELECT * FROM ${table}`).toArray());
       const before = snapshot();
       const applied = listAppliedSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT);
 

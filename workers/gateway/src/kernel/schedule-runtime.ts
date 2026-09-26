@@ -596,6 +596,7 @@ resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
       gids: this.host.auth.resolveGids(account.username, account.gid),
       username: account.username,
       home: account.home,
+      repoOwner: account.repoOwner,
       cwd: account.home,
     };
   }

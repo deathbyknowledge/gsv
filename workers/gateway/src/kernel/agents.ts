@@ -46,7 +46,7 @@ import { ensurePersonalMemory } from "./personal-memory";
  * one at setup.
  */
 const AGENT_NAME_POOL = [
-  "algo",
+  "ship",
   "friday",
   "sol",
   "echo",

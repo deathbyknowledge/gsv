@@ -215,6 +215,7 @@ function withDefaultProcessContext(identity: {
   gids: number[];
   username: string;
   home: string;
+  repoOwner?: string;
 }): ProcessIdentity {
   return {
     ...identity,
