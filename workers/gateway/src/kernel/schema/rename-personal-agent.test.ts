@@ -109,6 +109,35 @@ describe("personal agent rename", () => {
     });
   });
 
+  it.each([
+    { username: "algo", home: "/home/other", shipHome: "/home/algo" },
+    { username: "other", home: "/home/algo", shipHome: "/home/algo" },
+    { username: "other", home: "/home/ship", shipHome: "/home/ship" },
+  ])("rejects passwd imports that reuse Ship's repository or home: $username at $home", async ({ username, home, shipHome }) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      const auth = seed(sql, storage);
+      runKernelSqlMigrations(storage);
+      const before = auth.getPasswdEntries();
+      const imported = auth.serializePasswd().replace(":/home/algo:", `:${shipHome}:`)
+        + `${username}:x:1002:1002:Other:${home}:/bin/init\n`;
+      expect(() => auth.importPasswd(imported)).toThrow("Home or repository namespace already belongs to account: ship");
+      expect(auth.getPasswdEntries()).toEqual(before);
+      expect(auth.getPasswdByUsername(username)).toBeNull();
+    });
+  });
+
+  it("allows distinct accounts in passwd imports without losing Ship's repository ownership", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      const auth = seed(sql, storage);
+      runKernelSqlMigrations(storage);
+      auth.importPasswd(auth.serializePasswd() + "other:x:1002:1002:Other:/home/other:/bin/init\n");
+      expect(accountHomeRepoRef(auth.getPasswdByUid(1001)!)).toEqual({ owner: "algo", repo: "home" });
+      expect(accountHomeRepoRef(auth.getPasswdByUid(1002)!)).toEqual({ owner: "other", repo: "home" });
+    });
+  });
+
   it("keeps scheduled run-as identities and crontab management attached to the renamed account", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();

@@ -640,10 +640,18 @@ export class AuthStore {
   // ---------------------------------------------------------------------------
 
   importPasswd(raw: string): void {
-    const entries = parsePasswd(raw);
     const owners = new Map(this.getPasswdEntries().map((entry) => [entry.uid, entry.repoOwner]));
+    const entries = parsePasswd(raw).map((entry) => ({ ...entry, repoOwner: owners.get(entry.uid) }));
+    const preserved = entries.filter((entry) => entry.repoOwner !== undefined);
+    for (const entry of entries) {
+      const collision = preserved.find((owner) => owner.uid !== entry.uid && (
+        entry.username === owner.repoOwner || (entry.repoOwner ?? entry.username) === owner.repoOwner
+        || entry.home === owner.home
+      ));
+      if (collision) throw new Error(`Home or repository namespace already belongs to account: ${collision.username}`);
+    }
     this.sql.exec("DELETE FROM passwd");
-    for (const entry of entries) this.addUser({ ...entry, repoOwner: owners.get(entry.uid) });
+    for (const entry of entries) this.addUser(entry);
   }
 
   importShadow(raw: string): void {
