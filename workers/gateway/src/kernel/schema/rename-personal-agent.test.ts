@@ -84,14 +84,14 @@ describe("personal agent rename", () => {
     });
   });
 
-  it("retains a customized home and reserves the original repository namespace through passwd rewrites", async () => {
+  it.each(["/home/custom", "/home/ship"])("retains customized home %s and reserves the original repository namespace through passwd rewrites", async (home) => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       const auth = seed(sql, storage);
-      auth.updateUser("algo", { home: "/home/custom", gecos: "My assistant" });
+      auth.updateUser("algo", { home, gecos: "My assistant" });
       runKernelSqlMigrations(storage);
       const ship = auth.getPasswdByUid(1001)!;
-      expect(ship).toMatchObject({ username: "ship", repoOwner: "algo", home: "/home/custom", gecos: "My assistant" });
+      expect(ship).toMatchObject({ username: "ship", repoOwner: "algo", home, gecos: "My assistant" });
       expect(accountHomeRepoRef(ship)).toEqual({ owner: "algo", repo: "home" });
       auth.importPasswd(auth.serializePasswd());
       expect(auth.getPasswdByUid(1001)).toEqual(ship);

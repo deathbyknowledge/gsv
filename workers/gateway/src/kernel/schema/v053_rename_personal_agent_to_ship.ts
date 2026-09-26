@@ -10,14 +10,14 @@ export const KERNEL_V053_RENAME_PERSONAL_AGENT_TO_SHIP: SqlMigration = {
     // A pre-existing ship account or namespace belongs to its current owner.
     `CREATE TABLE personal_agent_rename_v053 (uid INTEGER PRIMARY KEY, gid INTEGER NOT NULL)`,
     `INSERT INTO personal_agent_rename_v053 (uid, gid)
-      SELECT uid, gid FROM passwd
-      WHERE username = 'algo' AND uid IN (SELECT agent_uid FROM personal_agents)
-        AND NOT EXISTS (SELECT 1 FROM passwd WHERE username = 'ship' OR home = '/home/ship')
+      SELECT candidate.uid, candidate.gid FROM passwd AS candidate
+      WHERE candidate.username = 'algo' AND candidate.uid IN (SELECT agent_uid FROM personal_agents)
+        AND NOT EXISTS (SELECT 1 FROM passwd WHERE uid <> candidate.uid AND (username = 'ship' OR home = '/home/ship'))
         AND NOT EXISTS (SELECT 1 FROM shadow WHERE username = 'ship')
         AND NOT EXISTS (SELECT 1 FROM groups WHERE name = 'ship')
         AND NOT EXISTS (SELECT 1 FROM cron_files WHERE path = '/var/spool/cron/ship')
         AND NOT EXISTS (SELECT 1 FROM cron_file_schedules WHERE path = '/var/spool/cron/ship')
-        AND EXISTS (SELECT 1 FROM groups WHERE name = 'algo' AND groups.gid = passwd.gid)`,
+        AND EXISTS (SELECT 1 FROM groups WHERE name = 'algo' AND groups.gid = candidate.gid)`,
     `UPDATE shadow SET username = 'ship'
       WHERE username = 'algo' AND EXISTS (SELECT 1 FROM personal_agent_rename_v053)`,
     `UPDATE groups SET name = 'ship'
