@@ -79,7 +79,10 @@ home and repository paths, so an upgraded account can still have `/home/algo`
 as its home. New accounts normally use `/home/ship`. Use the account's reported
 home or `~` rather than constructing a path from its username.
 Rewriting `/etc/passwd` preserves retained repository ownership by UID and
-rejects another account reusing that repository namespace or home path.
+rejects another account reusing that repository namespace. A rename grants no
+access to repositories under the new login name. Account creation, home updates,
+and passwd imports require distinct home paths; ambiguous legacy home paths
+must be corrected before delegated filesystem access can resolve them.
 
 ## Skills: `skills.d/`
 

@@ -18,6 +18,7 @@ import type { ShadowEntry } from "../auth/shadow";
 import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
+import { normalizePath } from "../fs/utils";
 
 export type AuthIdentity = {
   uid: number;
@@ -196,11 +197,10 @@ export class AuthStore {
   }
 
   getPasswdByHome(home: string): PasswdEntry | null {
-    const row = this.sql.exec<PasswdRow>(
-      "SELECT * FROM passwd WHERE home = ?",
-      home,
-    ).toArray()[0];
-    return row ? passwdEntry(row) : null;
+    const normalized = normalizePath(home);
+    const entries = this.getPasswdEntries().filter((entry) => normalizePath(entry.home) === normalized);
+    if (entries.length > 1) throw new Error(`Ambiguous account home: ${normalized}`);
+    return entries[0] ?? null;
   }
 
   getPasswdByRepoOwner(owner: string): PasswdEntry | null {
@@ -209,6 +209,7 @@ export class AuthStore {
   }
 
   addUser(entry: PasswdEntry): void {
+    assertDistinctAccountHomes([...this.getPasswdEntries(), entry]);
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
@@ -219,6 +220,12 @@ export class AuthStore {
   updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username" | "repoOwner">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
+    const home = fields.home;
+    if (home !== undefined) {
+      assertDistinctAccountHomes(this.getPasswdEntries().map((entry) =>
+        entry.username === username ? { ...entry, home } : entry,
+      ));
+    }
 
     this.sql.exec(
       "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
@@ -642,11 +649,11 @@ export class AuthStore {
   importPasswd(raw: string): void {
     const owners = new Map(this.getPasswdEntries().map((entry) => [entry.uid, entry.repoOwner]));
     const entries = parsePasswd(raw).map((entry) => ({ ...entry, repoOwner: owners.get(entry.uid) }));
+    assertDistinctAccountHomes(entries);
     const preserved = entries.filter((entry) => entry.repoOwner !== undefined);
     for (const entry of entries) {
       const collision = preserved.find((owner) => owner.uid !== entry.uid && (
         entry.username === owner.repoOwner || (entry.repoOwner ?? entry.username) === owner.repoOwner
-        || entry.home === owner.home
       ));
       if (collision) throw new Error(`Home or repository namespace already belongs to account: ${collision.username}`);
     }
@@ -687,6 +694,16 @@ export class AuthStore {
       .replace(/\//g, "_")
       .replace(/=+$/g, "");
     return `gsv_${kind}_${base64}`;
+  }
+}
+
+function assertDistinctAccountHomes(entries: PasswdEntry[]): void {
+  const homes = new Map<string, string>();
+  for (const entry of entries) {
+    const home = normalizePath(entry.home);
+    const owner = homes.get(home);
+    if (owner !== undefined) throw new Error(`Home or repository namespace already belongs to account: ${owner}`);
+    homes.set(home, entry.username);
   }
 }
 
