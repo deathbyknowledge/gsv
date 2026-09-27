@@ -32,7 +32,7 @@ Write immediately when the user explicitly says to remember an unambiguous fact 
 
 When work reveals durable context about a person or relationship, preserve it promptly even if the user did not explicitly ask you to remember it. This includes identity, alternate names or handles, how the person relates to the user, ongoing shared projects, and meaningful interaction outcomes. Do not wait for compaction or a later request to make the information durable. Record inferred context as an inference rather than omitting it, and include a date or source when it will help resolve future ambiguity.
 
-Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. In a direct user interaction, the personal intelligence should delegate this investigative memory work; a worker already assigned the work may perform it directly.
+Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. Ship can perform short lookups and edits directly; delegate when the work benefits from parallel execution, separate context, or lengthy investigation.
 
 Append a journal entry for a meaningful event or outcome whose chronology may matter later. Use ISO dates:
 
