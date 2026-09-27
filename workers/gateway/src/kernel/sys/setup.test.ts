@@ -340,6 +340,7 @@ describe("handleSysSetup", () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
+        if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "home123" }, tags: {} });
         if (url.pathname.endsWith("/apply")) {
           return new Response(JSON.stringify({ ok: true, head: "home123" }), {
             headers: { "Content-Type": "application/json" },

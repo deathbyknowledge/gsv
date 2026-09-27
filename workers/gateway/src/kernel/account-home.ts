@@ -1,4 +1,4 @@
-import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
+import { RipgitClient, RipgitConflictError, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
@@ -15,6 +15,32 @@ import {
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
+/** Seed missing defaults against a fixed revision; a concurrent owner edit wins. */
+export async function seedAccountHome(
+  env: Pick<Env, "RIPGIT">,
+  identity: ProcessIdentity,
+  message: string,
+  collect: (client: RipgitClient, snapshot: RipgitRepoRef) => Promise<RipgitApplyOp[]>,
+): Promise<void> {
+  if (!env.RIPGIT) return;
+  const client = new RipgitClient(env.RIPGIT);
+  const repo = accountHomeRepoRef(identity.username);
+  for (let attempt = 0; ; attempt++) {
+    const head = (await client.refs(repo)).heads.main
+      ?? (await client.apply(repo, identity.username, `${identity.username}@gsv.local`,
+        "gsv: initialize home", [], { allowEmpty: true })).head;
+    if (!head) throw new Error("Home initialization did not produce a revision");
+    const ops = await collect(client, { ...repo, branch: head });
+    if (ops.length === 0) return;
+    try {
+      await client.apply(repo, identity.username, `${identity.username}@gsv.local`, message, ops, { expectedHead: head });
+      return;
+    } catch (error) {
+      if (!(error instanceof RipgitConflictError) || attempt >= 2) throw error;
+    }
+  }
+}
+
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
@@ -26,13 +52,15 @@ export async function ensureAccountHomeLayout(
   } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
+  await seedAccountHome(env, identity, "gsv: scaffold home layout", (client, snapshot) =>
+    homeLayoutOps(client, snapshot, options));
+}
 
-  if (!env.RIPGIT) {
-    return;
-  }
-
-  const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity.username);
+async function homeLayoutOps(
+  client: RipgitClient,
+  repo: RipgitRepoRef,
+  options: NonNullable<Parameters<typeof ensureAccountHomeLayout>[2]>,
+): Promise<RipgitApplyOp[]> {
   const [
     contextDir,
     bootContext,
@@ -149,17 +177,7 @@ export async function ensureAccountHomeLayout(
       contentBytes: [],
     });
   }
-  if (ops.length === 0) {
-    return;
-  }
-
-  await client.apply(
-    repo,
-    identity.username,
-    `${identity.username}@gsv.local`,
-    "gsv: scaffold home layout",
-    ops,
-  );
+  return ops;
 }
 
 function maybePutTextFile(

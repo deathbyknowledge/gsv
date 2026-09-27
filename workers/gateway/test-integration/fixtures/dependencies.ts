@@ -550,6 +550,10 @@ export default class TestDependencies
       return new Response("Not Found", { status: 404 });
     }
 
+    if (url.pathname.endsWith("/refs") && request.method === "GET") {
+      return Response.json({ heads: { main: "integration-head" }, tags: {} });
+    }
+
     if (url.pathname.endsWith("/apply") && request.method === "POST") {
       const input = await request.json<ApplyRequest>();
       if (!Array.isArray(input.ops)) {

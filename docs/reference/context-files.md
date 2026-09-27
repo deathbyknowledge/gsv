@@ -65,6 +65,8 @@ These are editable account defaults. Existing account names and context files
 are preserved; revised prompt text seeds missing files, without rewriting an
 existing account's instructions. To adopt the new defaults in an existing
 space, edit that account's context files deliberately.
+Seeding checks the repository revision before committing, preserving owner
+edits made while defaults are being prepared.
 
 ## Skills: `skills.d/`
 

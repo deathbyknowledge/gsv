@@ -112,6 +112,7 @@ function createCtx() {
   const ripgit = {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
+      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "test-head" }, tags: {} });
       if (url.pathname.endsWith("/apply")) {
         const parts = url.pathname.split("/").filter(Boolean);
         const body = JSON.parse(String(init?.body ?? "{}"));
