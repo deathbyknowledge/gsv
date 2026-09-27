@@ -19,7 +19,6 @@ import {
   GSV_RUNTIME_CONTEXT,
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
-  GSV_WORKER_CONTEXT,
 } from "../prompts/system";
 import { normalizeTimezone } from "./timezone";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS, DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
@@ -67,7 +66,6 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   "config/ai/context.d/10-responsibilities.md": GSV_RESPONSIBILITY_CONTEXT,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
-  "config/ai/context.d/worker/00-role.md": GSV_WORKER_CONTEXT,
   // Prompt-visible skill enumeration. Detailed skill discovery remains available
   // through `man --search` and `skills` even when this is `off`.
   "config/ai/skills/index_mode": "summary",

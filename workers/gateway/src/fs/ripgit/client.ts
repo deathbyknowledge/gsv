@@ -171,8 +171,6 @@ type RipgitSearchResponse = {
 
 const DEFAULT_BRANCH = "main";
 
-export class RipgitConflictError extends Error {}
-
 export class RipgitClient {
   constructor(private readonly binding: Fetcher) {}
 
@@ -239,7 +237,6 @@ export class RipgitClient {
 
     const payload = await response.json<RipgitApplyResponse>();
     if (!payload.ok) {
-      if (payload.conflict) throw new RipgitConflictError(payload.error ?? "Repository revision changed");
       throw new Error(payload.error ?? `Failed to apply changes for ${repo.owner}/${repo.repo}`);
     }
     return {

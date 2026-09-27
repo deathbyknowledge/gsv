@@ -59,7 +59,6 @@ type ProcessIdentity = {
   gid: number;
   gids: number[];
   username: string;
-  repoOwner?: string; // Kernel-owned repository namespace retained after renaming
   home: string;
   cwd: string;
   workspaceId: string | null;
@@ -1371,7 +1370,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
@@ -1628,7 +1627,8 @@ type SystemSyscalls = {
 `sys.oauth.device.start` and `sys.oauth.device.poll` run the device
 authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
-the accounts a human owns: a `human` account gets a personal agent, and an
+the accounts a human owns: a `human` account gets a personal agent and a separate
+Crew execution account, and an
 `agent` account is a non-login identity the owner can run processes as.
 
 `account.owner.link` requires a signed-in root human and attests the Kernel's
@@ -1754,11 +1754,7 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-the skill index, the current registered identity, and the Kernel-selected
-`processRole` (`ship` or `worker`). `ai.config` includes that identity and role
-at bootstrap too. These are derived from the calling process, not caller-selected
-arguments. Process selects the worker role for a bounded IPC call and records
-the effective role in its context epoch manifest. An omitted `targets` or `skillIndex` means that catalog
+and the skill index. An omitted `targets` or `skillIndex` means that catalog
 could not be refreshed; Process retains its last observed projection. An empty
 array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and

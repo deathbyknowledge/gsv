@@ -20,18 +20,8 @@ discovery. Start unfamiliar tasks with
 `man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
 matching command, skill, target, or connected integration.
 
-Context includes only non-empty `.md` files. System files are loaded lexically.
-Each account layer loads the selected role directory first, then shared root
-files, with lexical ordering within each group. Both groups share the account's
-`config/ai/max_context_bytes` budget, so a large shared file cannot crowd out
-the role and voice instructions that precede it.
-
-Each context root may also contain `ship/*.md` and `worker/*.md`. Root files
-are shared; only the matching role directory is loaded. Other nested directories
-are not prompt sources. The Kernel identifies Ship by its canonical process
-record, independently of the account name. All other processes use worker
-context; a bounded IPC call also uses worker context even when addressed to Ship.
-This selects instructions, not permissions or another account.
+Context files are loaded lexically within each layer, include only non-empty
+`.md` files, and are bounded by `config/ai/max_context_bytes`.
 
 ## Program and User Context
 
@@ -44,10 +34,9 @@ to refer to the agent's own home.
 Conventional files include:
 
 ```text
-<agent home>/context.d/15-memory.md
-<agent home>/context.d/ship/00-role.md
-<agent home>/context.d/ship/05-voice.md
-<agent home>/context.d/worker/20-work.md
+<agent home>/context.d/00-role.md
+<agent home>/context.d/05-voice.md
+<personal agent home>/context.d/10-delegation.md
 <human home>/context.d/10-personal.md
 ```
 
@@ -59,30 +48,23 @@ in the Kernel `r12y` responsibility ledger rather than either context or memory
 layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
 context file.
 
-Ship's default policy acknowledges substantial work promptly, permits simple
-lookups and short sequences directly, and delegates when parallelism, separate
-context, or lengthy execution helps. Accepted unfinished outcomes go into `r12y`
-before delegation or yielding; acknowledgment need not wait for bookkeeping.
-Workers receive their assignment policy without Ship's public voice constraints.
+The default personal account for new installations is `ship`. Personal-agent
+provisioning also creates an ordinary owned `crew` account for delegated work
+(`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
+execution and memory guidance; Ship's conversation instructions and voice stay
+in Ship's home. Both receive the human owner's context and access to personal
+memory through the existing account permissions.
 
-The one-time upgrade moves the personal account's former `00-role.md` and `05-voice.md`
-into `ship/`. Untouched generated files receive the new defaults. Customized
-files retain their contents; an occupied destination keeps both versions under
-distinct names in `ship/`. Effective changes close and archive the old context
-epoch when the process next refreshes its standing context.
+Ship acknowledges substantial work before investigation or bookkeeping, handles
+short tasks directly, and delegates when parallel work, separate context, or a
+lengthy task benefits from another process. Its `10-delegation.md` names the
+Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
+outcomes belong in `r12y` before delegation or yielding.
 
-The default personal account is now `ship`. An existing personal account named
-`algo` is renamed when `ship` is available; custom account names and name
-collisions are preserved. Existing schedules and the account's crontab stay
-attached to the same account. The rename retains its UID, groups, settings, processes, and physical
-home and repository paths, so an upgraded account can still have `/home/algo`
-as its home. New accounts normally use `/home/ship`. Use the account's reported
-home or `~` rather than constructing a path from its username.
-Rewriting `/etc/passwd` preserves retained repository ownership by UID and
-rejects another account reusing that repository namespace. A rename grants no
-access to repositories under the new login name. Account creation, home updates,
-and passwd imports require distinct home paths; ambiguous legacy home paths
-must be corrected before delegated filesystem access can resolve them.
+These are editable account defaults. Existing account names and context files
+are preserved; revised prompt text seeds missing files, without rewriting an
+existing account's instructions. To adopt the new defaults in an existing
+space, edit that account's context files deliberately.
 
 ## Skills: `skills.d/`
 

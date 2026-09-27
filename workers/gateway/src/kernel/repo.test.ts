@@ -83,7 +83,6 @@ function makeContext(
         if (uid === 2000) return { uid: 2000, gid: 2000, username: "scout", home: "/home/scout" };
         return null;
       },
-      getPasswdByRepoOwner: () => null,
       getPasswdByUsername: (username: string) => {
         if (username === "alice") return { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" };
         if (username === "scout") return { uid: 2000, gid: 2000, username: "scout", home: "/home/scout" };

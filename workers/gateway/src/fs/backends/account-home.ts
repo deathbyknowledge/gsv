@@ -316,7 +316,7 @@ class AccountHomeMountBackend implements MountBackend {
   ) {}
 
   private get repo() {
-    return accountHomeRepoRef(this.identity);
+    return accountHomeRepoRef(this.identity.username);
   }
 
   private get home() {
@@ -1031,11 +1031,10 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
       return this.primary;
     }
 
-    const homeName = homeUsernameFromPath(normalized);
-    if (!homeName) return null;
-    const entry = this.auth.getPasswdByHome(`/home/${homeName}`);
-    if (!entry) return null;
-    const username = entry.username;
+    const username = homeUsernameFromPath(normalized);
+    if (!username || username === this.viewerIdentity.username) {
+      return null;
+    }
 
     if (!canOwnerAccessAccountHome(
       this.auth,
@@ -1046,6 +1045,9 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     )) {
       return null;
     }
+
+    const entry = this.auth.getPasswdByUsername(username);
+    if (!entry) return null;
 
     let delegate = this.delegates.get(username);
     if (!delegate) {
@@ -1077,8 +1079,7 @@ function visibleHomeNamespaceNames(
   if (viewerHome) names.add(viewerHome);
 
   for (const entry of auth.getPasswdEntries()) {
-    const homeName = homeNamespaceName(entry);
-    if (!homeName) continue;
+    if (normalizePath(entry.home) !== `/home/${entry.username}`) continue;
     if (canOwnerAccessAccountHome(
       auth,
       ownerUid,
@@ -1086,14 +1087,16 @@ function visibleHomeNamespaceNames(
       entry.username,
       isRoot,
     )) {
-      names.add(homeName);
+      names.add(entry.username);
     }
   }
   return [...names].sort();
 }
 
-function homeNamespaceName(identity: { home: string }): string | null {
-  return /^\/home\/([^/]+)$/.exec(normalizePath(identity.home))?.[1] ?? null;
+function homeNamespaceName(identity: ProcessIdentity): string | null {
+  return normalizePath(identity.home) === `/home/${identity.username}`
+    ? identity.username
+    : null;
 }
 
 function homeNamespaceStat(): ExtendedMountStat {

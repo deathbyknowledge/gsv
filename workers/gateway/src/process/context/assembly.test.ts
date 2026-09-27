@@ -349,64 +349,9 @@ describe("createSkillIndexProvider", () => {
 });
 
 describe("createHomeContextProvider", () => {
-  it.each(["ship", "worker"] as const)("selects %s context across system, account and owner without changing identity", async (role) => {
-    const other = role === "ship" ? "worker" : "ship";
-    const files = new Map([
-      ["root:context.d/shared.md", "Shared account instructions"],
-      ["root:context.d/ship/00-role.md", "Only Ship instructions"],
-      ["root:context.d/worker/00-role.md", "Only worker instructions"],
-      ["hank:context.d/preferences.md", "Shared owner preferences"],
-      ["hank:context.d/ship/voice.md", "Only Ship voice"],
-      ["hank:context.d/worker/work.md", "Only worker detail"],
-    ]);
-    const input = makeInput({
-      role,
-      ownerIdentity: OWNER_IDENTITY,
-      config: { ...CONFIG, maxContextBytes: 8192, systemContextFiles: [
-        { name: "facts.md", text: "Shared system facts" },
-        { name: "ship/role.md", text: "System Ship policy" },
-        { name: "worker/role.md", text: "System worker policy" },
-        { name: "unknown/nested.md", text: "Not selected" },
-      ] },
-      ripgit: {
-        async readPath(repo, path) {
-          const content = files.get(`${repo.owner}:${path}`);
-          if (content) return { kind: "file", bytes: new TextEncoder().encode(content), size: content.length };
-          const names = [...files.keys()].filter((key) => key.startsWith(`${repo.owner}:${path}/`))
-            .map((key) => key.slice(`${repo.owner}:${path}/`.length)).filter((name) => !name.includes("/"));
-          return { kind: "tree", entries: names.map((name) => ({ name, mode: "100644", hash: name, type: "blob" })) };
-        },
-      },
-    });
-    const snapshot = await assembleSystemPromptSnapshot(input);
-    expect(snapshot.prompt).toContain("Shared account instructions");
-    expect(snapshot.prompt).toContain("Shared owner preferences");
-    expect(snapshot.prompt).toContain("Shared system facts");
-    expect(snapshot.prompt).toContain(role === "ship" ? "Only Ship voice" : "Only worker detail");
-    expect(snapshot.prompt).not.toContain(other === "ship" ? "Only Ship" : "Only worker");
-    expect(snapshot.prompt).not.toContain(other === "ship" ? "System Ship" : "System worker");
-    expect(snapshot.prompt).not.toContain("Not selected");
-    expect(snapshot.sources.some((source) => source.name === `${role}/00-role.md`)).toBe(true);
-    expect(input.identity).toEqual(IDENTITY);
-
-    const fromR2 = await assembleSystemPromptSnapshot({ ...input, ripgit: null, storage: {
-      async list({ prefix }) {
-        const home = prefix.startsWith("root/") ? "root" : "hank";
-        return { objects: [...files.keys()].filter((key) => key.startsWith(`${home}:`))
-          .map((key) => ({ key: `${prefix}${key.slice(`${home}:context.d/`.length)}` })) };
-      },
-      async get(key) {
-        const home = key.startsWith("root/") ? "root" : "hank";
-        const content = files.get(`${home}:context.d/${key.split("/context.d/")[1]}`);
-        return content ? { text: async () => content } : null;
-      },
-    } });
-    expect(fromR2).toEqual(snapshot);
-  });
-
   it("loads sorted context files within budget", async () => {
     const provider = createHomeContextProvider();
-    const homeRepo = accountHomeRepoRef(IDENTITY);
+    const homeRepo = accountHomeRepoRef(IDENTITY.username);
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },
@@ -456,45 +401,6 @@ describe("createHomeContextProvider", () => {
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
     ]);
-  });
-
-  it.each(["ship", "worker"] as const)("retains %s role and voice before shared files fill the account budget", async (role) => {
-    const other = role === "ship" ? "worker" : "ship";
-    const files = new Map([
-      ["00-shared.md", "Shared context fills the budget."],
-      [`${other}/00-role.md`, "Unselected role"],
-      [`${role}/05-voice.md`, "Role voice"],
-      [`${role}/00-role.md`, "Role policy"],
-    ]);
-    const input = makeInput({
-      role,
-      config: { ...CONFIG, maxContextBytes: 32 },
-      storage: {
-        async list({ prefix }) {
-          return { objects: [...files.keys()].map((name) => ({ key: `${prefix}${name}` })) };
-        },
-        async get(key) {
-          const content = files.get(key.slice("root/context.d/".length));
-          return content ? { text: async () => content } : null;
-        },
-      },
-    });
-    const provider = createHomeContextProvider();
-    const fromR2 = await provider.collect(input);
-    const fromRipgit = await provider.collect({ ...input, ripgit: {
-      async readPath(_repo, path) {
-        const name = path.slice("context.d".length).replace(/^\//, "");
-        const content = files.get(name);
-        if (content) return { kind: "file", bytes: new TextEncoder().encode(content), size: content.length };
-        const prefix = name ? `${name}/` : "";
-        const names = [...files.keys()].filter((file) => file.startsWith(prefix))
-          .map((file) => file.slice(prefix.length)).filter((file) => !file.includes("/"));
-        return { kind: "tree", entries: names.map((file) => ({ name: file, mode: "100644", hash: file, type: "blob" })) };
-      },
-    } });
-    expect(fromR2.map((section) => section.name)).toEqual([`${role}/00-role.md`, `${role}/05-voice.md`]);
-    expect(fromR2.map((section) => section.text)).toEqual(["Role policy", "Role voice"]);
-    expect(fromRipgit).toEqual(fromR2);
   });
 });
 

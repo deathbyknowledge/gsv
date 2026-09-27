@@ -123,13 +123,11 @@ user-facing place where delegated results and actionable system events return;
 real child processes still use ordinary parent pids for lifecycle and IPC.
 
 For durable delegated work, `proc delegate` creates a non-interactive child and a
-supervised `proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
-selects a specialized owned agent. The Kernel process record selects Ship or
-worker context independently of the run-as account; bounded IPC calls always
-use worker context. This is runtime metadata, not an instruction inferred from
-the task's prose. Root context files and owner preferences remain shared, while
-`ship/` policy and voice files do not enter a worker's prompt. With
-`--responsibility ID`, the Kernel assigns
+supervised `proc.ipc.call`. Ship's seeded instructions select its owned Crew account
+with `--as ACCOUNT`, separating conversation guidance from execution guidance through
+ordinary account context. Explicit delegation can select another owned account;
+without `--as`, children retain normal parent identity inheritance. The delegated-task
+envelope supplies the return-to-caller contract. With `--responsibility ID`, the Kernel assigns
 that record to the child and persists the id on the IPC call. Completion, failure,
 or explicit termination returns a still-active assignment to Ship once, with the
 IPC call and child run ids recorded as evidence. The default 10-minute interval is

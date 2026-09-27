@@ -32,12 +32,6 @@ scheduler, and delegated results remain in Process IPC and activity. The respons
 stores the unresolved action and stable references to that evidence. A user interaction
 becomes a responsibility when the Ship accepts work that will outlive the current run.
 
-Ship acknowledges substantial work before investigation or bookkeeping. It then
-records any delegated, deferred, or blocked outcome before handing off or yielding
-with unfinished work. Immediate answers, short tasks, and ordinary retries do not
-need a responsibility. Ship owns the final outcome; a worker's completion is evidence
-to assess rather than automatic closure of the parent responsibility.
-
 Not every `[GSV EVENT]` is an obligation. For example, returning from a Work session
 is immediate conversational context and remains a Process event. Responsibilities
 replace ad hoc action-bearing wake events; they do not replace typed evidence,

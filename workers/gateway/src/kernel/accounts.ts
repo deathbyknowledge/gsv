@@ -30,8 +30,7 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 /** A username is available when it collides with no existing user or group. */
 export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
-  return !auth.getPasswdByUsername(name) && !auth.getGroupByName(name)
-    && !auth.getPasswdEntries().some((entry) => entry.home === `/home/${name}` || entry.repoOwner === name);
+  return !auth.getPasswdByUsername(name) && !auth.getGroupByName(name);
 }
 
 /**
@@ -52,7 +51,6 @@ export function accountIdentity(auth: AuthStore, entry: PasswdEntry): ProcessIde
     gids: auth.resolveGids(entry.username, entry.gid),
     username: entry.username,
     home: entry.home,
-    repoOwner: entry.repoOwner,
     cwd: entry.home,
   };
 }
@@ -148,9 +146,6 @@ export function commitAccount(ctx: KernelContext, prepared: PreparedAccount): Cr
     throw new Error(`User already exists: ${username}`);
   }
   if (auth.getGroupByName(username)) throw new Error(`Group already exists: ${username}`);
-  if (auth.getPasswdEntries().some((entry) => entry.home === `/home/${username}` || entry.repoOwner === username)) {
-    throw new Error(`Home or repository namespace already belongs to an account: ${username}`);
-  }
   if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
     throw new Error(`Access group already exists: ${input.accessGroupName}`);
   }
@@ -261,7 +256,7 @@ export async function seedContextFile(
 
   const path = `context.d/${name}`;
   const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity);
+  const repo = accountHomeRepoRef(identity.username);
   const existing = await client.readPath(repo, path);
   if (existing.kind !== "missing") return;
 

@@ -596,7 +596,6 @@ resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
       gids: this.host.auth.resolveGids(account.username, account.gid),
       username: account.username,
       home: account.home,
-      repoOwner: account.repoOwner,
       cwd: account.home,
     };
   }
@@ -609,7 +608,7 @@ resolveScheduledSpawnRunAs(record: ScheduleRecord, targetRunAs?: string): string
     // Execution must keep the account without depending on that pid still being
     // alive as the spawn parent.
     return record.runAs.kind === "process" || record.runAs.kind === "service"
-      ? String(record.runAs.uid)
+      ? record.runAs.username
       : undefined;
   }
 

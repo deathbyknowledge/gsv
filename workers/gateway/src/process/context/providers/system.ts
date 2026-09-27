@@ -1,5 +1,4 @@
 import type { PromptContextProvider, PromptSection } from "../types";
-import { contextFileAppliesToRole } from "../role";
 
 const MAX_RENDERED_TARGETS = 5;
 
@@ -17,7 +16,6 @@ function renderContextFiles(
   input: Parameters<typeof renderContextTemplate>[1],
 ): PromptSection[] {
   return [...(files ?? [])]
-    .filter((file) => contextFileAppliesToRole(file.name, input.role ?? "worker"))
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((file): PromptSection | null => {
       const text = renderContextTemplate(file.text, input).trim();
@@ -43,7 +41,6 @@ function renderContextFiles(
 function renderContextTemplate(
   template: string,
   input: {
-    role?: "ship" | "worker";
     identity: {
       uid: number;
       gid: number;

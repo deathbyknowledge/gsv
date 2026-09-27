@@ -32,11 +32,13 @@ const PERSONAL_AGENT_ACCOUNT = {
 };
 
 function makePersonalAgentAuth() {
+  const crew = { ...PERSONAL_AGENT_ACCOUNT, uid: 1002, gid: 1002, username: "crew", home: "/home/crew" };
   return {
     getPasswdByUsername: vi.fn((username: string) => (
       username === PERSONAL_AGENT_ACCOUNT.username ? PERSONAL_AGENT_ACCOUNT : null
     )),
     getPasswdByUid: vi.fn((uid: number) => {
+      if (uid === crew.uid) return crew;
       if (uid === IDENTITY.uid) {
         return {
           username: IDENTITY.username,
@@ -50,10 +52,10 @@ function makePersonalAgentAuth() {
       return uid === PERSONAL_AGENT_ACCOUNT.uid ? PERSONAL_AGENT_ACCOUNT : null;
     }),
     getShadowByUsername: vi.fn((username: string) => (
-      username === PERSONAL_AGENT_ACCOUNT.username ? { username, hash: "!" } : null
+      username === PERSONAL_AGENT_ACCOUNT.username || username === crew.username ? { username, hash: "!" } : null
     )),
     getGroupByGid: vi.fn((gid: number) => (
-      gid === PERSONAL_AGENT_ACCOUNT.gid
+      gid === crew.gid ? { name: crew.username, gid, members: [IDENTITY.username] } : gid === PERSONAL_AGENT_ACCOUNT.gid
         ? { name: PERSONAL_AGENT_ACCOUNT.username, gid, members: [IDENTITY.username] }
         : null
     )),
@@ -146,7 +148,7 @@ describe("proc handlers", () => {
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.spawn"] }),
-      procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000, repoOwner: "original-name" })), spawn: vi.fn() },
+      procs: { get: vi.fn(() => ({ ...SPAWN_PARENT, uid: 2000 })), spawn: vi.fn() },
       broadcastToUserUid: vi.fn(),
       runRoutes: { inheritProcessApprovalRoute: vi.fn() },
       config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
@@ -156,7 +158,7 @@ describe("proc handlers", () => {
     expect(result.ok).toBe(true);
     expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity", "proc.send"]);
     expect(sendFrameToProcessMock.mock.calls[0][2].args).toMatchObject({
-      identity: { uid: 2000, repoOwner: "original-name" }, ai: { modelId, reasoning: "high" },
+      identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
     });
     expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
     expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(IDENTITY.uid, "proc.changed", expect.objectContaining({ changes: ["created"] }));
@@ -941,6 +943,7 @@ describe("proc handlers", () => {
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
+      config: { get: vi.fn(() => "1002") },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -1007,6 +1010,7 @@ describe("proc handlers", () => {
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
+      config: { get: vi.fn(() => "1002") },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),

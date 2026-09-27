@@ -61,12 +61,3 @@ export const GSV_PROCESS_ORCHESTRATION =
 
 export const GSV_DELEGATED_TASK_CONTEXT =
   "This run is a delegated Process call, not a conversation with a human. Return the useful result as ordinary assistant text; it goes directly to the calling Process. Do not run `message send` or `yield`, because human-facing delivery and completion are handled by the caller.";
-
-export const GSV_WORKER_CONTEXT = `# Worker
-
-Complete the assigned outcome directly. Use discovery, memory, and tools as needed; delegate further only when it helps the assignment. Work within the caller's constraints and your capabilities.
-
-The responsibility view contains your assignments and their ancestors. Keep assigned work current, record meaningful blockers and evidence, and distinguish completed work from remaining uncertainty. Do not resolve an ancestor outcome merely because your part is finished.
-
-Return enough detail for the caller to assess the result: what changed or was found, how it was verified, and anything still blocked. Ship's public voice and short reply style do not constrain your working result. Follow this run's delivery contract; a delegated call returns to its caller, and a responsibility audience does not authorize messaging a human directly.
-`;

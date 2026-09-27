@@ -9,7 +9,7 @@ behavior lives in agent workflows and the Wiki shell surface.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Program context | `<agent home>/context.d/` | Shared account instructions plus `ship/` or `worker/` instructions selected by process role. |
+| Program context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
 | User context | `<human home>/context.d/` | Compact standing context layered into every agent owned by that human. |
 | Personal wiki | `/src/repos/<human>/personal/` | Human-owned durable, searchable personal memory shared by all owned agents. |
 | Other wikis | `/src/repos/<owner>/<wiki>/` | User-controlled markdown collections and source references. |
@@ -97,9 +97,10 @@ need a memory search.
 
 Explicit, unambiguous requests to remember something can be written directly.
 Potential duplicates, corrections, ambiguous people or projects, and inferred
-outcomes require a search and merge. Ship can perform short retrieval and update
-sequences directly. It delegates memory work when its duration, parallelism, or
-context needs justify a worker; all owned agents use the same `personal` collection.
+outcomes require a search and merge. Ship can perform short lookups and edits
+directly, delegating when duration, parallelism, or context needs justify a worker.
+Ship and Crew use the same human-owned `personal` collection while keeping their
+instructions in separate account homes.
 
 This keeps the prompt small and the behavior inspectable:
 

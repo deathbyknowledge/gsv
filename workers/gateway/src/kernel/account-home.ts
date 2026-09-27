@@ -1,5 +1,5 @@
-import { RipgitClient, RipgitConflictError, type RipgitApplyOp } from "../fs/ripgit/client";
-import { accountHomeRepoRef, ensureHomeRepoRevision } from "../fs/ripgit/repos";
+import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
@@ -8,55 +8,22 @@ import {
 } from "../prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
-  PERSONAL_INTELLIGENCE_MEMORY_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
-import { migratePersonalContext } from "./personal-context-migration";
-import type { AuthStore } from "./auth-store";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-type HomeLayoutOptions = {
-  seedPromptContext?: boolean;
-  personalAgent?: boolean;
-  cleanupGeneratedPromptContext?: boolean;
-  beforeRetiringGeneratedBootContext?: () => void;
-};
-
-// Reconciliation is durable in the home. This cache only avoids repeated reads
-// during the same Kernel lifetime; failures remain retryable.
-const reconciledPersonalHomes = new WeakMap<AuthStore, Map<number, Promise<void>>>();
-
-export async function ensurePersonalPromptContext(
-  auth: AuthStore,
-  env: Pick<Env, "STORAGE" | "RIPGIT">,
-  identity: ProcessIdentity,
-  beforeRetiringGeneratedBootContext: () => void,
-): Promise<void> {
-  let homes = reconciledPersonalHomes.get(auth);
-  if (!homes) {
-    homes = new Map();
-    reconciledPersonalHomes.set(auth, homes);
-  }
-  let pending = homes.get(identity.uid);
-  if (!pending) {
-    pending = ensureAccountHomeLayout(env, identity, { personalAgent: true, seedPromptContext: true, beforeRetiringGeneratedBootContext });
-    homes.set(identity.uid, pending);
-  }
-  try {
-    await pending;
-  } catch (error) {
-    homes.delete(identity.uid);
-    throw error;
-  }
-}
-
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
-  options: HomeLayoutOptions = {},
+  options: {
+    seedPromptContext?: boolean;
+    personalAgent?: boolean;
+    cleanupGeneratedPromptContext?: boolean;
+    beforeRetiringGeneratedBootContext?: () => void;
+  } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
 
@@ -65,23 +32,7 @@ export async function ensureAccountHomeLayout(
   }
 
   const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity);
-  if (options.personalAgent && options.seedPromptContext) {
-    await migratePersonalContext(client, repo, identity.username);
-  }
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await scaffoldHomeRevision(client, identity, options);
-    } catch (error) {
-      if (!(error instanceof RipgitConflictError) || attempt >= 2) throw error;
-    }
-  }
-}
-
-async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdentity, options: HomeLayoutOptions): Promise<void> {
-  const repo = accountHomeRepoRef(identity);
-  const head = await ensureHomeRepoRevision(client, repo, identity.username);
-  const snapshot = { ...repo, branch: head };
+  const repo = accountHomeRepoRef(identity.username);
   const [
     contextDir,
     bootContext,
@@ -92,14 +43,14 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
     memoryContext,
     skillsDir,
   ] = await Promise.all([
-    client.readPath(snapshot, "context.d"),
-    client.readPath(snapshot, "context.d/00-boot.md"),
-    client.readPath(snapshot, options.personalAgent ? "context.d/ship/00-role.md" : "context.d/00-role.md"),
-    client.readPath(snapshot, "context.d/00-style.md"),
-    client.readPath(snapshot, options.personalAgent ? "context.d/ship/05-voice.md" : "context.d/05-voice.md"),
-    client.readPath(snapshot, "context.d/10-commitments.md"),
-    client.readPath(snapshot, "context.d/15-memory.md"),
-    client.readPath(snapshot, "skills.d"),
+    client.readPath(repo, "context.d"),
+    client.readPath(repo, "context.d/00-boot.md"),
+    client.readPath(repo, "context.d/00-role.md"),
+    client.readPath(repo, "context.d/00-style.md"),
+    client.readPath(repo, "context.d/05-voice.md"),
+    client.readPath(repo, "context.d/10-commitments.md"),
+    client.readPath(repo, "context.d/15-memory.md"),
+    client.readPath(repo, "skills.d"),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -123,13 +74,13 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
       }
       maybePutTextFile(
         ops,
-        "context.d/ship/00-role.md",
+        "context.d/00-role.md",
         roleContext,
         PERSONAL_INTELLIGENCE_CONTEXT,
       );
       maybePutTextFile(
         ops,
-        "context.d/ship/05-voice.md",
+        "context.d/05-voice.md",
         voiceContext,
         PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
       );
@@ -151,9 +102,6 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
         memoryContext,
         DEFAULT_MEMORY_CONTEXT_TEMPLATE,
       );
-      if (memoryContext.kind === "missing" || (memoryContext.kind === "file" && TEXT_DECODER.decode(memoryContext.bytes) === DEFAULT_MEMORY_CONTEXT_TEMPLATE)) {
-        ops.push({ type: "put", path: "context.d/15-memory.md", contentBytes: Array.from(TEXT_ENCODER.encode(PERSONAL_INTELLIGENCE_MEMORY_CONTEXT)) });
-      }
     } else {
       maybePutTextFile(
         ops,
@@ -211,7 +159,6 @@ async function scaffoldHomeRevision(client: RipgitClient, identity: ProcessIdent
     `${identity.username}@gsv.local`,
     "gsv: scaffold home layout",
     ops,
-    { expectedHead: head },
   );
 }
 

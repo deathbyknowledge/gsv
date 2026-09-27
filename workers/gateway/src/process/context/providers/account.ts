@@ -1,6 +1,5 @@
 import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
 import type { PromptAssemblyInput, PromptSection } from "../types";
-import { contextFileAppliesToRole } from "../role";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -17,33 +16,34 @@ async function listAccountContextFiles(
 ): Promise<AccountContextFile[]> {
   const ripgit = input.ripgit;
   if (ripgit) {
-    const repo = accountHomeRepoRef(account);
-    const directories = ["", `${input.role ?? "worker"}/`];
-    const trees = await Promise.all(directories.map((dir) => ripgit.readPath(repo, `context.d/${dir}`.replace(/\/$/, ""))));
-    if (trees.some((tree) => tree.kind === "tree")) {
-      return trees.flatMap((tree, index) => tree.kind === "tree" ? tree.entries
+    const repo = accountHomeRepoRef(account.username);
+    const contextTree = await ripgit.readPath(repo, "context.d");
+    if (contextTree.kind === "tree") {
+      return contextTree.entries
         .filter((entry) => entry.type === "blob" && entry.name.endsWith(".md"))
         .map((entry) => ({
-          name: `${directories[index]}${entry.name}`,
+          name: entry.name,
           read: async () => {
-            const file = await ripgit.readPath(repo, `context.d/${directories[index]}${entry.name}`);
+            const file = await ripgit.readPath(repo, `context.d/${entry.name}`);
             return file.kind === "file" ? TEXT_DECODER.decode(file.bytes) : null;
           },
-        })) : []);
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
     }
   }
 
   const contextPrefix = `${account.home.replace(/^\//, "")}/context.d/`;
   const listed = await input.storage.list({ prefix: contextPrefix });
   return listed.objects
-    .filter((object) => contextFileAppliesToRole(object.key.slice(contextPrefix.length), input.role ?? "worker"))
+    .filter((object) => object.key.endsWith(".md"))
     .map((object) => ({
       name: object.key.slice(contextPrefix.length),
       read: async () => {
         const stored = await input.storage.get(object.key);
         return stored ? stored.text() : null;
       },
-    }));
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function collectAccountContext(
@@ -59,12 +59,7 @@ export async function collectAccountContext(
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
-  const contextFiles = (await listAccountContextFiles(input, account)).sort((left, right) => {
-    const leftScoped = left.name.includes("/");
-    const rightScoped = right.name.includes("/");
-    if (leftScoped !== rightScoped) return leftScoped ? -1 : 1;
-    return left.name.localeCompare(right.name);
-  });
+  const contextFiles = await listAccountContextFiles(input, account);
   let usedBytes = 0;
   for (const file of contextFiles) {
     const text = (await file.read())?.trim();

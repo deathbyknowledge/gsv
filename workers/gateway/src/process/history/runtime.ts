@@ -1780,8 +1780,7 @@ export class ProcessHistory {
     if (epoch) {
       const initialProjection = contextProjectionFromManifest(epoch.sourceManifest);
       const observedProjection = parseContextProjection(epoch.observedProjection);
-      const role = run.returnToCaller ? "worker" : contextSnapshot.processRole ?? "worker";
-      if (!run.systemPrompt || !initialProjection || !observedProjection || epoch.sourceManifest.processRole !== role) {
+      if (!run.systemPrompt || !initialProjection || !observedProjection) {
         epoch = await this.refreshIncompleteContextEpoch(
           runId,
           run,
@@ -2020,7 +2019,6 @@ export class ProcessHistory {
       : await assembleSystemPromptSnapshot({
           config: promptConfig,
           identity: this.host.identity,
-          role: run.returnToCaller ? "worker" : contextSnapshot.processRole ?? "worker",
           ownerIdentity: config.owner ?? undefined,
           targets: projection.targets,
           mcpServers: projection.mcpServers,
@@ -2046,7 +2044,6 @@ export class ProcessHistory {
     });
     const sourceManifest = jsonObjectSchema.parse({
       version: 2,
-      processRole: run.returnToCaller ? "worker" : contextSnapshot.processRole ?? "worker",
       process: {
         pid: this.host.pid,
         uid: this.host.identity.uid,

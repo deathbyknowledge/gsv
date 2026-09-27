@@ -45,7 +45,6 @@ export function contextSnapshotFromRun(
   config: AiConfigResult,
 ): AiContextResult {
   const snapshot: AiContextResult = {
-    processRole: config.processRole,
     targets: run.devices ?? [],
     mcpServers: run.mcpServers ?? [],
     system: {

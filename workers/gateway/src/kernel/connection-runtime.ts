@@ -253,7 +253,7 @@ async handleSysConnect(
    */
   reconcileOwnedIdentities(ownerUid: number): void {
     for (const proc of this.host.procs.list(ownerUid)) {
-      const entry = this.host.auth.getPasswdByUid(proc.uid);
+      const entry = this.host.auth.getPasswdByUsername(proc.username);
       if (!entry) continue;
 
       const fresh: ProcessIdentity = {
@@ -262,7 +262,6 @@ async handleSysConnect(
         gids: this.host.auth.resolveGids(entry.username, entry.gid),
         username: entry.username,
         home: entry.home,
-        repoOwner: entry.repoOwner,
         cwd: proc.cwd,
       };
 
@@ -270,7 +269,6 @@ async handleSysConnect(
         proc.gid === fresh.gid &&
         proc.home === fresh.home &&
         proc.username === fresh.username &&
-        proc.repoOwner === fresh.repoOwner &&
         JSON.stringify(proc.gids) === JSON.stringify(fresh.gids)
       ) {
         continue;

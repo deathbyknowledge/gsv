@@ -31,14 +31,19 @@ import { resolveCallerOwnerUid } from "./context";
 import type { AuthStore } from "./auth-store";
 import {
   accountIdentity,
+  commitAccount,
   createAccount,
   isUsernameAvailable,
   normalizeAccountName,
+  prepareAccount,
+  prepareAccountHome,
+  seedContextFile,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
+import { CREW_CONTEXT, crewDelegationContext } from "../prompts/personal-intelligence";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -188,6 +193,7 @@ export async function ensurePersonalAgent(
           ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
         },
       });
+      await ensureCrewAccount(ctx, human, identity);
       return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
@@ -195,7 +201,7 @@ export async function ensurePersonalAgent(
 
   const agentName = pickAgentName(auth, preferredName);
   ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
-  return createAccount(ctx, {
+  const provision = await createAccount(ctx, {
     kind: "agent",
     username: agentName,
     gecos: personalAgentDisplayName(agentName),
@@ -204,6 +210,43 @@ export async function ensurePersonalAgent(
     crossMemberOwner: true,
     personalAgentOf: human.uid,
   });
+  await ensureCrewAccount(ctx, human, provision.identity);
+  return provision;
+}
+
+async function ensureCrewAccount(
+  ctx: KernelContext,
+  human: ProcessIdentity,
+  ship: ProcessIdentity,
+): Promise<void> {
+  const prepared = await prepareAccount({
+    kind: "agent",
+    username: "crew",
+    gecos: "Crew",
+    ownerUid: human.uid,
+    contextFiles: [{ name: "00-role.md", text: CREW_CONTEXT }],
+  });
+  const key = `config/accounts/crew/${human.uid}`;
+  const savedUid = ctx.config.get(key);
+  const existing = savedUid === null ? null : ctx.auth.getPasswdByUid(Number(savedUid));
+  let crew: ProcessIdentity;
+  if (existing) {
+    const shadow = ctx.auth.getShadowByUsername(existing.username);
+    if (!shadow || !isLocked(shadow) || ctx.auth.isPersonalAgentUid(existing.uid)
+      || !canOwnerRunAsAccount(ctx.auth, human.uid, existing, false)) {
+      throw new Error("The configured Crew account is not an owned agent");
+    }
+    crew = accountIdentity(ctx.auth, existing);
+  } else {
+    for (let suffix = 2; !isUsernameAvailable(ctx.auth, prepared.input.username); suffix++) {
+      prepared.input.username = `crew${suffix}`;
+    }
+    // Claim the account and remember its uid before remote home writes can yield.
+    crew = commitAccount(ctx, prepared).identity;
+    ctx.config.set(key, String(crew.uid));
+  }
+  await prepareAccountHome(ctx.env, { ...prepared.input, username: crew.username }, crew);
+  await seedContextFile(ctx.env, ship, "10-delegation.md", crewDelegationContext(crew.username));
 }
 
 /**

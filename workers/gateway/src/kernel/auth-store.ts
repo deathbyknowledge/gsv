@@ -18,7 +18,6 @@ import type { ShadowEntry } from "../auth/shadow";
 import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
-import { normalizePath } from "../fs/utils";
 
 export type AuthIdentity = {
   uid: number;
@@ -26,7 +25,6 @@ export type AuthIdentity = {
   gids: number[];
   username: string;
   home: string;
-  repoOwner?: string;
 };
 
 export type AuthResult =
@@ -177,55 +175,37 @@ export class AuthStore {
   // ---------------------------------------------------------------------------
 
   getPasswdEntries(): PasswdEntry[] {
-    return this.sql.exec<PasswdRow>("SELECT * FROM passwd ORDER BY uid").toArray().map(passwdEntry);
+    return this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd ORDER BY uid",
+    ).toArray();
   }
 
   getPasswdByUsername(username: string): PasswdEntry | null {
-    const rows = this.sql.exec<PasswdRow>(
-      "SELECT * FROM passwd WHERE username = ?",
+    const rows = this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE username = ?",
       username,
     ).toArray();
-    return rows[0] ? passwdEntry(rows[0]) : null;
+    return rows[0] ?? null;
   }
 
   getPasswdByUid(uid: number): PasswdEntry | null {
-    const rows = this.sql.exec<PasswdRow>(
-      "SELECT * FROM passwd WHERE uid = ?",
+    const rows = this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE uid = ?",
       uid,
     ).toArray();
-    return rows[0] ? passwdEntry(rows[0]) : null;
-  }
-
-  getPasswdByHome(home: string): PasswdEntry | null {
-    const normalized = normalizePath(home);
-    const entries = this.getPasswdEntries().filter((entry) => normalizePath(entry.home) === normalized);
-    if (entries.length > 1) throw new Error(`Ambiguous account home: ${normalized}`);
-    return entries[0] ?? null;
-  }
-
-  getPasswdByRepoOwner(owner: string): PasswdEntry | null {
-    const row = this.sql.exec<PasswdRow>("SELECT * FROM passwd WHERE repo_owner = ?", owner).toArray()[0];
-    return row ? passwdEntry(row) : null;
+    return rows[0] ?? null;
   }
 
   addUser(entry: PasswdEntry): void {
-    assertDistinctAccountHomes([...this.getPasswdEntries(), entry]);
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
     );
-    if (entry.repoOwner) this.sql.exec("UPDATE passwd SET repo_owner = ? WHERE uid = ?", entry.repoOwner, entry.uid);
   }
 
-  updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username" | "repoOwner">>): boolean {
+  updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
-    const home = fields.home;
-    if (home !== undefined) {
-      assertDistinctAccountHomes(this.getPasswdEntries().map((entry) =>
-        entry.username === username ? { ...entry, home } : entry,
-      ));
-    }
 
     this.sql.exec(
       "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
@@ -410,7 +390,6 @@ export class AuthStore {
       identity: {
         uid: user.uid, gid: user.gid, gids,
         username: user.username, home: user.home,
-        repoOwner: user.repoOwner,
       },
     };
   }
@@ -488,7 +467,6 @@ export class AuthStore {
         gids,
         username: user.username,
         home: user.home,
-        repoOwner: user.repoOwner,
       },
       kind: tokenRow.kind,
       peerId: tokenRow.peer_id,
@@ -647,18 +625,9 @@ export class AuthStore {
   // ---------------------------------------------------------------------------
 
   importPasswd(raw: string): void {
-    const owners = new Map(this.getPasswdEntries().map((entry) => [entry.uid, entry.repoOwner]));
-    const entries = parsePasswd(raw).map((entry) => ({ ...entry, repoOwner: owners.get(entry.uid) }));
-    assertDistinctAccountHomes(entries);
-    const preserved = entries.filter((entry) => entry.repoOwner !== undefined);
-    for (const entry of entries) {
-      const collision = preserved.find((owner) => owner.uid !== entry.uid && (
-        entry.username === owner.repoOwner || (entry.repoOwner ?? entry.username) === owner.repoOwner
-      ));
-      if (collision) throw new Error(`Home or repository namespace already belongs to account: ${collision.username}`);
-    }
+    const entries = parsePasswd(raw);
     this.sql.exec("DELETE FROM passwd");
-    for (const entry of entries) this.addUser(entry);
+    for (const e of entries) this.addUser(e);
   }
 
   importShadow(raw: string): void {
@@ -695,23 +664,6 @@ export class AuthStore {
       .replace(/=+$/g, "");
     return `gsv_${kind}_${base64}`;
   }
-}
-
-function assertDistinctAccountHomes(entries: PasswdEntry[]): void {
-  const homes = new Map<string, string>();
-  for (const entry of entries) {
-    const home = normalizePath(entry.home);
-    const owner = homes.get(home);
-    if (owner !== undefined) throw new Error(`Home or repository namespace already belongs to account: ${owner}`);
-    homes.set(home, entry.username);
-  }
-}
-
-type PasswdRow = Omit<PasswdEntry, "repoOwner"> & { repo_owner?: string | null };
-
-function passwdEntry(row: PasswdRow): PasswdEntry {
-  const { repo_owner, ...entry } = row;
-  return repo_owner ? { ...entry, repoOwner: repo_owner } : entry;
 }
 
 function mapTokenRow(row: {

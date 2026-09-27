@@ -94,8 +94,6 @@ import {
 import { createMediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
-import { ensurePersonalPromptContext } from "./account-home";
-import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
 import { discoverVisibleTargets, gsvTargetImplementations, listAllVisibleTargets, targetCanHandle, targetToAiTarget } from "./targets";
@@ -194,7 +192,6 @@ export async function handleAiContext(
   _args: AiContextArgs,
   ctx: KernelContext,
 ): Promise<AiContextResult> {
-  await ensureCallerPersonalContext(ctx);
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
@@ -215,8 +212,6 @@ export async function handleAiContext(
 
   const targetDiscovery = await discoverVisibleTargets(ctx);
   const result: AiContextResult = {
-    processRole: ctx.processId && ctx.procs.get(ctx.processId)?.isPersonalController ? "ship" : "worker",
-    identity: principalOf(ctx)?.account,
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
@@ -237,7 +232,6 @@ export async function handleAiConfig(
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
-  await ensureCallerPersonalContext(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
@@ -282,8 +276,6 @@ export async function handleAiConfig(
     });
 
   const result: AiConfigResult = {
-    processRole: ctx.processId && ctx.procs.get(ctx.processId)?.isPersonalController ? "ship" : "worker",
-    identity: principalOf(ctx)?.account,
     owner,
     executor: resolveAiTextExecutor(ctx),
     provider: primary.provider,
@@ -313,15 +305,6 @@ export async function handleAiConfig(
   if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
   if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
   return result;
-}
-
-async function ensureCallerPersonalContext(ctx: KernelContext): Promise<void> {
-  const account = principalOf(ctx)?.account;
-  if (account && ctx.env.RIPGIT && ctx.auth.isPersonalAgentUid(account.uid)) {
-    await ensurePersonalPromptContext(ctx.auth, ctx.env, account, () => {
-      ensureInitialOnboardingResponsibility(resolveCallerOwnerUid(ctx), ctx.responsibilities);
-    });
-  }
 }
 
 async function ensureBuiltinSkillsForPrompt(
@@ -751,7 +734,6 @@ function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
     gids: ctx.auth.resolveGids(entry.username, entry.gid),
     username: entry.username,
     home: entry.home,
-    repoOwner: entry.repoOwner,
     cwd: entry.home,
   };
 }
@@ -1148,7 +1130,6 @@ function resolveAiTranscriptionProcessContext(
       gid: process.gid,
       gids: process.gids,
       username: process.username,
-      repoOwner: process.repoOwner,
       home: process.home,
       cwd: process.cwd,
     }),

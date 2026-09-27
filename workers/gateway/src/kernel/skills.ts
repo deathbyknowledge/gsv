@@ -326,7 +326,7 @@ async function collectRipgitRuntimeSkillFiles(
   for (const layer of homeLayers) {
     files.push(...await collectRipgitSkillFiles(
       ripgit,
-      accountHomeRepoRef(layer.identity),
+      accountHomeRepoRef(layer.identity.username),
       "skills.d",
       {
         kind: "home",
@@ -378,7 +378,6 @@ function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdenti
     gids: ctx.auth.resolveGids(entry.username, entry.gid),
     username: entry.username,
     home: entry.home,
-    repoOwner: entry.repoOwner,
     cwd: entry.home,
   };
 

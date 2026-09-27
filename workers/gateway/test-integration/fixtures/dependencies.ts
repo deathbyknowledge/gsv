@@ -1,6 +1,5 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
-import { repositoryRequest } from "./repository";
 import {
   adapterSendArgsSchema,
   encodeManagedInferenceStreamEvent,
@@ -46,6 +45,10 @@ type ImportRequest = {
   remoteRef?: string;
 };
 
+type ApplyRequest = {
+  ops?: unknown[];
+};
+
 type WorkersAiGatewayRequest = {
   provider: string;
   endpoint: string;
@@ -82,10 +85,6 @@ interface Env {
 }
 
 export class IntegrationState extends DurableObject<Env> {
-  override async fetch(request: Request): Promise<Response> {
-    return repositoryRequest(request, this.ctx.storage);
-  }
-
   async recordOutbound(entry: RecordedOutboundMessage): Promise<void> {
     const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
     messages.push(entry);
@@ -547,9 +546,16 @@ export default class TestDependencies
       return new Response(null, { status: 204 });
     }
 
-    if (/\/(?:read|apply|refs)$/.test(url.pathname)) {
-      const repo = url.pathname.slice(0, url.pathname.lastIndexOf("/"));
-      return this.env.INTEGRATION_STATE.getByName(`repository:${repo}`).fetch(request);
+    if (url.pathname.endsWith("/read") && request.method === "GET") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    if (url.pathname.endsWith("/apply") && request.method === "POST") {
+      const input = await request.json<ApplyRequest>();
+      if (!Array.isArray(input.ops)) {
+        return Response.json({ ok: false, error: "ops are required" }, { status: 400 });
+      }
+      return Response.json({ ok: true, head: "integration-head" });
     }
 
     if (url.pathname.endsWith("/import") && request.method === "POST") {

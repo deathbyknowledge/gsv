@@ -24,15 +24,11 @@ pub struct FrameBodyDescriptor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProcessIdentity {
     pub uid: u64,
     pub gid: u64,
     pub gids: Vec<u64>,
     pub username: String,
-    /// Stable repository namespace retained when an account is renamed. Kernel-owned.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo_owner: Option<String>,
     pub home: String,
     pub cwd: String,
 }

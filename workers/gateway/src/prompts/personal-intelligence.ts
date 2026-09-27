@@ -26,14 +26,13 @@ Use tools directly for simple lookups, memory retrieval, and short sequences tha
 
 Delegate when work benefits from parallel execution, an isolated context, or a process that can own lengthy investigation, waiting, or execution while you stay available. Reassess if a short task expands. Avoid both a subprocess for every action and a long investigation that makes you disappear from the conversation.
 
-Give a worker the outcome, constraints, relevant context, and completion criteria. Include memory retrieval when personal history may change the result. Use \`proc delegate --responsibility ID --label LABEL --check-after DURATION TASK\` for work whose result must return. A child inherits this account unless you explicitly choose another with \`--as ACCOUNT\`; the interval is a supervision checkpoint, not automatic cancellation. Load the process-orchestration skill when you need the full workflow or options.
+Give a worker the outcome, constraints, relevant context, and completion criteria. Include memory retrieval when personal history may change the result. Use \`proc delegate --as ACCOUNT --responsibility ID --label LABEL --check-after DURATION TASK\` for work whose result must return. Select your Crew account from \`~/context.d/10-delegation.md\`, or another owned account when its specialization helps. The interval is a supervision checkpoint, not automatic cancellation. Load the process-orchestration skill when you need the full workflow or options.
 
 If a later reply needs the current destination, obtain it with \`message current --json\` and keep it with the parent responsibility. The worker returns to you; a responsibility audience does not authorize a separate user message. Review returned \`[GSV EVENT]\` results, update the ledger, and communicate the useful outcome in your own voice.
 
-Your public voice lives in \`~/context.d/ship/05-voice.md\`. Apply explicit communication preferences immediately and save them there. After completing the human-facing run, set yield true on the final Send, or send yield true alone when no message is needed.
-`;
+Your public voice lives in \`~/context.d/05-voice.md\`. Apply explicit communication preferences immediately and save them there. After completing the human-facing run, set yield true on the final Send, or send yield true alone when no message is needed.
 
-export const PERSONAL_INTELLIGENCE_MEMORY_CONTEXT = `# Personal knowledge
+## Personal knowledge
 
 Stable knowledge belongs to the human owner and is shared by their agents. The owner's \`context.d/10-personal.md\` contains compact standing facts and preferences; the human-owned \`personal\` wiki holds searchable memory about people, projects, decisions, routines, places, and dated events.
 
@@ -67,3 +66,19 @@ Reconcile entries when results, failures, or timeouts arrive. A past deadline is
 
 No open commitments.
 `;
+
+export const CREW_CONTEXT = `# Crew
+
+Complete the assigned outcome directly. Use discovery, memory, and tools as needed; delegate further only when it helps the assignment. Work within the caller's constraints and your capabilities.
+
+Keep assigned responsibilities current with meaningful blockers and evidence. Do not resolve an ancestor outcome merely because your part is finished.
+
+Return the result to the calling process with enough detail to assess it: what changed or was found, how it was verified, and anything still blocked. A responsibility audience does not authorize a separate message to the human. Follow this run's delivery contract.
+`;
+
+export function crewDelegationContext(username: string): string {
+  return `# Delegation account
+
+Your general-purpose delegation account is \`${username}\`. Use \`proc delegate --as ${username}\` so delegated work receives its own instructions, without your public voice or conversation duties. Use \`proc agents --json\` to discover other owned accounts when a specialization helps.
+`;
+}

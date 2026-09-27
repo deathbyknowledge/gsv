@@ -2348,7 +2348,7 @@ describe("scheduler", () => {
     }));
   });
 
-  it("runs process-principal spawn schedules after the creator is gone and the recorded username is stale", async () => {
+  it("runs process-principal spawn schedules after the creator process is gone", async () => {
     const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
@@ -2356,7 +2356,7 @@ describe("scheduler", () => {
     const runAs: SchedulePrincipal = {
       kind: "process",
       uid: CUSTOM_AGENT_IDENTITY.uid,
-      username: "former-account-name",
+      username: CUSTOM_AGENT_IDENTITY.username,
       pid: "proc:dead-creator",
     };
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {

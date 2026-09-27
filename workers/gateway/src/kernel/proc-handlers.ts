@@ -153,7 +153,6 @@ export async function handleProcSpawn(
         gid: parent.gid,
         gids: parent.gids,
         username: parent.username,
-        repoOwner: parent.repoOwner,
         home: parent.home,
         cwd: parent.cwd,
       }

@@ -13,6 +13,7 @@ import {
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+  CREW_CONTEXT,
 } from "../prompts/personal-intelligence";
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
@@ -33,6 +34,7 @@ function createCtx() {
   ];
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"]]);
   const personalAgents = new Map<number, number>();
+  const configValues = new Map<string, string>();
   const ripgitFiles = new Map<string, string>();
   const createResponsibility = vi.fn(() => ({
     record: { id: "r12y:onboarding" },
@@ -110,7 +112,6 @@ function createCtx() {
   const ripgit = {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "test-head" }, tags: {} });
       if (url.pathname.endsWith("/apply")) {
         const parts = url.pathname.split("/").filter(Boolean);
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -121,11 +122,6 @@ function createCtx() {
           repo,
           ...body,
         });
-        for (const op of body.ops) {
-          const key = `${owner}:${op.path}`;
-          if (op.type === "put") ripgitFiles.set(key, new TextDecoder().decode(new Uint8Array(op.contentBytes)));
-          else if (op.type === "delete") ripgitFiles.delete(key);
-        }
         return new Response(JSON.stringify({ ok: true, head: "test-head" }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -161,8 +157,8 @@ function createCtx() {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["env"],
       config: {
-        get: vi.fn(() => null),
-        set: vi.fn(),
+        get: vi.fn((key: string) => configValues.get(key) ?? null),
+        set: vi.fn((key: string, value: string) => { configValues.set(key, value); }),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["config"],
       responsibilities: {
@@ -313,8 +309,8 @@ describe("handleAccountCreate", () => {
       title: "Get to know the user and finish initial GSV setup",
       dedupeKey: "onboarding.initial",
     }));
-    const roleContextOp = agentOps.find((op) => op.path === "context.d/ship/00-role.md");
-    const voiceContextOp = agentOps.find((op) => op.path === "context.d/ship/05-voice.md");
+    const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
+    const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
     expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
     expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
@@ -325,7 +321,7 @@ describe("handleAccountCreate", () => {
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
-    expect(agentOps).toContainEqual(
+    expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }),
     );
     expect(agentOps).not.toContainEqual(
@@ -453,7 +449,50 @@ describe("handleAccountCreate", () => {
     expect(personalAgent?.gecos).toBe("Ship");
   });
 
-  it("moves customized Ship context while preserving other personal agent files", async () => {
+  it("gives each owner a separate Crew account without adopting occupied names", async () => {
+    const { ctxFor, passwd, groups, shadow, ripgitApplyBodies } = createCtx();
+    const aliceCtx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
+    await handleAccountCreate({ kind: "agent", username: "crew", persona: "Existing specialist" }, aliceCtx);
+    await ensurePersonalAgent(aliceCtx, principalOf(aliceCtx)!.account);
+    await ensurePersonalAgent(aliceCtx, principalOf(aliceCtx)!.account);
+    const aliceCrew = passwd.find((entry) => entry.username === "crew2")!;
+    expect(passwd.filter((entry) => entry.gecos === "Crew")).toHaveLength(1);
+    expect(shadow.get("crew2")).toBe("!");
+    expect(groups.find((group) => group.gid === aliceCrew.gid)?.members).toEqual(["alice"]);
+    expect(groups.find((group) => group.name === "alice")?.members).toContain("crew2");
+    const crewOps = ripgitApplyBodies.filter((body) => body.owner === "crew2").flatMap((body) => body.ops);
+    const crewRole = crewOps.find((op) => op.path === "context.d/00-role.md");
+    expect(new TextDecoder().decode(new Uint8Array(crewRole?.contentBytes ?? []))).toBe(CREW_CONTEXT);
+    expect(crewOps).not.toContainEqual(expect.objectContaining({ path: "context.d/05-voice.md" }));
+    const delegation = ripgitApplyBodies.filter((body) => body.owner === "ship").flatMap((body) => body.ops)
+      .find((op) => op.path === "context.d/10-delegation.md");
+    expect(new TextDecoder().decode(new Uint8Array(delegation?.contentBytes ?? []))).toContain("--as crew2");
+
+    const bob = await handleAccountCreate({ kind: "human", username: "bob", password: "password-123" },
+      ctxFor(userIdentity(0, "root", ["*"])));
+    const bobCtx = ctxFor(userIdentity(bob.account.uid, "bob", ["account.list"]));
+    expect(handleAccountList({}, bobCtx).accounts.map((account) => account.username)).toContain("crew3");
+    expect(handleAccountList({}, bobCtx).accounts.map((account) => account.username)).not.toContain("crew2");
+    expect(handleAccountList({}, aliceCtx).accounts.map((account) => account.username)).not.toContain("crew3");
+  });
+
+  it("resumes Crew provisioning after a home write fails without changing customized instructions", async () => {
+    const state = createCtx();
+    provisionExistingPersonalAgent(state);
+    const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+    vi.mocked(ctx.env.STORAGE.put).mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error("storage unavailable"));
+    await expect(ensurePersonalAgent(ctx, principalOf(ctx)!.account)).rejects.toThrow("storage unavailable");
+    const crew = state.passwd.find((entry) => entry.username === "crew")!;
+    expect(crew).toBeDefined();
+    state.ripgitFiles.set("crew:context.d/00-role.md", "Custom crew instructions");
+    const resumed = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+    expect(resumed.identity.username).toBe("friday");
+    expect(state.passwd.filter((entry) => entry.gecos === "Crew")).toEqual([crew]);
+    expect(state.ripgitApplyBodies.filter((body) => body.owner === "crew").flatMap((body) => body.ops))
+      .not.toContainEqual(expect.objectContaining({ path: "context.d/00-role.md" }));
+  });
+
+  it("leaves existing personal agent context untouched during a hard cutover", async () => {
     const state = createCtx();
     provisionExistingPersonalAgent(state);
     const existingPaths = [
@@ -480,9 +519,9 @@ describe("handleAccountCreate", () => {
     expect(result.created).toBe(false);
     expect(state.auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "Friday" });
     expect(state.passwd.find((u) => u.username === "friday")?.gecos).toBe("Friday");
-    const ops = state.ripgitApplyBodies.flatMap((body) => body.ops);
+    const ops = state.ripgitApplyBodies.filter((body) => body.owner === "friday").flatMap((body) => body.ops);
     expect(ops).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "put", path: "context.d/ship/05-voice.md" }),
+      expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),
     ]));
     expect(ops).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
@@ -491,9 +530,7 @@ describe("handleAccountCreate", () => {
       type: "delete",
       path: "context.d/10-commitments.md",
     });
-    expect(state.ripgitFiles.get("friday:context.d/ship/00-role.md")).toBe("Existing context.d/00-role.md");
-    expect(state.ripgitFiles.has("friday:context.d/00-role.md")).toBe(false);
-    for (const path of existingPaths.filter((path) => path !== "context.d/00-role.md")) {
+    for (const path of existingPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
   });

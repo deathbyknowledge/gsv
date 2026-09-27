@@ -20,7 +20,7 @@ export async function seedBuiltinSkillsToHome(
   ripgit: RipgitClient,
   identity: ProcessIdentity,
 ): Promise<BuiltinSkillSeedResult> {
-  const homeRepo = accountHomeRepoRef(identity);
+  const homeRepo = accountHomeRepoRef(identity.username);
   const ops: RipgitApplyOp[] = [];
   let skipped = 0;
 

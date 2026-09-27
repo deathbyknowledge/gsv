@@ -29,7 +29,7 @@ import type { KernelContext, PrincipalView } from "./context";
 import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
-import { accountHomeRepoRef, accountRepoOwner } from "../fs/ripgit/repos";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
 import * as z from "zod/mini";
@@ -79,7 +79,7 @@ export function handleRepoList(
     });
   };
 
-  add(toSummary(accountHomeRepoRef(identity.account), "home", ctx));
+  add(toSummary(accountHomeRepoRef(identity.account.username), "home", ctx));
 
   for (const row of ctx.config.list("repos")) {
     const parsed = parseRegisteredRepoKey(row.key);
@@ -440,14 +440,14 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (identity.account.uid === 0 || identity.calls.includes("*")) {
     return true;
   }
-  if (repo.owner === accountRepoOwner(identity.account)) {
+  if (repo.owner === identity.account.username) {
     return true;
   }
   const ownerUid = resolveCallerOwnerUid(ctx);
   const owner = ctx.auth.getPasswdByUid(ownerUid);
   if (
     owner &&
-    accountRepoOwner(owner) === repo.owner &&
+    owner.username === repo.owner &&
     ownerUid !== identity.account.uid &&
     canOwnerDelegateRunAs(ctx.auth, ownerUid, identity.account)
   ) {
@@ -456,8 +456,8 @@ export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (ownerUid !== identity.account.uid) {
     return false;
   }
-  const target = ctx.auth.getPasswdByRepoOwner(repo.owner) ?? ctx.auth.getPasswdByUsername(repo.owner);
-  return !!target && accountRepoOwner(target) === repo.owner && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
+  const target = ctx.auth.getPasswdByUsername(repo.owner);
+  return !!target && canOwnerDelegateRunAs(ctx.auth, ownerUid, target);
 }
 
 function toSummary(

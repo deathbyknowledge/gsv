@@ -370,7 +370,6 @@ function processIdentityForUser(ctx: KernelContext, user: PasswdEntry): ProcessI
     gids: ctx.auth.resolveGids(user.username, user.gid),
     username: user.username,
     home: user.home,
-    repoOwner: user.repoOwner,
     cwd: user.home,
   };
 }

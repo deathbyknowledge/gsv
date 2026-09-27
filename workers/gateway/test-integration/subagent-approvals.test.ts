@@ -22,7 +22,7 @@ describe("delegated approval journey", () => {
       }) });
       runtime.ai.enqueue(
         { kind: "tool-calls", calls: [{ id: "delegate", name: "Shell", arguments: {
-          input: "proc delegate --model child-model --label ft-news 'Fetch the latest news'",
+          input: "proc delegate --as crew --model child-model --label ft-news 'Fetch the latest news'",
         } }] },
         { kind: "tool-calls", calls: [{ id: "yield-parent", name: "Shell", arguments: { input: "yield" } }] },
       );
@@ -46,6 +46,7 @@ describe("delegated approval journey", () => {
       const child = (await runtime.client.proc.list({})).processes.find(({ label }) => label === "ft-news");
       if (!child) throw new Error("Delegated child is missing");
       expect(child.parentPid).toBe(parent.pid);
+      expect(child.username).toBe("crew");
       expect(child.state).toBe("waiting_hil");
       const history = await runtime.client.proc.history({ pid: child.pid, includeMessages: false });
       if (!history.ok || !history.pendingHil) throw new Error("Child approval could not be loaded");
