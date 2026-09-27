@@ -85,6 +85,8 @@ async function selectWorkspace(workspace) {
   state.selectedPath = null;
   state.sourceText = "";
   state.sourceHash = null;
+  elements.source.value = "";
+  elements.source.disabled = true;
   setDirty(false);
   elements.promptControls.hidden = workspace !== "prompts";
   renderTabs();
@@ -93,7 +95,17 @@ async function selectWorkspace(workspace) {
 
 async function refresh() {
   if (state.dirty && !confirmDiscard()) return;
-  const data = await requestJson(`/api/files?workspace=${encodeURIComponent(state.workspace)}`);
+  const version = ++state.selectionVersion;
+  elements.source.disabled = true;
+  elements.save.disabled = true;
+  const data = await requestJson(`/api/files?workspace=${encodeURIComponent(state.workspace)}`).catch((error) => {
+    if (version === state.selectionVersion) {
+      elements.source.disabled = !state.selectedPath;
+      setDirty(state.dirty);
+    }
+    throw error;
+  });
+  if (version !== state.selectionVersion) return;
   state.files = data.files;
   elements.root.textContent = data.root;
   elements.root.title = data.root;
@@ -130,11 +142,19 @@ async function selectFile(path, force = false) {
   if (!path || (!force && path === state.selectedPath)) return;
   if (!force && !confirmDiscard()) return;
   const version = ++state.selectionVersion;
+  elements.source.disabled = true;
+  elements.save.disabled = true;
   clearTimeout(state.renderTimer);
   state.previewVersion++;
   const data = await requestJson(
     `/api/file?workspace=${encodeURIComponent(state.workspace)}&path=${encodeURIComponent(path)}`,
-  );
+  ).catch((error) => {
+    if (version === state.selectionVersion) {
+      elements.source.disabled = !state.selectedPath;
+      setDirty(state.dirty);
+    }
+    throw error;
+  });
   if (version !== state.selectionVersion) return;
   state.selectedPath = path;
   state.sourceText = data.content;
@@ -168,13 +188,13 @@ function sourceChanged() {
 
 function setDirty(dirty) {
   state.dirty = dirty;
-  elements.save.disabled = state.saving || !dirty || !state.selectedPath;
+  elements.save.disabled = state.saving || elements.source.disabled || !dirty || !state.selectedPath;
   elements.saveState.textContent = dirty ? "UNSAVED" : state.selectedPath ? "SAVED" : "";
   elements.saveState.className = `save-state${dirty ? " is-dirty" : ""}`;
 }
 
 async function saveSource() {
-  if (!state.dirty || !state.selectedPath || state.saving) return;
+  if (!state.dirty || !state.selectedPath || state.saving || elements.source.disabled) return;
   state.saving = true;
   const submitted = {
     workspace: state.workspace, path: state.selectedPath,
