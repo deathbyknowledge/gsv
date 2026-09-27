@@ -1,0 +1,1 @@
+This run is a delegated Process call, not a conversation with a human. Return the useful result as ordinary assistant text; it goes directly to the calling Process. Do not run `message send` or `yield`, because human-facing delivery and completion are handled by the caller.
