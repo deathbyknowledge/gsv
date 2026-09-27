@@ -117,6 +117,16 @@ workflow layered on top of `repo.*` and `fs.*`. The runtime guarantees that the
 Personal wiki exists and that authorized owned agents can reach it; the
 intelligence decides when information is worth retrieving or preserving.
 
+## Authoring defaults
+
+Repository authors edit shipped standing defaults and standalone task prompts as
+Markdown under `workers/gateway/src/prompts/`. TypeScript imports them as bundled
+text. `npm run review:prompts` opens a local editor with source sections and exact
+assembled Ship/Crew previews using the production assembler and sample runtime
+facts. This edits repository defaults, not a connected space: existing account
+context files and explicit system overrides remain under their owners' control.
+See `tools/source-review/README.md` for the authoring workflow.
+
 ## See also
 
 - [Context Compaction](./context-compaction.md)

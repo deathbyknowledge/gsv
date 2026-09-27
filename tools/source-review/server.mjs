@@ -2,18 +2,18 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import Ajv from "ajv";
+import { loadPromptPreview } from "./prompt-loader.mjs";
 
 const execFileAsync = promisify(execFile);
 const TOOL_ROOT = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(TOOL_ROOT, "../..");
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_DIFF_BYTES = 1024 * 1024;
-const TEXT_ENCODER = new TextEncoder();
 const ajv = new Ajv({ allErrors: true });
 const validateFileWrite = ajv.compile({
   type: "object",
@@ -34,43 +34,16 @@ const validateMarkdownRender = ajv.compile({
     content: { type: "string" },
   },
 });
-
-const PROMPT_GROUPS = [
-  {
-    id: "system",
-    label: "SYSTEM CONTEXT DEFAULTS",
-    tone: "system",
-    entries: [
-      ["system.ts", "GSV_RUNTIME_FACTS"],
-      ["system.ts", "GSV_RUNTIME_CONTEXT"],
-      ["system.ts", "GSV_TARGET_CONTEXT"],
-      ["system.ts", "GSV_RESPONSIBILITY_CONTEXT"],
-      ["system.ts", "GSV_CONTEXT_DISCOVERY"],
-      ["system.ts", "GSV_PROCESS_ORCHESTRATION"],
-    ],
+const validatePromptPreview = ajv.compile({
+  type: "object", additionalProperties: false, required: ["account"],
+  properties: {
+    account: { enum: ["ship", "crew"] },
+    draft: {
+      type: "object", additionalProperties: false, required: ["path", "content"],
+      properties: { path: { type: "string", minLength: 1 }, content: { type: "string" } },
+    },
   },
-  {
-    id: "personal",
-    label: "FRESH PERSONAL INTELLIGENCE CONTEXT",
-    tone: "personal",
-    entries: [
-      ["personal-intelligence.ts", "PERSONAL_INTELLIGENCE_CONTEXT"],
-      ["personal-intelligence.ts", "PERSONAL_INTELLIGENCE_VOICE_CONTEXT"],
-      ["agent-home.ts", "PERSONAL_STANDING_CONTEXT"],
-    ],
-  },
-  {
-    id: "supporting",
-    label: "OTHER ACTIVE MODEL PROMPTS AND AGENT DEFAULTS",
-    tone: "supporting",
-    entries: [
-      ["agent-home.ts", "DEFAULT_STYLE_CONTEXT"],
-      ["agent-home.ts", "DEFAULT_MEMORY_CONTEXT_TEMPLATE"],
-      ["compaction.ts", "COMPACTION_SUMMARY_SYSTEM_PROMPT"],
-      ["setup-assist.ts", "SETUP_ASSIST_SYSTEM_PROMPT"],
-    ],
-  },
-];
+});
 
 export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT) {
   return new Map([
@@ -78,7 +51,7 @@ export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT
       id: "prompts",
       label: "Prompt Sources",
       root: resolve(REPO_ROOT, "workers/gateway/src/prompts"),
-      extensions: new Set([".ts"]),
+      extensions: new Set([".md"]),
     }],
     ["manual", {
       id: "manual",
@@ -89,7 +62,7 @@ export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT
   ]);
 }
 
-export function resolveWorkspacePath(workspace, requestedPath) {
+export async function resolveWorkspacePath(workspace, requestedPath) {
   if (!requestedPath || requestedPath.includes("\0")) {
     throw new HttpError(400, "A file path is required.");
   }
@@ -102,7 +75,13 @@ export function resolveWorkspacePath(workspace, requestedPath) {
   if (!workspace.extensions.has(extname(absolutePath))) {
     throw new HttpError(415, "That file type is not editable in this source workspace.");
   }
-  return { absolutePath, relativePath: relativePath.replaceAll(sep, "/") };
+  const [root, target] = await Promise.all([realpath(workspace.root), realpath(absolutePath)]);
+  const resolvedRelative = relative(root, target);
+  if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)
+    || !workspace.extensions.has(extname(target))) {
+    throw new HttpError(403, "The file is outside the selected source workspace.");
+  }
+  return { absolutePath: target, relativePath: relativePath.replaceAll(sep, "/") };
 }
 
 export async function listWorkspaceFiles(workspace) {
@@ -111,45 +90,14 @@ export async function listWorkspaceFiles(workspace) {
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export async function loadPromptGroups(promptRoot) {
-  const modules = new Map();
-  const loadExport = async (path, exportName) => {
-    let loaded = modules.get(path);
-    if (!loaded) {
-      const absolutePath = resolve(promptRoot, path);
-      const metadata = await stat(absolutePath);
-      loaded = await import(`${pathToFileURL(absolutePath).href}?mtime=${metadata.mtimeMs}`);
-      modules.set(path, loaded);
-    }
-    return promptBlock(path, exportName, loaded[exportName]);
-  };
-
-  const groups = [];
-  for (const group of PROMPT_GROUPS) {
-    const blocks = [];
-    for (const [path, exportName] of group.entries) {
-      blocks.push(await loadExport(path, exportName));
-    }
-    groups.push({ id: group.id, label: group.label, tone: group.tone, blocks });
-  }
-
-  const blocks = groups.flatMap((group) => group.blocks);
-  const bytes = blocks.reduce((total, block) => total + block.bytes, 0);
-  return {
-    note: "Evaluated repository exports, not one live Process prompt. Runtime identity, installed skills, targets, and user-edited context.d files are intentionally absent.",
-    groups,
-    blocks,
-    bytes,
-    estimatedTokens: Math.ceil(bytes / 4),
-  };
-}
-
 export function createSourceReviewServer(options = {}) {
   const workspaces = options.workspaces ?? createWorkspaceRegistry(options.manualRoot);
   const initialWorkspace = normalizeWorkspaceId(options.initialWorkspace ?? "prompts", workspaces);
+  let writes = Promise.resolve();
   return createServer(async (request, response) => {
     try {
       setSecurityHeaders(response);
+      assertLocalRequest(request);
       const url = new URL(request.url ?? "/", "http://source-review.local");
       if (request.method === "GET" && url.pathname === "/") {
         return sendFile(response, resolve(TOOL_ROOT, "index.html"), "text/html; charset=utf-8");
@@ -159,6 +107,11 @@ export function createSourceReviewServer(options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/styles.css") {
         return sendFile(response, resolve(TOOL_ROOT, "styles.css"), "text/css; charset=utf-8");
+      }
+      if (request.method === "GET" && url.pathname === "/sanitize.js") {
+        const requireFromWeb = createRequire(resolve(REPO_ROOT, "web/package.json"));
+        const path = resolve(dirname(requireFromWeb.resolve("dompurify")), "purify.es.mjs");
+        return sendFile(response, path, "text/javascript; charset=utf-8");
       }
       if (request.method === "GET" && url.pathname === "/api/config") {
         const available = [];
@@ -183,7 +136,7 @@ export function createSourceReviewServer(options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/api/file") {
         const workspace = requireWorkspace(url.searchParams.get("workspace"), workspaces);
-        const file = resolveWorkspacePath(workspace, url.searchParams.get("path"));
+        const file = await resolveWorkspacePath(workspace, url.searchParams.get("path"));
         const content = await readFile(file.absolutePath, "utf8");
         return sendJson(response, 200, { path: file.relativePath, content, hash: hashText(content) });
       }
@@ -192,17 +145,21 @@ export function createSourceReviewServer(options = {}) {
         const body = await readJsonBody(request);
         if (!validateFileWrite(body)) throw invalidJsonBody(validateFileWrite.errors);
         const workspace = requireWorkspace(body.workspace, workspaces);
-        const file = resolveWorkspacePath(workspace, body.path);
-        const current = await readFile(file.absolutePath, "utf8");
-        if (hashText(current) !== body.expectedHash) {
-          throw new HttpError(409, "The file changed on disk. Refresh before overwriting it.");
-        }
-        await writeFile(file.absolutePath, body.content, "utf8");
+        const write = writes.then(async () => {
+          const file = await resolveWorkspacePath(workspace, body.path);
+          const current = await readFile(file.absolutePath, "utf8");
+          if (hashText(current) !== body.expectedHash) {
+            throw new HttpError(409, "The file changed on disk. Refresh before overwriting it.");
+          }
+          await writeFile(file.absolutePath, body.content, "utf8");
+        });
+        writes = write.catch(() => {});
+        await write;
         return sendJson(response, 200, { ok: true, hash: hashText(body.content) });
       }
       if (request.method === "GET" && url.pathname === "/api/diff") {
         const workspace = requireWorkspace(url.searchParams.get("workspace"), workspaces);
-        const file = resolveWorkspacePath(workspace, url.searchParams.get("path"));
+        const file = await resolveWorkspacePath(workspace, url.searchParams.get("path"));
         const { stdout } = await execFileAsync(
           "git",
           ["diff", "--no-ext-diff", "--", file.relativePath],
@@ -210,9 +167,20 @@ export function createSourceReviewServer(options = {}) {
         );
         return sendJson(response, 200, { diff: stdout });
       }
-      if (request.method === "GET" && url.pathname === "/api/prompt-blocks") {
+      if (request.method === "POST" && url.pathname === "/api/prompt-preview") {
+        assertSameOrigin(request);
+        const body = await readJsonBody(request);
+        if (!validatePromptPreview(body)) throw invalidJsonBody(validatePromptPreview.errors);
         const workspace = requireWorkspace("prompts", workspaces);
-        return sendJson(response, 200, await loadPromptGroups(workspace.root));
+        const draft = body.draft && {
+          ...await resolveWorkspacePath(workspace, body.draft.path), content: body.draft.content,
+        };
+        const preview = await loadPromptPreview(body.account, draft);
+        const parseMarkdown = await markdownParser();
+        for (const section of [...preview.sections, ...preview.catalog]) {
+          section.html = await parseMarkdown(section.text);
+        }
+        return sendJson(response, 200, preview);
       }
       if (request.method === "POST" && url.pathname === "/api/render-markdown") {
         assertSameOrigin(request);
@@ -243,18 +211,6 @@ async function walk(root, prefix, extensions, output) {
       output.push({ path, bytes: metadata.size, modifiedAt: metadata.mtimeMs });
     }
   }
-}
-
-function promptBlock(path, exportName, text) {
-  const bytes = TEXT_ENCODER.encode(text).length;
-  return {
-    path,
-    exportName,
-    text,
-    bytes,
-    characters: [...text].length,
-    estimatedTokens: Math.ceil(bytes / 4),
-  };
 }
 
 function requireWorkspace(id, workspaces) {
@@ -293,6 +249,13 @@ function assertSameOrigin(request) {
   const host = request.headers.host;
   if (origin && host && new URL(origin).host !== host) {
     throw new HttpError(403, "Cross-origin writes are not allowed.");
+  }
+}
+
+function assertLocalRequest(request) {
+  const port = request.socket.localPort;
+  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(request.headers.host)) {
+    throw new HttpError(403, "Source review is only available on localhost.");
   }
 }
 

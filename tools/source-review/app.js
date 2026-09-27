@@ -1,3 +1,5 @@
+import DOMPurify from "/sanitize.js";
+
 const elements = {
   tabs: document.querySelector("#workspace-tabs"),
   root: document.querySelector("#root-path"),
@@ -9,6 +11,9 @@ const elements = {
   stats: document.querySelector("#review-stats"),
   note: document.querySelector("#review-note"),
   preview: document.querySelector("#preview"),
+  promptControls: document.querySelector("#prompt-controls"),
+  account: document.querySelector("#prompt-account"),
+  view: document.querySelector("#prompt-view"),
   sourcePath: document.querySelector("#source-path"),
   source: document.querySelector("#source"),
   save: document.querySelector("#save"),
@@ -27,19 +32,24 @@ const state = {
   sourceHash: null,
   dirty: false,
   renderTimer: null,
+  previewVersion: 0,
+  selectionVersion: 0,
+  saving: false,
 };
 
-await initialize();
+await initialize().catch(showError);
 
 async function initialize() {
   state.config = await requestJson("/api/config");
   renderTabs();
   await selectWorkspace(state.config.initialWorkspace);
 
-  elements.refresh.addEventListener("click", () => void refresh());
+  elements.refresh.addEventListener("click", () => void refresh().catch(showError));
   elements.search.addEventListener("input", renderFileList);
   elements.source.addEventListener("input", sourceChanged);
   elements.save.addEventListener("click", () => void saveSource());
+  elements.account.addEventListener("change", () => void renderPromptPreview().catch(showError));
+  elements.view.addEventListener("change", () => void renderPromptPreview().catch(showError));
   elements.preview.addEventListener("click", previewClicked);
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -60,7 +70,7 @@ function renderTabs() {
     button.type = "button";
     button.textContent = workspace.label;
     button.classList.toggle("is-active", workspace.id === state.workspace);
-    button.addEventListener("click", () => void selectWorkspace(workspace.id));
+    button.addEventListener("click", () => void selectWorkspace(workspace.id).catch(showError));
     return button;
   }));
 }
@@ -69,10 +79,14 @@ async function selectWorkspace(workspace) {
   if (workspace === state.workspace) return;
   if (!confirmDiscard()) return;
   state.workspace = workspace;
+  state.previewVersion++;
+  state.selectionVersion++;
+  clearTimeout(state.renderTimer);
   state.selectedPath = null;
   state.sourceText = "";
   state.sourceHash = null;
   setDirty(false);
+  elements.promptControls.hidden = workspace !== "prompts";
   renderTabs();
   await refresh();
 }
@@ -88,7 +102,7 @@ async function refresh() {
   const currentExists = state.files.some((file) => file.path === state.selectedPath);
   const preferred = state.workspace === "manual"
     ? state.files.find((file) => file.path === "index.md")?.path
-    : state.files.find((file) => file.path === "system.ts")?.path;
+    : state.files.find((file) => file.path === "ship/00-role.md")?.path;
   if (!currentExists) {
     await selectFile(preferred ?? state.files[0]?.path ?? null);
   } else if (state.selectedPath) {
@@ -106,7 +120,7 @@ function renderFileList() {
       button.className = `file-row${file.path === state.selectedPath ? " is-active" : ""}`;
       button.textContent = file.path;
       button.title = `${file.bytes.toLocaleString()} bytes`;
-      button.addEventListener("click", () => void selectFile(file.path));
+      button.addEventListener("click", () => void selectFile(file.path).catch(showError));
       return button;
     });
   elements.files.replaceChildren(...rows);
@@ -115,9 +129,13 @@ function renderFileList() {
 async function selectFile(path, force = false) {
   if (!path || (!force && path === state.selectedPath)) return;
   if (!force && !confirmDiscard()) return;
+  const version = ++state.selectionVersion;
+  clearTimeout(state.renderTimer);
+  state.previewVersion++;
   const data = await requestJson(
     `/api/file?workspace=${encodeURIComponent(state.workspace)}&path=${encodeURIComponent(path)}`,
   );
+  if (version !== state.selectionVersion) return;
   state.selectedPath = path;
   state.sourceText = data.content;
   state.sourceHash = data.hash;
@@ -127,7 +145,11 @@ async function selectFile(path, force = false) {
   setDirty(false);
   renderFileList();
   await refreshDiff();
+  if (version !== state.selectionVersion) return;
   if (state.workspace === "prompts") {
+    if (path.startsWith("ship/")) elements.account.value = "ship";
+    if (path.startsWith("crew/") || path.startsWith("agent/")) elements.account.value = "crew";
+    if (path.startsWith("tasks/")) elements.view.value = "catalog";
     await renderPromptPreview();
   } else {
     await renderManualPreview(data.content);
@@ -136,86 +158,104 @@ async function selectFile(path, force = false) {
 
 function sourceChanged() {
   setDirty(elements.source.value !== state.sourceText);
-  if (state.workspace === "manual") {
-    clearTimeout(state.renderTimer);
-    state.renderTimer = setTimeout(() => void renderManualPreview(elements.source.value), 160);
-  }
+  state.previewVersion++;
+  clearTimeout(state.renderTimer);
+  state.renderTimer = setTimeout(() => {
+    const rendering = state.workspace === "prompts" ? renderPromptPreview() : renderManualPreview(elements.source.value);
+    void rendering.catch(showError);
+  }, 200);
 }
 
 function setDirty(dirty) {
   state.dirty = dirty;
-  elements.save.disabled = !dirty || !state.selectedPath;
+  elements.save.disabled = state.saving || !dirty || !state.selectedPath;
   elements.saveState.textContent = dirty ? "UNSAVED" : state.selectedPath ? "SAVED" : "";
   elements.saveState.className = `save-state${dirty ? " is-dirty" : ""}`;
 }
 
 async function saveSource() {
-  if (!state.dirty || !state.selectedPath) return;
+  if (!state.dirty || !state.selectedPath || state.saving) return;
+  state.saving = true;
+  const submitted = {
+    workspace: state.workspace, path: state.selectedPath,
+    content: elements.source.value, expectedHash: state.sourceHash,
+  };
   elements.save.disabled = true;
   elements.saveState.textContent = "SAVING";
   try {
     const data = await requestJson("/api/file", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspace: state.workspace,
-        path: state.selectedPath,
-        content: elements.source.value,
-        expectedHash: state.sourceHash,
-      }),
+      body: JSON.stringify(submitted),
     });
-    state.sourceText = elements.source.value;
+    state.sourceText = submitted.content;
     state.sourceHash = data.hash;
-    setDirty(false);
-    await refreshDiff();
-    if (state.workspace === "prompts") {
-      await renderPromptPreview();
-    }
+    setDirty(elements.source.value !== state.sourceText);
   } catch (error) {
     elements.saveState.textContent = "SAVE FAILED";
     elements.saveState.className = "save-state is-error";
     showError(error);
-    elements.save.disabled = false;
+    return;
+  } finally {
+    state.saving = false;
+    elements.save.disabled = !state.dirty || !state.selectedPath;
   }
+  void refreshDiff().catch(showError);
+  if (state.workspace === "prompts") void renderPromptPreview().catch(showError);
 }
 
 async function renderPromptPreview() {
-  const data = await requestJson("/api/prompt-blocks");
-  elements.kind.textContent = "EVALUATED PROMPT SOURCES";
-  elements.title.textContent = "Repository-defined prompt text";
-  elements.note.textContent = data.note;
-  elements.stats.textContent = `${data.blocks.length} BLOCKS · ${formatCount(data.bytes)} BYTES · ~${formatCount(data.estimatedTokens)} TOKENS`;
-
-  const groups = data.groups.map((group) => {
-    const section = document.createElement("section");
-    section.className = "prompt-group";
-    const title = document.createElement("h3");
-    title.className = "prompt-group-title";
-    title.textContent = group.label;
-    const blocks = group.blocks.map((block) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `prompt-block is-${group.tone}`;
-      button.dataset.sourcePath = block.path;
-      const header = document.createElement("header");
-      const name = document.createElement("strong");
-      name.textContent = block.exportName;
-      const meta = document.createElement("small");
-      meta.textContent = `${block.path} · ${formatCount(block.bytes)} B · ~${formatCount(block.estimatedTokens)} T`;
-      header.append(name, meta);
-      const body = document.createElement("pre");
-      body.textContent = block.text;
-      button.append(header, body);
-      return button;
-    });
-    section.append(title, ...blocks);
-    return section;
+  const version = ++state.previewVersion;
+  const account = elements.account.value;
+  const view = elements.view.value;
+  const body = { account };
+  if (state.dirty) body.draft = { path: state.selectedPath, content: elements.source.value };
+  const data = await requestJson("/api/prompt-preview", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  elements.preview.replaceChildren(...groups);
+  if (version !== state.previewVersion) return;
+  elements.kind.textContent = "REPOSITORY DEFAULTS";
+  elements.title.textContent = view === "catalog" ? "All prompt sources" : `${account === "ship" ? "Ship" : "Crew"} · assembled prompt`;
+  elements.note.textContent = "Sample account and runtime. Saved edits change this worktree; space overrides stay intact.";
+  const bytes = new TextEncoder().encode(view === "catalog" ? data.catalog.map((source) => source.text).join("") : data.prompt).length;
+  elements.stats.textContent = `${view === "catalog" ? `${data.catalog.length} SOURCES` : `${data.sections.length} SECTIONS`} · ${formatCount(bytes)} BYTES`;
+  const scrollTop = elements.preview.scrollTop;
+  if (view === "exact") {
+    const pre = document.createElement("pre");
+    pre.className = "exact-prompt";
+    pre.textContent = data.prompt;
+    elements.preview.replaceChildren(pre);
+  } else {
+    const blocks = view === "catalog" ? data.catalog : data.sections;
+    elements.preview.replaceChildren(...blocks.map((block) => {
+      const section = document.createElement("section");
+      const root = block.contextRoot?.key;
+      section.className = `prompt-block is-${root === "system" ? "system" : "personal"}`;
+      section.classList.toggle("is-selected", block.path === state.selectedPath);
+      const header = document.createElement("header");
+      const name = document.createElement(block.path ? "button" : "strong");
+      if (block.path) {
+        name.type = "button";
+        name.dataset.sourcePath = block.path;
+      }
+      name.textContent = block.path ?? "Available skills · generated";
+      const meta = document.createElement("small");
+      meta.textContent = `${formatCount(new TextEncoder().encode(block.text).length)} B`;
+      header.append(name, meta);
+      const article = document.createElement(block.path ? "article" : "pre");
+      article.className = "manual-article";
+      if (block.path) article.innerHTML = DOMPurify.sanitize(block.html);
+      else article.textContent = block.text;
+      section.append(header, article);
+      return section;
+    }));
+  }
+  elements.preview.scrollTop = scrollTop;
 }
 
 async function renderManualPreview(content) {
   if (!state.selectedPath) return;
+  const version = ++state.previewVersion;
   elements.kind.textContent = "RENDERED MANUAL SOURCE";
   elements.title.textContent = state.selectedPath;
   elements.note.textContent = "This preview and editor read the gsv-manual worktree directly. Saving creates an ordinary Git diff there.";
@@ -231,9 +271,10 @@ async function renderManualPreview(content) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content }),
   });
+  if (version !== state.previewVersion) return;
   const article = document.createElement("article");
   article.className = "manual-article";
-  article.innerHTML = data.html;
+  article.innerHTML = DOMPurify.sanitize(data.html);
   elements.preview.replaceChildren(article);
 }
 
@@ -242,16 +283,18 @@ async function refreshDiff() {
     elements.diff.textContent = "No file selected.";
     return;
   }
+  const version = state.selectionVersion;
   const data = await requestJson(
     `/api/diff?workspace=${encodeURIComponent(state.workspace)}&path=${encodeURIComponent(state.selectedPath)}`,
   );
+  if (version !== state.selectionVersion) return;
   elements.diff.textContent = data.diff || "No worktree diff for this file.";
 }
 
 function previewClicked(event) {
   const block = event.target.closest("[data-source-path]");
   if (block?.dataset.sourcePath) {
-    void selectFile(block.dataset.sourcePath);
+    void selectFile(block.dataset.sourcePath).catch(showError);
     return;
   }
   if (state.workspace !== "manual") return;
@@ -264,12 +307,12 @@ function previewClicked(event) {
   const path = resolved.endsWith("/") ? `${resolved}index.md` : resolved;
   if (state.files.some((file) => file.path === path)) {
     event.preventDefault();
-    void selectFile(path);
+    void selectFile(path).catch(showError);
   }
 }
 
 function confirmDiscard() {
-  return !state.dirty || window.confirm("Discard unsaved source changes?");
+  return !state.saving && (!state.dirty || window.confirm("Discard unsaved source changes?"));
 }
 
 async function requestJson(url, options) {
