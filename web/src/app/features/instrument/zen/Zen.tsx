@@ -452,7 +452,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* moments: the runtime's, plus the commands run by hand */
   const { moments, receipts } = useMemo(() => {
-    const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
+    const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId, pid ?? undefined)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     for (const outgoing of outbox.messages) {
       if (outgoing.draft.conversationId
@@ -910,7 +910,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const activeRun = connected ? runtime.activeRunId : null;
-  const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
+  const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
@@ -1030,7 +1030,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </ul>}
           {showFeedback && <div class="zen-feedback">
             {activeRun !== null && <span role="status">
-              {attemptedModel && <>attempting {attemptedModel} · </>}
+              {currentModel && <>{currentModel} · </>}
               {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
             </span>}
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}

@@ -135,6 +135,11 @@ was performed.
 
 Desktop keeps voice and hands-free controls at the right edge beneath the prompt. Reconnect feedback
 appears beside the attachment actions, without reserving blank space to the right of the input controls.
+The outgoing-message spinner lasts until delivery is acknowledged. Ship's activity mark follows the
+active run independently of its transcript, including context preparation and reasoning before any
+visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
+shows activity again until it ends. The model label identifies the run's selected model, not whether
+the provider has started returning tokens.
 
 Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
 use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
