@@ -15,7 +15,7 @@ The prompt workspace is for editing the repository's shipped instructions. Selec
 a source under a category and edit it beside the **Category** preview. Each source
 shows its scope: shared, Ship, Crew, generic agent, owner, or standalone task.
 Choose **Sections** or **Exact text** and pick **Ship** or **Crew** to inspect the
-assembled model input. **Sections** links to every source that contributes to a
+assembled standing prompt. **Sections** links to every source that contributes to a
 saved context file; **All sources** also includes standalone task prompts.
 Typing updates the preview before saving. **Save** (or Ctrl/Cmd+S) writes the file;
 **Refresh** reloads changes made in another editor.
@@ -36,7 +36,7 @@ Active standing defaults and standalone task prompts live in
 | `world-model/` | What GSV is and how its environments relate |
 | `interaction/` | Incoming events, message delivery, and Ship's communication obligations |
 | `computer-and-discovery/` | Targets, files, commands, manuals, skills, and integrations |
-| `durable-work/` | Responsibilities, delegation, scheduling, and follow-through |
+| `durable-work/` | Context snapshots and updates, responsibilities, delegation, scheduling, and follow-through |
 | `knowledge/` | Shared memory, retrieval, and what to preserve |
 | `role-and-judgment/` | Ship and Crew's responsibilities and execution decisions |
 | `voice/` | Ship's public voice and the generic agent writing defaults |
@@ -48,11 +48,16 @@ to Ship's saved role file, while `knowledge/agent.md` supplies an ordinary agent
 memory file. `voice/agent.md` is a default for agent accounts, not another account
 named `agent`. Ship has its own voice source.
 
-The category extraction preserves the existing prompt wording, assembly order,
-and stored `context.d` paths. Some stored files are composed from several source
-categories. The TypeScript wrappers in `prompts/` own that composition;
-`prompt-sources.ts` maps it for the editor. This allows source organization to
-change without migrating existing overrides or saved account instructions.
+The category files contain the model-facing explanations, not just an outline:
+`world-model/gsv.md` defines owners, accounts, processes, runs, conversations, and
+targets; `interaction/` explains input provenance and delivery contracts;
+`durable-work/continuity.md` explains initial snapshots and subsequent updates.
+Computer/discovery guidance covers target selection, capabilities, and approvals.
+
+Stored `context.d` paths and section order remain stable. Some stored files are
+composed from several source categories. The TypeScript wrappers in `prompts/`
+own that composition; `prompt-sources.ts` maps it for the editor. Editing a
+category's wording changes its rendered contribution without changing its scope.
 
 TypeScript imports this text during the build. Keep `{{...}}` placeholders intact:
 system placeholders are expanded by the existing runtime provider;

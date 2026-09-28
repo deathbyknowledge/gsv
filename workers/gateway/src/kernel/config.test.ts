@@ -175,11 +175,11 @@ describe("ConfigStore", () => {
 
   it("defines lean common process context once for all profiles", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
-    expect(context).toContain("GSV is a personal intelligence OS");
-    expect(context).toContain("its own lightweight Linux virtual computer");
-    expect(context).toContain("skills show browser-target");
+    expect(context).toContain("GSV is a personal intelligence operating environment");
+    expect(context).toContain("A process has a pid");
+    expect(context).toContain("A target is an addressable environment");
     expect(context).toContain("[GSV EVENT]");
-    expect(context).toContain("typed runtime events from GSV");
+    expect(context).toContain("typed runtime events");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
     expect(targets).toContain("message destinations");
     expect(targets).toContain("message attach PATH...");
@@ -191,7 +191,8 @@ describe("ConfigStore", () => {
       "cp source-target:/path destination-target:/path",
     );
     expect(targets).toContain("targets list");
-    expect(targets).toContain("must be run from the `gsv` target");
+    expect(targets).toContain("on target `gsv`");
+    expect(targets).toContain("skills show browser-target");
     const responsibilities =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
     expect(responsibilities).toContain("Kernel responsibility ledger");

@@ -126,10 +126,17 @@ voice, and instance facts. Scope stays explicit within each category: shared,
 Ship, Crew, generic agent, or owner. Separate task prompts cover compaction,
 onboarding, delegated-run delivery, and corrections.
 
+The shared defaults explain the relationship between the human owner, agent
+account, process, run, conversation, and target. Input guidance distinguishes
+human messages, process requests, schedules, and runtime events; delivery guidance
+distinguishes explicit human-facing messages from delegated return values.
+Continuity guidance explains how an epoch's initial runtime facts and
+responsibilities are updated by later events across runs.
+
 TypeScript composes these sources into the existing system and account context
 files, preserving their stored paths and assembly order. `npm run review:prompts`
 opens a local editor with category previews, links from assembled sections to
-their contributing sources, and exact Ship/Crew model input. The previews use the
+their contributing sources, and exact Ship/Crew standing prompts. The previews use the
 production assembler and sample runtime facts. Saving edits changes repository
 defaults; existing account context files and explicit system overrides remain
 under their owners' control.

@@ -1,5 +1,6 @@
 import computerDiscovery from "../../workers/gateway/src/prompts/computer-and-discovery/discovery.md";
 import computerTargets from "../../workers/gateway/src/prompts/computer-and-discovery/targets.md";
+import contextContinuity from "../../workers/gateway/src/prompts/durable-work/continuity.md";
 import processWork from "../../workers/gateway/src/prompts/durable-work/processes.md";
 import responsibilityRules from "../../workers/gateway/src/prompts/durable-work/responsibilities.md";
 import shipWork from "../../workers/gateway/src/prompts/durable-work/ship.md";
@@ -30,6 +31,7 @@ export type PromptSource = { path: string; text: string; scope: PromptSourceScop
 export const PROMPT_SOURCES: PromptSource[] = [
   { path: "computer-and-discovery/discovery.md", text: computerDiscovery, scope: "shared" },
   { path: "computer-and-discovery/targets.md", text: computerTargets, scope: "shared" },
+  { path: "durable-work/continuity.md", text: contextContinuity, scope: "shared" },
   { path: "durable-work/processes.md", text: processWork, scope: "shared" },
   { path: "durable-work/responsibilities.md", text: responsibilityRules, scope: "shared" },
   { path: "durable-work/ship.md", text: shipWork, scope: "ship" },
@@ -58,7 +60,7 @@ export const CONTEXT_SOURCE_PATHS = new Map<string, string[]>([
   ["system/00-runtime.md", ["instance-facts/runtime.md"]],
   ["system/01-gsv.md", ["world-model/gsv.md", "interaction/events.md"]],
   ["system/05-targets.md", ["interaction/messages.md", "computer-and-discovery/targets.md"]],
-  ["system/10-responsibilities.md", ["durable-work/responsibilities.md", "instance-facts/responsibilities.md"]],
+  ["system/10-responsibilities.md", ["durable-work/continuity.md", "durable-work/responsibilities.md", "instance-facts/responsibilities.md"]],
   ["system/20-discovery.md", ["computer-and-discovery/discovery.md"]],
   ["system/30-process-orchestration.md", ["durable-work/processes.md"]],
   ["ship/00-role.md", [
