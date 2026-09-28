@@ -211,8 +211,11 @@ System-owned producers use the same ledger contract:
 - Provisioning a new personal intelligence creates one high-priority initial
   onboarding responsibility. It waits for the user rather than waking the Ship on
   its own, is present in Ship's first context epoch, and remains unresolved until
-  the user confirms setup is complete. This replaces the generated boot context
-  file.
+  the user has experienced one completed task beyond conversation. Ship resolves
+  it with the concepts the user met along the way, which the `gsv-concepts` skill
+  reads later. The responsibility carries the state; the personal agent's
+  generated `07-onboarding.md` carries the behaviour while it is open. The Kernel
+  reports the resolution as the `onboarding.completed` telemetry event.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

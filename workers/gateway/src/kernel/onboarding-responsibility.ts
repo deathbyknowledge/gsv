@@ -1,6 +1,6 @@
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
-const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
+export const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
 
 export function ensureInitialOnboardingResponsibility(
   ownerUid: number,
@@ -9,22 +9,20 @@ export function ensureInitialOnboardingResponsibility(
 ): ResponsibilityCreateOutcome {
   return responsibilities.create({
     ownerUid,
-    title: "Get to know the user and finish initial GSV setup",
+    title: "Welcome to GSV",
     details: {
       responsibilityType: "onboarding.initial",
-      summary: "Learn how to be useful to the user and help them connect and configure the parts of GSV they want.",
+      summary: "The user understands what GSV does by experiencing a successful task by themselves.",
       outcomes: [
-        "Learn enough about the user to be useful.",
-        "Help connect useful computers, services, or messengers.",
-        "Help configure models, permissions, and approvals where needed.",
+        "One of the following: a machine OR messenger OR integration is connected OR a scheduled task is created",
       ],
-      completionCondition: "The user confirms that onboarding or setup is complete.",
+      completionCondition: "The user has experienced one completed task beyond conversation, such as connecting a machine, browser, messenger, or integration, sending an email, creating, editing, or deleting files, or creating a reminder.",
     },
     source: { kind: "system", component: "onboarding" },
     assignee: { kind: "ship" },
     state: "waiting",
     priority: "high",
-    blocker: "Waiting for the user to begin or continue setup.",
+    blocker: "Waiting for the user's first messages.",
     dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY,
     actor: { kind: "system", component: "onboarding" },
     observedByShip: true,

@@ -36,6 +36,7 @@ Conventional files include:
 ```text
 <agent home>/context.d/00-role.md
 <agent home>/context.d/05-voice.md
+<personal agent home>/context.d/07-onboarding.md
 <personal agent home>/context.d/10-delegation.md
 <human home>/context.d/10-personal.md
 ```
@@ -45,8 +46,10 @@ facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
 in the Kernel `r12y` responsibility ledger rather than either context or memory
-layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
-context file.
+layer. Initial onboarding keeps its state in an `r12y` responsibility; the
+personal agent's generated `07-onboarding.md` holds the behaviour that applies
+while that responsibility is unresolved, and the built-in `gsv-concepts` skill
+covers new concepts afterwards.
 
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work

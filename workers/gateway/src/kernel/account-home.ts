@@ -13,6 +13,7 @@ import {
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
+import { PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT } from "../prompts/onboarding";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -69,6 +70,7 @@ async function homeLayoutOps(
     roleContext,
     styleContext,
     voiceContext,
+    onboardingContext,
     commitmentsContext,
     memoryContext,
     skillsDir,
@@ -78,6 +80,7 @@ async function homeLayoutOps(
     client.readPath(repo, "context.d/00-role.md"),
     client.readPath(repo, "context.d/00-style.md"),
     client.readPath(repo, "context.d/05-voice.md"),
+    client.readPath(repo, "context.d/07-onboarding.md"),
     client.readPath(repo, "context.d/10-commitments.md"),
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "skills.d"),
@@ -122,6 +125,12 @@ async function homeLayoutOps(
         "context.d/05-voice.md",
         voiceContext,
         PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+      );
+      maybePutTextFile(
+        ops,
+        "context.d/07-onboarding.md",
+        onboardingContext,
+        PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT,
       );
       maybeDeleteGeneratedTextFile(
         ops,

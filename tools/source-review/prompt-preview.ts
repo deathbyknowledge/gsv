@@ -11,6 +11,7 @@ import {
   PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   CREW_CONTEXT, crewDelegationContext,
 } from "../../workers/gateway/src/prompts/personal-intelligence";
+import { PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT } from "../../workers/gateway/src/prompts/onboarding";
 import { CONTEXT_SOURCE_PATHS, PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
@@ -30,6 +31,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
   const program = account === "ship" ? [
     { name: "00-role.md", text: PERSONAL_INTELLIGENCE_CONTEXT },
     { name: "05-voice.md", text: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
+    { name: "07-onboarding.md", text: PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT },
     { name: "10-delegation.md", text: crewDelegationContext("crew") },
   ] : [
     { name: "00-role.md", text: CREW_CONTEXT },

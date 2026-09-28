@@ -15,6 +15,7 @@ import {
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
   CREW_CONTEXT,
 } from "../prompts/personal-intelligence";
+import { PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT } from "../prompts/onboarding";
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
@@ -300,7 +301,7 @@ describe("handleAccountCreate", () => {
     );
     expect(createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
       ownerUid: result.account.uid,
-      title: "Get to know the user and finish initial GSV setup",
+      title: "Welcome to GSV",
       dedupeKey: "onboarding.initial",
     }));
     const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
@@ -309,6 +310,9 @@ describe("handleAccountCreate", () => {
       .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
     expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_INTELLIGENCE_VOICE_CONTEXT);
+    const onboardingContextOp = agentOps.find((op) => op.path === "context.d/07-onboarding.md");
+    expect(new TextDecoder().decode(new Uint8Array(onboardingContextOp?.contentBytes ?? [])))
+      .toBe(PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT);
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
     );

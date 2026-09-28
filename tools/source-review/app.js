@@ -9,6 +9,7 @@ const promptCategories = new Map([
   ["role-and-judgment", "Role and judgment"],
   ["voice", "Voice"],
   ["instance-facts", "Instance facts"],
+  ["onboarding", "Onboarding"],
   ["tasks", "Task prompts"],
 ]);
 

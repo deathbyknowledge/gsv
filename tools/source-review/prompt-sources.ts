@@ -8,6 +8,7 @@ import delegationFacts from "../../workers/gateway/src/prompts/instance-facts/sh
 import ownerFacts from "../../workers/gateway/src/prompts/instance-facts/user.md";
 import interaction from "../../workers/gateway/src/prompts/interaction/shared.md";
 import sharedKnowledge from "../../workers/gateway/src/prompts/knowledge/shared.md";
+import shipOnboarding from "../../workers/gateway/src/prompts/onboarding/ship.md";
 import crewRole from "../../workers/gateway/src/prompts/role-and-judgment/crew.md";
 import shipRole from "../../workers/gateway/src/prompts/role-and-judgment/ship.md";
 import compactionTask from "../../workers/gateway/src/prompts/tasks/compaction.md";
@@ -32,6 +33,7 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "instance-facts/user.md", text: ownerFacts, scope: "owner" },
   { path: "interaction/shared.md", text: interaction, scope: "shared" },
   { path: "knowledge/shared.md", text: sharedKnowledge, scope: "shared" },
+  { path: "onboarding/ship.md", text: shipOnboarding, scope: "ship" },
   { path: "role-and-judgment/crew.md", text: crewRole, scope: "crew" },
   { path: "role-and-judgment/ship.md", text: shipRole, scope: "ship" },
   { path: "tasks/compaction.md", text: compactionTask, scope: "task" },
@@ -51,6 +53,7 @@ export const CONTEXT_SOURCE_PATHS = new Map<string, string[]>([
   ["system/30-process-orchestration.md", ["durable-work/processes.md"]],
   ["ship/00-role.md", ["role-and-judgment/ship.md", "knowledge/shared.md"]],
   ["ship/05-voice.md", ["voice/ship.md"]],
+  ["ship/07-onboarding.md", ["onboarding/ship.md"]],
   ["ship/10-delegation.md", ["instance-facts/ship.md"]],
   ["crew/00-role.md", ["role-and-judgment/crew.md"]],
   ["crew/15-memory.md", ["knowledge/shared.md"]],

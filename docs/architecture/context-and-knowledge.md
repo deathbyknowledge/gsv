@@ -122,7 +122,7 @@ intelligence decides when information is worth retrieving or preserving.
 Repository authors edit shipped standing defaults and standalone task prompts as
 Markdown under `workers/gateway/src/prompts/`. The sources are grouped by world
 model, interaction, computer/discovery, durable work, knowledge, role/judgment,
-voice, and instance facts. Scope stays explicit within each category: shared,
+voice, instance facts, and onboarding. Scope stays explicit within each category: shared,
 Ship, Crew, or owner. Separate task prompts cover compaction,
 onboarding, delegated-run delivery, and corrections.
 

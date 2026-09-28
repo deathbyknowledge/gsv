@@ -41,6 +41,7 @@ Active standing defaults and standalone task prompts live in
 | `role-and-judgment/` | Ship's responsiveness and follow-through; Crew's assignment and reporting duties |
 | `voice/` | Ship's public voice |
 | `instance-facts/` | Runtime values, responsibility snapshot, Crew account name, and owner context template |
+| `onboarding/` | Ship's first-task guidance while the initial onboarding responsibility is open |
 | `tasks/` | Separate compaction, setup, delegated-run, and correction instructions |
 
 Category and scope are independent. `knowledge/shared.md` contributes once to
