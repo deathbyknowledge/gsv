@@ -55,7 +55,7 @@ describe("seedBuiltinSkillsToHome", () => {
 
     const result = await seedBuiltinSkillsToHome(client, IDENTITY);
 
-    expect(result).toEqual({ username: "alice", copied: 3, skipped: 3 });
+    expect(result).toEqual({ username: "alice", copied: 4, skipped: 3 });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const operations = apply.mock.calls[0]?.[4] as Array<{
       type: string;
@@ -63,6 +63,7 @@ describe("seedBuiltinSkillsToHome", () => {
       contentBytes: number[];
     }>;
     expect(operations.map((operation) => operation.path)).toEqual([
+      "skills.d/gsv-concepts/SKILL.md",
       "skills.d/image-reading/SKILL.md",
       "skills.d/memory/SKILL.md",
       "skills.d/process-orchestration/SKILL.md",

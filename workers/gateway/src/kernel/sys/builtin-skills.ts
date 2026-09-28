@@ -1,4 +1,5 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
+import gsvConceptsSkill from "../../../../../skills/gsv-concepts/SKILL.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
@@ -63,6 +64,10 @@ export const BUILTIN_SKILL_FILES = [
   {
     path: "browser-target/SKILL.md",
     content: browserTargetSkill,
+  },
+  {
+    path: "gsv-concepts/SKILL.md",
+    content: gsvConceptsSkill,
   },
   {
     path: "gsv-manual/SKILL.md",

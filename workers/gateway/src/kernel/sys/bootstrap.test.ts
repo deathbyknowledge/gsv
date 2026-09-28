@@ -95,6 +95,7 @@ describe("handleSysBootstrap", () => {
     );
     expect(BUILTIN_SKILL_FILES.map((skill) => skill.path)).toEqual([
       "browser-target/SKILL.md",
+      "gsv-concepts/SKILL.md",
       "gsv-manual/SKILL.md",
       "image-reading/SKILL.md",
       "memory/SKILL.md",
@@ -150,6 +151,7 @@ describe("handleSysBootstrap", () => {
     const operations = applyMock.mock.calls[0]?.[4] as Array<{ path: string }>;
     expect(operations.map((operation) => operation.path)).toEqual([
       "skills.d/.dir",
+      "skills.d/gsv-concepts/SKILL.md",
       "skills.d/gsv-manual/SKILL.md",
       "skills.d/image-reading/SKILL.md",
       "skills.d/memory/SKILL.md",
