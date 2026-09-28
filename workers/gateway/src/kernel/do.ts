@@ -18,6 +18,7 @@ import { InstallationRetirement, durableResourceName, stateWithRetirementStorage
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
+import { emitOnboardingCompleted } from "./onboarding-telemetry";
 import type {
   Frame,
   FrameBody,
@@ -503,7 +504,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilities = new ResponsibilityStore(
+      ctx.storage,
+      (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"),
+      (record) => emitOnboardingCompleted({ env: this.bindings, installationId: this.installationId }, record),
+    );
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);

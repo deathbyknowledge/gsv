@@ -220,6 +220,32 @@ it("accepts service outcomes only from their owner and rejects user content", ()
   }
 });
 
+describe("onboarding.completed", () => {
+  it("accepts a duration and a concept count and rejects concept names", () => {
+    const base = {
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "product",
+        name: "onboarding.completed",
+        properties: { durationMs: 420000, conceptsCount: 2 },
+      },
+    };
+    assert.equal(telemetryRecordSchema.safeParse(createTelemetryRecord(base)).success, true);
+    for (const properties of [
+      { durationMs: 420000 },
+      { durationMs: -1, conceptsCount: 0 },
+      { durationMs: 420000, conceptsCount: 2, concepts: ["approval"] },
+    ]) {
+      assert.throws(() => createTelemetryRecord({
+        ...base,
+        event: { ...base.event, properties },
+      }));
+    }
+    assert.throws(() => createTelemetryRecord({ ...base, component: "accounts" }));
+  });
+});
+
 describe("integration.connected", () => {
   it("accepts the closed kind and provider enums and rejects anything else", () => {
     const base = {

@@ -277,6 +277,18 @@ const delegationCompletedSchema = z.strictObject({
   }),
 });
 
+// Emitted once when the Ship resolves the installation's initial onboarding
+// responsibility: how long from provisioning to the user's first completed
+// task, and how many concepts came up on the way. Never the concept names.
+const onboardingCompletedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.completed"),
+  properties: z.strictObject({
+    durationMs: nonNegativeIntegerSchema,
+    conceptsCount: nonNegativeIntegerSchema,
+  }),
+});
+
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("process.compaction.failed"),
@@ -340,6 +352,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   adapterConnectedSchema,
   integrationConnectedSchema,
   delegationCompletedSchema,
+  onboardingCompletedSchema,
 ]);
 
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
@@ -365,6 +378,7 @@ export const telemetryEventComponents = {
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
   "delegation.completed": ["gateway"],
+  "onboarding.completed": ["gateway"],
 } satisfies TelemetryEventOwnership;
 
 export const telemetryRecordSchema = z.strictObject({

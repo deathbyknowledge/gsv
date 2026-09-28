@@ -166,7 +166,11 @@ export type ResponsibilityChangesOutcome = {
 };
 
 export class ResponsibilityStore {
-  constructor(private readonly storage: DurableObjectStorage, private readonly onChange?: (ownerUid: number) => void) {}
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly onChange?: (ownerUid: number) => void,
+    private readonly onResolved?: (record: ResponsibilityRecord) => void,
+  ) {}
 
   get(ownerUid: number, id: string): ResponsibilityRecord | null {
     const row = this.getRow(ownerUid, id);
@@ -484,6 +488,7 @@ export class ResponsibilityStore {
 
   update(input: ResponsibilityUpdateInput): ResponsibilityUpdateOutcome {
     let outcome: ResponsibilityUpdateOutcome | undefined;
+    let resolvedRecord: ResponsibilityRecord | null = null;
     this.storage.transactionSync(() => {
       const currentRow = this.getRow(input.ownerUid, input.id);
       if (!currentRow) throw new Error(`Responsibility not found: ${input.id}`);
@@ -587,9 +592,11 @@ export class ResponsibilityStore {
         now: input.now,
       });
       outcome = { record, revision, changed: true };
+      if (kind === "resolved") resolvedRecord = record;
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
     if (outcome.changed) this.onChange?.(input.ownerUid);
+    if (resolvedRecord) this.onResolved?.(resolvedRecord);
     return outcome;
   }
 
