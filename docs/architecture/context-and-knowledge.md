@@ -123,29 +123,31 @@ Repository authors edit shipped standing defaults and standalone task prompts as
 Markdown under `workers/gateway/src/prompts/`. The sources are grouped by world
 model, interaction, computer/discovery, durable work, knowledge, role/judgment,
 voice, and instance facts. Scope stays explicit within each category: shared,
-Ship, Crew, generic agent, or owner. Separate task prompts cover compaction,
+Ship, Crew, or owner. Separate task prompts cover compaction,
 onboarding, delegated-run delivery, and corrections.
 
-The shared defaults explain the relationship between the human owner, agent
-account, process, run, conversation, and target. Input guidance distinguishes
-human messages, process requests, schedules, and runtime events; delivery guidance
-distinguishes explicit human-facing messages from delegated return values.
-Continuity guidance explains how an epoch's initial runtime facts and
-responsibilities are updated by later events across runs.
+The shared defaults orient the agent within a persistent, Linux-like computer,
+building on familiar Unix concepts. They explain GSV-specific decisions: choosing
+targets, interpreting message origins and runtime events, sending human-facing
+output through Send, and returning delegated results. Later events supersede
+initial facts; files and responsibilities preserve continuity.
 
-Each category owns its rules. Ship's role focuses on immediate acknowledgment,
-execution choices, and follow-through; Crew's role focuses on the assigned outcome
-and its evidence. Both use the same knowledge source. Voice stays separate from
-delivery mechanics, and instance templates contain values rather than policy.
-Command recipes remain in the discoverable skills and manuals.
+Each category owns its rules. Ship prioritizes acknowledgment and continued
+responsiveness, then appropriate responsibility bookkeeping, then execution or
+delegation. Crew's role defines the assigned outcome and evidence to report; no
+generic voice is seeded. Both use the same knowledge source. Ship's voice stays
+separate from delivery mechanics, and instance templates contain values rather
+than policy. Command recipes remain in the discoverable skills and manuals.
 
 TypeScript composes these sources into the existing system and account context
-files, preserving their stored paths and assembly order. `npm run review:prompts`
+files, preserving their stored paths and layer order. `npm run review:prompts`
 opens a local editor with category previews, links from assembled sections to
 their contributing sources, and exact Ship/Crew standing prompts. The previews use the
 production assembler and sample runtime facts. Saving edits changes repository
 defaults; existing account context files and explicit system overrides remain
 under their owners' control.
+Home scaffolding removes retired generic style files only when their contents
+exactly match a generated default; customized and concurrent edits are preserved.
 See `tools/source-review/README.md` for the authoring workflow.
 
 ## See also

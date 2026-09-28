@@ -14,11 +14,10 @@ import compactionTask from "../../workers/gateway/src/prompts/tasks/compaction.m
 import delegatedTask from "../../workers/gateway/src/prompts/tasks/delegated.md";
 import setupTask from "../../workers/gateway/src/prompts/tasks/setup-assist.md";
 import yieldTask from "../../workers/gateway/src/prompts/tasks/yield-correction.md";
-import agentVoice from "../../workers/gateway/src/prompts/voice/agent.md";
 import shipVoice from "../../workers/gateway/src/prompts/voice/ship.md";
 import worldModel from "../../workers/gateway/src/prompts/world-model/gsv.md";
 
-export type PromptSourceScope = "shared" | "ship" | "crew" | "agent" | "owner" | "task";
+export type PromptSourceScope = "shared" | "ship" | "crew" | "owner" | "task";
 export type PromptSource = { path: string; text: string; scope: PromptSourceScope };
 
 // Source categories are independent of saved context.d paths and their assembly order.
@@ -39,7 +38,6 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "tasks/delegated.md", text: delegatedTask, scope: "task" },
   { path: "tasks/setup-assist.md", text: setupTask, scope: "task" },
   { path: "tasks/yield-correction.md", text: yieldTask, scope: "task" },
-  { path: "voice/agent.md", text: agentVoice, scope: "agent" },
   { path: "voice/ship.md", text: shipVoice, scope: "ship" },
   { path: "world-model/gsv.md", text: worldModel, scope: "shared" },
 ];
@@ -55,7 +53,6 @@ export const CONTEXT_SOURCE_PATHS = new Map<string, string[]>([
   ["ship/05-voice.md", ["voice/ship.md"]],
   ["ship/10-delegation.md", ["instance-facts/ship.md"]],
   ["crew/00-role.md", ["role-and-judgment/crew.md"]],
-  ["crew/00-style.md", ["voice/agent.md"]],
   ["crew/15-memory.md", ["knowledge/shared.md"]],
   ["user/10-personal.md", ["instance-facts/user.md"]],
 ]);

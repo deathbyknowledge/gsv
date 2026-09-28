@@ -5,7 +5,7 @@ import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config"
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
 import { BUILTIN_SKILL_FILES } from "../../workers/gateway/src/kernel/sys/builtin-skills";
 import {
-  DEFAULT_STYLE_CONTEXT, DEFAULT_MEMORY_CONTEXT_TEMPLATE, PERSONAL_STANDING_CONTEXT,
+  DEFAULT_MEMORY_CONTEXT_TEMPLATE, PERSONAL_STANDING_CONTEXT,
 } from "../../workers/gateway/src/prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
@@ -33,7 +33,6 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
     { name: "10-delegation.md", text: crewDelegationContext("crew") },
   ] : [
     { name: "00-role.md", text: CREW_CONTEXT },
-    { name: "00-style.md", text: DEFAULT_STYLE_CONTEXT },
     { name: "15-memory.md", text: DEFAULT_MEMORY_CONTEXT_TEMPLATE },
   ];
   const files = new Map<string, string>([

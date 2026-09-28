@@ -1,4 +1,3 @@
-import styleContext from "./voice/agent.md";
 import memoryContext from "./knowledge/shared.md";
 import standingContext from "./instance-facts/user.md";
 
@@ -10,8 +9,9 @@ export const RETIRED_BOOT_CONTEXT_TEMPLATE =
   "- Help the user and your own agent account finish setting up GSV: connect useful devices/targets or messengers, configure models and approvals.\n" +
   "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations. Until onboarding is complete, keep it as an active assignment even if the conversation changes topic.\n";
 
+// Historical seeding note; this text is now retained only for exact-match cleanup.
 // Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
-export const DEFAULT_STYLE_CONTEXT = styleContext;
+export const RETIRED_AGENT_VOICE_CONTEXT = "# Voice\n\nLead with the result. Be concise and concrete, with enough evidence and limitations for the recipient to act. Use structure when it improves clarity; omit generic introductions and repetition.\n";
 
 // Used by ensureAccountHomeLayout to seed context.d/15-memory.md for worker accounts.
 export const DEFAULT_MEMORY_CONTEXT_TEMPLATE = memoryContext;

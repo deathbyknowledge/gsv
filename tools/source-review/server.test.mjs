@@ -55,6 +55,7 @@ test("previews assemble account-specific defaults with the runtime providers", a
   assert.match(ship.prompt, /<05-voice.md>/);
   assert.match(ship.prompt, /Crew account: `crew`/);
   assert.doesNotMatch(crew.prompt, /<05-voice.md>/);
+  assert.doesNotMatch(crew.prompt, /<00-style.md>/);
   assert.match(crew.prompt, /<program path="\/home\/crew\/context.d\/">/);
   for (const preview of [ship, crew]) {
     assert.match(preview.prompt, /<user path="\/home\/alex\/context.d\/">/);
@@ -69,7 +70,7 @@ test("previews assemble account-specific defaults with the runtime providers", a
   for (const preview of [ship, crew]) {
     const paths = new Set(preview.sections.flatMap((section) => section.paths));
     for (const source of preview.catalog) {
-      const applies = ["shared", "owner", preview === ship ? "ship" : "crew", ...(preview === crew ? ["agent"] : [])].includes(source.scope);
+      const applies = ["shared", "owner", preview === ship ? "ship" : "crew"].includes(source.scope);
       assert.equal(paths.has(source.path), applies, source.path);
     }
   }
@@ -97,8 +98,7 @@ test("each category draft reaches its intended accounts without changing another
     const original = await readFile(absolutePath, "utf8");
     for (const account of ["ship", "crew"]) {
       const preview = await loadPromptPreview(account, { absolutePath, content: marker });
-      const applies = source.scope === "shared" || source.scope === "owner" || source.scope === account
-        || (source.scope === "agent" && account === "crew");
+      const applies = source.scope === "shared" || source.scope === "owner" || source.scope === account;
       assert.equal(preview.prompt.includes(marker), applies, `${source.path} in ${account}`);
       assert.equal(preview.catalog.find((entry) => entry.path === source.path).text, marker);
     }

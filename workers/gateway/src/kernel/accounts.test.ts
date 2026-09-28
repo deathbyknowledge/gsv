@@ -18,7 +18,6 @@ import {
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
-  DEFAULT_STYLE_CONTEXT,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 
@@ -239,10 +238,7 @@ describe("handleAccountCreate", () => {
     }, ctx);
 
     const ops = ripgitApplyBodies.flatMap((body) => body.ops);
-    const styleContextOp = ops.find((op) => op.path === "context.d/00-style.md");
-    expect(styleContextOp).toEqual(expect.objectContaining({ type: "put" }));
-    const styleContext = new TextDecoder().decode(new Uint8Array(styleContextOp?.contentBytes ?? []));
-    expect(styleContext).toBe(DEFAULT_STYLE_CONTEXT);
+    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/00-style.md" }));
     const memoryContextOp = ops.find((op) => op.path === "context.d/15-memory.md");
     expect(memoryContextOp).toEqual(expect.objectContaining({ type: "put" }));
     const memoryContext = new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? []));

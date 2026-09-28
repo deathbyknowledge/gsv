@@ -1,5 +1,5 @@
 # Durable work and continuity
 
-The Kernel's `r12y` ledger preserves accepted outcomes across runs. Record work before delegating it or yielding unfinished. Keep assignments, blockers, evidence, and next checks current; resolve only achieved outcomes. Short work completed in this run and routine retries need no entry. Use `r12y list` for current state.
+Use `r12y` to track accepted outcomes that are delegated, deferred, blocked, or still unfinished when you stop. Keep assignments, blockers, evidence, and next checks current; resolve only achieved outcomes. Short work completed now and routine retries need no entry. Use `r12y list` for current state.
 
-The standing prompt's runtime facts, skills, and responsibility snapshot are the baseline of a context epoch, which can span runs. Apply later events in order; they supersede those initial values. Reset, compaction, replacement, or changed standing instructions starts a new epoch. Durable records preserve what must outlive history.
+The facts and responsibilities shown here are an initial snapshot. Later events update them; use the newest information. Keep unfinished work in `r12y` and lasting knowledge in files so you can resume after losing earlier context.

@@ -196,7 +196,7 @@ async function selectFile(path, force = false) {
   if (state.workspace === "prompts") {
     const scope = state.promptSources.get(path)?.scope;
     if (scope === "ship") elements.account.value = "ship";
-    if (scope === "crew" || scope === "agent") elements.account.value = "crew";
+    if (scope === "crew") elements.account.value = "crew";
     if (path.startsWith("tasks/")) elements.view.value = "category";
     await renderPromptPreview();
   } else {
