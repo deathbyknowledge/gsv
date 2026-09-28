@@ -515,6 +515,11 @@ describe("Zen conversation entry", () => {
         await expectCard(zen);
         expect(configWrites).toEqual([]);
         expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await vi.waitFor(() => expect(approvalCard(zen)).toBeNull());
+        await askApproval();
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
       } finally { await zen.unmount(); }
     });
 

@@ -50,11 +50,13 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
   stageRef.current = stage;
   /* the policy is written before the mark; a failed mark retries the mark alone, never the policy */
   const policyWrittenRef = useRef(false);
+  /* an account that cannot write the mark still acknowledged the walkthrough: keep that for the session */
+  const acknowledgedRef = useRef(false);
 
   /* opens when an approval is pending and the mark is unset; once nothing is pending, whatever stage it reached is
      forgotten, so the next approval reads the mark afresh (show it again in Settings clears it) */
   useEffect(() => {
-    if (stage === "idle" && due && pending) {
+    if (stage === "idle" && due && pending && !acknowledgedRef.current) {
       setChoices({});
       setError(null);
       policyWrittenRef.current = false;
@@ -65,7 +67,7 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
   }, [due, pending, stage]);
 
   const finish = useCallback(async (mark: "done" | "skipped") => {
-    if (uid === null) { setStage("done"); return; }
+    if (uid === null) { acknowledgedRef.current = true; setStage("done"); return; }
     setStage("saving");
     setError(null);
     try {
@@ -86,7 +88,7 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
   const continueFlow = useCallback(() => {
     const current = stageRef.current;
     if (current === "step1") {
-      if (!editable) { setStage("done"); return; }
+      if (!editable) { acknowledgedRef.current = true; setStage("done"); return; }
       setStage("step2");
       return;
     }
