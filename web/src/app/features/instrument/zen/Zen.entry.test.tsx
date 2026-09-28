@@ -85,7 +85,7 @@ beforeEach(() => {
   vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation((listener) => { statuses.add(listener); return () => { statuses.delete(listener); }; });
   vi.spyOn(GSVClient.prototype, "onSignal").mockImplementation((listener) => { signals.add(listener); return () => { signals.delete(listener); }; });
   vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
-    if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: shipUid, username: "algo", label: "ship",
+    if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: ownerUid, username: "algo", label: "ship",
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets: [] } };
@@ -97,8 +97,10 @@ beforeEach(() => {
       configEntries = [...configEntries.filter((entry) => entry.key !== write.key), ...(write.value ? [write] : [])];
       return { data: { ok: true } };
     }
-    if (call === "account.list") return { data: { accounts: selfCapabilities ? [{ uid: ownerUid, username: "hank", displayName: "Hank",
-      relation: "self", runnable: false, capabilities: selfCapabilities }] : [] } };
+    if (call === "account.list") return { data: { accounts: selfCapabilities ? [
+      { uid: ownerUid, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: selfCapabilities },
+      { uid: shipUid, username: "algo", displayName: "Algo", relation: "personal-agent", runnable: true, capabilities: [] },
+    ] : [] } };
     if (call === "proc.hil") {
       const decision = z.object({ requestId: z.string(), decision: z.string() }).parse(args);
       hilDecisions.push(decision);

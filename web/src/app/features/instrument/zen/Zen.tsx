@@ -714,7 +714,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* a persistent rule goes to the account the pending process actually reads; until that account is
      known (the process list is still loading or failed) the walkthrough explains only and offers no always allow */
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
-  const processUid = processes.data?.find((process) => process.pid === pid)?.uid ?? null;
+  /* a process entry's uid is its owner; the policy the Kernel resolves first belongs to the run-as account,
+     found by username in the accounts list (unknown there means no safe target yet) */
+  const processUsername = processes.data?.find((process) => process.pid === pid)?.username ?? null;
+  const processUid = processUsername === null ? null
+    : accounts.data?.find((account) => account.username === processUsername)?.uid ?? null;
   const policyUid = self === null ? null : approvalPolicyAccount({
     selfUid: self.uid, processUid, processOverride: processUid === null ? "" : configEntry(accountApprovalKey(processUid)),
   });
