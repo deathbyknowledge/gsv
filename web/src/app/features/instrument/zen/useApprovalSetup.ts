@@ -2,12 +2,13 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import {
   composeApprovalChoices,
+  currentApprovalChoices,
   type ApprovalCategoryId,
   type ApprovalChoice,
   type ApprovalChoices,
   type ApprovalPolicyValue,
 } from "../../../domain/agentApproval";
-import { parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
+import { normalizedApprovalPolicy, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { markApprovalSetup, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 
 type Stage = "idle" | "step1" | "step2" | "saving" | "done";
@@ -80,10 +81,16 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
     }
   }, [client, onSaved, uid]);
 
+  /* picking what the policy already does is not a choice, so an unchanged walkthrough writes no override */
   const choose = useCallback((id: ApprovalCategoryId, choice: ApprovalChoice) => {
-    setChoices((current) => ({ ...current, [id]: choice }));
+    const effective = currentApprovalChoices(parseApprovalPolicy(override || inherited))[id];
+    setChoices((current) => {
+      const next = { ...current };
+      if (choice === effective) delete next[id]; else next[id] = choice;
+      return next;
+    });
     setError(null);
-  }, []);
+  }, [inherited, override]);
 
   const continueFlow = useCallback(() => {
     const current = stageRef.current;
@@ -97,6 +104,7 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
     if (!picked || policyWrittenRef.current) { void finish("done"); return; }
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
     const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, choices));
+    if (normalizedApprovalPolicy(next) === normalizedApprovalPolicy(override || inherited)) { void finish("done"); return; }
     setStage("saving");
     setError(null);
     void (async () => {

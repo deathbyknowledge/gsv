@@ -424,6 +424,23 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("writes only the mark when every pick matches what the policy already does", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onChoose("mail", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "done" }]);
+      } finally { await zen.unmount(); }
+    });
+
     it("keeps the walkthrough open with the error when the policy does not save", async () => {
       rejectWriteOf = "users/1000/ai/tools/approval";
       const zen = await mountedZen();
