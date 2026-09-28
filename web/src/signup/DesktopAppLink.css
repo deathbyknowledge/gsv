@@ -2,3 +2,5 @@
 .signup-desktop-app { width: min(420px, 100%); margin: 32px auto 0; padding-inline: var(--gsv-auth-pad-x, 20px); box-sizing: content-box; color: var(--text-dim); font-size: 11px; line-height: 1.6; }
 .signup-desktop-app .gsv-auth-link { color: var(--accent-bright); font-size: inherit; text-decoration: underline; }
 .signup-desktop-app .gsv-auth-link:hover { color: var(--text); }
+/* The two-choice welcome step spans the full width, so its footer reads centered rather than form-aligned. */
+.gsv-auth-surface-shared:has(.desktop-welcome-wide) + .signup-desktop-app { text-align: center; }
