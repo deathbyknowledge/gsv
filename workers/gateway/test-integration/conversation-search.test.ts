@@ -15,7 +15,6 @@ describe("conversation search over the authenticated protocol", () => {
 
       const first = await runtime.client.conversation.search({ query: "rotter cafe", limit: 1 });
       expect(first.conversation.id).toBe(conversation.id);
-      expect(first.indexing).toBe(false);
       expect(first.hits).toHaveLength(1);
       expect(first.hits[0].snippet).toBe("Rotterdam cafés open at nine.");
       expect(first.nextBeforeSequence).toBe(first.hits[0].sequence);

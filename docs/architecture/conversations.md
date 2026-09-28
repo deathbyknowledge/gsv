@@ -162,11 +162,15 @@ plain-text snippets, authors, dates, message IDs and sequences, newest first. Qu
 256 characters and 32 words, with up to 50 results per page. `nextBeforeSequence` pages older hits.
 Attachment contents and internal Process reasoning are not included.
 
-The index retains searchable text and author/date metadata when full messages move to R2. An upgrade
-indexes the bounded hot set immediately. First search schedules older segments for indexing, one
-segment per durable alarm; each segment's index and completion marker commit atomically. Queries
-report `indexing: true` until the archive backlog is complete, so partial results are not presented
-as an exhaustive search. Retrying or restarting indexing cannot duplicate a message.
+Only messages committed after search is enabled are indexed. Existing messages remain readable
+through history, with no archive backfill or indexing alarms. Each new message adds its terms and
+sequence to a contentless FTS index in the same transaction as the message. Idempotent replays do not
+add another index entry.
+
+The index retains terms and positions when messages move to R2, without retaining another copy of
+their text or metadata. Search resolves the returned matches from hot messages or the relevant R2
+segments to produce previews; a segment containing several matches is read once per query. Index
+storage still grows with indexed history, even though the full-message hot set stays bounded.
 
 Ship uses the same syscall through `message search "words"`. `--with` selects an owned conversation or
 Contact, `--before` pages older matches, and `--json` returns the structured result. A message sequence

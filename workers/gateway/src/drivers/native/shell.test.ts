@@ -4396,7 +4396,7 @@ describe("native administration shell commands", () => {
       title: "Ship", handlerPid: "proc:ship", latestSequence: 12, createdAt: 1, updatedAt: 2 };
     const search = vi.fn(async () => ({ hits: [{ id: "msg:one", sequence: 12,
       author: { kind: "user" as const, uid: IDENTITY.uid }, createdAt: 1, snippet: "Rotterdam events" }],
-      nextBeforeSequence: null, indexing: false }));
+      nextBeforeSequence: null }));
     getConversationByIdMock.mockReturnValue({ search });
     const ctx = makeContext({
       capabilities: ["shell.exec", "conversation.search"],

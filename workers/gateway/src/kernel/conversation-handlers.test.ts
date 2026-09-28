@@ -174,7 +174,7 @@ describe("conversation handlers", () => {
   });
 
   it("searches only owned conversations for signed-in people and their canonical Ship", async () => {
-    const search = vi.fn(async () => ({ hits: [], nextBeforeSequence: null, indexing: false }));
+    const search = vi.fn(async () => ({ hits: [], nextBeforeSequence: null }));
     getConversationByIdMock.mockReturnValue({ search });
     const ctx = context();
     await expect(handleConversationSearch({ query: "Rotterdam", limit: 10 }, ctx)).resolves.toMatchObject({ conversation: SHIP, hits: [] });

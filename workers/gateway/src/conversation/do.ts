@@ -78,7 +78,6 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private get storage(): R2Bucket { return this.namedRuntime().storage; }
   private archiveTransition: Promise<void> = Promise.resolve();
   private appendTransition: Promise<void> = Promise.resolve();
-  private searchIndexTransition: Promise<void> = Promise.resolve();
 
   constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
     super(state, env);
@@ -119,7 +118,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
   async quiesceInstallationResource(input: InstallationDeletionRequest) {
     const record = this.retirement.begin(input);
     if (record.phase !== "quiescing") return record;
-    await Promise.allSettled([this.appendTransition, this.archiveTransition, this.searchIndexTransition]);
+    await Promise.allSettled([this.appendTransition, this.archiveTransition]);
     await this.retirement.drain();
     if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
     return this.retirement.quiesced();
@@ -205,31 +204,28 @@ export class Conversation extends DurableObject<GatewayEnv> {
     const limit = input.limit ?? 20;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Search limit must be between 1 and 50");
     const before = normalizeBeforeSequence(input.beforeSequence, this.store.latestSequence() + 1);
-    if (this.store.pendingSearchSegment() && await this.ctx.storage.getAlarm() === null) {
-      await this.ctx.storage.setAlarm(Date.now());
+    const sequences = this.store.search(query, before, limit + 1);
+    const hasMore = sequences.length > limit;
+    sequences.length = Math.min(sequences.length, limit);
+    const messages = new Map(sequences.map((sequence) => [sequence, this.store.messageAt(sequence)]));
+    const archived = sequences.filter((sequence) => !messages.get(sequence));
+    if (archived.length) {
+      const segments = this.store.archiveSegmentsBefore(before).filter((segment) => (
+        archived.some((sequence) => sequence >= segment.fromSequence && sequence <= segment.toSequence)
+      ));
+      for (const segment of segments) {
+        for (const message of await this.readArchive(segment)) {
+          if (messages.has(message.sequence)) messages.set(message.sequence, message);
+        }
+      }
     }
-    this.retirement.assertActive();
-    const hits = this.store.search(query, before, limit + 1);
-    const hasMore = hits.length > limit;
-    hits.length = Math.min(hits.length, limit);
-    return { hits, nextBeforeSequence: hasMore ? hits.at(-1)!.sequence : null, indexing: this.store.pendingSearchSegment() !== null };
-  }
-
-  async alarm(): Promise<void> {
-    if (this.retirement.state) return;
-    const next = this.searchIndexTransition.then(async () => {
-      const segment = this.store.pendingSearchSegment();
-      if (!segment) return;
-      const messages = await this.readArchive(segment);
-      if (this.retirement.state) return;
-      this.ctx.storage.transactionSync(() => {
-        for (const message of messages) this.store.indexMessage(message);
-        this.store.finishSearchSegment(segment.segmentId);
-      });
-      if (this.store.pendingSearchSegment()) await this.ctx.storage.setAlarm(Date.now());
+    const hits = sequences.map((sequence) => {
+      const message = messages.get(sequence);
+      if (!message) throw new Error("Search entry has no canonical message");
+      return { id: message.id, sequence, author: message.author, createdAt: message.createdAt,
+        snippet: searchSnippet(message.text, input.query) };
     });
-    this.searchIndexTransition = next.catch(() => undefined);
-    await next;
+    return { hits, nextBeforeSequence: hasMore ? sequences.at(-1)! : null };
   }
 
   async history(input: ConversationHistoryInput = {}): Promise<{
@@ -490,6 +486,23 @@ function requireConversationKind(value: ConversationKind): void {
   if (value !== "ship" && value !== "work" && value !== "group" && value !== "contact") {
     throw new Error("Conversation kind is invalid");
   }
+}
+
+function searchSnippet(text: string, query: string): string {
+  const points = [...text];
+  if (points.length <= 360) return text;
+  const fold = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const normalized = fold(text);
+  const offsets = (fold(query).match(/[\p{L}\p{N}]+/gu) ?? [])
+    .map((term) => normalized.indexOf(term)).filter((offset) => offset >= 0);
+  const match = offsets.length ? Math.min(...offsets) : 0;
+  let position = 0;
+  for (let offset = 0; offset < match && position < points.length; position++) {
+    offset += fold(points[position]).length;
+  }
+  const start = Math.max(0, position - 80);
+  const end = Math.min(points.length, start + 360);
+  return `${start ? "…" : ""}${points.slice(start, end).join("").replace(/\s+/g, " ").trim()}${end < points.length ? "…" : ""}`;
 }
 
 function normalizeLimit(value: number | undefined): number {

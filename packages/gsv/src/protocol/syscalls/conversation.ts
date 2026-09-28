@@ -119,8 +119,6 @@ export type ConversationSearchResult = {
   conversation: ConversationSummary;
   hits: ConversationSearchHit[];
   nextBeforeSequence: number | null;
-  /** Older archived messages are still being added to the index. */
-  indexing: boolean;
 };
 
 export type ConversationSendArgs = {

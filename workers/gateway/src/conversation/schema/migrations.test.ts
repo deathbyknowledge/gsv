@@ -15,13 +15,15 @@ describe("conversation schema upgrades", () => {
       const store = new ConversationStore(sql);
       expect(store.messageAt(1)).toMatchObject({ id: "message", text: "Original text" });
       expect(store.messageAt(1)?.selectedTarget).toBeUndefined();
-      expect(store.search('"Original"*', 2, 10).map((hit) => hit.id)).toEqual(["message"]);
+      expect(store.search('"Original"*', 2, 10)).toEqual([]);
       const appended = store.append({ messageId: "selected", idempotencyKey: "selected", payloadHash: "fixture", text: "New text", selectedTarget: "macbook",
         author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 2 });
       expect(appended?.message.selectedTarget).toBe("macbook");
       runConversationSqlMigrations(storage);
       expect(store.messageAt(2)?.selectedTarget).toBe("macbook");
-      expect(store.search('"text"*', 3, 10)).toHaveLength(2);
+      expect(store.search('"text"*', 3, 10)).toEqual([2]);
+      expect(sql.exec("SELECT name FROM sqlite_master WHERE name = 'message_search_content'").toArray()).toEqual([]);
+      expect(sql.exec("SELECT text FROM message_search WHERE message_search MATCH 'New'").toArray()).toEqual([{ text: null }]);
     });
   });
 });

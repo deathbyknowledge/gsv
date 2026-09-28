@@ -27,7 +27,6 @@ export const ZenSearch = memo(function ZenSearch({ conversationId, timeZone, onC
     enabled: connected && settled.length > 0 && !opened,
     queryFn: () => client.conversation.search({ conversationId, query: settled, beforeSequence: pages.at(-1), limit: 20 }),
     retry: false,
-    refetchInterval: (query) => query.state.data?.indexing ? 1_000 : false,
   });
   const hits = search.data?.hits ?? [];
   const pending = query.trim() !== settled || search.isFetching;
@@ -91,12 +90,12 @@ export const ZenSearch = memo(function ZenSearch({ conversationId, timeZone, onC
             <span class="zen-search-snippet">{hit.snippet}</span>
           </button>)}
         </div>
-        {fresh && settled && !pending && !search.isError && !hits.length && !search.data?.indexing ? <p>No matches.</p> : null}
+        {fresh && settled && !pending && !search.isError && !hits.length ? <p>No matches.</p> : null}
       </div>
       <footer class="zen-search-footer">
-        <span>{search.data?.indexing ? "Searching older messages…" : "↑ ↓ select · enter open"}</span>
+        <span>↑ ↓ select · enter open</span>
         {pages.length > 0 && <button type="button" onClick={() => { setPages((pages) => pages.slice(0, -1)); setSelected(0); }}>newer</button>}
-        {search.data?.nextBeforeSequence != null && !search.data.indexing && fresh && <button type="button"
+        {search.data?.nextBeforeSequence != null && fresh && <button type="button"
           onClick={() => { setPages((pages) => [...pages, search.data!.nextBeforeSequence!]); setSelected(0); }}>older</button>}
       </footer>
     </>}

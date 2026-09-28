@@ -133,13 +133,13 @@ async function searchMessages(args: string[], ctx: KernelContext): Promise<ExecR
   }
   const result = await handleConversationSearch({ query: words.join(" "), conversationId, beforeSequence, limit }, ctx);
   if (outputJson) return completed(`${JSON.stringify(result, null, 2)}\n`);
-  const lines = [`conversation=${result.conversation.id}`, `indexing=${result.indexing}`, ""];
+  const lines = [`conversation=${result.conversation.id}`, ""];
   for (const hit of result.hits) {
     const author = hit.author.kind === "user" ? `user:${hit.author.uid}`
       : hit.author.kind === "process" ? hit.author.pid : hit.author.displayName;
     lines.push(`${hit.sequence} ${hit.id} ${author} ${new Date(hit.createdAt).toISOString()}`, hit.snippet, "");
   }
-  if (!result.hits.length) lines.push(result.indexing ? "Older messages are still being indexed; search again shortly." : "(no matches)");
+  if (!result.hits.length) lines.push("(no matches)");
   if (result.nextBeforeSequence !== null) lines.push(`next_before=${result.nextBeforeSequence}`);
   return completed(`${lines.join("\n")}\n`);
 }

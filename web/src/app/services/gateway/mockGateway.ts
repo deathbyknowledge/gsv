@@ -725,7 +725,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         && terms.every((term) => message.text.toLowerCase().includes(term))).reverse();
       const hits = matches.slice(0, limit).map(({ id, sequence, author, createdAt, text }) => ({ id, sequence, author, createdAt, snippet: text }));
       return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), hits,
-        nextBeforeSequence: matches.length > limit ? hits.at(-1)!.sequence : null, indexing: false });
+        nextBeforeSequence: matches.length > limit ? hits.at(-1)!.sequence : null });
     }
     case "conversation.send": {
       const sent = receive(sendArgs.parse(args).text);
