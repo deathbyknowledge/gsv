@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
 import {
   APPROVAL_CATEGORIES,
+  approvalPolicyAccount,
   approvalRuleForRequest,
   askingCategories,
   composeApprovalChoices,
@@ -39,6 +40,15 @@ describe("approval categories", () => {
     expect(askingCategories(blocked)).not.toContain("delete");
     const half = upsertApprovalRule(shipped, { match: "fs.delete", target: "gsv", action: "deny" });
     expect(currentApprovalChoices(half).delete).toBe("ask");
+  });
+});
+
+describe("approvalPolicyAccount", () => {
+  it("has no target until the process account is known, then picks the account whose override the process reads", () => {
+    expect(approvalPolicyAccount({ selfUid: 1000, processUid: null, processOverride: "" })).toBeNull();
+    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1000, processOverride: "" })).toBe(1000);
+    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1001, processOverride: "" })).toBe(1000);
+    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1001, processOverride: '{"default":"ask","rules":[]}' })).toBe(1001);
   });
 });
 

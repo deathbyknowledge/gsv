@@ -115,6 +115,14 @@ export function askingCategories(policy: ApprovalPolicyValue): ApprovalCategoryI
   return APPROVAL_CATEGORIES.filter((category) => current[category.id] === "ask").map((category) => category.id);
 }
 
+/** The account whose approval override a persistent choice must write. The Kernel resolves the run-as
+ *  account's own override before the owner's, so a process whose account has one reads that key; until
+ *  the process's account is known there is no safe target, and persistent controls stay off. */
+export function approvalPolicyAccount(input: { selfUid: number; processUid: number | null; processOverride: string }): number | null {
+  if (input.processUid === null) return null;
+  return input.processUid !== input.selfUid && input.processOverride !== "" ? input.processUid : input.selfUid;
+}
+
 /** Replace the first rule with the same capability and scope, or append; every other rule keeps its place. */
 export function upsertApprovalRule(policy: ApprovalPolicyValue, rule: ApprovalPolicyRule): ApprovalPolicyValue {
   const next: ApprovalPolicyRule = { match: rule.match, action: rule.action };

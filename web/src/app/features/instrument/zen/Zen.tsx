@@ -19,7 +19,7 @@ import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleProcesses, loadConsoleTargets } from "../../../services/system/consoleService";
 import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
 import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
-import { approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
+import { approvalPolicyAccount, approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
 import { defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { canConfigure, readSettingsPolicy } from "../settings/settingsModel";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
@@ -711,16 +711,17 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const cache = useQueryClient();
   const self = accounts.data?.find((account) => account.relation === "self") ?? null;
   const configEntry = (key: string) => config.data?.find((entry) => entry.key === key)?.value ?? "";
-  /* the Kernel resolves the run-as account's own override before the owner's, so a persistent rule goes
-     to whichever of the two the pending process actually reads: the agent's override when it has one */
+  /* a persistent rule goes to the account the pending process actually reads; until that account is
+     known (the process list is still loading or failed) the walkthrough explains only and offers no always allow */
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
   const processUid = processes.data?.find((process) => process.pid === pid)?.uid ?? null;
-  const policyUid = self === null ? null
-    : processUid !== null && processUid !== self.uid && configEntry(accountApprovalKey(processUid)) !== "" ? processUid : self.uid;
+  const policyUid = self === null ? null : approvalPolicyAccount({
+    selfUid: self.uid, processUid, processOverride: processUid === null ? "" : configEntry(accountApprovalKey(processUid)),
+  });
   const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
   /* a policy Settings cannot edit losslessly is never rewritten from here either */
-  const policyEditable = self !== null && canConfigure(self, "sys.config.set")
+  const policyEditable = self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
     && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null)
     && readSettingsPolicy(policyInherited) !== null;
   const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";
