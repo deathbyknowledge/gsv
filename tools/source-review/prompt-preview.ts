@@ -11,16 +11,13 @@ import {
   PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
   CREW_CONTEXT, crewDelegationContext,
 } from "../../workers/gateway/src/prompts/personal-intelligence";
-import { GSV_DELEGATED_TASK_CONTEXT } from "../../workers/gateway/src/prompts/system";
-import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../../workers/gateway/src/prompts/compaction";
-import { SETUP_ASSIST_SYSTEM_PROMPT } from "../../workers/gateway/src/prompts/setup-assist";
-import { YIELD_CORRECTION_MESSAGE } from "../../workers/gateway/src/prompts/correction-events";
+import { CONTEXT_SOURCE_PATHS, PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
-type PreviewSection = PromptSection & { path?: string; provider: string };
+type PreviewSection = PromptSection & { paths: string[]; provider: string };
 type PromptPreview = PromptAssemblySnapshot & {
   sections: PreviewSection[];
-  catalog: Array<{ path: string; text: string }>;
+  catalog: PromptSource[];
 };
 
 // This fixture uses the production defaults and providers, with local sample identities.
@@ -29,27 +26,20 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
   const systemContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
-  const catalog = [
-    ...systemContextFiles.map(({ name, text }) => ({ path: `system/${name}`, text })),
-    { path: "ship/00-role.md", text: PERSONAL_INTELLIGENCE_CONTEXT },
-    { path: "ship/05-voice.md", text: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
-    { path: "ship/10-delegation.md", text: crewDelegationContext("crew") },
-    { path: "crew/00-role.md", text: CREW_CONTEXT },
-    { path: "agent/00-style.md", text: DEFAULT_STYLE_CONTEXT },
-    { path: "agent/15-memory.md", text: DEFAULT_MEMORY_CONTEXT_TEMPLATE },
-    { path: "user/10-personal.md", text: PERSONAL_STANDING_CONTEXT },
-    { path: "tasks/delegated.md", text: GSV_DELEGATED_TASK_CONTEXT },
-    { path: "tasks/compaction.md", text: COMPACTION_SUMMARY_SYSTEM_PROMPT },
-    { path: "tasks/setup-assist.md", text: SETUP_ASSIST_SYSTEM_PROMPT },
-    { path: "tasks/yield-correction.md", text: YIELD_CORRECTION_MESSAGE },
+  const catalog = PROMPT_SOURCES;
+  const program = account === "ship" ? [
+    { name: "00-role.md", text: PERSONAL_INTELLIGENCE_CONTEXT },
+    { name: "05-voice.md", text: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
+    { name: "10-delegation.md", text: crewDelegationContext("crew") },
+  ] : [
+    { name: "00-role.md", text: CREW_CONTEXT },
+    { name: "00-style.md", text: DEFAULT_STYLE_CONTEXT },
+    { name: "15-memory.md", text: DEFAULT_MEMORY_CONTEXT_TEMPLATE },
   ];
-  const program = catalog.filter(({ path }) => path.startsWith(`${account}/`)
-    || (account === "crew" && path.startsWith("agent/")));
-  const owner = catalog.filter(({ path }) => path.startsWith("user/"));
-  const files = new Map([...program, ...owner].map(({ path, text }) => [
-    `home/${path.startsWith("user/") ? "alex" : account}/context.d/${path.split("/")[1]}`,
-    text,
-  ]));
+  const files = new Map<string, string>([
+    ...program.map(({ name, text }) => [`home/${account}/context.d/${name}`, text] as const),
+    ["home/alex/context.d/10-personal.md", PERSONAL_STANDING_CONTEXT] as const,
+  ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
   });
@@ -99,10 +89,9 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       const collected = await provider.collect(assemblyInput);
       for (const section of collected) {
         const root = section.contextRoot?.key;
-        const source = root === "program" ? program.find(({ path }) => path.endsWith(`/${section.name}`))
-          : root === "user" ? owner.find(({ path }) => path.endsWith(`/${section.name}`))
-          : catalog.find(({ path }) => path === `system/${section.name}`);
-        sections.push({ ...section, path: source?.path, provider: provider.name });
+        const sourceScope = root === "program" ? account : root === "user" ? "user" : "system";
+        const paths = CONTEXT_SOURCE_PATHS.get(`${sourceScope}/${section.name}`) ?? [];
+        sections.push({ ...section, paths, provider: provider.name });
       }
       return collected;
     },

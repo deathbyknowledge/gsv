@@ -11,10 +11,12 @@ npm run review:manual
 
 Both commands listen on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
 
-The prompt workspace is for editing the repository's shipped instructions. Pick
-**Ship** or **Crew**, select a Markdown source, and edit it beside the assembled
-preview. **Sections** shows where each piece comes from; **Exact text** shows the
-assembled model input; **All sources** also includes standalone task prompts.
+The prompt workspace is for editing the repository's shipped instructions. Select
+a source under a category and edit it beside the **Category** preview. Each source
+shows its scope: shared, Ship, Crew, generic agent, owner, or standalone task.
+Choose **Sections** or **Exact text** and pick **Ship** or **Crew** to inspect the
+assembled model input. **Sections** links to every source that contributes to a
+saved context file; **All sources** also includes standalone task prompts.
 Typing updates the preview before saving. **Save** (or Ctrl/Cmd+S) writes the file;
 **Refresh** reloads changes made in another editor.
 
@@ -29,14 +31,28 @@ requests.
 Active standing defaults and standalone task prompts live in
 `workers/gateway/src/prompts/` as Markdown:
 
-| Directory | Used for |
+| Category directory | What it teaches |
 | --- | --- |
-| `system/` | Shared `config/ai/context.d/` defaults, in filename order |
-| `ship/` | Ship's role, voice, and delegation account |
-| `crew/` | Crew's role |
-| `agent/` | Shared style and memory guidance for ordinary agent accounts |
-| `user/` | The human owner's shared standing context |
-| `tasks/` | Compaction, setup, delegated-run delivery, and yield correction |
+| `world-model/` | What GSV is and how its environments relate |
+| `interaction/` | Incoming events, message delivery, and Ship's communication obligations |
+| `computer-and-discovery/` | Targets, files, commands, manuals, skills, and integrations |
+| `durable-work/` | Responsibilities, delegation, scheduling, and follow-through |
+| `knowledge/` | Shared memory, retrieval, and what to preserve |
+| `role-and-judgment/` | Ship and Crew's responsibilities and execution decisions |
+| `voice/` | Ship's public voice and the generic agent writing defaults |
+| `instance-facts/` | Runtime values, responsibility snapshot, Crew account name, and owner context template |
+| `tasks/` | Separate compaction, setup, delegated-run, and correction instructions |
+
+Category and scope are independent. For example, `knowledge/ship.md` contributes
+to Ship's saved role file, while `knowledge/agent.md` supplies an ordinary agent's
+memory file. `voice/agent.md` is a default for agent accounts, not another account
+named `agent`. Ship has its own voice source.
+
+The category extraction preserves the existing prompt wording, assembly order,
+and stored `context.d` paths. Some stored files are composed from several source
+categories. The TypeScript wrappers in `prompts/` own that composition;
+`prompt-sources.ts` maps it for the editor. This allows source organization to
+change without migrating existing overrides or saved account instructions.
 
 TypeScript imports this text during the build. Keep `{{...}}` placeholders intact:
 system placeholders are expanded by the existing runtime provider;
@@ -49,8 +65,8 @@ account's home. System defaults remain live where no explicit config override
 exists. Saving here only changes the worktree; deployment and changes to an
 existing space are separate actions.
 
-When adding a prompt, wire it into its owning runtime path and the small source
-map in `prompt-preview.ts`. The editor uses that map to connect assembled sections
+When adding a prompt, wire it into its owning runtime path and the source
+map in `prompt-sources.ts`. The editor uses that map to connect assembled sections
 to their editable files; it does not choose runtime prompt order or policy.
 
 The manual view reads the sibling `../gsv-manual` worktree by default. Set `GSV_MANUAL_ROOT` when the manual lives elsewhere:

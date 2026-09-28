@@ -120,6 +120,13 @@ seeded `skill-authoring` skill contains the full authoring workflow.
 
 Agents should treat these paths like normal files. Read before editing, preserve user-authored structure, and keep changes narrow.
 
+Repository authors use `npm run review:prompts` to edit the shipped Markdown by
+category: world model, interaction, computer/discovery, durable work, knowledge,
+role/judgment, voice, and instance facts. These authoring categories compose into
+the existing `context.d` paths above. The editor shows both the category sources
+and exact assembled Ship/Crew prompts; its sample accounts do not read a live
+space. See [Authoring defaults](../architecture/context-and-knowledge.md#authoring-defaults).
+
 Examples:
 
 ```sh

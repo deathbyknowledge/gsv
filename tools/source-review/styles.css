@@ -135,6 +135,15 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
   overflow: auto;
 }
 
+.file-group {
+  margin: 18px 8px 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.file-group:first-child { margin-top: 0; }
+
 .file-row {
   width: 100%;
   display: block;
@@ -226,6 +235,7 @@ select { color: inherit; background: var(--panel); border: 1px solid var(--borde
 .prompt-block.is-selected { outline: 1px solid var(--accent); }
 .prompt-block header button { padding: 0; border: 0; background: none; color: var(--accent-strong); font-size: 12px; text-align: left; overflow-wrap: anywhere; }
 .prompt-block header button:hover { text-decoration: underline; }
+.source-links { display: grid; gap: 5px; min-width: 0; }
 
 .prompt-block header {
   display: flex;

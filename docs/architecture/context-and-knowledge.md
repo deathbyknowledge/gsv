@@ -120,11 +120,19 @@ intelligence decides when information is worth retrieving or preserving.
 ## Authoring defaults
 
 Repository authors edit shipped standing defaults and standalone task prompts as
-Markdown under `workers/gateway/src/prompts/`. TypeScript imports them as bundled
-text. `npm run review:prompts` opens a local editor with source sections and exact
-assembled Ship/Crew previews using the production assembler and sample runtime
-facts. This edits repository defaults, not a connected space: existing account
-context files and explicit system overrides remain under their owners' control.
+Markdown under `workers/gateway/src/prompts/`. The sources are grouped by world
+model, interaction, computer/discovery, durable work, knowledge, role/judgment,
+voice, and instance facts. Scope stays explicit within each category: shared,
+Ship, Crew, generic agent, or owner. Separate task prompts cover compaction,
+onboarding, delegated-run delivery, and corrections.
+
+TypeScript composes these sources into the existing system and account context
+files, preserving their stored paths and assembly order. `npm run review:prompts`
+opens a local editor with category previews, links from assembled sections to
+their contributing sources, and exact Ship/Crew model input. The previews use the
+production assembler and sample runtime facts. Saving edits changes repository
+defaults; existing account context files and explicit system overrides remain
+under their owners' control.
 See `tools/source-review/README.md` for the authoring workflow.
 
 ## See also

@@ -1,5 +1,17 @@
 import DOMPurify from "/sanitize.js";
 
+const promptCategories = new Map([
+  ["world-model", "World model"],
+  ["interaction", "Interaction and authority"],
+  ["computer-and-discovery", "Computer and discovery"],
+  ["durable-work", "Durable work and continuity"],
+  ["knowledge", "Knowledge"],
+  ["role-and-judgment", "Role and judgment"],
+  ["voice", "Voice"],
+  ["instance-facts", "Instance facts"],
+  ["tasks", "Task prompts"],
+]);
+
 const elements = {
   tabs: document.querySelector("#workspace-tabs"),
   root: document.querySelector("#root-path"),
@@ -35,6 +47,7 @@ const state = {
   previewVersion: 0,
   selectionVersion: 0,
   saving: false,
+  promptSources: new Map(),
 };
 
 await initialize().catch(showError);
@@ -114,7 +127,7 @@ async function refresh() {
   const currentExists = state.files.some((file) => file.path === state.selectedPath);
   const preferred = state.workspace === "manual"
     ? state.files.find((file) => file.path === "index.md")?.path
-    : state.files.find((file) => file.path === "ship/00-role.md")?.path;
+    : state.files.find((file) => file.path === "world-model/gsv.md")?.path;
   if (!currentExists) {
     await selectFile(preferred ?? state.files[0]?.path ?? null);
   } else if (state.selectedPath) {
@@ -124,17 +137,31 @@ async function refresh() {
 
 function renderFileList() {
   const query = elements.search.value.trim().toLowerCase();
-  const rows = state.files
-    .filter((file) => !query || file.path.toLowerCase().includes(query))
-    .map((file) => {
+  const files = state.files.filter((file) => !query || file.path.toLowerCase().includes(query));
+  const groups = state.workspace === "prompts"
+    ? [...new Set([...promptCategories.keys(), ...files.map((file) => file.path.split("/")[0])])]
+      .map((category) => [category, files.filter((file) => file.path.startsWith(`${category}/`))])
+    : [[null, files]];
+  const rows = [];
+  for (const [category, entries] of groups) {
+    if (entries.length === 0) continue;
+    if (category) {
+      const heading = document.createElement("h3");
+      heading.className = "file-group";
+      heading.textContent = promptCategories.get(category) ?? category;
+      rows.push(heading);
+    }
+    for (const file of entries) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `file-row${file.path === state.selectedPath ? " is-active" : ""}`;
-      button.textContent = file.path;
-      button.title = `${file.bytes.toLocaleString()} bytes`;
+      button.textContent = category ? file.path.slice(category.length + 1) : file.path;
+      button.setAttribute("aria-label", file.path);
+      button.title = `${file.path} · ${file.bytes.toLocaleString()} bytes`;
       button.addEventListener("click", () => void selectFile(file.path).catch(showError));
-      return button;
-    });
+      rows.push(button);
+    }
+  }
   elements.files.replaceChildren(...rows);
 }
 
@@ -167,9 +194,10 @@ async function selectFile(path, force = false) {
   await refreshDiff();
   if (version !== state.selectionVersion) return;
   if (state.workspace === "prompts") {
-    if (path.startsWith("ship/")) elements.account.value = "ship";
-    if (path.startsWith("crew/") || path.startsWith("agent/")) elements.account.value = "crew";
-    if (path.startsWith("tasks/")) elements.view.value = "catalog";
+    const scope = state.promptSources.get(path)?.scope;
+    if (scope === "ship") elements.account.value = "ship";
+    if (scope === "crew" || scope === "agent") elements.account.value = "crew";
+    if (path.startsWith("tasks/")) elements.view.value = "category";
     await renderPromptPreview();
   } else {
     await renderManualPreview(data.content);
@@ -234,11 +262,18 @@ async function renderPromptPreview() {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
   if (version !== state.previewVersion) return;
+  state.promptSources = new Map(data.catalog.map((source) => [source.path, source]));
+  const category = state.selectedPath?.split("/")[0];
+  const sourceView = view === "catalog" || view === "category";
+  const blocks = view === "category" ? data.catalog.filter((source) => source.path.startsWith(`${category}/`))
+    : view === "catalog" ? data.catalog : data.sections;
+  elements.account.disabled = sourceView;
   elements.kind.textContent = "REPOSITORY DEFAULTS";
-  elements.title.textContent = view === "catalog" ? "All prompt sources" : `${account === "ship" ? "Ship" : "Crew"} · assembled prompt`;
+  elements.title.textContent = view === "category" ? promptCategories.get(category) ?? category
+    : view === "catalog" ? "All prompt sources" : `${account === "ship" ? "Ship" : "Crew"} · assembled prompt`;
   elements.note.textContent = "Sample account and runtime. Saved edits change this worktree; space overrides stay intact.";
-  const bytes = new TextEncoder().encode(view === "catalog" ? data.catalog.map((source) => source.text).join("") : data.prompt).length;
-  elements.stats.textContent = `${view === "catalog" ? `${data.catalog.length} SOURCES` : `${data.sections.length} SECTIONS`} · ${formatCount(bytes)} BYTES`;
+  const bytes = new TextEncoder().encode(sourceView ? blocks.map((source) => source.text).join("") : data.prompt).length;
+  elements.stats.textContent = `${sourceView ? `${blocks.length} SOURCES` : `${data.sections.length} SECTIONS`} · ${formatCount(bytes)} BYTES`;
   const scrollTop = elements.preview.scrollTop;
   if (view === "exact") {
     const pre = document.createElement("pre");
@@ -246,25 +281,34 @@ async function renderPromptPreview() {
     pre.textContent = data.prompt;
     elements.preview.replaceChildren(pre);
   } else {
-    const blocks = view === "catalog" ? data.catalog : data.sections;
     elements.preview.replaceChildren(...blocks.map((block) => {
       const section = document.createElement("section");
       const root = block.contextRoot?.key;
-      section.className = `prompt-block is-${root === "system" ? "system" : "personal"}`;
-      section.classList.toggle("is-selected", block.path === state.selectedPath);
+      const paths = block.path ? [block.path] : block.paths;
+      section.className = `prompt-block is-${root === "system" || block.scope === "shared" ? "system" : "personal"}`;
+      section.classList.toggle("is-selected", paths.includes(state.selectedPath));
       const header = document.createElement("header");
-      const name = document.createElement(block.path ? "button" : "strong");
-      if (block.path) {
-        name.type = "button";
-        name.dataset.sourcePath = block.path;
+      const names = document.createElement("div");
+      names.className = "source-links";
+      if (paths.length > 0) {
+        for (const path of paths) {
+          const name = document.createElement("button");
+          name.type = "button";
+          name.dataset.sourcePath = path;
+          name.textContent = path;
+          names.append(name);
+        }
+      } else {
+        const name = document.createElement("strong");
+        name.textContent = "Available skills · generated";
+        names.append(name);
       }
-      name.textContent = block.path ?? "Available skills · generated";
       const meta = document.createElement("small");
-      meta.textContent = `${formatCount(new TextEncoder().encode(block.text).length)} B`;
-      header.append(name, meta);
-      const article = document.createElement(block.path ? "article" : "pre");
+      meta.textContent = `${block.scope ? `${block.scope.toUpperCase()} · ` : ""}${formatCount(new TextEncoder().encode(block.text).length)} B`;
+      header.append(names, meta);
+      const article = document.createElement(paths.length > 0 ? "article" : "pre");
       article.className = "manual-article";
-      if (block.path) article.innerHTML = DOMPurify.sanitize(block.html);
+      if (paths.length > 0) article.innerHTML = DOMPurify.sanitize(block.html);
       else article.textContent = block.text;
       section.append(header, article);
       return section;

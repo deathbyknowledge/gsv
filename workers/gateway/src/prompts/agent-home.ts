@@ -1,6 +1,6 @@
-import styleContext from "./agent/00-style.md";
-import memoryContext from "./agent/15-memory.md";
-import standingContext from "./user/10-personal.md";
+import styleContext from "./voice/agent.md";
+import memoryContext from "./knowledge/agent.md";
+import standingContext from "./instance-facts/user.md";
 
 // Used only to remove the exact generated context.d/00-boot.md during responsibility-ledger migration.
 export const RETIRED_BOOT_CONTEXT_TEMPLATE =

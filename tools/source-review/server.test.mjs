@@ -24,7 +24,7 @@ async function listen(server) {
 
 test("source paths stay inside their declared workspace and only expose Markdown", async () => {
   const workspace = createWorkspaceRegistry().get("prompts");
-  assert.equal((await resolveWorkspacePath(workspace, "ship/00-role.md")).relativePath, "ship/00-role.md");
+  assert.equal((await resolveWorkspacePath(workspace, "role-and-judgment/ship.md")).relativePath, "role-and-judgment/ship.md");
   await assert.rejects(resolveWorkspacePath(workspace, "../process/do.ts"), /outside/);
   await assert.rejects(resolveWorkspacePath(workspace, "system.ts"), /file type/);
 });
@@ -66,10 +66,17 @@ test("previews assemble account-specific defaults with the runtime providers", a
   }
   const files = await listWorkspaceFiles(createWorkspaceRegistry().get("prompts"));
   assert.deepEqual(ship.catalog.map((source) => source.path).sort(), files.map((file) => file.path).sort());
+  for (const preview of [ship, crew]) {
+    const paths = new Set(preview.sections.flatMap((section) => section.paths));
+    for (const source of preview.catalog) {
+      const applies = ["shared", "owner", preview === ship ? "ship" : "crew", ...(preview === crew ? ["agent"] : [])].includes(source.scope);
+      assert.equal(paths.has(source.path), applies, source.path);
+    }
+  }
 });
 
 test("unsaved Markdown changes the real assembled prompt without touching disk or leaking into the next preview", async () => {
-  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/system/00-runtime.md");
+  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/instance-facts/runtime.md");
   const original = await readFile(absolutePath, "utf8");
   const preview = await loadPromptPreview("ship", {
     absolutePath, content: "# Edited\n\nHello {{program.username}} from {{user.username}}.\nLiteral `code` and ${notJavaScript}.\n",
@@ -80,6 +87,23 @@ test("unsaved Markdown changes the real assembled prompt without touching disk o
   assert.doesNotMatch((await loadPromptPreview("ship")).prompt, /# Edited/);
   const blank = await loadPromptPreview("ship", { absolutePath, content: "" });
   assert.ok(!blank.sections.some((section) => section.name === "00-runtime.md"));
+});
+
+test("each category draft reaches its intended accounts without changing another account's instructions", async () => {
+  const sources = (await loadPromptPreview("ship")).catalog;
+  for (const source of sources) {
+    const marker = `Category draft for ${source.path}`;
+    const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts", source.path);
+    const original = await readFile(absolutePath, "utf8");
+    for (const account of ["ship", "crew"]) {
+      const preview = await loadPromptPreview(account, { absolutePath, content: marker });
+      const applies = source.scope === "shared" || source.scope === "owner" || source.scope === account
+        || (source.scope === "agent" && account === "crew");
+      assert.equal(preview.prompt.includes(marker), applies, `${source.path} in ${account}`);
+      assert.equal(preview.catalog.find((entry) => entry.path === source.path).text, marker);
+    }
+    assert.equal(await readFile(absolutePath, "utf8"), original);
+  }
 });
 
 test("source writes reject a stale editor before changing the worktree", async (context) => {
@@ -121,7 +145,7 @@ test("the preview API validates drafts and renders their Markdown", async (conte
   const post = (body) => fetch(`${origin}/api/prompt-preview`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const response = await post({ account: "crew", draft: { path: "crew/00-role.md", content: "# Draft\n\nDo **this**." } });
+  const response = await post({ account: "crew", draft: { path: "role-and-judgment/crew.md", content: "# Draft\n\nDo **this**." } });
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.match(data.prompt, /Do \*\*this\*\*/);
