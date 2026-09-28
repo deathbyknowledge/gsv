@@ -33,6 +33,7 @@ jobs:
       desktop: ${{ steps.filter.outputs.desktop }}
       transcriber: ${{ steps.filter.outputs.transcriber }}
       host_crates: ${{ steps.filter.outputs.host_crates }}
+      source_review: ${{ steps.filter.outputs.source_review }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +42,18 @@ jobs:
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           filters: |
+            source_review:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tools/source-review/**'
+              - 'workers/gateway/src/prompts/**'
+              - 'workers/gateway/src/process/context/**'
+              - 'workers/gateway/src/kernel/config.ts'
+              - 'workers/gateway/src/kernel/skills.ts'
+              - 'workers/gateway/src/kernel/sys/builtin-skills.ts'
+              - 'packages/gsv/**'
+              - 'skills/**'
             version:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
@@ -290,6 +303,7 @@ jobs:
       needs.changes.outputs.installations == 'true' ||
       needs.changes.outputs.inference == 'true' ||
       needs.changes.outputs.deployment == 'true' ||
+      needs.changes.outputs.source_review == 'true' ||
       needs.changes.outputs.deletion_stack == 'true'
     steps:
       - uses: actions/checkout@v4
@@ -311,6 +325,10 @@ jobs:
       - name: Test GSV package
         if: needs.changes.outputs.sdk == 'true'
         run: npm test --workspace packages/gsv
+
+      - name: Test prompt authoring
+        if: needs.changes.outputs.source_review == 'true'
+        run: npm run review:test
 
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'

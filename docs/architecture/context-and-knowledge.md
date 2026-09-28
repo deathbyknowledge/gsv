@@ -117,6 +117,39 @@ workflow layered on top of `repo.*` and `fs.*`. The runtime guarantees that the
 Personal wiki exists and that authorized owned agents can reach it; the
 intelligence decides when information is worth retrieving or preserving.
 
+## Authoring defaults
+
+Repository authors edit shipped standing defaults and standalone task prompts as
+Markdown under `workers/gateway/src/prompts/`. The sources are grouped by world
+model, interaction, computer/discovery, durable work, knowledge, role/judgment,
+voice, and instance facts. Scope stays explicit within each category: shared,
+Ship, Crew, or owner. Separate task prompts cover compaction,
+onboarding, delegated-run delivery, and corrections.
+
+The shared defaults orient the agent within a persistent, Linux-like computer,
+building on familiar Unix concepts. They explain GSV-specific decisions: choosing
+targets, interpreting message origins and runtime events, sending human-facing
+output through Send, and returning delegated results. Later events supersede
+initial facts; files and responsibilities preserve continuity.
+
+Each category owns its rules. Ship prioritizes acknowledgment and continued
+responsiveness, then appropriate responsibility bookkeeping, then execution or
+delegation. Crew's role defines the assigned outcome and evidence to report; no
+generic voice is seeded. Both use the same knowledge source. Ship's voice stays
+separate from delivery mechanics, and instance templates contain values rather
+than policy. Command recipes remain in the discoverable skills and manuals.
+
+TypeScript composes these sources into the existing system and account context
+files, preserving their stored paths and layer order. `npm run review:prompts`
+opens a local editor with category previews, links from assembled sections to
+their contributing sources, and exact Ship/Crew standing prompts. The previews use the
+production assembler and sample runtime facts. Saving edits changes repository
+defaults; existing account context files and explicit system overrides remain
+under their owners' control.
+Home scaffolding removes retired generic style files only when their contents
+exactly match a generated default; customized and concurrent edits are preserved.
+See `tools/source-review/README.md` for the authoring workflow.
+
 ## See also
 
 - [Context Compaction](./context-compaction.md)
