@@ -24,6 +24,7 @@ let storage: Map<string, string>;
 let messages: ConversationMessage[];
 let hasMore: boolean;
 let ownerUid: number;
+let shipUid: number;
 let gateway: string;
 let shipPid: string;
 let activeRunId: string | null;
@@ -57,6 +58,7 @@ beforeEach(() => {
   messages = [];
   hasMore = false;
   ownerUid = 1000;
+  shipUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
   activeRunId = null;
@@ -83,7 +85,7 @@ beforeEach(() => {
   vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation((listener) => { statuses.add(listener); return () => { statuses.delete(listener); }; });
   vi.spyOn(GSVClient.prototype, "onSignal").mockImplementation((listener) => { signals.add(listener); return () => { signals.delete(listener); }; });
   vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
-    if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: ownerUid, username: "algo", label: "ship",
+    if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: shipUid, username: "algo", label: "ship",
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets: [] } };
@@ -518,6 +520,37 @@ describe("Zen conversation entry", () => {
 
     it("explains only, and offers no always allow, when the saved policy cannot be edited losslessly", async () => {
       configEntries = [{ key: "users/1000/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).editable).toBe(false);
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes always allow to the agent's own override when the pending process resolves that one", async () => {
+      shipUid = 1001;
+      configEntries = [
+        { key: "users/1000/ui/approval-setup", value: "done" },
+        { key: "users/1001/ai/tools/approval", value: '{"default":"auto","rules":[{"match":"shell.exec","target":"targets/*","action":"ask"}]}' },
+      ];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1001/ai/tools/approval"]);
+        expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("explains only when the inherited policy cannot be edited losslessly", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' }];
       const zen = await mountedZen();
       try {
         await askApproval();

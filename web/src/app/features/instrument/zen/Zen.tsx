@@ -16,7 +16,7 @@ import {
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
 import { useChatOutbox } from "../../../services/chat/hooks/useChatOutbox";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
-import { loadConsoleTargets } from "../../../services/system/consoleService";
+import { loadConsoleProcesses, loadConsoleTargets } from "../../../services/system/consoleService";
 import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
 import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
@@ -29,7 +29,7 @@ import { useTerminalSessions } from "../../../services/terminal/TerminalProvider
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
-import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { SHELL_KEYS } from "../shared/shellKeys";
@@ -711,26 +711,33 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const cache = useQueryClient();
   const self = accounts.data?.find((account) => account.relation === "self") ?? null;
   const configEntry = (key: string) => config.data?.find((entry) => entry.key === key)?.value ?? "";
-  const policyOverride = self ? configEntry(accountApprovalKey(self.uid)) : "";
-  /* an override Settings cannot edit losslessly is never rewritten from here either */
-  const policyEditable = self !== null && canConfigure(self, "sys.config.set")
-    && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null);
+  /* the Kernel resolves the run-as account's own override before the owner's, so a persistent rule goes
+     to whichever of the two the pending process actually reads: the agent's override when it has one */
+  const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
+  const processUid = processes.data?.find((process) => process.pid === pid)?.uid ?? null;
+  const policyUid = self === null ? null
+    : processUid !== null && processUid !== self.uid && configEntry(accountApprovalKey(processUid)) !== "" ? processUid : self.uid;
+  const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
+  /* a policy Settings cannot edit losslessly is never rewritten from here either */
+  const policyEditable = self !== null && canConfigure(self, "sys.config.set")
+    && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null)
+    && readSettingsPolicy(policyInherited) !== null;
   const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";
   const refreshConfig = useCallback(() => cache.invalidateQueries({ queryKey: consoleConfigQueryKey }), [cache]);
   const setup = useApprovalSetup({
-    client, uid: self?.uid ?? null, due: setupDue, pending: pendingHil !== null, editable: policyEditable,
+    client, uid: self?.uid ?? null, policyUid, due: setupDue, pending: pendingHil !== null, editable: policyEditable,
     inherited: policyInherited, override: policyOverride, onSaved: refreshConfig,
   });
   const [alwaysAllow, setAlwaysAllow] = useState<{ requestId: string; saving: boolean; error: string | null } | null>(null);
   const allowAlways = useCallback(async () => {
-    if (!pid || !pendingHil || !self) return;
+    if (!pid || !pendingHil || !self || policyUid === null) return;
     const request = pendingHil;
     setAlwaysAllow({ requestId: request.requestId, saving: true, error: null });
     try {
       const base = parseApprovalPolicy(policyOverride || policyInherited);
       const next = protectManagedMailApproval(upsertApprovalRule(base, approvalRuleForRequest(request.syscall, request.target)));
-      await saveAccountApprovalPolicy(client, self.uid, policyOverride, serializeApprovalPolicy(next));
+      await saveAccountApprovalPolicy(client, policyUid, policyOverride, serializeApprovalPolicy(next));
       await refreshConfig();
     } catch (error) {
       setAlwaysAllow({ requestId: request.requestId, saving: false, error: error instanceof Error ? error.message : "The rule did not save." });
@@ -738,7 +745,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     }
     setAlwaysAllow(null);
     await decide("approve");
-  }, [client, decide, pendingHil, pid, policyInherited, policyOverride, refreshConfig, self]);
+  }, [client, decide, pendingHil, pid, policyInherited, policyOverride, policyUid, refreshConfig, self]);
 
   useEffect(() => {
     if (!active || !prefill || !connected || !pid) return;

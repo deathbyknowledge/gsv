@@ -14,7 +14,10 @@ type Stage = "idle" | "step1" | "step2" | "saving" | "done";
 
 export type ApprovalSetupInput = {
   client: Pick<GSVClient, "sys">;
+  /** The signed-in account, which owns the walkthrough mark. */
   uid: number | null;
+  /** The account whose policy the pending process resolves; its override is what the choices write. */
+  policyUid: number | null;
   /** The card should open: an approval is pending and the account has not done or skipped the walkthrough. */
   due: boolean;
   /** Nothing is pending any more; an unfinished card closes without recording anything. */
@@ -39,7 +42,7 @@ export type ApprovalSetupState = {
 };
 
 /** The walkthrough's stage machine: opens once per pending approval while due, writes the policy then the mark. */
-export function useApprovalSetup({ client, uid, due, pending, editable, inherited, override, onSaved }: ApprovalSetupInput): ApprovalSetupState {
+export function useApprovalSetup({ client, uid, policyUid, due, pending, editable, inherited, override, onSaved }: ApprovalSetupInput): ApprovalSetupState {
   const [stage, setStage] = useState<Stage>("idle");
   const [choices, setChoices] = useState<ApprovalChoices>({});
   const [error, setError] = useState<string | null>(null);
@@ -87,7 +90,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
       setStage("step2");
       return;
     }
-    if (current !== "step2" || uid === null) return;
+    if (current !== "step2" || uid === null || policyUid === null) return;
     const picked = Object.keys(choices).length > 0;
     if (!picked || policyWrittenRef.current) { void finish("done"); return; }
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
@@ -96,7 +99,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
     setError(null);
     void (async () => {
       try {
-        await saveAccountApprovalPolicy(client, uid, override, next);
+        await saveAccountApprovalPolicy(client, policyUid, override, next);
         policyWrittenRef.current = true;
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : "The policy did not save.");
@@ -105,7 +108,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
       }
       await finish("done");
     })();
-  }, [choices, client, editable, finish, inherited, override, uid]);
+  }, [choices, client, editable, finish, inherited, override, policyUid, uid]);
 
   const skip = useCallback(() => {
     const current = stageRef.current;
