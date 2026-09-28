@@ -44,6 +44,18 @@ describe("approval categories", () => {
   });
 });
 
+describe("currentApprovalChoices with machine-specific rules", () => {
+  it("shows a rule for one machine in its row instead of hiding it behind the wildcard", () => {
+    const open = composeApprovalChoices(shipped, null, { shell: "auto" });
+    expect(currentApprovalChoices(open).shell).toBe("auto");
+    const laptopAsks = upsertApprovalRule(open, { match: "shell.exec", target: "laptop", action: "ask" });
+    expect(currentApprovalChoices(laptopAsks).shell).toBe("ask");
+    const laptopBlocked = upsertApprovalRule(open, { match: "shell.exec", target: "laptop", action: "deny" });
+    expect(currentApprovalChoices(laptopBlocked).shell).toBe("deny");
+    expect(currentApprovalChoices(laptopBlocked).web).toBe("ask");
+  });
+});
+
 describe("approvalPolicyAccount", () => {
   it("has no target until the process account is known, then picks the account whose override the process reads", () => {
     expect(approvalPolicyAccount({ selfUid: 1000, processUid: null, processOverride: "" })).toBeNull();

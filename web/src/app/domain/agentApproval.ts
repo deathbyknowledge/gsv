@@ -103,10 +103,19 @@ export const APPROVAL_CATEGORIES: readonly ApprovalCategory[] = [
 ];
 
 /** What a policy does today for each category: deny if any of its rules would block (the row is then
- *  locked so a deliberate denial in any scope is never rewritten), else ask if any would ask, else allow. */
+ *  locked so a deliberate denial in any scope is never rewritten), else ask if any would ask, else allow.
+ *  A machine-wide rule is also resolved on every machine the policy names, so a rule for one machine
+ *  shows in the row rather than hiding behind the wildcard. */
 export function currentApprovalChoices(policy: ApprovalPolicyValue): Record<ApprovalCategoryId, ApprovalPolicyAction> {
+  const machines = [...new Set(policy.rules
+    .map((rule) => approvalTargetFromValue(rule.target))
+    .filter((scope): scope is string => scope !== undefined && scope !== "gsv" && scope !== "targets/*"))];
   const entries = APPROVAL_CATEGORIES.map((category) => {
-    const actions = category.rules.map((rule) => resolveApprovalAction(policy, rule.match, rule.target ?? "gsv"));
+    const actions = category.rules.flatMap((rule) => {
+      const scope = rule.target ?? "gsv";
+      const scopes = scope === "targets/*" ? [scope, ...machines] : [scope];
+      return scopes.map((at) => resolveApprovalAction(policy, rule.match, at));
+    });
     return [category.id, actions.includes("deny") ? "deny" : actions.includes("ask") ? "ask" : "auto"] as const;
   });
   // SAFETY: APPROVAL_CATEGORIES lists every ApprovalCategoryId exactly once, so the entries cover the record.
