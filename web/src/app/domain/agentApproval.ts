@@ -102,12 +102,12 @@ export const APPROVAL_CATEGORIES: readonly ApprovalCategory[] = [
   { id: "mail", label: "sending email", example: "a reply to Mike about the contract", rules: [{ match: "mail.send", target: "gsv" }] },
 ];
 
-/** What a policy does today for each category: ask if any of its rules would ask, else deny if any
- *  would block, else allow. A blocked category is shown as such and is never rewritten by the walkthrough. */
+/** What a policy does today for each category: deny if any of its rules would block (the row is then
+ *  locked so a deliberate denial in any scope is never rewritten), else ask if any would ask, else allow. */
 export function currentApprovalChoices(policy: ApprovalPolicyValue): Record<ApprovalCategoryId, ApprovalPolicyAction> {
   const entries = APPROVAL_CATEGORIES.map((category) => {
     const actions = category.rules.map((rule) => resolveApprovalAction(policy, rule.match, rule.target ?? "gsv"));
-    return [category.id, actions.includes("ask") ? "ask" : actions.includes("deny") ? "deny" : "auto"] as const;
+    return [category.id, actions.includes("deny") ? "deny" : actions.includes("ask") ? "ask" : "auto"] as const;
   });
   // SAFETY: APPROVAL_CATEGORIES lists every ApprovalCategoryId exactly once, so the entries cover the record.
   return Object.fromEntries(entries) as Record<ApprovalCategoryId, ApprovalPolicyAction>;

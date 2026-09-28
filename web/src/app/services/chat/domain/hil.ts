@@ -128,10 +128,8 @@ export function hilAlwaysAllowSentence(request: ProcHilRequest, place: string): 
     case "fs.copy": return `copy files ${where}`;
     case "net.fetch": return `fetch web addresses ${where}`;
     case "mail.send": return "send email";
-    case "sys.mcp.call": {
-      const server = argText(request, "serverId");
-      return server ? `use tools from ${server}` : "use connected tools";
-    }
+    // The saved rule is keyed by capability, not server, so the consent names the whole scope.
+    case "sys.mcp.call": return "use any connected tool";
     default: return `use ${plainToolName(request.toolName)} ${where}`;
   }
 }

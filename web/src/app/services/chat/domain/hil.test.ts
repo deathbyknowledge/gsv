@@ -107,8 +107,8 @@ describe("always-allow wording", () => {
     expect(hilAlwaysAllowSentence({ ...shell, syscall: "fs.delete", args: { path: "/tmp/a" } }, "my mac")).toBe("delete files on my mac");
     expect(hilAlwaysAllowSentence({ ...shell, syscall: "net.fetch", args: { url: "u" } }, "my mac")).toBe("fetch web addresses on my mac");
     expect(hilAlwaysAllowSentence({ ...shell, syscall: "mail.send", target: "gsv", args: {} }, "your cloud home")).toBe("send email");
-    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: { serverId: "linear", name: "create_issue" } }, "your cloud home")).toBe("use tools from linear");
-    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: {} }, "your cloud home")).toBe("use connected tools");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: { serverId: "linear", name: "create_issue" } }, "your cloud home")).toBe("use any connected tool");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: {} }, "your cloud home")).toBe("use any connected tool");
     expect(hilAlwaysAllowSentence({ ...shell, syscall: "codemode.exec", toolName: "CodeMode", target: "gsv", args: {} }, "your cloud home")).toBe("use CodeMode in your cloud home");
     for (const syscall of ["shell.exec", "fs.delete", "net.fetch", "sys.mcp.call"]) {
       expect(hilAlwaysAllowSentence({ ...shell, syscall, args: {} }, "my mac")).not.toContain(syscall);
