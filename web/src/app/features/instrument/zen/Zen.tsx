@@ -691,12 +691,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* approvals */
   const decide = useCallback(
-    async (decision: "approve" | "deny", remember = false) => {
+    async (decision: "approve" | "deny") => {
       if (!pid || !pendingHil) return;
-      const args: Parameters<typeof decideChatHil>[1] = { pid, requestId: pendingHil.requestId, decision };
-      if (remember) args.remember = true;
       try {
-        await decideChatHil(client, args);
+        await decideChatHil(client, { pid, requestId: pendingHil.requestId, decision });
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The decision did not go through.");
       }
@@ -748,8 +746,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       return;
     }
     setAlwaysAllow(null);
-    /* the run keeps its policy snapshot, so the saved rule also has to be remembered for this run */
-    await decide("approve", true);
+    /* a plain approval: a remembered one would persist a Process override that Settings cannot revoke.
+       The saved account rule applies from the next run; this run keeps its policy snapshot. */
+    await decide("approve");
   }, [client, decide, pendingHil, pid, policyInherited, policyOverride, policyUid, refreshConfig, self]);
 
   useEffect(() => {
