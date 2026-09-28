@@ -27,7 +27,7 @@ Example 3: "I am a dev. Just curious what you can do." - you could ask if they h
 
 ## The first task (condition for success)
 
-At least ONE of the following happens: 1 - connection of their computer OR a messenger OR their browser; 2 - schedule of a recurring task.
+At least ONE of the TASKS THAT COUNT above happens.
 
 ## Required setup only
 

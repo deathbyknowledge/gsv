@@ -592,7 +592,7 @@ export class ResponsibilityStore {
         now: input.now,
       });
       outcome = { record, revision, changed: true };
-      if (kind === "resolved") resolvedRecord = record;
+      if (kind === "resolved" && current.state !== "resolved") resolvedRecord = record;
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
     if (outcome.changed) this.onChange?.(input.ownerUid);

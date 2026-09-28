@@ -75,6 +75,15 @@ describe("initial onboarding responsibility", () => {
         now: 421_000,
       });
 
+      responsibilities.update({
+        ownerUid: 1000,
+        id: onboarding.id,
+        patch: { state: "resolved", resolution: { conceptsIntroduced: ["approval", "routine", "place"] } },
+        actor: { kind: "process", processId: "ship-1" },
+        observedByShip: true,
+        now: 422_000,
+      });
+
       expect(emitted).toEqual([onboarding.id]);
       expect(log).toHaveBeenCalledTimes(1);
       expect(log).toHaveBeenCalledWith(expect.objectContaining({
