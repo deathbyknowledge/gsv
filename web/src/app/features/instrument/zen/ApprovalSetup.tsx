@@ -24,11 +24,12 @@ export function ApprovalSetup({ step, choices, current, editable, saving, error,
       {step === 1 ? (
         <>
           <p class="ask">
-            Most of what I do, I just do. In my own home I read and write files, run commands, search the web and open pages.
-            On your machines I read and search without asking. You see all of it in the receipt under each answer, after the fact.
+            Oh, this is annoying. For most of what I do, I don't need to bother you. In the ship I read and write files, run commands,
+            search the web and open pages. On your machines I read and search without asking (you see all of it in the receipt under
+            each answer, after the fact).
           </p>
           {editable ? (
-            <p class="ask">The rest I ask about first. A minute now and I'll stop asking about the parts you don't care about.</p>
+            <p class="ask">This one is the "ask about it first" type. If you don't want to see these again, I'll stop asking from now on.</p>
           ) : (
             <>
               <p class="ask">{asking.length ? `Right now I ask before: ${asking.join(" · ")}.` : "Right now I don't ask before anything."}</p>

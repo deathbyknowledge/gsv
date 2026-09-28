@@ -17,7 +17,7 @@ describe("approval setup card", () => {
     const tree = ApprovalSetup(props);
     const text = collectText(tree);
     expect(text).toContain("approval · setup");
-    expect(text).toContain("In my own home I read and write files, run commands");
+    expect(text).toContain("In the ship I read and write files, run commands");
     expect(text).toContain("receipt under each answer");
     expect(text).toContain("go on");
     expect(text).toContain("skip and nothing changes");
