@@ -20,7 +20,7 @@ import { loadConsoleProcesses, loadConsoleTargets } from "../../../services/syst
 import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
 import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { approvalPolicyAccount, approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
-import { defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
+import { GLOBAL_APPROVAL_CONFIG_KEY, defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { canConfigure, readSettingsPolicy } from "../settings/settingsModel";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
@@ -720,6 +720,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   });
   const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
+  const inheritedSource = { key: GLOBAL_APPROVAL_CONFIG_KEY, value: configEntry(GLOBAL_APPROVAL_CONFIG_KEY) };
   /* nothing persistent is written until the settings snapshot has loaded, and a policy Settings cannot
      edit losslessly is never rewritten from here either */
   const policyEditable = config.data !== undefined && self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
@@ -729,7 +730,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const refreshConfig = useCallback(() => cache.invalidateQueries({ queryKey: consoleConfigQueryKey }), [cache]);
   const setup = useApprovalSetup({
     client, uid: self?.uid ?? null, policyUid, due: setupDue, pending: pendingHil !== null, editable: policyEditable,
-    inherited: policyInherited, override: policyOverride, onSaved: refreshConfig,
+    inherited: policyInherited, override: policyOverride, inheritedSource, onSaved: refreshConfig,
   });
   const [alwaysAllow, setAlwaysAllow] = useState<{ requestId: string; saving: boolean; error: string | null } | null>(null);
   const allowAlways = useCallback(async () => {
@@ -739,9 +740,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     try {
       const base = parseApprovalPolicy(policyOverride || policyInherited);
       const next = protectManagedMailApproval(upsertApprovalRule(base, approvalRuleForRequest(request.syscall, request.target)));
-      await saveAccountApprovalPolicy(client, policyUid, policyOverride, serializeApprovalPolicy(next));
+      await saveAccountApprovalPolicy(client, policyUid, policyOverride, serializeApprovalPolicy(next), inheritedSource);
       await refreshConfig();
     } catch (error) {
+      await refreshConfig().catch(() => {});
       setAlwaysAllow({ requestId: request.requestId, saving: false, error: error instanceof Error ? error.message : "The rule did not save." });
       return;
     }
@@ -749,7 +751,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     /* a plain approval: a remembered one would persist a Process override that Settings cannot revoke.
        The saved account rule applies from the next run; this run keeps its policy snapshot. */
     await decide("approve");
-  }, [client, decide, pendingHil, pid, policyInherited, policyOverride, policyUid, refreshConfig, self]);
+  }, [client, decide, inheritedSource, pendingHil, pid, policyInherited, policyOverride, policyUid, refreshConfig, self]);
 
   useEffect(() => {
     if (!active || !prefill || !connected || !pid) return;

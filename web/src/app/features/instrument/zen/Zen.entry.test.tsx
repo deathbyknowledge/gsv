@@ -441,6 +441,42 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("saves revised picks after the policy was written but the mark was not", async () => {
+      rejectWriteOf = "users/1000/ui/approval-setup";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        await vi.waitFor(() => expect(setup(zen).current.mail).toBe("auto"));
+        await act(() => { setup(zen).onChoose("mail", "ask"); });
+        rejectWriteOf = null;
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites.map((write) => write.key)).toEqual([
+          "users/1000/ai/tools/approval", "users/1000/ai/tools/approval", "users/1000/ui/approval-setup",
+        ]);
+        expect(JSON.parse(configWrites[1].value).rules).toContainEqual({ match: "mail.send", target: "gsv", action: "ask" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("refuses always allow when the inherited policy changed after the snapshot loaded", async () => {
+      configEntries = [{ key: "users/1000/ui/approval-setup", value: "done" }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        configEntries = [...configEntries, { key: "config/ai/tools/approval", value: '{"default":"deny","rules":[]}' }];
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(card(zen).alwaysAllowError).toContain("inherited policy changed"));
+        expect(configWrites).toEqual([]);
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
     it("keeps the walkthrough open with the error when the policy does not save", async () => {
       rejectWriteOf = "users/1000/ai/tools/approval";
       const zen = await mountedZen();

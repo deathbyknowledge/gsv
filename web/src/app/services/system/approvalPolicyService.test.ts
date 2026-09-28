@@ -24,6 +24,20 @@ describe("permission policy replacement", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it("does not write over an inherited policy that changed since the draft was composed", async () => {
+    const client = new GSVClient();
+    const globalKey = "config/ai/tools/approval";
+    vi.spyOn(client.sys.config, "get").mockImplementation(async (args) => ({
+      entries: args?.key === globalKey ? [{ key: globalKey, value: '{"default":"deny","rules":[]}' }] : [],
+    }));
+    const save = vi.spyOn(client.sys.config, "set");
+    await expect(saveAccountApprovalPolicy(client, 1000, "", replacement, { key: globalKey, value: "" })).rejects.toThrow("inherited policy changed");
+    expect(save).not.toHaveBeenCalled();
+    vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
+    await saveAccountApprovalPolicy(client, 1000, "", replacement, { key: globalKey, value: '{"default":"deny","rules":[]}' });
+    expect(client.sys.config.set).toHaveBeenCalledWith({ key, value: replacement });
+  });
+
   it("rejects unsupported replacement fields before issuing a syscall", async () => {
     const client = new GSVClient();
     const get = vi.spyOn(client.sys.config, "get");

@@ -9,7 +9,7 @@ import {
   type ApprovalPolicyValue,
 } from "../../../domain/agentApproval";
 import { normalizedApprovalPolicy, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
-import { markApprovalSetup, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
+import { markApprovalSetup, saveAccountApprovalPolicy, type ApprovalPolicySource } from "../../../services/system/approvalPolicyService";
 
 type Stage = "idle" | "step1" | "step2" | "saving" | "done";
 
@@ -27,6 +27,8 @@ export type ApprovalSetupInput = {
   /** The policy the account inherits, and its own override if it has one. */
   inherited: string;
   override: string;
+  /** The raw inherited source the snapshot was read from, so a save refuses a newer one. */
+  inheritedSource: ApprovalPolicySource;
   /** Called after either key is written, so cached config reads catch up. */
   onSaved: () => Promise<void>;
 };
@@ -43,14 +45,12 @@ export type ApprovalSetupState = {
 };
 
 /** The walkthrough's stage machine: opens once per pending approval while due, writes the policy then the mark. */
-export function useApprovalSetup({ client, uid, policyUid, due, pending, editable, inherited, override, onSaved }: ApprovalSetupInput): ApprovalSetupState {
+export function useApprovalSetup({ client, uid, policyUid, due, pending, editable, inherited, override, inheritedSource, onSaved }: ApprovalSetupInput): ApprovalSetupState {
   const [stage, setStage] = useState<Stage>("idle");
   const [choices, setChoices] = useState<ApprovalChoices>({});
   const [error, setError] = useState<string | null>(null);
   const stageRef = useRef(stage);
   stageRef.current = stage;
-  /* the policy is written before the mark; a failed mark retries the mark alone, never the policy */
-  const policyWrittenRef = useRef(false);
   /* an account that cannot write the mark still acknowledged the walkthrough: keep that for the session */
   const acknowledgedRef = useRef(false);
 
@@ -60,7 +60,6 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
     if (stage === "idle" && due && pending && !acknowledgedRef.current) {
       setChoices({});
       setError(null);
-      policyWrittenRef.current = false;
       setStage("step1");
     } else if (!pending && stage !== "idle" && stage !== "saving") {
       setStage("idle");
@@ -76,6 +75,8 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
       await onSaved();
       setStage("done");
     } catch (failure) {
+      /* the policy may already be written: reload so a retry composes against what is saved now */
+      await onSaved().catch(() => {});
       setError(failure instanceof Error ? failure.message : "The mark did not save.");
       setStage("step2");
     }
@@ -101,7 +102,9 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
     }
     if (current !== "step2" || uid === null || policyUid === null) return;
     const picked = Object.keys(choices).length > 0;
-    if (!picked || policyWrittenRef.current) { void finish("done"); return; }
+    if (!picked) { void finish("done"); return; }
+    /* composed against the current snapshot: after a partial save that snapshot is the written policy,
+       so unchanged picks write only the mark and revised picks write again */
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
     const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, choices));
     if (normalizedApprovalPolicy(next) === normalizedApprovalPolicy(override || inherited)) { void finish("done"); return; }
@@ -109,16 +112,16 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
     setError(null);
     void (async () => {
       try {
-        await saveAccountApprovalPolicy(client, policyUid, override, next);
-        policyWrittenRef.current = true;
+        await saveAccountApprovalPolicy(client, policyUid, override, next, inheritedSource);
       } catch (failure) {
+        await onSaved().catch(() => {});
         setError(failure instanceof Error ? failure.message : "The policy did not save.");
         setStage("step2");
         return;
       }
       await finish("done");
     })();
-  }, [choices, client, editable, finish, inherited, override, policyUid, uid]);
+  }, [choices, client, editable, finish, inherited, inheritedSource, onSaved, override, policyUid, uid]);
 
   const skip = useCallback(() => {
     const current = stageRef.current;
