@@ -133,6 +133,9 @@ Process history keeps its existing lifecycle and archive policy. Conversation hi
 activity can therefore rotate independently without conflating what the user saw with how the work
 was performed.
 
+Desktop keeps voice and hands-free controls at the right edge beneath the prompt. Reconnect feedback
+appears beside the attachment actions, without reserving blank space to the right of the input controls.
+
 Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
 use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
 files to the system Downloads folder. Audio and video retain their inline players. Documents and

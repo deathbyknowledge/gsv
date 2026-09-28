@@ -1067,11 +1067,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
+            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
               enabled={active && connected && pid !== null && pendingHil === null}
               send={onSubmit} scroll={scrolling.move} />
-            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
           </div>
           <div class="zen-place-section">
             {!currentPlace.online && <div class="zen-feedback" role="status">
