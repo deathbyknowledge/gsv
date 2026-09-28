@@ -944,8 +944,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         {empty ? (
           <div class="zen-empty">
             {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>What would you like to do?</h1>
-              <p class="zen-welcome-copy">Start with a question, an idea, or something you want to get done. Your Ship will take it from there.</p>
+              <h1>Welcome to the ship.</h1>
+              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
             </>}
           </div>
         ) : !ready ? (
