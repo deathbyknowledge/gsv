@@ -129,7 +129,7 @@ async function refresh() {
     ? state.files.find((file) => file.path === "index.md")?.path
     : state.files.find((file) => file.path === "world-model/gsv.md")?.path;
   if (!currentExists) {
-    await selectFile(preferred ?? state.files[0]?.path ?? null);
+    await selectFile(preferred ?? state.files[0]?.path ?? null, true);
   } else if (state.selectedPath) {
     await selectFile(state.selectedPath, true);
   }
