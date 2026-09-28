@@ -88,6 +88,14 @@ describe("composeApprovalChoices", () => {
     expect(resolveApprovalAction(asking, "fs.read", "my-mac")).toBe("auto");
     expect(resolveApprovalAction(asking, "fs.search", "my-mac")).toBe("auto");
     expect(resolveApprovalAction(asking, "fs.edit", "my-mac")).toBe("ask");
+    const bare: ApprovalPolicyValue = { default: "auto", rules: [] };
+    const askingBare = composeApprovalChoices(bare, null, { "machine-files": "ask" });
+    expect(resolveApprovalAction(askingBare, "fs.write", "my-mac")).toBe("ask");
+    expect(resolveApprovalAction(askingBare, "fs.read", "my-mac")).toBe("auto");
+    expect(resolveApprovalAction(askingBare, "fs.search", "my-mac")).toBe("auto");
+    expect(resolveApprovalAction(askingBare, "fs.transfer.send", "my-mac")).toBe("auto");
+    const kept = composeApprovalChoices({ default: "auto", rules: [{ match: "fs.read", target: "targets/*", action: "ask" }] }, null, { "machine-files": "ask" });
+    expect(resolveApprovalAction(kept, "fs.read", "my-mac")).toBe("ask");
   });
 
   it("lets a delete choice win over the file wildcard on machines and the cloud-home default", () => {

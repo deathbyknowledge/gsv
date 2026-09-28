@@ -82,6 +82,9 @@ export type ApprovalCategory = {
   example: string;
   /** The rules a choice writes; the action is the choice. */
   rules: readonly Pick<ApprovalPolicyRule, "match" | "target">[];
+  /** Exact rules an ask choice keeps automatic when the policy has none of its own, so a wildcard
+   *  above only moves what the row names. */
+  keepsAuto?: readonly Pick<ApprovalPolicyRule, "match" | "target">[];
 };
 
 export type ApprovalChoices = Partial<Record<ApprovalCategoryId, ApprovalChoice>>;
@@ -89,7 +92,8 @@ export type ApprovalChoices = Partial<Record<ApprovalCategoryId, ApprovalChoice>
 export const APPROVAL_CATEGORIES: readonly ApprovalCategory[] = [
   { id: "shell", label: "running commands on your machines", example: "brew upgrade on your laptop", rules: [{ match: "shell.exec", target: "targets/*" }] },
   // Reads, searches and transfers keep their own exact auto rules, so this wildcard only moves changes.
-  { id: "machine-files", label: "changing files on your machines", example: "a config file on your laptop", rules: [{ match: "fs.*", target: "targets/*" }] },
+  { id: "machine-files", label: "changing files on your machines", example: "a config file on your laptop", rules: [{ match: "fs.*", target: "targets/*" }],
+    keepsAuto: [{ match: "fs.read", target: "targets/*" }, { match: "fs.search", target: "targets/*" }, { match: "fs.transfer.stat", target: "targets/*" }, { match: "fs.transfer.send", target: "targets/*" }] },
   // Exact rules at both scopes, so they beat the file wildcard above and the cloud-home default.
   { id: "delete", label: "deleting files", example: "an old export in your Downloads", rules: [{ match: "fs.delete", target: "gsv" }, { match: "fs.delete", target: "targets/*" }] },
   { id: "web", label: "fetching web pages through your machines", example: "a page on your office network", rules: [{ match: "net.fetch", target: "targets/*" }] },
@@ -149,6 +153,12 @@ export function composeApprovalChoices(
     const action = choices[category.id];
     if (!action) continue;
     for (const rule of category.rules) policy = upsertApprovalRule(policy, { ...rule, action });
+    if (action !== "ask") continue;
+    for (const rule of category.keepsAuto ?? []) {
+      const scope = approvalTargetFromValue(rule.target);
+      const present = policy.rules.some((entry) => entry.match === rule.match && approvalTargetFromValue(entry.target) === scope);
+      if (!present) policy = upsertApprovalRule(policy, { ...rule, action: "auto" });
+    }
   }
   return protectManagedMailApproval(policy);
 }

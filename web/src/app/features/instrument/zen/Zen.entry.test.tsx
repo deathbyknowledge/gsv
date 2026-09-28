@@ -34,7 +34,7 @@ let selfCapabilities: string[] | null;
 let configReads: Promise<never> | null;
 let rejectWriteOf: string | null;
 const configWrites: Array<{ key: string; value: string }> = [];
-const hilDecisions: Array<{ requestId: string; decision: string }> = [];
+const hilDecisions: Array<{ requestId: string; decision: string; remember?: boolean }> = [];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
@@ -100,7 +100,7 @@ beforeEach(() => {
     if (call === "account.list") return { data: { accounts: selfCapabilities ? [{ uid: ownerUid, username: "hank", displayName: "Hank",
       relation: "self", runnable: false, capabilities: selfCapabilities }] : [] } };
     if (call === "proc.hil") {
-      const decision = z.object({ requestId: z.string(), decision: z.string() }).parse(args);
+      const decision = z.object({ requestId: z.string(), decision: z.string(), remember: z.boolean().optional() }).parse(args);
       hilDecisions.push(decision);
       return { data: { ok: true, pid: shipPid, requestId: decision.requestId, decision: decision.decision, resumed: true, pendingHil: null } };
     }
@@ -497,7 +497,7 @@ describe("Zen conversation entry", () => {
         await expectCard(zen);
         expect(collectText(ApprovalCard(card(zen)))).toContain("always: run commands on laptop, without asking");
         await act(async () => { card(zen).onAlwaysAllow?.(); });
-        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve", remember: true }]));
         expect(configWrites).toHaveLength(1);
         expect(configWrites[0].key).toBe("users/1000/ai/tools/approval");
         expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
@@ -543,7 +543,7 @@ describe("Zen conversation entry", () => {
         await askApproval();
         await expectCard(zen);
         await act(async () => { card(zen).onAlwaysAllow?.(); });
-        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve", remember: true }]));
         expect(configWrites.map((write) => write.key)).toEqual(["users/1001/ai/tools/approval"]);
         expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
       } finally { await zen.unmount(); }

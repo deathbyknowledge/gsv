@@ -56,14 +56,15 @@ export function ApprovalSetup({ step, choices, current, editable, saving, error,
           <ul class="rows" aria-label="What to ask about">
             {APPROVAL_CATEGORIES.map((category) => {
               const picked = choices[category.id] ?? current[category.id];
+              const blocked = current[category.id] === "deny";
               return (
                 <li key={category.id}>
                   <span class="row-label">{category.label}</span>
                   <span class="row-example">{category.example}</span>
                   <span class="row-pick">
-                    {picked === "deny" ? <span class="row-blocked">blocked</span> : null}
-                    <button type="button" class="ibtn" aria-pressed={picked === "auto"} disabled={saving} onClick={() => onChoose(category.id, "auto")}>allow</button>
-                    <button type="button" class="ibtn" aria-pressed={picked === "ask"} disabled={saving} onClick={() => onChoose(category.id, "ask")}>ask</button>
+                    {blocked ? <span class="row-blocked">blocked</span> : null}
+                    <button type="button" class="ibtn" aria-pressed={picked === "auto"} disabled={saving || blocked} onClick={() => onChoose(category.id, "auto")}>allow</button>
+                    <button type="button" class="ibtn" aria-pressed={picked === "ask"} disabled={saving || blocked} onClick={() => onChoose(category.id, "ask")}>ask</button>
                   </span>
                 </li>
               );

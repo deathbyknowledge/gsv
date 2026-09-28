@@ -41,12 +41,14 @@ describe("approval setup card", () => {
     expect(text).toContain("open settings, top right");
   });
 
-  it("shows a denied row as blocked with neither side pressed", () => {
+  it("shows a denied row as blocked, with neither side pressed nor offered", () => {
     const tree = ApprovalSetup({ ...props, step: 2, current: { ...current, delete: "deny" } });
     expect(collectText(tree)).toContain("blocked");
     const picks = buttons(tree).filter((node) => node.props["aria-pressed"] !== undefined);
     const pressed = picks.filter((node) => node.props["aria-pressed"] === true).map((node) => collectText(node));
     expect(pressed).toEqual(["ask", "ask", "ask", "ask", "ask"]);
+    const disabled = picks.filter((node) => node.props.disabled === true).map((node) => collectText(node));
+    expect(disabled).toEqual(["allow", "ask"]);
   });
 
   it("shows an explicit pick over the current policy and reports it with the row id", () => {
