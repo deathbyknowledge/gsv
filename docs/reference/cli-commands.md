@@ -159,10 +159,11 @@ Ship responsibility for each message; enabling it affects future completions.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
-`message search "words"` searches conversation messages saved after search was
-enabled, including those later archived, and defaults to Ship. Earlier messages
-remain available through history and are not indexed retroactively. Search
-returns newest matches first, with literal word prefixes combined with AND.
+`message search "words"` searches retained conversation messages saved after search was
+enabled, including those later archived, and defaults to Ship. Older search entries
+are removed as the conversation database approaches its storage budget; their original
+messages remain readable through history. Pre-feature messages are not indexed retroactively.
+Search returns newest matches first, with literal word prefixes combined with AND.
 `--before` accepts the returned `nextBeforeSequence` to page older matches.
 A signed-in user or their Ship may search;
 delegated work does not inherit conversation access. Use `message history` with

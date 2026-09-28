@@ -4,6 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
 import { getConversationById } from "../shared/utils";
+import { ConversationStore } from "./store";
 
 function conversation(name: string) {
   return getConversationById("inst_test", `conv:test:${name}:${crypto.randomUUID()}`);
@@ -111,7 +112,16 @@ describe("Conversation Durable Object", () => {
     await runInDurableObject(stub, async (_instance: Conversation, state) => {
       expect(await state.storage.getAlarm()).toBeNull();
       expect(state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = 'message_search_content'").toArray()).toEqual([]);
+      const constrained = new ConversationStore(state.storage.sql, 0);
+      for (let sequence = 1_002; sequence <= 1_021; sequence++) {
+        state.storage.transactionSync(() => constrained.append({ ...message(sequence), payloadHash: "fixture" }));
+      }
     });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
+    expect((await stub.history({ beforeSequence: 3, limit: 2 })).messages).toEqual(archived.messages);
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook" }))
+      .toEqual({ message: archived.messages[0], created: false });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
   }, 30_000);
 
   it("keeps legacy conversation-owned media readable", async () => {

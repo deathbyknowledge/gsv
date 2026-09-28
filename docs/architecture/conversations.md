@@ -169,8 +169,20 @@ add another index entry.
 
 The index retains terms and positions when messages move to R2, without retaining another copy of
 their text or metadata. Search resolves the returned matches from hot messages or the relevant R2
-segments to produce previews; a segment containing several matches is read once per query. Index
-storage still grows with indexed history, even though the full-message hot set stays bounded.
+segments to produce previews; a segment containing several matches is read once per query.
+
+Search retention uses a 6 GB pressure threshold for the entire Conversation database, including
+message receipts and archive metadata. SQLite's live database size excludes reusable pages. Above
+the threshold, each new message advances a bounded FTS merge or removes up to 128 oldest search
+entries and advances the merge. Contentless-delete indexing permits eviction without reading old
+message bodies from R2. Reclamation runs within normal message writes, with no alarms or backfill.
+
+This is an incremental storage budget, with headroom below the 10 GB paid-plan limit, rather than a
+synchronous hard ceiling: deleted postings are reclaimed as merges progress. Pruning always leaves
+the incoming message searchable. Canonical messages, media, archive references and idempotency
+receipts are never removed by search retention; an evicted result remains readable through history.
+Those canonical records have their own storage lifetime, so this policy does not bound all
+conversation metadata forever.
 
 Ship uses the same syscall through `message search "words"`. `--with` selects an owned conversation or
 Contact, `--before` pages older matches, and `--json` returns the structured result. A message sequence

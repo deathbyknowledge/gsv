@@ -596,7 +596,7 @@ conversation ownership checks. Delegated processes do not inherit this read auth
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
-| `conversation.search` | Conversation DO | Searches messages committed after search was enabled, newest matches first. Defaults to the caller's Ship. Indexed messages remain searchable after archival; previous history is not backfilled. |
+| `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
