@@ -5,6 +5,8 @@ import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_STYLE_CONTEXT,
   RETIRED_BOOT_CONTEXT_TEMPLATE,
+  RETIRED_STYLE_CONTEXT,
+  RETIRED_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
@@ -123,12 +125,14 @@ async function homeLayoutOps(
         "context.d/00-style.md",
         styleContext,
         DEFAULT_STYLE_CONTEXT,
+        RETIRED_STYLE_CONTEXT,
       );
       maybeDeleteGeneratedTextFile(
         ops,
         "context.d/15-memory.md",
         memoryContext,
         DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+        RETIRED_MEMORY_CONTEXT_TEMPLATE,
       );
     } else {
       maybePutTextFile(
@@ -156,12 +160,14 @@ async function homeLayoutOps(
       "context.d/00-style.md",
       styleContext,
       DEFAULT_STYLE_CONTEXT,
+      RETIRED_STYLE_CONTEXT,
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/15-memory.md",
       memoryContext,
       DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+      RETIRED_MEMORY_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -200,13 +206,13 @@ function maybeDeleteGeneratedTextFile(
   ops: RipgitApplyOp[],
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
-  generatedContent: string,
+  ...generatedContents: string[]
 ): boolean {
   if (existing.kind !== "file") {
     return false;
   }
   const text = TEXT_DECODER.decode(existing.bytes);
-  if (text !== generatedContent) {
+  if (!generatedContents.includes(text)) {
     return false;
   }
   ops.push({

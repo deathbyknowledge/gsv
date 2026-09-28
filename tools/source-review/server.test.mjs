@@ -53,7 +53,7 @@ test("previews assemble account-specific defaults with the runtime providers", a
   assert.match(ship.prompt, /<system path="\/sys\/config\/ai\/context.d\/">/);
   assert.match(ship.prompt, /<program path="\/home\/ship\/context.d\/">/);
   assert.match(ship.prompt, /<05-voice.md>/);
-  assert.match(ship.prompt, /proc delegate --as crew/);
+  assert.match(ship.prompt, /Crew account: `crew`/);
   assert.doesNotMatch(crew.prompt, /<05-voice.md>/);
   assert.match(crew.prompt, /<program path="\/home\/crew\/context.d\/">/);
   for (const preview of [ship, crew]) {

@@ -18,6 +18,8 @@ import {
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
+  DEFAULT_STYLE_CONTEXT,
+  DEFAULT_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
@@ -240,16 +242,11 @@ describe("handleAccountCreate", () => {
     const styleContextOp = ops.find((op) => op.path === "context.d/00-style.md");
     expect(styleContextOp).toEqual(expect.objectContaining({ type: "put" }));
     const styleContext = new TextDecoder().decode(new Uint8Array(styleContextOp?.contentBytes ?? []));
-    expect(styleContext).toContain("Lead with the direct answer");
-    expect(styleContext).toContain("# Example");
-    expect(styleContext).not.toContain("# Style");
+    expect(styleContext).toBe(DEFAULT_STYLE_CONTEXT);
     const memoryContextOp = ops.find((op) => op.path === "context.d/15-memory.md");
     expect(memoryContextOp).toEqual(expect.objectContaining({ type: "put" }));
     const memoryContext = new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? []));
-    expect(memoryContext).toContain("human-owned kinds of memory");
-    expect(memoryContext).toContain("`personal` wiki");
-    expect(memoryContext).toContain("skills show memory");
-    expect(memoryContext).not.toContain("/src/repos/scout/memory");
+    expect(memoryContext).toBe(DEFAULT_MEMORY_CONTEXT_TEMPLATE);
     expect(ops).not.toContainEqual(
       expect.objectContaining({ path: "context.d/20-open-loops.md" }),
     );
@@ -467,7 +464,7 @@ describe("handleAccountCreate", () => {
     expect(crewOps).not.toContainEqual(expect.objectContaining({ path: "context.d/05-voice.md" }));
     const delegation = ripgitApplyBodies.filter((body) => body.owner === "ship").flatMap((body) => body.ops)
       .find((op) => op.path === "context.d/10-delegation.md");
-    expect(new TextDecoder().decode(new Uint8Array(delegation?.contentBytes ?? []))).toContain("--as crew2");
+    expect(new TextDecoder().decode(new Uint8Array(delegation?.contentBytes ?? []))).toContain("Crew account: `crew2`");
 
     const bob = await handleAccountCreate({ kind: "human", username: "bob", password: "password-123" },
       ctxFor(userIdentity(0, "root", ["*"])));

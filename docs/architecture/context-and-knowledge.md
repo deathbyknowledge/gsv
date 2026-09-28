@@ -133,6 +133,12 @@ distinguishes explicit human-facing messages from delegated return values.
 Continuity guidance explains how an epoch's initial runtime facts and
 responsibilities are updated by later events across runs.
 
+Each category owns its rules. Ship's role focuses on immediate acknowledgment,
+execution choices, and follow-through; Crew's role focuses on the assigned outcome
+and its evidence. Both use the same knowledge source. Voice stays separate from
+delivery mechanics, and instance templates contain values rather than policy.
+Command recipes remain in the discoverable skills and manuals.
+
 TypeScript composes these sources into the existing system and account context
 files, preserving their stored paths and assembly order. `npm run review:prompts`
 opens a local editor with category previews, links from assembled sections to

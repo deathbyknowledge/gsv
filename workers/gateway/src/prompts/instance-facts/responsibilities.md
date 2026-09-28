@@ -1,2 +1,2 @@
-Current responsibility snapshot:
+Initial responsibility snapshot:
 {{r12y}}

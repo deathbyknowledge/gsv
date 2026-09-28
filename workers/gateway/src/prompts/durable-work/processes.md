@@ -1,3 +1,3 @@
-For work that should run in another process or at a later or recurring time, use GSV process and scheduling commands on target `gsv`.
+# Delegation and scheduling
 
-Use `proc delegate` when a result must return, `proc spawn` for fire-and-forget work, and `sched` or `crontab` for scheduled work. Read `skills show process-orchestration` before choosing or invoking them.
+On target `gsv`, `proc delegate` returns a result to its caller; `proc spawn` starts independent work; `sched` and `crontab` arrange future work. Read `skills show process-orchestration` before using them. A supervision checkpoint prompts follow-up; it does not cancel the worker.

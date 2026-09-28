@@ -1,14 +1,11 @@
 import shipRole from "./role-and-judgment/ship.md";
-import shipResponsibilities from "./durable-work/ship.md";
-import shipExecution from "./role-and-judgment/ship-execution.md";
-import shipInteraction from "./interaction/ship.md";
-import shipKnowledge from "./knowledge/ship.md";
+import sharedKnowledge from "./knowledge/shared.md";
 import voiceContext from "./voice/ship.md";
 import crewContext from "./role-and-judgment/crew.md";
 import delegationText from "./instance-facts/ship.md";
 
 export const PERSONAL_INTELLIGENCE_CONTEXT = [
-  shipRole, shipResponsibilities, shipExecution, shipInteraction, shipKnowledge,
+  shipRole, sharedKnowledge,
 ].map((text) => text.trimEnd()).join("\n\n") + "\n";
 
 export const PERSONAL_INTELLIGENCE_VOICE_CONTEXT = voiceContext;

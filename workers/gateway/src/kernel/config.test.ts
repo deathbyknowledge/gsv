@@ -177,16 +177,16 @@ describe("ConfigStore", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
     expect(context).toContain("GSV is a personal intelligence operating environment");
     expect(context).toContain("A process has a pid");
-    expect(context).toContain("A target is an addressable environment");
+    expect(context).toContain("A target exposes an environment's capabilities");
     expect(context).toContain("[GSV EVENT]");
-    expect(context).toContain("typed runtime events");
+    expect(context).toContain("runtime events");
+    expect(context).toContain("message destinations");
+    expect(context).toContain("message attach PATH...");
+    expect(context).toContain("Use Send");
+    expect(context).toContain("work can continue afterward");
+    expect(context).toContain("message send");
+    expect(context).toContain("yield");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
-    expect(targets).toContain("message destinations");
-    expect(targets).toContain("message attach PATH...");
-    expect(targets).toContain("Send tool");
-    expect(targets).toContain("the run continues");
-    expect(targets).toContain("message send");
-    expect(targets).toContain("yield");
     expect(targets).toContain(
       "cp source-target:/path destination-target:/path",
     );
@@ -195,16 +195,16 @@ describe("ConfigStore", () => {
     expect(targets).toContain("skills show browser-target");
     const responsibilities =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
-    expect(responsibilities).toContain("Kernel responsibility ledger");
-    expect(responsibilities).toContain("`r12y` command");
+    expect(responsibilities).toContain("Kernel's `r12y` ledger");
+    expect(responsibilities).toContain("r12y list");
     expect(responsibilities).toContain("{{r12y}}");
     const discovery =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
     expect(discovery).toContain("the `mcp` command");
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(discovery).toContain("CodeMode as `mcpTools`");
-    expect(discovery).toContain("Load the relevant skill");
+    expect(discovery).toContain("CodeMode's `mcpTools`");
+    expect(discovery).toContain("load the relevant skill");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe(
       "summary",
     );
@@ -221,15 +221,16 @@ describe("ConfigStore", () => {
     const runtimeFacts =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
     expect(runtimeFacts).toContain(
-      "as agent `{{program.username}}` for owner `{{user.username}}`",
+      "Agent: {{program.username}}",
     );
+    expect(runtimeFacts).toContain("Owner: {{user.username}}");
     expect(runtimeFacts).toContain("Agent home: {{program.home}}");
     expect(runtimeFacts).toContain("Owner home: {{user.home}}");
     expect(runtimeFacts).toContain(
       "Current working directory: {{program.cwd}}",
     );
-    expect(runtimeFacts).toContain("Date: {{current.date}}");
-    expect(runtimeFacts).toContain("Timezone: {{current.timezone}}");
+    expect(runtimeFacts).toContain("{{current.date}}");
+    expect(runtimeFacts).toContain("{{current.timezone}}");
   });
 
   it("defines a global default tool approval policy with explicit guarded tool kinds", () => {

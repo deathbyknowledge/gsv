@@ -34,25 +34,29 @@ Active standing defaults and standalone task prompts live in
 | Category directory | What it teaches |
 | --- | --- |
 | `world-model/` | What GSV is and how its environments relate |
-| `interaction/` | Incoming events, message delivery, and Ship's communication obligations |
+| `interaction/` | Input provenance, authority, message delivery, and run completion |
 | `computer-and-discovery/` | Targets, files, commands, manuals, skills, and integrations |
 | `durable-work/` | Context snapshots and updates, responsibilities, delegation, scheduling, and follow-through |
 | `knowledge/` | Shared memory, retrieval, and what to preserve |
-| `role-and-judgment/` | Ship and Crew's responsibilities and execution decisions |
+| `role-and-judgment/` | Ship's responsiveness and follow-through; Crew's assignment and reporting duties |
 | `voice/` | Ship's public voice and the generic agent writing defaults |
 | `instance-facts/` | Runtime values, responsibility snapshot, Crew account name, and owner context template |
 | `tasks/` | Separate compaction, setup, delegated-run, and correction instructions |
 
-Category and scope are independent. For example, `knowledge/ship.md` contributes
-to Ship's saved role file, while `knowledge/agent.md` supplies an ordinary agent's
-memory file. `voice/agent.md` is a default for agent accounts, not another account
-named `agent`. Ship has its own voice source.
+Category and scope are independent. `knowledge/shared.md` contributes once to
+each account's prompt: through Ship's saved role file or an ordinary agent's
+memory file. `voice/agent.md` supplies generic agent defaults; Ship has its own
+voice. The `agent` filename does not refer to another account.
 
 The category files contain the model-facing explanations, not just an outline:
 `world-model/gsv.md` defines owners, accounts, processes, runs, conversations, and
 targets; `interaction/` explains input provenance and delivery contracts;
-`durable-work/continuity.md` explains initial snapshots and subsequent updates.
+`durable-work/responsibilities.md` explains initial snapshots and subsequent updates.
 Computer/discovery guidance covers target selection, capabilities, and approvals.
+
+Write each rule in its owning category. Keep shared mechanics out of role files,
+procedural recipes in skills/manuals, and instance templates limited to values.
+Voice describes how to write; the role decides when communication is useful.
 
 Stored `context.d` paths and section order remain stable. Some stored files are
 composed from several source categories. The TypeScript wrappers in `prompts/`

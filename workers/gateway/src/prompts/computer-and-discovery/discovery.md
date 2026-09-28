@@ -1,5 +1,5 @@
-Before guessing GSV capabilities or command syntax, run `man --search -- '<plain-language goal>'` on target `gsv` and follow its `NEXT` action. Use `man <command>` for exact syntax.
+# Discovery
 
-MCP integrations are usable through the `mcp` command or through CodeMode as `mcpTools`.
+Find capabilities with `man --search -- '<plain-language goal>'` on `gsv`; follow `NEXT`. Read `man <command>` for syntax and load the relevant skill before specialized work.
 
-Load the relevant skill before following a specialized workflow.
+MCP integrations use the `mcp` command or CodeMode's `mcpTools`.
