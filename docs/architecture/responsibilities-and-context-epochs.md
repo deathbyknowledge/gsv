@@ -215,7 +215,8 @@ System-owned producers use the same ledger contract:
   it with the concepts the user met along the way, which the `gsv-concepts` skill
   reads later. The responsibility carries the state; the personal agent's
   generated `07-onboarding.md` carries the behaviour while it is open. The Kernel
-  reports the resolution as the `onboarding.completed` telemetry event.
+  reports the resolution as the `onboarding.completed` telemetry event, once per
+  owner account.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

@@ -8,10 +8,11 @@ export type OnboardingTelemetryScope = {
 };
 
 /**
- * Report the resolution of the installation's initial onboarding responsibility
- * on the product stream. The responsibility store calls this after the terminal
- * transition is durable; any other resolved responsibility is ignored. The
- * record carries only the elapsed time and a count, never the concept names.
+ * Report the resolution of an owner's initial onboarding responsibility on the
+ * product stream, once per owner account. The responsibility store calls this
+ * after the terminal transition is durable; any other resolved responsibility
+ * is ignored. The record carries only the elapsed time and a count, never the
+ * concept names or the owner.
  */
 export function emitOnboardingCompleted(
   scope: OnboardingTelemetryScope,

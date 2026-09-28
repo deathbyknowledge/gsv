@@ -277,9 +277,11 @@ const delegationCompletedSchema = z.strictObject({
   }),
 });
 
-// Emitted once when the Ship resolves the installation's initial onboarding
-// responsibility: how long from provisioning to the user's first completed
-// task, and how many concepts came up on the way. Never the concept names.
+// Emitted once per owner account when their Ship resolves its initial onboarding
+// responsibility: how long from provisioning to that person's first completed
+// task, and how many concepts came up on the way. Never the concept names. An
+// installation with several people reports one event per person; count distinct
+// installation ids for a per-installation view.
 const onboardingCompletedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("onboarding.completed"),
