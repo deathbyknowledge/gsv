@@ -8,6 +8,8 @@ import "../styles.css";
 import "../styles/gsv-scrollbar.css";
 import { render } from "preact";
 import { App } from "./App";
+import { DesktopAppLink } from "./features/session/DesktopAppLink";
+import { SetupFooterProvider } from "./services/platform/SetupFooter";
 
 const app = document.querySelector<HTMLElement>("#app");
 
@@ -15,4 +17,5 @@ if (!app) {
   throw new Error("Missing #app mount");
 }
 
-render(<App />, app);
+// Browsers point first-boot setup at the beta Desktop app; Desktop mounts App without this slot.
+render(<SetupFooterProvider footer={<DesktopAppLink variant="setup" />}><App /></SetupFooterProvider>, app);

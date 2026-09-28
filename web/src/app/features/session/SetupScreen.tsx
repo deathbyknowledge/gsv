@@ -2,6 +2,7 @@ import { TextInput } from "../../components/ui/TextInput";
 import { AuthLayout } from "./AuthLayout";
 import { SessionError } from "./SessionChrome";
 import { USERNAME_FORMAT_DESCRIPTION } from "./sessionDomain";
+import { SetupFooter } from "../../services/platform/SetupFooter";
 import "./SetupScreen.css";
 
 type SetupScreenProps = {
@@ -44,6 +45,7 @@ export function SetupScreen({ visible, busy, space, username, password, password
           </button>
         </div>
       </form>
+      <SetupFooter />
     </section>
   </AuthLayout>;
 }

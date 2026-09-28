@@ -1,0 +1,9 @@
+/* Signup: centered to the same width as the welcome form steps, which the signup entry starts on; sized like the Back link. */
+.signup-desktop-app { width: min(420px, 100%); margin: 32px auto 0; padding-inline: var(--gsv-auth-pad-x, 20px); box-sizing: content-box; color: var(--text-dim); font-size: 11px; line-height: 1.6; }
+.signup-desktop-app .gsv-auth-link, .gsv-setup-desktop-app .gsv-auth-link { color: var(--accent-bright); font-size: inherit; text-decoration: underline; }
+.signup-desktop-app .gsv-auth-link:hover, .gsv-setup-desktop-app .gsv-auth-link:hover { color: var(--text); }
+/* The two-choice welcome step spans the full width, so its footer reads centered rather than form-aligned. */
+.gsv-auth-surface-shared:has(.desktop-welcome-wide) + .signup-desktop-app { text-align: center; }
+/* Setup: sits under the create-account form in that screen's note style. */
+.gsv-setup-desktop-app { margin: 24px 0 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.6; }
+.gsv-setup-desktop-app .gsv-auth-link { white-space: nowrap; }
