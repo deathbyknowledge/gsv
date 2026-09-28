@@ -722,8 +722,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   });
   const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
-  /* a policy Settings cannot edit losslessly is never rewritten from here either */
-  const policyEditable = self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
+  /* nothing persistent is written until the settings snapshot has loaded, and a policy Settings cannot
+     edit losslessly is never rewritten from here either */
+  const policyEditable = config.data !== undefined && self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
     && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null)
     && readSettingsPolicy(policyInherited) !== null;
   const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";

@@ -563,12 +563,16 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
-    it("never holds a decision behind an unread settings read", async () => {
+    it("never holds a decision behind an unread settings read, and offers nothing persistent until it is read", async () => {
       configReads = new Promise(() => {});
       const zen = await mountedZen();
       try {
         await askApproval();
         await expectCard(zen);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { card(zen).onDecide("approve"); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites).toEqual([]);
       } finally { await zen.unmount(); }
     });
   });
