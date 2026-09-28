@@ -8,6 +8,7 @@ import { AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { BrowserWelcomeStorage } from "./storage";
+import { DesktopAppLink } from "./DesktopAppLink";
 import { signupDestination } from "./navigation";
 
 const accountsOrigin = window.location.origin;
@@ -20,4 +21,4 @@ async function connect(origin: string, onboardingToken?: string | null) {
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) throw new Error("Missing #app mount");
 render(<AuthScene layout="welcome"><OwnerWelcomeScreen ready resume={false} initialStep="invite"
-  load={load} onConnect={connect} /></AuthScene>, app);
+  load={load} onConnect={connect} /><DesktopAppLink /></AuthScene>, app);

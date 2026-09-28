@@ -1,0 +1,3 @@
+/* Centered to the same width as the welcome form steps, which the signup entry starts on. */
+.signup-desktop-app { width: min(420px, 100%); margin: 32px auto 0; padding-inline: var(--gsv-auth-pad-x, 20px); box-sizing: content-box; color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+.signup-desktop-app .gsv-auth-link { font-size: inherit; }
