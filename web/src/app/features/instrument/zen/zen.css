@@ -353,6 +353,7 @@
 .zen-approval .row-pick { grid-area: pick; display: flex; gap: 6px; }
 .zen-approval .row-pick .ibtn[aria-pressed="true"] { color: var(--text-hi); border-color: var(--update); }
 .zen-approval .row-pick .ibtn[aria-pressed="false"] { color: var(--text-dim); }
+.zen-approval .row-pick .row-blocked { align-self: center; color: var(--text-dim); font-size: 11px; }
 @media (max-width: 560px) {
   .zen-approval .rows li { grid-template-columns: 1fr; grid-template-areas: "label" "example" "pick"; row-gap: 4px; }
 }

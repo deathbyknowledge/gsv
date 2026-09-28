@@ -1,11 +1,11 @@
-import { APPROVAL_CATEGORIES, type ApprovalCategoryId, type ApprovalChoice, type ApprovalChoices } from "../../../domain/agentApproval";
+import { APPROVAL_CATEGORIES, type ApprovalCategoryId, type ApprovalChoice, type ApprovalChoices, type ApprovalPolicyAction } from "../../../domain/agentApproval";
 
 export type ApprovalSetupProps = {
   step: 1 | 2;
   /** The person's explicit picks; a row without one shows what the policy does today. */
   choices: ApprovalChoices;
-  /** What the account's policy does today, per row. */
-  current: Record<ApprovalCategoryId, ApprovalChoice>;
+  /** What the account's policy does today, per row; a denied row is shown as blocked. */
+  current: Record<ApprovalCategoryId, ApprovalPolicyAction>;
   /** False when the account cannot write its policy: the card explains and offers no picks. */
   editable: boolean;
   saving: boolean;
@@ -61,6 +61,7 @@ export function ApprovalSetup({ step, choices, current, editable, saving, error,
                   <span class="row-label">{category.label}</span>
                   <span class="row-example">{category.example}</span>
                   <span class="row-pick">
+                    {picked === "deny" ? <span class="row-blocked">blocked</span> : null}
                     <button type="button" class="ibtn" aria-pressed={picked === "auto"} disabled={saving} onClick={() => onChoose(category.id, "auto")}>allow</button>
                     <button type="button" class="ibtn" aria-pressed={picked === "ask"} disabled={saving} onClick={() => onChoose(category.id, "ask")}>ask</button>
                   </span>

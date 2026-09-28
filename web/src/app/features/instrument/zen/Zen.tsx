@@ -21,7 +21,7 @@ import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../
 import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
 import { defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
-import { canConfigure } from "../settings/settingsModel";
+import { canConfigure, readSettingsPolicy } from "../settings/settingsModel";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -710,9 +710,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the first approval opens the Ship's walkthrough instead; its choices and the always-allow key write the account policy */
   const cache = useQueryClient();
   const self = accounts.data?.find((account) => account.relation === "self") ?? null;
-  const policyEditable = self !== null && canConfigure(self, "sys.config.set");
   const configEntry = (key: string) => config.data?.find((entry) => entry.key === key)?.value ?? "";
   const policyOverride = self ? configEntry(accountApprovalKey(self.uid)) : "";
+  /* an override Settings cannot edit losslessly is never rewritten from here either */
+  const policyEditable = self !== null && canConfigure(self, "sys.config.set")
+    && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null);
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
   const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";
   const refreshConfig = useCallback(() => cache.invalidateQueries({ queryKey: consoleConfigQueryKey }), [cache]);

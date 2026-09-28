@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText } from "../../../testing/testHarness";
-import { APPROVAL_CATEGORIES, type ApprovalCategoryId, type ApprovalChoice } from "../../../domain/agentApproval";
+import { APPROVAL_CATEGORIES, type ApprovalCategoryId, type ApprovalPolicyAction } from "../../../domain/agentApproval";
 import { ApprovalSetup, type ApprovalSetupProps } from "./ApprovalSetup";
 
 const current = {
   shell: "ask", "machine-files": "ask", delete: "auto", web: "ask", tools: "ask", mail: "ask",
-} satisfies Record<ApprovalCategoryId, ApprovalChoice>;
+} satisfies Record<ApprovalCategoryId, ApprovalPolicyAction>;
 const props: ApprovalSetupProps = {
   step: 1, choices: {}, current, editable: true, saving: false, error: null,
   onChoose: () => {}, onContinue: () => {}, onSkip: () => {},
@@ -39,6 +39,14 @@ describe("approval setup card", () => {
     expect(pressed).toEqual(["ask", "ask", "allow", "ask", "ask", "ask"]);
     expect(text).toContain("save it");
     expect(text).toContain("open settings, top right");
+  });
+
+  it("shows a denied row as blocked with neither side pressed", () => {
+    const tree = ApprovalSetup({ ...props, step: 2, current: { ...current, delete: "deny" } });
+    expect(collectText(tree)).toContain("blocked");
+    const picks = buttons(tree).filter((node) => node.props["aria-pressed"] !== undefined);
+    const pressed = picks.filter((node) => node.props["aria-pressed"] === true).map((node) => collectText(node));
+    expect(pressed).toEqual(["ask", "ask", "ask", "ask", "ask"]);
   });
 
   it("shows an explicit pick over the current policy and reports it with the row id", () => {

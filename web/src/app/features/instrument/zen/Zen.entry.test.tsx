@@ -516,6 +516,20 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("explains only, and offers no always allow, when the saved policy cannot be edited losslessly", async () => {
+      configEntries = [{ key: "users/1000/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).editable).toBe(false);
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+      } finally { await zen.unmount(); }
+    });
+
     it("never holds a decision behind an unread settings read", async () => {
       configReads = new Promise(() => {});
       const zen = await mountedZen();

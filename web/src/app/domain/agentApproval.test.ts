@@ -31,6 +31,15 @@ describe("approval categories", () => {
     const deletesAsk = composeApprovalChoices(shipped, null, { "machine-files": "auto", delete: "ask" });
     expect(askingCategories(deletesAsk)).toEqual(["shell", "delete", "web", "tools", "mail"]);
   });
+
+  it("reads a denied rule as blocked rather than allowed, and ask still wins over it", () => {
+    const blocked = upsertApprovalRule(upsertApprovalRule(shipped, { match: "fs.delete", target: "gsv", action: "deny" }),
+      { match: "fs.delete", target: "targets/*", action: "deny" });
+    expect(currentApprovalChoices(blocked).delete).toBe("deny");
+    expect(askingCategories(blocked)).not.toContain("delete");
+    const half = upsertApprovalRule(shipped, { match: "fs.delete", target: "gsv", action: "deny" });
+    expect(currentApprovalChoices(half).delete).toBe("ask");
+  });
 });
 
 describe("upsertApprovalRule", () => {
