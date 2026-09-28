@@ -88,7 +88,7 @@ function forgetSeededSession(): void {
 /* ---------- fixtures ---------- */
 
 const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
-const SHIP = { pid: "p-ship", uid: 1001, username: "algo", home: "/home/algo" };
+const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
@@ -125,7 +125,7 @@ const targets: SysTargetSummary[] = [
 
 const accounts: AccountSummary[] = [
   { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false },
-  { uid: SHIP.uid, username: SHIP.username, displayName: "algo", relation: "personal-agent", runnable: true },
+  { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
 /* ---------- the scripted runs: what Ship does, step by step ---------- */

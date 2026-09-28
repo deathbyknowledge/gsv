@@ -36,6 +36,7 @@ Conventional files include:
 ```text
 <agent home>/context.d/00-role.md
 <agent home>/context.d/05-voice.md
+<personal agent home>/context.d/10-delegation.md
 <human home>/context.d/10-personal.md
 ```
 
@@ -46,6 +47,26 @@ occasionally relevant personal information belongs in the human-owned
 in the Kernel `r12y` responsibility ledger rather than either context or memory
 layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
 context file.
+
+The default personal account for new installations is `ship`. Personal-agent
+provisioning also creates an ordinary owned `crew` account for delegated work
+(`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
+execution and memory guidance; Ship's conversation instructions and voice stay
+in Ship's home. Both receive the human owner's context and access to personal
+memory through the existing account permissions.
+
+Ship acknowledges substantial work before investigation or bookkeeping, handles
+short tasks directly, and delegates when parallel work, separate context, or a
+lengthy task benefits from another process. Its `10-delegation.md` names the
+Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
+outcomes belong in `r12y` before delegation or yielding.
+
+These are editable account defaults. Existing account names and context files
+are preserved; revised prompt text seeds missing files, without rewriting an
+existing account's instructions. To adopt the new defaults in an existing
+space, edit that account's context files deliberately.
+Seeding checks the repository revision before committing, preserving owner
+edits made while defaults are being prepared.
 
 ## Skills: `skills.d/`
 

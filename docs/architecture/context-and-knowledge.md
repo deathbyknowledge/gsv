@@ -97,8 +97,10 @@ need a memory search.
 
 Explicit, unambiguous requests to remember something can be written directly.
 Potential duplicates, corrections, ambiguous people or projects, and inferred
-outcomes require a search and merge. A direct-interaction process delegates that
-discovery; workers perform it using the shared `personal` collection.
+outcomes require a search and merge. Ship can perform short lookups and edits
+directly, delegating when duration, parallelism, or context needs justify a worker.
+Ship and Crew use the same human-owned `personal` collection while keeping their
+instructions in separate account homes.
 
 This keeps the prompt small and the behavior inspectable:
 

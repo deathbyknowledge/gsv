@@ -19,19 +19,19 @@ Run every command in this guide through `Shell` on target `gsv`. Keep CodeMode f
 
 ## Delegate or Start a Process
 
-Use delegation for normal subprocess work:
+Ship selects the Crew account named in `~/context.d/10-delegation.md` for general delegated work. Replace `ACCOUNT` with that name or another owned account suited to the task:
 
 ```bash
-proc delegate --label 'research' --timeout 10m 'Research the question and return a concise answer.'
+proc delegate --as ACCOUNT --label 'research' --check-after 10m 'Research the question and return a concise answer.'
 ```
 
-Delegation creates a non-interactive child, returns an in-progress task handle immediately, and sends completion or timeout back as a process event. It requires a process-backed caller, so never put `proc delegate` in a crontab or top-level scheduled shell command.
+Delegation creates a non-interactive child, returns an in-progress task handle immediately, and sends its result back as a process event. The check interval is a supervision checkpoint, not a work deadline. It requires a process-backed caller, so never put `proc delegate` in a crontab or top-level scheduled shell command.
 
-List the accounts available for running processes, then use `--as <account>` when a different identity is needed:
+Without `--as`, a child inherits the parent's identity and account context. List the accounts available for running processes when choosing a different identity:
 
 ```bash
 proc agents
-proc delegate --as pkg#agent --label 'specialized-work' 'Complete the task.'
+proc delegate --as ACCOUNT --label 'specialized-work' 'Complete the task.'
 ```
 
 Use the other process commands according to their reply contract:
