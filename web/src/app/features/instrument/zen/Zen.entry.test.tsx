@@ -439,6 +439,24 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("retries only the mark after the policy saved and the mark did not", async () => {
+      rejectWriteOf = "users/1000/ui/approval-setup";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+        rejectWriteOf = null;
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval", "users/1000/ui/approval-setup"]);
+      } finally { await zen.unmount(); }
+    });
+
     it("comes back at the next approval once the mark is cleared again", async () => {
       const zen = await mountedZen();
       try {

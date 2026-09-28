@@ -45,6 +45,8 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
   const [error, setError] = useState<string | null>(null);
   const stageRef = useRef(stage);
   stageRef.current = stage;
+  /* the policy is written before the mark; a failed mark retries the mark alone, never the policy */
+  const policyWrittenRef = useRef(false);
 
   /* opens when an approval is pending and the mark is unset; once nothing is pending, whatever stage it reached is
      forgotten, so the next approval reads the mark afresh (show it again in Settings clears it) */
@@ -52,6 +54,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
     if (stage === "idle" && due && pending) {
       setChoices({});
       setError(null);
+      policyWrittenRef.current = false;
       setStage("step1");
     } else if (!pending && stage !== "idle" && stage !== "saving") {
       setStage("idle");
@@ -86,7 +89,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
     }
     if (current !== "step2" || uid === null) return;
     const picked = Object.keys(choices).length > 0;
-    if (!picked) { void finish("done"); return; }
+    if (!picked || policyWrittenRef.current) { void finish("done"); return; }
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
     const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, choices));
     setStage("saving");
@@ -94,6 +97,7 @@ export function useApprovalSetup({ client, uid, due, pending, editable, inherite
     void (async () => {
       try {
         await saveAccountApprovalPolicy(client, uid, override, next);
+        policyWrittenRef.current = true;
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : "The policy did not save.");
         setStage("step2");
