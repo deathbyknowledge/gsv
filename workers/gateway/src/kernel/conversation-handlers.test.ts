@@ -16,6 +16,7 @@ const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersona
 
 import {
   handleConversationHistory,
+  handleConversationSearch,
   handleConversationShip,
   handleConversationMediaRead,
   handleConversationSend,
@@ -65,6 +66,7 @@ function context(ownerUid = 1000): KernelContext {
       getOwnerUid: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS.ownerUid : null),
     },
     conversations: {
+      getShip: vi.fn(() => SHIP),
       ensureShip: vi.fn(() => SHIP),
       get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
       list: vi.fn(() => [SHIP]),
@@ -169,6 +171,21 @@ describe("conversation handlers", () => {
     await expect(handleConversationHistory({ conversationId: SHIP.id }, ctx)).rejects.toThrow(
       "Conversation history requires a signed-in human or their Ship",
     );
+  });
+
+  it("searches only owned conversations for signed-in people and their canonical Ship", async () => {
+    const search = vi.fn(async () => ({ hits: [], nextBeforeSequence: null, indexing: false }));
+    getConversationByIdMock.mockReturnValue({ search });
+    const ctx = context();
+    await expect(handleConversationSearch({ query: "Rotterdam", limit: 10 }, ctx)).resolves.toMatchObject({ conversation: SHIP, hits: [] });
+    expect(search).toHaveBeenCalledWith({ query: "Rotterdam", limit: 10, beforeSequence: undefined });
+    expect(getConversationByIdMock).toHaveBeenCalledWith("inst_test", SHIP.id);
+    ctx.processId = PROCESS.processId;
+    await expect(handleConversationSearch({ query: "Rotterdam" }, ctx)).resolves.toMatchObject({ hits: [] });
+    ctx.procs.get = vi.fn(() => ({ ...PROCESS, isPersonalController: false }));
+    await expect(handleConversationSearch({ query: "Rotterdam" }, ctx)).rejects.toThrow("signed-in human or their Ship");
+    await expect(handleConversationSearch({ conversationId: SHIP.id, query: "Rotterdam" }, context(1002))).rejects.toThrow("Conversation not found");
+    expect(search).toHaveBeenCalledTimes(2);
   });
 
   it("admits the canonical input into the handler and pins the reply to its client", async () => {

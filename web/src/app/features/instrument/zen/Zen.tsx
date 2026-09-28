@@ -1,4 +1,5 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
+import { ZenSearch } from "./ZenSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
@@ -323,6 +324,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   }, [active, today, timeZone]);
 
   const [note, setNote] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
@@ -724,6 +728,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (event.defaultPrevented || event.isComposing) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
+      if (!event.altKey && (event.key === "f" && (event.ctrlKey || event.metaKey) || event.key === "/" && !typing && !event.ctrlKey && !event.metaKey)) {
+        event.preventDefault(); setSearchOpen(true); return;
+      }
       if (editing && event.key === "Escape") {
         // Escape leaves the prompt even if the input's own handler did not run.
         event.preventDefault();
@@ -1066,11 +1073,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
+            <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
-              enabled={active && connected && pid !== null && pendingHil === null}
+              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen}
               send={onSubmit} scroll={scrolling.move} />
           </div>
           <div class="zen-place-section">
@@ -1100,6 +1108,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
+      {active && searchOpen && conversation.conversation && <ZenSearch key={conversation.conversation.id}
+        conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>
   );
 }

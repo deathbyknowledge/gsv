@@ -3,6 +3,7 @@ import type {
   ConversationMessage,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
+  ConversationSearchHit,
   MessageAttachment,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
@@ -142,6 +143,7 @@ export class ConversationStore {
       input.payloadHash,
       Date.now(),
     );
+    this.indexMessage(message);
     return { message, created: true };
   }
 
@@ -184,6 +186,13 @@ export class ConversationStore {
     ).toArray().map((row) => toMessage(meta.conversation_id, row));
   }
 
+  listHotAfter(afterSequence: number, limit: number): ConversationMessage[] {
+    const meta = this.requireMeta();
+    return this.sql.exec<MessageRow>(
+      "SELECT * FROM messages WHERE sequence > ? ORDER BY sequence LIMIT ?", afterSequence, limit,
+    ).toArray().map((row) => toMessage(meta.conversation_id, row));
+  }
+
   latestSequence(): number {
     const hot = this.sql.exec<{ value: number | null }>(
       "SELECT MAX(sequence) AS value FROM messages",
@@ -198,6 +207,45 @@ export class ConversationStore {
     return this.sql.exec<{ value: number }>(
       "SELECT COUNT(*) AS value FROM messages",
     ).toArray()[0]?.value ?? 0;
+  }
+
+  indexMessage(message: ConversationMessage): void {
+    this.sql.exec(
+      `INSERT OR REPLACE INTO message_search (rowid, text, message_id, author_json, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      message.sequence, message.text, message.id, JSON.stringify(message.author), message.createdAt,
+    );
+  }
+
+  search(query: string, beforeSequence: number, limit: number): ConversationSearchHit[] {
+    return this.sql.exec<{
+      sequence: number; message_id: string; author_json: string; created_at: number; snippet: string;
+    }>(
+      `SELECT rowid AS sequence, message_id, author_json, created_at,
+              snippet(message_search, 0, '', '', '…', 32) AS snippet
+       FROM message_search WHERE message_search MATCH ? AND rowid < ?
+       ORDER BY rowid DESC LIMIT ?`,
+      query, beforeSequence, limit,
+    ).toArray().map((row) => ({
+      id: row.message_id, sequence: row.sequence, createdAt: Number(row.created_at), snippet: row.snippet,
+      // SAFETY: this index copies author_json from owned canonical messages.
+      author: JSON.parse(row.author_json) as ConversationMessageAuthor,
+    }));
+  }
+
+  pendingSearchSegment(): ConversationArchiveSegment | null {
+    const row = this.sql.exec<{
+      segment_id: string; from_sequence: number; to_sequence: number; message_count: number;
+      object_key: string; checksum: string; created_at: number;
+    }>("SELECT * FROM archive_segments WHERE search_indexed = 0 ORDER BY from_sequence DESC LIMIT 1").toArray()[0];
+    return row ? {
+      segmentId: row.segment_id, fromSequence: row.from_sequence, toSequence: row.to_sequence,
+      messageCount: row.message_count, objectKey: row.object_key, checksum: row.checksum, createdAt: row.created_at,
+    } : null;
+  }
+
+  finishSearchSegment(segmentId: string): void {
+    this.sql.exec("UPDATE archive_segments SET search_indexed = 1 WHERE segment_id = ?", segmentId);
   }
 
   oldestHot(limit: number): ConversationMessage[] {
@@ -248,8 +296,8 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO archive_segments
-       (segment_id, from_sequence, to_sequence, message_count, object_key, checksum, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (segment_id, from_sequence, to_sequence, message_count, object_key, checksum, created_at, search_indexed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       segment.segmentId,
       segment.fromSequence,
       segment.toSequence,

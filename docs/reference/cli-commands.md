@@ -67,6 +67,7 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
@@ -157,6 +158,14 @@ producers as `configurable`. Only configurable producers can be changed. Use
 Ship responsibility for each message; enabling it affects future completions.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
+
+`message search "words"` searches committed conversation text, including archived
+messages, and defaults to Ship. It returns newest matches first, with literal
+word prefixes combined with AND. `--before` accepts the returned
+`nextBeforeSequence` to page older matches; `--json` also reports whether older
+archives are still being indexed. A signed-in user or their Ship may search;
+delegated work does not inherit conversation access. Use `message history` with
+the match's sequence plus one as `--before` and `--limit 1` to read it in full.
 
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination

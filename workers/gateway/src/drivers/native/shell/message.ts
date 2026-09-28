@@ -27,7 +27,7 @@ import {
   handleContactList,
   handleContactSend,
 } from "../../../kernel/federation";
-import { handleConversationHistory } from "../../../kernel/conversation-handlers";
+import { handleConversationHistory, handleConversationSearch } from "../../../kernel/conversation-handlers";
 import {
   type VisibleAdapterMessageDestination,
   adapterMessageDestinationId,
@@ -90,6 +90,8 @@ async function runMessageCommand(
       return attachToReply(rest, shellCtx, fs, ctx);
     case "history":
       return await showMessageHistory(rest, ctx);
+    case "search":
+      return await searchMessages(rest, ctx);
     case "delivery":
       return showMessageDelivery(rest, ctx);
     case "send":
@@ -97,6 +99,49 @@ async function runMessageCommand(
     default:
       throw new Error(`unknown command: ${subcommand}\n${messageUsage()}`);
   }
+}
+
+async function searchMessages(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  requireCommandCapability(ctx, "conversation.search");
+  const words: string[] = [];
+  let conversationId: string | undefined;
+  let beforeSequence: number | undefined;
+  let limit: number | undefined;
+  let outputJson = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--with") {
+      conversationId = requireShellOptionValue(args[++index], option);
+      if (conversationId.startsWith("contact:")) {
+        requireCommandCapability(ctx, "contact.list");
+        const contact = handleContactList({ includeRevoked: true }, ctx).contacts.find(({ id }) => id === conversationId);
+        if (!contact) throw new Error(`Contact not found: ${conversationId}`);
+        conversationId = contact.conversationId;
+      }
+    } else if (option === "--before") {
+      beforeSequence = parsePositiveInteger(requireShellOptionValue(args[++index], option), option);
+    } else if (option === "--limit") {
+      limit = parsePositiveInteger(requireShellOptionValue(args[++index], option), option);
+    } else if (option === "--json") {
+      outputJson = true;
+    } else if (option === "--") {
+      words.push(...args.slice(index + 1));
+      break;
+    } else if (option.startsWith("--")) {
+      throw new Error(`unexpected search option: ${option}`);
+    } else words.push(option);
+  }
+  const result = await handleConversationSearch({ query: words.join(" "), conversationId, beforeSequence, limit }, ctx);
+  if (outputJson) return completed(`${JSON.stringify(result, null, 2)}\n`);
+  const lines = [`conversation=${result.conversation.id}`, `indexing=${result.indexing}`, ""];
+  for (const hit of result.hits) {
+    const author = hit.author.kind === "user" ? `user:${hit.author.uid}`
+      : hit.author.kind === "process" ? hit.author.pid : hit.author.displayName;
+    lines.push(`${hit.sequence} ${hit.id} ${author} ${new Date(hit.createdAt).toISOString()}`, hit.snippet, "");
+  }
+  if (!result.hits.length) lines.push(result.indexing ? "Older messages are still being indexed; search again shortly." : "(no matches)");
+  if (result.nextBeforeSequence !== null) lines.push(`next_before=${result.nextBeforeSequence}`);
+  return completed(`${lines.join("\n")}\n`);
 }
 
 async function showMessageHistory(args: string[], ctx: KernelContext): Promise<ExecResult> {
@@ -934,6 +979,7 @@ function messageUsage(): string {
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
     "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "  message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",

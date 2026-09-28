@@ -15,11 +15,13 @@ describe("conversation schema upgrades", () => {
       const store = new ConversationStore(sql);
       expect(store.messageAt(1)).toMatchObject({ id: "message", text: "Original text" });
       expect(store.messageAt(1)?.selectedTarget).toBeUndefined();
+      expect(store.search('"Original"*', 2, 10).map((hit) => hit.id)).toEqual(["message"]);
       const appended = store.append({ messageId: "selected", idempotencyKey: "selected", payloadHash: "fixture", text: "New text", selectedTarget: "macbook",
         author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 2 });
       expect(appended?.message.selectedTarget).toBe("macbook");
       runConversationSqlMigrations(storage);
       expect(store.messageAt(2)?.selectedTarget).toBe("macbook");
+      expect(store.search('"text"*', 3, 10)).toHaveLength(2);
     });
   });
 });

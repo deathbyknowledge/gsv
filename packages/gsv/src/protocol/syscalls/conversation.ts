@@ -88,6 +88,8 @@ export type ConversationListResult = { conversations: ConversationSummary[] };
 export type ConversationHistoryArgs = {
   conversationId: string;
   beforeSequence?: number;
+  /** Read the next chronological page; mutually exclusive with beforeSequence. */
+  afterSequence?: number;
   limit?: number;
 };
 
@@ -95,6 +97,30 @@ export type ConversationHistoryResult = {
   conversation: ConversationSummary;
   messages: ConversationMessage[];
   hasMore: boolean;
+};
+
+export type ConversationSearchArgs = {
+  /** Defaults to the caller's Ship conversation. */
+  conversationId?: string;
+  query: string;
+  beforeSequence?: number;
+  limit?: number;
+};
+
+export type ConversationSearchHit = {
+  id: string;
+  sequence: number;
+  author: ConversationMessageAuthor;
+  createdAt: number;
+  snippet: string;
+};
+
+export type ConversationSearchResult = {
+  conversation: ConversationSummary;
+  hits: ConversationSearchHit[];
+  nextBeforeSequence: number | null;
+  /** Older archived messages are still being added to the index. */
+  indexing: boolean;
 };
 
 export type ConversationSendArgs = {

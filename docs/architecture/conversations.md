@@ -150,11 +150,38 @@ message cannot invalidate an open preview; closing it or signing out releases th
 Older messages may link directly to a remote file. Those links open separately in the browser;
 native saves apply to the attachment blobs resolved by the authenticated frontend.
 
+## Search
+
+Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`. Selecting a result shows the
+original message and surrounding messages in the dialog, preserving the conversation position and
+any draft when the dialog closes.
+
+`conversation.search` searches canonical message text using the Conversation DO's SQLite FTS5 index.
+Words are literal prefixes, combined with AND; punctuation is not a query language. Results contain
+plain-text snippets, authors, dates, message IDs and sequences, newest first. Queries accept up to
+256 characters and 32 words, with up to 50 results per page. `nextBeforeSequence` pages older hits.
+Attachment contents and internal Process reasoning are not included.
+
+The index retains searchable text and author/date metadata when full messages move to R2. An upgrade
+indexes the bounded hot set immediately. First search schedules older segments for indexing, one
+segment per durable alarm; each segment's index and completion marker commit atomically. Queries
+report `indexing: true` until the archive backlog is complete, so partial results are not presented
+as an exhaustive search. Retrying or restarting indexing cannot duplicate a message.
+
+Ship uses the same syscall through `message search "words"`. `--with` selects an owned conversation or
+Contact, `--before` pages older matches, and `--json` returns the structured result. A message sequence
+can be read with `message history --with CONVERSATION --before NEXT_SEQUENCE --limit 1`.
+
+Clients can use `conversation.history` with `afterSequence` to read forwards from a match. It cannot
+be combined with `beforeSequence`. Both return messages in chronological order; `hasMore` continues
+to describe earlier messages, while the conversation's `latestSequence` identifies newer messages.
+
 ## Authorization
 
-Public `conversation.*` syscalls require a direct authenticated user client. Process callers cannot
-append user messages, read a user's canonical conversation through those syscalls, or recursively
-admit themselves. Adapter ingress and Process message commits use private Kernel-owned paths after
+Public conversation mutations require a direct authenticated user client. History and search also
+admit that user's canonical Ship with the corresponding capabilities; other Process callers cannot
+read the user's conversations. Processes cannot append user messages or recursively admit themselves.
+Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the

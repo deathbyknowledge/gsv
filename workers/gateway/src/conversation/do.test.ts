@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
 import { getConversationById } from "../shared/utils";
@@ -23,6 +23,28 @@ function message(sequence: number) {
 }
 
 describe("Conversation Durable Object", () => {
+  it("searches literal words and prefixes with stable pagination and plain snippets", async () => {
+    const stub = conversation("search");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    for (const [index, text] of ["Rotterdam concerts", "Rotterdam events <script>quoted</script>", "Café in Rotterdam", "Unrelated Berlin"].entries()) {
+      await stub.append({ ...message(index), text });
+    }
+    const first = await stub.search({ query: "rotter", limit: 2 });
+    expect(first.hits.map((hit) => hit.sequence)).toEqual([3, 2]);
+    expect(first.hits[1].snippet).toBe("Rotterdam events <script>quoted</script>");
+    expect(first.nextBeforeSequence).toBe(2);
+    expect(first.indexing).toBe(false);
+    const next = await stub.search({ query: "rotter", beforeSequence: first.nextBeforeSequence!, limit: 2 });
+    expect(next.hits.map((hit) => hit.sequence)).toEqual([1]);
+    expect(next.nextBeforeSequence).toBeNull();
+    expect((await stub.search({ query: "cafe rotter" })).hits.map((hit) => hit.sequence)).toEqual([3]);
+    expect((await stub.search({ query: 'Rotterdam OR Berlin' })).hits).toEqual([]);
+    expect((await stub.search({ query: '" OR "' })).hits).toEqual([]);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: " " }))).rejects.toThrow("Search requires");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "r".repeat(257) }))).rejects.toThrow("Search requires");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "Rotterdam", limit: 51 }))).rejects.toThrow("Search limit");
+  });
+
   it("stores canonical messages idempotently and rejects changed replays", async () => {
     const stub = conversation("append");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
@@ -42,6 +64,7 @@ describe("Conversation Durable Object", () => {
     expect(history.messages).toEqual([first.message]);
     expect(history.latestSequence).toBe(1);
     expect(history.hasMore).toBe(false);
+    expect((await stub.search({ query: "message" })).hits).toHaveLength(1);
   });
 
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
@@ -61,10 +84,26 @@ describe("Conversation Durable Object", () => {
     expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
     expect(archived.messages[0]?.selectedTarget).toBe("macbook");
     expect(archived.messages[1]?.selectedTarget).toBeUndefined();
+    const aroundArchiveBoundary = await stub.history({ afterSequence: 498, limit: 4 });
+    expect(aroundArchiveBoundary.messages.map((message) => message.sequence)).toEqual([499, 500, 501, 502]);
+    expect(aroundArchiveBoundary.hasMore).toBe(true);
+    expect((await stub.history({ afterSequence: 1_000, limit: 4 })).messages.map((message) => message.sequence)).toEqual([1_001]);
     expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
       message: archived.messages[0],
       created: false,
     });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits.map((hit) => hit.id)).toEqual(["msg:1"]);
+
+    await runInDurableObject(stub, async (_instance: Conversation, state) => {
+      state.storage.sql.exec("DELETE FROM message_search WHERE rowid <= 500");
+      state.storage.sql.exec("UPDATE archive_segments SET search_indexed = 0");
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await stub.search({ query: "message 1", beforeSequence: 2 })).toMatchObject({ hits: [], indexing: true });
+    await runDurableObjectAlarm(stub);
+    const indexed = await stub.search({ query: "message 1", beforeSequence: 2 });
+    expect(indexed.indexing).toBe(false);
+    expect(indexed.hits.map((hit) => hit.id)).toEqual(["msg:1"]);
   }, 30_000);
 
   it("keeps legacy conversation-owned media readable", async () => {
