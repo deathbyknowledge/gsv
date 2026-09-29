@@ -449,6 +449,27 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("leaves mixed machine scopes intact when their displayed choice is selected again", async () => {
+      configEntries = [{ key: "users/1000/ai/tools/approval", value: JSON.stringify({
+        default: "auto", rules: [{ match: "shell.exec", target: "laptop", action: "ask" }],
+      }) }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        expect(setup(zen).current.shell).toBe("ask");
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("shell", "auto"); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "done" }]);
+      } finally { await zen.unmount(); }
+    });
+
     it("saves revised picks after the policy was written but the mark was not", async () => {
       rejectWriteOf = "users/1000/ui/approval-setup";
       const zen = await mountedZen();

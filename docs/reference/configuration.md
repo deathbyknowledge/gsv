@@ -117,7 +117,8 @@ first, or is refused. Two keys hold it:
 Policy shape:
 
 Zen's first-approval walkthrough applies category choices to matching
-machine-specific rules too. Existing denials stay blocked. File-change choices
+machine-specific rules too. Selecting the displayed choice again preserves any
+mixed machine-specific settings. Existing denials stay blocked. File-change choices
 preserve separate read, transfer and explicit deletion rules. **Always allow
 this** saves the exact capability and target to the policy used by that process,
 including when root is inspecting another person's work.
