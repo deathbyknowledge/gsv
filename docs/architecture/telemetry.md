@@ -43,7 +43,8 @@ The shared inference client also logs a fixed failure stage when acquiring a
 managed target, starting its stream, or consuming that stream fails. These
 diagnostic records contain only `component: "gsv_inference"` and the stage event;
 they never include the response payload or exception text. Ordinary request
-cancellation emits no failure log.
+cancellation emits no failure log; client-owned deadlines still report the
+stage that timed out.
 
 Operational telemetry and product analytics are separate purposes. A managed
 consumer derives unrelated pseudonyms for the two streams with different HMAC
