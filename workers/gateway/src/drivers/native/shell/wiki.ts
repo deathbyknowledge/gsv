@@ -15,7 +15,6 @@ import {
   handleRepoRead,
   handleRepoSearch,
 } from "../../../kernel/repo";
-import { handleSysBootstrap } from "../../../kernel/sys/bootstrap";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 const WIKI_MANIFEST_PATH = "wiki.json";
@@ -88,7 +87,10 @@ async function runWikiCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "info": {
       const collection = await resolveWikiCollection(ctx, rest[0]);
       const pages = await collectWikiPages(ctx, collection);
-      return { stdout: formatWikiInfo(collection, pages), stderr: "", exitCode: 0 };
+      const update = collection.repo === "root/gsv-manual"
+        ? ctx.manual.status() : undefined;
+      const sync = update ? `sync=${update.status}\nrevision=${update.head ?? "unknown"}\n` : "";
+      return { stdout: formatWikiInfo(collection, pages) + sync, stderr: "", exitCode: 0 };
     }
     case "read": {
       const path = rest.join(" ").trim();
@@ -104,7 +106,7 @@ async function runWikiCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (rest.length !== 1 || rest[0] !== "gsv-manual") {
         throw new Error("Usage: wiki refresh gsv-manual");
       }
-      const result = await handleSysBootstrap({}, ctx);
+      const result = await ctx.manual.refresh();
       return {
         stdout: [
           `wiki=${result.repo}`,
