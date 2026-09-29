@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GSVClient } from "@humansandmachines/gsv/client";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
-import { LineInspector, ProcessInspector } from "./Fleet";
+import { ProcessInspector } from "./Fleet";
+import { LineInspector } from "../settings/LedgerLine";
 
 const abort = vi.fn<GSVClient["proc"]["abort"]>();
 

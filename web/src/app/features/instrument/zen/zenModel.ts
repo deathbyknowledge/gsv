@@ -60,8 +60,9 @@ export function resolvePlace(name: string, places: readonly Place[]): string | n
 }
 
 /** The prompt's default place: the first online machine, else the cloud home. */
-export function defaultPlace(places: readonly Place[]): string {
-  return places.find((place) => place.online)?.id ?? CLOUD_PLACE_ID;
+// The default is now the cloud home; using a connected machine is an explicit choice.
+export function defaultPlace(): string {
+  return CLOUD_PLACE_ID;
 }
 
 /* ---------- activity along the target axis ---------- */

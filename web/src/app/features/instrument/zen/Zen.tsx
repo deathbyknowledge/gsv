@@ -437,7 +437,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (!targetsQuery.data) return;
     const next = placesFromTargets(targetsQuery.data);
     setPlaces(next);
-    setWhere((current) => current ?? defaultPlace(next));
+    setWhere((current) => current ?? defaultPlace());
   }, [targetsQuery.data]);
 
   /* history, then live signals reduced into the runtime state */
@@ -622,14 +622,14 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       }
       const accepted = outbox.send({
         pid, conversationId: conversation.conversation?.id, message: text,
-        media: [...attachments], selectedTarget: where ?? defaultPlace(places),
+        media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pid, places, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
   );
 
   const nativeVoice = useRef<NativeVoiceHandle>(null);
@@ -638,7 +638,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const runDirectly = useCallback(
     (command: string) => {
       try {
-        const target = where ?? defaultPlace(places);
+        const target = where ?? defaultPlace();
         const supportsSessions = places.find((place) => place.id === target)?.kind !== "browser";
         const id = sessions.start(command, target, pidProp ?? "ship", supportsSessions);
         scrolling.follow();

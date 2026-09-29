@@ -87,7 +87,7 @@
 /* ---------- distances ---------- */
 .distance {
   position: absolute;
-  inset: 0;
+  inset: var(--instrument-header-height) 0 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
@@ -113,6 +113,8 @@
   position: absolute;
   inset: 0 0 auto;
   height: var(--instrument-header-height);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
   z-index: 3;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
