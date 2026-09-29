@@ -107,19 +107,39 @@ export const APPROVAL_CATEGORIES: readonly ApprovalCategory[] = [
  *  A machine-wide rule is also resolved on every machine the policy names, so a rule for one machine
  *  shows in the row rather than hiding behind the wildcard. */
 export function currentApprovalChoices(policy: ApprovalPolicyValue): Record<ApprovalCategoryId, ApprovalPolicyAction> {
-  const machines = [...new Set(policy.rules
-    .map((rule) => approvalTargetFromValue(rule.target))
-    .filter((scope): scope is string => scope !== undefined && scope !== "gsv" && scope !== "targets/*"))];
   const entries = APPROVAL_CATEGORIES.map((category) => {
-    const actions = category.rules.flatMap((rule) => {
-      const scope = rule.target ?? "gsv";
-      const scopes = scope === "targets/*" ? [scope, ...machines] : [scope];
-      return scopes.map((at) => resolveApprovalAction(policy, rule.match, at));
-    });
+    const actions = categoryPolicyRules(policy, category)
+      .map((rule) => resolveApprovalAction(policy, rule.match, rule.target ?? "gsv"));
     return [category.id, actions.includes("deny") ? "deny" : actions.includes("ask") ? "ask" : "auto"] as const;
   });
   // SAFETY: APPROVAL_CATEGORIES lists every ApprovalCategoryId exactly once, so the entries cover the record.
   return Object.fromEntries(entries) as Record<ApprovalCategoryId, ApprovalPolicyAction>;
+}
+
+/** Expand a category at the scopes its existing rules can override. The same
+ * rules drive both its displayed choice and the policy it writes. */
+function categoryPolicyRules(policy: ApprovalPolicyValue, category: ApprovalCategory): Pick<ApprovalPolicyRule, "match" | "target">[] {
+  return category.rules.flatMap((rule) => {
+    const target = approvalTargetFromValue(rule.target);
+    const scopes = new Set([target]);
+    for (const existing of policy.rules) {
+      const scope = approvalTargetFromValue(existing.target);
+      if (target === "targets/*" && scope && scope !== "gsv") scopes.add(scope);
+      else if (target === undefined && scope === "gsv") scopes.add(scope);
+    }
+    return [...scopes].flatMap((scope) => {
+      const matches = new Set([rule.match]);
+      for (const existing of policy.rules) {
+        if (approvalTargetMatchesScope(existing.target, scope ?? "gsv")
+          && approvalMatchIncludes(rule.match, existing.match)
+          && !category.keepsAuto?.some((kept) => kept.match === existing.match)
+          && !(category.id === "machine-files" && existing.match === "fs.delete")) {
+          matches.add(existing.match);
+        }
+      }
+      return [...matches].map((match) => scope ? { match, target: scope } : { match });
+    });
+  });
 }
 
 /** The categories a policy currently asks about, in walkthrough order. */
@@ -131,9 +151,9 @@ export function askingCategories(policy: ApprovalPolicyValue): ApprovalCategoryI
 /** The account whose approval override a persistent choice must write. The Kernel resolves the run-as
  *  account's own override before the owner's, so a process whose account has one reads that key; until
  *  the process's account is known there is no safe target, and persistent controls stay off. */
-export function approvalPolicyAccount(input: { selfUid: number; processUid: number | null; processOverride: string }): number | null {
+export function approvalPolicyAccount(input: { ownerUid: number; processUid: number | null; processOverride: string }): number | null {
   if (input.processUid === null) return null;
-  return input.processUid !== input.selfUid && input.processOverride !== "" ? input.processUid : input.selfUid;
+  return input.processUid !== input.ownerUid && input.processOverride !== "" ? input.processUid : input.ownerUid;
 }
 
 /** Replace the first rule with the same capability and scope, or append; every other rule keeps its place. */
@@ -161,12 +181,25 @@ export function composeApprovalChoices(
   for (const category of APPROVAL_CATEGORIES) {
     const action = choices[category.id];
     if (!action) continue;
-    for (const rule of category.rules) policy = upsertApprovalRule(policy, { ...rule, action });
-    if (action !== "ask") continue;
-    for (const rule of category.keepsAuto ?? []) {
-      const scope = approvalTargetFromValue(rule.target);
-      const present = policy.rules.some((entry) => entry.match === rule.match && approvalTargetFromValue(entry.target) === scope);
-      if (!present) policy = upsertApprovalRule(policy, { ...rule, action: "auto" });
+    if (currentApprovalChoices(base)[category.id] === "deny") continue;
+    const before = policy;
+    const rules = categoryPolicyRules(before, category);
+    for (const rule of rules) {
+      if (resolveApprovalAction(policy, rule.match, rule.target ?? "gsv") !== action) {
+        policy = upsertApprovalRule(policy, { ...rule, action });
+      }
+    }
+    // File reads and transfers are separate from changes. Keep explicit delete
+    // choices too; that row owns them even when a machine has a broad fs rule.
+    const preserved = (category.keepsAuto ?? []).map((rule) => rule.match);
+    if (category.id === "machine-files" && before.rules.some((rule) => rule.match === "fs.delete")) preserved.push("fs.delete");
+    for (const scope of new Set(rules.map((rule) => rule.target))) {
+      for (const match of preserved) {
+        const previous = resolveApprovalAction(before, match, scope ?? "gsv");
+        if (resolveApprovalAction(policy, match, scope ?? "gsv") !== previous) {
+          policy = upsertApprovalRule(policy, { match, target: scope, action: previous });
+        }
+      }
     }
   }
   return protectManagedMailApproval(policy);

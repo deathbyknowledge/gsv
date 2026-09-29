@@ -146,6 +146,7 @@ import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
   handleConversationHistory,
+  handleConversationSearch,
   handleConversationShip,
   handleConversationList,
   handleConversationMediaRead,
@@ -408,6 +409,9 @@ async function dispatchKernel(
         break;
       case "conversation.history":
         data = await handleConversationHistory(frame.args, ctx);
+        break;
+      case "conversation.search":
+        data = await handleConversationSearch(frame.args, ctx);
         break;
       case "conversation.send":
         data = await handleConversationSend(frame.args, ctx);

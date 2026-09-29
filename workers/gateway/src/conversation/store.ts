@@ -7,6 +7,8 @@ import type {
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 
+const SEARCH_STORAGE_BUDGET_BYTES = 6_000_000_000;
+
 type MetaRow = {
   conversation_id: string;
   owner_uid: number;
@@ -58,7 +60,10 @@ export type ConversationArchiveSegment = {
 };
 
 export class ConversationStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly searchStorageBudgetBytes = SEARCH_STORAGE_BUDGET_BYTES,
+  ) {}
 
   initialize(conversationId: string, ownerUid: number, kind: ConversationKind): MetaRow {
     this.sql.exec(
@@ -142,7 +147,28 @@ export class ConversationStore {
       input.payloadHash,
       Date.now(),
     );
+    // Check merge progress before inserting pending FTS data for this message.
+    this.pruneSearch(message.sequence);
+    this.sql.exec("INSERT INTO message_search (rowid, text) VALUES (?, ?)", message.sequence, message.text);
     return { message, created: true };
+  }
+
+  private pruneSearch(latestSequence: number): void {
+    if (this.sql.databaseSize <= this.searchStorageBudgetBytes) return;
+
+    // Reclaim pending deletions before dropping more history. databaseSize excludes reusable pages.
+    const before = this.sql.exec<{ count: number }>("SELECT total_changes() AS count").one().count;
+    this.sql.exec("INSERT INTO message_search(message_search, rank) VALUES ('merge', 64)");
+    const after = this.sql.exec<{ count: number }>("SELECT total_changes() AS count").one().count;
+    if (after - before >= 2) return;
+
+    this.sql.exec(
+      `DELETE FROM message_search WHERE rowid IN (
+        SELECT rowid FROM message_search WHERE rowid < ? ORDER BY rowid LIMIT 128
+      )`,
+      latestSequence,
+    );
+    this.sql.exec("INSERT INTO message_search(message_search, rank) VALUES ('merge', 64)");
   }
 
   receipt(idempotencyKey: string): {
@@ -184,6 +210,13 @@ export class ConversationStore {
     ).toArray().map((row) => toMessage(meta.conversation_id, row));
   }
 
+  listHotAfter(afterSequence: number, limit: number): ConversationMessage[] {
+    const meta = this.requireMeta();
+    return this.sql.exec<MessageRow>(
+      "SELECT * FROM messages WHERE sequence > ? ORDER BY sequence LIMIT ?", afterSequence, limit,
+    ).toArray().map((row) => toMessage(meta.conversation_id, row));
+  }
+
   latestSequence(): number {
     const hot = this.sql.exec<{ value: number | null }>(
       "SELECT MAX(sequence) AS value FROM messages",
@@ -198,6 +231,15 @@ export class ConversationStore {
     return this.sql.exec<{ value: number }>(
       "SELECT COUNT(*) AS value FROM messages",
     ).toArray()[0]?.value ?? 0;
+  }
+
+  search(query: string, beforeSequence: number, limit: number): number[] {
+    return this.sql.exec<{ sequence: number }>(
+      `SELECT rowid AS sequence
+       FROM message_search WHERE message_search MATCH ? AND rowid < ?
+       ORDER BY rowid DESC LIMIT ?`,
+      query, beforeSequence, limit,
+    ).toArray().map((row) => row.sequence);
   }
 
   oldestHot(limit: number): ConversationMessage[] {

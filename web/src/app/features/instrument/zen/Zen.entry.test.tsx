@@ -19,11 +19,13 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ApprovalSetup } from "./ApprovalSetup";
 import { Zen } from "./Zen";
 import { ZenText } from "./ZenText";
+import { ThinkingMark } from "./ThinkingMark";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
 let hasMore: boolean;
 let ownerUid: number;
+let selfUid: number;
 let shipUid: number;
 let gateway: string;
 let shipPid: string;
@@ -58,6 +60,7 @@ beforeEach(() => {
   messages = [];
   hasMore = false;
   ownerUid = 1000;
+  selfUid = 1000;
   shipUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
@@ -98,7 +101,7 @@ beforeEach(() => {
       return { data: { ok: true } };
     }
     if (call === "account.list") return { data: { accounts: selfCapabilities ? [
-      { uid: ownerUid, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: selfCapabilities },
+      { uid: selfUid, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: selfCapabilities },
       { uid: shipUid, username: "algo", displayName: "Algo", relation: "personal-agent", runnable: true, capabilities: [] },
     ] : [] } };
     if (call === "proc.hil") {
@@ -204,16 +207,19 @@ describe("Zen conversation entry", () => {
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(text()).toContain(readiness));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
       runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
-      await vi.waitFor(() => expect(text()).toContain("attempting active-model"));
+      await vi.waitFor(() => expect(text()).toContain("active-model"));
+      expect(text()).not.toContain("attempting");
       expect(text()).toContain(readiness);
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
       await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }
   });
@@ -589,6 +595,23 @@ describe("Zen conversation entry", () => {
         await expectCard(zen);
         expect(configWrites).toEqual([]);
         expect(card(zen).onAlwaysAllow).toBeUndefined();
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes to the process owner's policy when root reviews its approval", async () => {
+      selfUid = 0;
+      shipUid = 1001;
+      configEntries = [{ key: "users/0/ui/approval-setup", value: "done" }];
+      const zen = await mountedZen("ship");
+      try {
+        await zen.refreshHistory();
+        await askApproval();
+        await expectCard(zen);
+        await act(async () => { await card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites).toHaveLength(1);
+        expect(configWrites[0]!.key).toBe("users/1000/ai/tools/approval");
+        expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]);
       } finally { await zen.unmount(); }
     });
 

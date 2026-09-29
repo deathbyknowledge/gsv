@@ -15,7 +15,9 @@ If you were given an **invite code** instead, open the operator's signup page
 (or **Create a space** in the Desktop app), enter the code, verify your email
 with the six-digit code it sends, and choose the handle your space will live at.
 The same code resumes the same space if the browser or app is interrupted, and
-it works once.
+it works once. The signup page also links to the beta Desktop app for macOS and
+Linux; see [Install host apps](/how-to/install-host-apps) for the download and
+first-launch steps.
 
 Owner sign-in on **My spaces** lists spaces you own. It is separate from your
 account inside each space. Signing in alone does not create a space or grant
@@ -47,6 +49,10 @@ The web console is called **Instrument** and has four views:
 - **Fleet** lists your places, processes, contacts and responsibilities, the ledger of actions and their outcomes, and recently touched files.
 - **Memory** shows your personal knowledge pages.
 - **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.
+
+In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
+mode. Open a match to read the surrounding conversation. Closing search returns
+to your place and draft.
 
 ## Next steps
 

@@ -2,7 +2,6 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import {
   composeApprovalChoices,
-  currentApprovalChoices,
   type ApprovalCategoryId,
   type ApprovalChoice,
   type ApprovalChoices,
@@ -84,10 +83,13 @@ export function useApprovalSetup({ client, uid, policyUid, due, pending, editabl
 
   /* picking what the policy already does is not a choice, so an unchanged walkthrough writes no override */
   const choose = useCallback((id: ApprovalCategoryId, choice: ApprovalChoice) => {
-    const effective = currentApprovalChoices(parseApprovalPolicy(override || inherited))[id];
+    const base = parseApprovalPolicy(override || inherited);
+    const nextPolicy = composeApprovalChoices(base, null, { [id]: choice });
+    const unchanged = normalizedApprovalPolicy(serializeApprovalPolicy(nextPolicy))
+      === normalizedApprovalPolicy(serializeApprovalPolicy(base));
     setChoices((current) => {
       const next = { ...current };
-      if (choice === effective) delete next[id]; else next[id] = choice;
+      if (unchanged) delete next[id]; else next[id] = choice;
       return next;
     });
     setError(null);

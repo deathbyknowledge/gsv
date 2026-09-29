@@ -58,10 +58,10 @@ describe("currentApprovalChoices with machine-specific rules", () => {
 
 describe("approvalPolicyAccount", () => {
   it("has no target until the process account is known, then picks the account whose override the process reads", () => {
-    expect(approvalPolicyAccount({ selfUid: 1000, processUid: null, processOverride: "" })).toBeNull();
-    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1000, processOverride: "" })).toBe(1000);
-    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1001, processOverride: "" })).toBe(1000);
-    expect(approvalPolicyAccount({ selfUid: 1000, processUid: 1001, processOverride: '{"default":"ask","rules":[]}' })).toBe(1001);
+    expect(approvalPolicyAccount({ ownerUid: 1000, processUid: null, processOverride: "" })).toBeNull();
+    expect(approvalPolicyAccount({ ownerUid: 1000, processUid: 1000, processOverride: "" })).toBe(1000);
+    expect(approvalPolicyAccount({ ownerUid: 1000, processUid: 1001, processOverride: "" })).toBe(1000);
+    expect(approvalPolicyAccount({ ownerUid: 1000, processUid: 1001, processOverride: '{"default":"ask","rules":[]}' })).toBe(1001);
   });
 });
 
@@ -82,6 +82,42 @@ describe("upsertApprovalRule", () => {
 });
 
 describe("composeApprovalChoices", () => {
+  it("changes a machine-specific ask when the whole category is allowed", () => {
+    const policy = upsertApprovalRule(shipped, { match: "shell.exec", target: "laptop", action: "ask" });
+    const next = composeApprovalChoices(policy, null, { shell: "auto" });
+    expect(resolveApprovalAction(next, "shell.exec", "laptop")).toBe("auto");
+    expect(resolveApprovalAction(next, "shell.exec", "other-machine")).toBe("auto");
+  });
+
+  it("includes specific file changes in the row and preserves read and delete exceptions", () => {
+    const policy: ApprovalPolicyValue = { default: "auto", rules: [
+      { match: "fs.write", target: "laptop", action: "ask" },
+      { match: "fs.read", target: "laptop", action: "ask" },
+      { match: "fs.delete", target: "laptop", action: "ask" },
+    ] };
+    expect(currentApprovalChoices(policy)["machine-files"]).toBe("ask");
+    const next = composeApprovalChoices(policy, null, { "machine-files": "auto" });
+    expect(resolveApprovalAction(next, "fs.write", "laptop")).toBe("auto");
+    expect(resolveApprovalAction(next, "fs.read", "laptop")).toBe("ask");
+    expect(resolveApprovalAction(next, "fs.delete", "laptop")).toBe("ask");
+  });
+
+  it("locks a category containing a specific denial even if another rule allows it", () => {
+    const policy = upsertApprovalRule(shipped, { match: "fs.write", target: "laptop", action: "deny" });
+    expect(currentApprovalChoices(policy)["machine-files"]).toBe("deny");
+    const next = composeApprovalChoices(policy, null, { "machine-files": "auto" });
+    expect(next).toEqual(policy);
+  });
+
+  it("overrides broader target-specific rules without changing their other capabilities", () => {
+    const policy: ApprovalPolicyValue = { default: "auto", rules: [
+      { match: "shell.*", target: "laptop", action: "ask" },
+    ] };
+    const next = composeApprovalChoices(policy, null, { shell: "auto" });
+    expect(resolveApprovalAction(next, "shell.exec", "laptop")).toBe("auto");
+    expect(resolveApprovalAction(next, "shell.cancel", "laptop")).toBe("ask");
+  });
+
   it("flips only the chosen capability and keeps every other shipped rule at its index", () => {
     const next = composeApprovalChoices(shipped, null, { shell: "auto" });
     expect(next.default).toBe("auto");

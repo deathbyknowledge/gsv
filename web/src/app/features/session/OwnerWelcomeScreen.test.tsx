@@ -65,6 +65,8 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")?.props)
         .toMatchObject({ suffix: ".example.com" }));
       expect(fetcher).toHaveBeenCalledExactlyOnceWith("https://accounts.example.com/owner/api/session", expect.objectContaining({ method: "GET" }));
+      // Desktop renders this screen too; the beta app link belongs to the browser signup entry alone.
+      expect(collectNodes(tree).some((node) => node.type === "a")).toBe(false);
     } finally { await root.unmount(); }
   });
 

@@ -1,4 +1,5 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
+import { ZenSearch } from "./ZenSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
@@ -330,6 +331,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   }, [active, today, timeZone]);
 
   const [note, setNote] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
@@ -459,7 +463,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* moments: the runtime's, plus the commands run by hand */
   const { moments, receipts } = useMemo(() => {
-    const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId)
+    const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId, pid ?? undefined)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     for (const outgoing of outbox.messages) {
       if (outgoing.draft.conversationId
@@ -716,11 +720,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
   /* a process entry's uid is its owner; the policy the Kernel resolves first belongs to the run-as account,
      found by username in the accounts list (unknown there means no safe target yet) */
-  const processUsername = processes.data?.find((process) => process.pid === pid)?.username ?? null;
+  const approvalProcess = processes.data?.find((process) => process.pid === pid);
+  const processUsername = approvalProcess?.username ?? null;
   const processUid = processUsername === null ? null
     : accounts.data?.find((account) => account.username === processUsername)?.uid ?? null;
-  const policyUid = self === null ? null : approvalPolicyAccount({
-    selfUid: self.uid, processUid, processOverride: processUid === null ? "" : configEntry(accountApprovalKey(processUid)),
+  const policyUid = approvalProcess?.uid == null ? null : approvalPolicyAccount({
+    ownerUid: approvalProcess.uid, processUid, processOverride: processUid === null ? "" : configEntry(accountApprovalKey(processUid)),
   });
   const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
   const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
@@ -781,6 +786,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (event.defaultPrevented || event.isComposing) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
+      if (!event.altKey && (event.key === "f" && (event.ctrlKey || event.metaKey) || event.key === "/" && !typing && !event.ctrlKey && !event.metaKey)) {
+        event.preventDefault(); setSearchOpen(true); return;
+      }
       if (editing && event.key === "Escape") {
         // Escape leaves the prompt even if the input's own handler did not run.
         event.preventDefault();
@@ -994,7 +1002,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const activeRun = connected ? runtime.activeRunId : null;
-  const attemptedModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
+  const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
@@ -1115,7 +1123,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </ul>}
           {showFeedback && <div class="zen-feedback">
             {activeRun !== null && <span role="status">
-              {attemptedModel && <>attempting {attemptedModel} · </>}
+              {currentModel && <>{currentModel} · </>}
               {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
             </span>}
             {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
@@ -1151,12 +1159,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
+            <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
+            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
-              enabled={active && connected && pid !== null && pendingHil === null}
+              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen}
               send={onSubmit} scroll={scrolling.move} />
-            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
           </div>
           <div class="zen-place-section">
             {!currentPlace.online && <div class="zen-feedback" role="status">
@@ -1185,6 +1194,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
+      {active && searchOpen && conversation.conversation && <ZenSearch key={conversation.conversation.id}
+        conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>
   );
 }

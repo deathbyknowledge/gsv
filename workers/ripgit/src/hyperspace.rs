@@ -294,12 +294,11 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
         .unwrap_or_else(|| "main".to_string());
     let ref_name = workspace_ref_name(import.default_branch.as_deref().unwrap_or("main"));
     let tracking_ref = upstream_tracking_ref_name(&remote_ref)?;
-    let local_head_before = api::resolve_ref(sql, &ref_name)?;
-    let previous_upstream_head = api::resolve_ref(sql, &tracking_ref)?;
-    store::set_config(sql, "upstream.remote_url", &remote_url)?;
-    store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
-    store::set_config(sql, "upstream.tracking_ref", &tracking_ref)?;
-    store::set_config(sql, "upstream.source", "git-upload-pack")?;
+    let previous_tracking_ref = store::get_config(sql, "upstream.tracking_ref")?;
+    let previous_upstream_head = api::resolve_ref(
+        sql,
+        previous_tracking_ref.as_deref().unwrap_or(&tracking_ref),
+    )?;
 
     let fetched = git::fetch_remote_ref_with_options(
         sql,
@@ -312,6 +311,14 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
         },
     )
     .await?;
+
+    // A root edit can arrive while the upstream fetch yields. Inspect the local
+    // branch after fetching so an automatic refresh cannot overwrite that edit.
+    let local_head_before = api::resolve_ref(sql, &ref_name)?;
+    store::set_config(sql, "upstream.remote_url", &remote_url)?;
+    store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
+    store::set_config(sql, "upstream.tracking_ref", &tracking_ref)?;
+    store::set_config(sql, "upstream.source", "git-upload-pack")?;
 
     let mut local_head = local_head_before.clone();
     let mut local_changed = false;

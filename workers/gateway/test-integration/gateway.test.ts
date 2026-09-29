@@ -8,6 +8,7 @@ import { webSearchQuerySchema } from "@humansandmachines/gsv/services/web-search
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import manualVersion from "../src/kernel/sys/manual-version.json";
 
 const USERNAME = "harness-user";
 const PASSWORD = "integration-test-password";
@@ -157,7 +158,7 @@ describe("gateway integration", () => {
     });
     expect(setup.bootstrap).toMatchObject({
       repo: "root/gsv-manual",
-      ref: "main",
+      ref: manualVersion.revision,
       changed: true,
     });
 

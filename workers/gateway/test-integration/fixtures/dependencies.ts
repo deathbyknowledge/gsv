@@ -547,6 +547,11 @@ export default class TestDependencies
     }
 
     if (url.pathname.endsWith("/read") && request.method === "GET") {
+      if (url.pathname.includes("/repos/root/gsv-manual/")) {
+        const path = url.searchParams.get("path");
+        if (path === "wiki.json") return new Response(JSON.stringify({ kind: "gsv.wiki", version: 1, id: "gsv-manual", title: "GSV Manual" }));
+        if (!path || path === ".") return Response.json([]);
+      }
       return new Response("Not Found", { status: 404 });
     }
 
@@ -566,7 +571,7 @@ export default class TestDependencies
       const input = await request.json<ImportRequest>();
       return Response.json({
         ok: true,
-        head: "integration-head",
+        head: url.pathname.includes("/repos/root/gsv-manual/") ? input.remoteRef ?? "main" : "integration-head",
         changed: true,
         remote_url: input.remoteUrl ?? "https://example.invalid/gsv-manual",
         remote_ref: input.remoteRef ?? "main",

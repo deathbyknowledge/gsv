@@ -225,6 +225,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
               <dt>j / k</dt><dd>Next / previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
+              <dt>/</dt><dd>Search conversation · Ctrl/Cmd+F also works while typing</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
               <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
             </dl>
