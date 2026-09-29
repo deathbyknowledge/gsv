@@ -109,6 +109,34 @@ describe("minimal account setup", () => {
     expect(window.location.pathname).toBe("/recover");
   });
 
+  it("returns to the original credentials entry after Back, invalid edits and Forward", async () => {
+    const screen = await setupScreen("/onboarding");
+    await act(() => {
+      screen.state().setup.onUsername("alice");
+      screen.state().setup.onPassword("password123");
+      screen.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await act(() => window.history.back());
+    await act(() => screen.state().setup.onPasswordConfirm("different"));
+    await screen.visitConsentStep();
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    expect(screen.state().setup.step).toBe("credentials");
+    expect(window.history.state).toEqual({ gsvSetupConsent: false });
+    expect(screen.setup).not.toHaveBeenCalled();
+    await act(() => screen.state().setup.onPasswordConfirm("password123"));
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await act(() => screen.state().setup.onConsent(true));
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    expect(screen.setup).toHaveBeenCalledOnce();
+    window.history.replaceState(window.history.state, "", "/");
+    await screen.unmount();
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+    await act(() => window.history.back());
+    expect(window.location.pathname).toBe("/previous");
+  });
+
   it("requires consent before submitting credentials, retaining the form after a retryable failure", async () => {
     const screen = await setupScreen();
     try {

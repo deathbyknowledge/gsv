@@ -23,7 +23,7 @@ type SetupScreenProps = {
   onPasswordConfirm: (value: string) => void;
   onConsent: (checked: boolean) => void;
   onBack: () => void;
-  onFieldBlur: (field: keyof SetupAccount) => void;
+  onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => void;
   onSubmit: (event: Event) => void;
 };
 
@@ -44,15 +44,15 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
           <TextInput label="Username" value={username} disabled={busy} info={USERNAME_FORMAT_DESCRIPTION}
             status={fieldErrors.username ? "error" : "none"} message={fieldErrors.username}
             placeholder="Choose a username" onChange={onUsername}
-            inputProps={{ autoComplete: "username", maxLength: 32, "data-setup-username": true, onBlur: () => onFieldBlur("username") }} />
+            inputProps={{ autoComplete: "username", maxLength: 32, "data-setup-username": true, onBlur: (event) => onFieldBlur("username", event.relatedTarget) }} />
           <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
             status={fieldErrors.password ? "error" : "none"} message={fieldErrors.password}
             placeholder="At least 8 characters" onChange={onPassword}
-            inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password": true, onBlur: () => onFieldBlur("password") }} />
+            inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password": true, onBlur: (event) => onFieldBlur("password", event.relatedTarget) }} />
           <TextInput label="Confirm password" type="password" value={passwordConfirm} disabled={busy} clearable={false}
             status={fieldErrors.passwordConfirm ? "error" : "none"} message={fieldErrors.passwordConfirm}
             placeholder="Enter your password again" onChange={onPasswordConfirm}
-            inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true, onBlur: () => onFieldBlur("passwordConfirm") }} />
+            inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true, onBlur: (event) => onFieldBlur("passwordConfirm", event.relatedTarget) }} />
         </> : <div class="gsv-setup-agreement">
           <div class="gsv-setup-disclosure">
             <p>GSV is an AI assistant that can use your computer and connected services to get things done.</p>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { z } from "zod";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
@@ -14,6 +14,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
   const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
   const [setupTouched, setSetupTouched] = useState<Partial<Record<keyof SetupAccount, boolean>>>({});
+  const [setupValidationAttempt, setSetupValidationAttempt] = useState(0);
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
   const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
@@ -63,7 +64,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (!loginUsernameTouched && snapshot.username) setLoginUsername(snapshot.username);
   }, [snapshot.username, loginUsernameTouched]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (busy) return;
     const root = screenRef.current;
     if (!root || visibleView === "ready" || visibleView === "booting") return;
@@ -71,11 +72,15 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       root.querySelector<HTMLElement>("[data-setup-heading]")?.focus();
       return;
     }
+    if (visibleView === "setup" && setupValidationAttempt > 0) {
+      const invalid = root.querySelector<HTMLInputElement>('input[aria-invalid="true"]');
+      if (invalid) { invalid.focus({ preventScroll: true }); return; }
+    }
     const prefix = visibleView === "setup" ? "setup" : "session";
     const username = root.querySelector<HTMLInputElement>(`[data-${prefix}-username]`);
     if (username && !username.value) username.focus({ preventScroll: true });
     else root.querySelector<HTMLInputElement>(`[data-${prefix}-password]`)?.focus({ preventScroll: true });
-  }, [busy, visibleView, setupStep]);
+  }, [busy, visibleView, setupStep, setupValidationAttempt]);
 
   useEffect(() => {
     if (snapshot.phase !== "authenticating") setPendingAction(null);
@@ -109,7 +114,9 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     const account = { username: setupUsername, password: setupPassword };
     setSetupTouched({ username: true, password: true, passwordConfirm: true });
     if (Object.keys(setupErrors).length > 0) {
+      if (setupStep === "consent") window.history.back();
       setSetupStep("credentials");
+      setSetupValidationAttempt((attempt) => attempt + 1);
       return;
     }
     if (setupStep === "credentials") {
@@ -162,7 +169,12 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
         window.history.back();
         setSetupStep("credentials");
       },
-      onFieldBlur: (field: keyof SetupAccount) => { setSetupTouched((touched) => ({ ...touched, [field]: true })); },
+      onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => {
+        // Submission validates every field. Showing an error on pointer-down
+        // would move Continue before pointer-up and swallow the click.
+        if (next && next === screenRef.current?.querySelector("[data-setup-submit]")) return;
+        setSetupTouched((touched) => ({ ...touched, [field]: true }));
+      },
       onSubmit: submitSetup,
     },
   };
