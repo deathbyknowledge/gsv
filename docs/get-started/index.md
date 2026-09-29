@@ -56,8 +56,7 @@ to your place and draft.
 
 The composer starts on **your cloud** (`gsv`). Choose another place explicitly
 when you want a message or command to target it; that choice stays while you
-move between views. The header stays above the scrolling content, separated by
-a thin line.
+move between views. The header stays above the scrolling content.
 
 ## Next steps
 

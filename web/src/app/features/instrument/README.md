@@ -2,8 +2,8 @@
 
 Instrument is the default web UI at `/`. Its views use `/zen`, `/fleet`, `/memory` and `/zen/settings`. The former desktop shell, console and standalone workspaces are retired; old deep links have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
-The shared header reserves its own height above every view. A thin border marks
-the scrolling boundary; messages, lists and files cannot pass behind the header.
+The shared header reserves its own height above every view. Messages, lists and
+files cannot pass behind the header.
 The star field continues behind both regions without an opaque header backdrop.
 
 Zen, Fleet, Memory and Settings mount on their first visit and retain their local
