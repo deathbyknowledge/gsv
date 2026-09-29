@@ -66,7 +66,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
       </button>}
     </>}
     <FleetDialog open={active && allowed && !!line} title="Activity" onClose={() => setSelected(null)}>
-      {line && <LineInspector line={line} placeLabelFor={placeLabel} processName={processName(line.processId)} now={Date.now()} technical={technical} onProcess={(pid) => { setSelected(null); onProcess(pid); }} />}
+      {line && <LineInspector line={line} placeLabelFor={placeLabel} processName={processName(line.processId)} technical={technical} onProcess={(pid) => { setSelected(null); onProcess(pid); }} />}
     </FleetDialog>
   </section>;
 }

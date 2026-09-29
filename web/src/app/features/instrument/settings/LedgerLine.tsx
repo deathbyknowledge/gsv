@@ -1,3 +1,5 @@
+import { useEffect, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { relativeTime, type LedgerLine } from "../fleet/fleetModel";
 
 export function outcomeWord(outcome: string): string {
@@ -6,19 +8,29 @@ export function outcomeWord(outcome: string): string {
   return outcome;
 }
 
+function LineTime({ timestamp }: { timestamp: number | null }) {
+  const active = useViewActive();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active || timestamp === null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, timestamp]);
+  return <span>{relativeTime(timestamp, now)}</span>;
+}
+
 /** One line of the ledger, in full: everything the row truncated, and the way to the run it belongs to. */
 export function LineInspector({
   line,
   placeLabelFor,
   processName,
-  now,
   technical,
   onProcess,
 }: {
   line: LedgerLine;
   placeLabelFor: (placeId: string) => string;
   processName: string;
-  now: number;
   technical: boolean;
   onProcess: (pid: string) => void;
 }) {
@@ -27,7 +39,7 @@ export function LineInspector({
     <div>
       <h3>{line.what}</h3>
       <div class="sub">
-        {placeLabelFor(line.place)} · {relativeTime(line.timestamp, now)}
+        {placeLabelFor(line.place)} · <LineTime timestamp={line.timestamp} />
       </div>
       <dl class="fleet-kv">
         <dt>Outcome</dt>
