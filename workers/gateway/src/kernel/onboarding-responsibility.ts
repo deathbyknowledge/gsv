@@ -16,7 +16,7 @@ export function ensureInitialOnboardingResponsibility(
       outcomes: [
         "One of the following: a machine OR browser OR messenger OR integration is connected; an email is sent; a file is created OR edited OR deleted; a reminder OR scheduled task is created",
       ],
-      completionCondition: "The user has experienced one completed task beyond conversation, such as connecting a machine, browser, messenger, or integration, sending an email, creating, editing, or deleting files, or creating a reminder.",
+      completionCondition: "The user has experienced one completed task beyond conversation, such as connecting a machine, browser, messenger, or integration, sending an email, creating, editing, or deleting files, or creating a reminder that can reach them even if they leave the website.",
     },
     source: { kind: "system", component: "onboarding" },
     assignee: { kind: "ship" },

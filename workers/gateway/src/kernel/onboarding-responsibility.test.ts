@@ -23,7 +23,7 @@ describe("initial onboarding responsibility", () => {
         blocker: "Waiting for the user's first messages.",
         details: {
           responsibilityType: "onboarding.initial",
-          completionCondition: "The user has experienced one completed task beyond conversation, such as connecting a machine, browser, messenger, or integration, sending an email, creating, editing, or deleting files, or creating a reminder.",
+          completionCondition: "The user has experienced one completed task beyond conversation, such as connecting a machine, browser, messenger, or integration, sending an email, creating, editing, or deleting files, or creating a reminder that can reach them even if they leave the website.",
         },
       });
       expect(replay).toEqual({
