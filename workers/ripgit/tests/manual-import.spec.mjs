@@ -18,11 +18,14 @@ describe("versioned Manual imports", () => {
   });
   afterAll(async () => { await harness?.close(); await upstream?.close(); });
 
-  async function importRevision(installation, revision) {
-    const response = await worker.fetch("https://ripgit.invalid/hyperspace/repos/root/gsv-manual/import", {
+  function requestImport(installation, revision) {
+    return worker.fetch("https://ripgit.invalid/hyperspace/repos/root/gsv-manual/import", {
       method: "POST", headers: { "x-gsv-installation-id": installation, "content-type": "application/json" },
       body: JSON.stringify({ author: "root", email: "root@gsv.local", message: "update", remoteUrl: upstream.url, remoteRef: revision }),
     });
+  }
+  async function importRevision(installation, revision) {
+    const response = await requestImport(installation, revision);
     expect(response.status, await response.clone().text()).toBe(200);
     return response.json();
   }
@@ -56,5 +59,39 @@ describe("versioned Manual imports", () => {
     try { local = await edit("inst_manual_edited"); } finally { held.release(); }
     expect(await update).toMatchObject({ head: local, changed: false, diverged: true, upstream_head: next });
     expect(await importRevision("inst_manual_edited", next)).toMatchObject({ head: local, changed: false, diverged: true });
+  });
+
+  it.each([false, true])("does not restore a deleted repository after a fetch (recreated: %s)", async (recreate) => {
+    const installation = `inst_manual_deleted_${recreate}`;
+    const [old, next] = upstream.revisions;
+    await importRevision(installation, old);
+    const held = upstream.holdNext();
+    const update = requestImport(installation, next);
+    await held.started;
+    let replacement;
+    try {
+      const deleted = await worker.fetch("https://ripgit.invalid/root/gsv-manual", {
+        method: "DELETE", headers: { "x-gsv-installation-id": installation, "x-ripgit-actor-name": "root" },
+      });
+      expect(deleted.status).toBe(200);
+      await deleted.body?.cancel();
+      if (recreate) replacement = await edit(installation);
+    } finally { held.release(); }
+    const response = await update;
+    expect(response.status).toBe(500);
+    await response.body?.cancel();
+    await worker.evictDurableObject("REPOSITORY", { name: `${installation}/root/gsv-manual` });
+    const refs = await worker.fetch("https://ripgit.invalid/hyperspace/repos/root/gsv-manual/refs", {
+      headers: { "x-gsv-installation-id": installation },
+    });
+    expect(refs.status).toBe(200);
+    expect((await refs.json()).heads).toEqual(recreate ? { main: replacement } : {});
+    if (!recreate) {
+      const stats = await worker.fetch("https://ripgit.invalid/root/gsv-manual/stats", {
+        headers: { "x-gsv-installation-id": installation },
+      });
+      expect(await stats.json()).toMatchObject({ commits: 0, blobs: 0, refs: 0 });
+      expect(await importRevision(installation, next)).toMatchObject({ head: next, changed: true });
+    }
   });
 });

@@ -85,6 +85,9 @@ configured source or bundled revision changes. Requests keep using the installed
 copy during the refresh. Successful checks survive eviction; there is no polling
 alarm or fetch on every request. Failed or interrupted updates retry on activity
 after five minutes. Installation lifecycle admission also gates these updates.
+Deleting the Manual cancels an in-flight refresh: its late result cannot restore
+repository contents or registration. Automatic updates leave a deleted Manual
+absent; an explicit refresh can install it again.
 
 The importer preserves local edits, including edits made during a fetch. An
 untouched imported copy can follow a version upgrade or rollback. A divergent

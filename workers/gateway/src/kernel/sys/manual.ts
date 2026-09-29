@@ -22,6 +22,8 @@ export type ManualUpdateState = {
 
 export class ManualUpdater {
   private pending?: Promise<SysBootstrapResult>;
+  private generation = 0;
+  private deletions = 0;
 
   constructor(
     private readonly storage: Pick<DurableObjectStorage, "kv">,
@@ -34,7 +36,7 @@ export class ManualUpdater {
   }
 
   async ensureCurrent(): Promise<void> {
-    if (!this.ctx.env.RIPGIT || !this.ctx.config.get("repos/root/gsv-manual/created_at")) return;
+    if (this.deletions || !this.ctx.env.RIPGIT || !this.ctx.config.get("repos/root/gsv-manual/created_at")) return;
     try {
       const { remoteUrl, ref } = resolveManualUpstream(this.ctx.env);
       const previous = this.status();
@@ -48,16 +50,32 @@ export class ManualUpdater {
   }
 
   refresh(automatic = false): Promise<SysBootstrapResult> {
+    if (this.deletions) return Promise.reject(new Error("Manual repository is being deleted"));
     if (this.pending) return this.pending;
-    this.pending = this.update(automatic).finally(() => { this.pending = undefined; });
-    return this.pending;
+    const pending = this.update(automatic, this.generation).finally(() => {
+      if (this.pending === pending) this.pending = undefined;
+    });
+    this.pending = pending;
+    return pending;
+  }
+
+  beginDeletion(): () => void {
+    this.generation++;
+    this.deletions++;
+    this.pending = undefined;
+    this.storage.kv.delete(STATE_KEY);
+    return () => { this.deletions--; };
+  }
+
+  private assertCurrent(generation: number): void {
+    if (generation !== this.generation) throw new Error("Manual update cancelled by repository deletion");
   }
 
   private sourceKey(remoteUrl: string, ref: string): string {
     return JSON.stringify([remoteUrl, ref, manualVersion.revision]);
   }
 
-  private async update(automatic: boolean): Promise<SysBootstrapResult> {
+  private async update(automatic: boolean, generation: number): Promise<SysBootstrapResult> {
     if (!this.ctx.env.RIPGIT) throw new Error("RIPGIT binding is required for system bootstrap");
     const { remoteUrl, ref } = resolveManualUpstream(this.ctx.env);
     const state: ManualUpdateState = {
@@ -69,10 +87,12 @@ export class ManualUpdater {
       // First-boot setup has its own onboarding authorization before ordinary
       // work is admitted. Only background updates need a separate admission.
       if (automatic && !await this.canUpdate()) throw new Error("Installation admission is closed");
+      this.assertCurrent(generation);
       const imported = await new RipgitClient(this.ctx.env.RIPGIT).importFromUpstream(
         ROOT_GSV_MANUAL_REPO, "root", "root@gsv.local",
         "gsv: update manual", remoteUrl, ref,
       );
+      this.assertCurrent(generation);
       if (!this.ctx.config.get("repos/root/gsv-manual/created_at")) {
         registerRepo(this.ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
         setRepoVisibility(ROOT_GSV_MANUAL_REPO, "public", this.ctx.config);
@@ -86,7 +106,9 @@ export class ManualUpdater {
       return { repo: "root/gsv-manual", remoteUrl: imported.remoteUrl,
         ref: imported.remoteRef, head: imported.head ?? null, changed: imported.changed };
     } catch (error) {
-      this.storage.kv.put(STATE_KEY, { ...state, status: "failed" } satisfies ManualUpdateState);
+      if (generation === this.generation) {
+        this.storage.kv.put(STATE_KEY, { ...state, status: "failed" } satisfies ManualUpdateState);
+      }
       throw error;
     }
   }
