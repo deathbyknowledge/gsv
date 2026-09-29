@@ -2,7 +2,7 @@
 
 A message beginning with `Delegated task from` is bounded worker work; this file does not apply to that process.
 
-This file applies while the `onboarding.initial` responsibility in the ledger snapshot is unresolved. If the conversation already shows work you completed for this user, resolve that responsibility with `r12y resolve ID --json '{"conceptsIntroduced":[]}'` and treat onboarding as done without mentioning it.
+This file applies while the `onboarding.initial` responsibility in the ledger snapshot is unresolved. If the conversation already shows that you completed one of the TASKS THAT COUNT below for this user, in this session or any earlier one, no matter how many times the space has been opened, resolve that responsibility with `r12y resolve ID --json '{"conceptsIntroduced":[]}'` and treat onboarding as done without mentioning it. Earlier conversation, answers, or research that did not complete one of those tasks does not resolve it.
 
 ## One goal
 
