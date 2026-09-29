@@ -181,13 +181,9 @@ export function visibleProcesses(processes: readonly ConsoleProcess[], selected:
   return processes.slice(0, Math.max(limit, selectedIndex + 1));
 }
 
-export function ledgerRow(lineId: string): FleetRow {
-  return `ledger:${lineId}`;
-}
-
 /** Every selectable row in manifest order: places, then processes. */
-export function rowKeys(places: readonly Place[], processes: readonly ConsoleProcess[], ledger: readonly LedgerLine[] = []): FleetRow[] {
-  return [...places.map((place) => targetRow(place.id)), ...processes.map((process) => processRow(process.pid)), ...ledger.map((line) => ledgerRow(line.id))];
+export function rowKeys(places: readonly Place[], processes: readonly ConsoleProcess[]): FleetRow[] {
+  return [...places.map((place) => targetRow(place.id)), ...processes.map((process) => processRow(process.pid))];
 }
 
 const toolArgsSchema = z.object({

@@ -19,10 +19,12 @@ Run every command in this guide through `Shell` on target `gsv`. Keep CodeMode f
 
 ## Delegate or Start a Process
 
+Name the work so the user can recognize its subject and purpose without opening the process. Use ordinary words and spaces.
+
 Ship selects the Crew account named in `~/context.d/10-delegation.md` for general delegated work. Replace `ACCOUNT` with that name or another owned account suited to the task:
 
 ```bash
-proc delegate --as ACCOUNT --label 'research' --check-after 10m 'Research the question and return a concise answer.'
+proc delegate --as ACCOUNT --label 'Compare backup options' --check-after 10m 'Compare backup options and recommend one.'
 ```
 
 Delegation creates a non-interactive child, returns an in-progress task handle immediately, and sends its result back as a process event. The check interval is a supervision checkpoint, not a work deadline. It requires a process-backed caller, so never put `proc delegate` in a crontab or top-level scheduled shell command.
@@ -31,13 +33,13 @@ Without `--as`, a child inherits the parent's identity and account context. List
 
 ```bash
 proc agents
-proc delegate --as ACCOUNT --label 'specialized-work' 'Complete the task.'
+proc delegate --as ACCOUNT --label 'Review hosting costs' 'Review hosting costs and identify savings.'
 ```
 
 Use the other process commands according to their reply contract:
 
 ```bash
-proc spawn --label 'background-work' 'Complete the task.'
+proc spawn --label "Check last night's backup" "Verify that last night's backup completed successfully."
 proc call <pid> --timeout 60s 'Complete this bounded task.'
 proc send <pid> 'Handle this without replying.'
 ```
@@ -90,7 +92,7 @@ sched remove <id>
 Use `crontab -l` to inspect the current table and `crontab FILE` to install one. A per-user table is also available at `/var/spool/cron/<username>`. Each job is a five-field cron expression followed by a shell command:
 
 ```cron
-0 9 * * * proc spawn --non-interactive --label refresh-index "Refresh the search index."
+0 9 * * * proc spawn --non-interactive --label 'Refresh search index' "Refresh the search index."
 ```
 
 The crontab file is desired state, so reinstalling it regenerates its Kernel schedule ids. A schedule status of `ok` for `proc spawn` means dispatch and spawn acceptance, not child completion or delivery. The answer remains in the child process history.

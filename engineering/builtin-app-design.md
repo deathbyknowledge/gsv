@@ -16,9 +16,9 @@ If you cannot state the app's job clearly, stop and design first.
 
 Examples:
 - `Zen` owns conversation, messages, run activity, approvals and direct shell commands
-- `Fleet` owns places, processes, contacts, responsibilities, routines, the ledger and files
+- `Fleet` owns places, processes, contacts, responsibilities, routines and files
 - `Memory` owns reading, finding, creating and correcting pages
-- `Settings` owns model preferences, instructions, permissions, connections and timezone
+- `Settings` owns model preferences, instructions, permissions, connections, timezone and the full ledger
 
 ## Design From Decisions
 

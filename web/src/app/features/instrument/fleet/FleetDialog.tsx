@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useId, useLayoutEffect, useRef } from "preact/hooks";
 import { RetainedView } from "../../../services/navigation/ViewActivity";
 
 export function FleetDialog({ open, title, onClose, children }: {
@@ -9,6 +9,7 @@ export function FleetDialog({ open, title, onClose, children }: {
   children: ComponentChildren;
 }) {
   const element = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   const backdropPress = useRef(false);
   useLayoutEffect(() => {
     const dialog = element.current;
@@ -28,7 +29,7 @@ export function FleetDialog({ open, title, onClose, children }: {
     return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
   };
 
-  return <dialog ref={element} class="fleet-dialog" aria-labelledby="fleet-inspector-title"
+  return <dialog ref={element} class="fleet-dialog" aria-labelledby={titleId}
     onCancel={(event) => { event.preventDefault(); onClose(); }}
     onPointerDown={(event) => { backdropPress.current = outside(event); }}
     onClick={(event) => {
@@ -36,7 +37,7 @@ export function FleetDialog({ open, title, onClose, children }: {
       backdropPress.current = false;
     }}>
     <header class="fleet-dialog-head">
-      <span id="fleet-inspector-title">{title}</span>
+      <span id={titleId}>{title}</span>
       <button type="button" class="fleet-text-action" aria-label="Close inspector" onClick={onClose}>close <kbd>esc</kbd></button>
     </header>
     <RetainedView active={open}>

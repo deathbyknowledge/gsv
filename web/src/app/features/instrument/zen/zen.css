@@ -43,14 +43,14 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  scroll-padding-top: calc(var(--instrument-header-height) + 12px);
+  scroll-padding-top: 12px;
   overflow-anchor: none;
   min-height: 0;
 }
 .zen-content {
   position: relative;
   min-height: 100%;
-  padding: calc(var(--instrument-header-height) + 5vh) 0 6vh;
+  padding: 5vh 0 6vh;
   display: flex;
   flex-direction: column;
 }

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GSVClient } from "@humansandmachines/gsv/client";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
-import { LineInspector, ProcessInspector } from "./Fleet";
+import { ProcessInspector } from "./Fleet";
+import { LineInspector } from "../settings/LedgerLine";
 
 const abort = vi.fn<GSVClient["proc"]["abort"]>();
 
@@ -100,7 +101,7 @@ describe("Fleet process navigation", () => {
     const tree = LineInspector({
       line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
         what: "read a file", detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
-      placeLabelFor: (target) => target, processName: "worker", now: 1, technical: false, onProcess,
+      placeLabelFor: (target) => target, processName: "worker", technical: false, onProcess,
     });
     const action = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "inspect process");
     expect(action).toBeDefined();
