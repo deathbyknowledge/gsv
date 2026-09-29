@@ -48,6 +48,10 @@ The web console is called **Instrument** and has four views:
 - **Memory** shows your personal knowledge pages.
 - **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.
 
+In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
+mode. Open a match to read the surrounding conversation. Closing search returns
+to your place and draft.
+
 ## Next steps
 
 - [Connect devices](/how-to/connect-devices).

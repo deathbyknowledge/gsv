@@ -585,15 +585,18 @@ return { exitCode: res.exitCode, output };
 ## Conversations: `conversation.*`
 
 `conversation.*` is the direct-client interface for canonical user-visible messages. It is
-separate from raw `proc.history` activity. These operations require an authenticated direct user
-client; Process and adapter service callers use private Kernel-owned admission paths.
+separate from raw `proc.history` activity. Mutations require an authenticated direct user client;
+Process and adapter service callers use private Kernel-owned admission paths. History and search
+also admit the caller's canonical Ship, with their respective syscall capabilities and the same
+conversation ownership checks. Delegated processes do not inherit this read authority.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -639,8 +642,16 @@ type ConversationSyscalls = {
     result: { conversations: ConversationSummary[] };
   };
   "conversation.history": {
-    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    args: { conversationId: string; beforeSequence?: number; afterSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.search": {
+    args: { conversationId?: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversation: ConversationSummary;
+      hits: { id: string; sequence: number; author: ConversationMessage["author"]; createdAt: number; snippet: string }[];
+      nextBeforeSequence: number | null;
+    };
   };
   "conversation.send": {
     args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
