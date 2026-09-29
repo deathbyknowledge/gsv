@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use worker::*;
@@ -31,6 +31,8 @@ const APPLICATION_TABLES: &[&str] = &[
 pub struct RetirementSql {
     raw: SqlStorage,
     retired: Arc<AtomicBool>,
+    generation: Arc<AtomicUsize>,
+    request_generation: Option<usize>,
 }
 
 impl RetirementSql {
@@ -42,7 +44,16 @@ impl RetirementSql {
         Ok(Self {
             raw,
             retired: Arc::new(AtomicBool::new(retired)),
+            generation: Arc::new(AtomicUsize::new(0)),
+            request_generation: None,
         })
+    }
+
+    pub fn for_request(&self) -> Self {
+        Self {
+            request_generation: Some(self.generation.load(Ordering::SeqCst)),
+            ..self.clone()
+        }
     }
 
     pub fn exec(
@@ -62,11 +73,21 @@ impl RetirementSql {
         if self.retired.load(Ordering::SeqCst) {
             return Err(Error::RustError("Installation is retired".into()));
         }
+        if self
+            .request_generation
+            .is_some_and(|generation| generation != self.generation.load(Ordering::SeqCst))
+        {
+            return Err(Error::RustError(
+                "Repository was deleted during the request".into(),
+            ));
+        }
         Ok(())
     }
 
     pub fn clear_repository(&self) -> Result<()> {
         self.assert_active()?;
+        // Only in-flight requests need this fence; they cannot survive object eviction.
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.erase_application_data()
     }
 

@@ -16,6 +16,7 @@ import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
 import { ZenText } from "./ZenText";
+import { ThinkingMark } from "./ThinkingMark";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -171,16 +172,19 @@ describe("Zen conversation entry", () => {
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(text()).toContain(readiness));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
       runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
-      await vi.waitFor(() => expect(text()).toContain("attempting active-model"));
+      await vi.waitFor(() => expect(text()).toContain("active-model"));
+      expect(text()).not.toContain("attempting");
       expect(text()).toContain(readiness);
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
       await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }
   });

@@ -5,6 +5,8 @@ import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 import { handleSysBootstrap } from "./bootstrap";
+import { ManualUpdater, type ManualUpdateState } from "./manual";
+import manualVersion from "./manual-version.json";
 import { RipgitClient } from "../../fs/ripgit/client";
 
 const importFromUpstreamMock = vi.spyOn(RipgitClient.prototype, "importFromUpstream");
@@ -15,7 +17,7 @@ function makeContext(): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const configValues = new Map<string, string>();
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  return {
+  const ctx = {
     env: {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       RIPGIT: {} as Fetcher,
@@ -45,6 +47,13 @@ function makeContext(): KernelContext {
     } as KernelContext["config"],
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
+  const values = new Map<string, ManualUpdateState>();
+  // SAFETY: the updater only uses get/put for its opaque ManualUpdateState record.
+  ctx.manual = new ManualUpdater({ kv: {
+    get: (key: string) => values.get(key),
+    put: (key: string, value: ManualUpdateState) => { values.set(key, value); },
+  } as DurableObjectStorage["kv"] }, ctx, async () => true);
+  return ctx;
 }
 
 function setManualBootstrapEnv(ctx: KernelContext, upstream: string, ref?: string): void {
@@ -89,9 +98,9 @@ describe("handleSysBootstrap", () => {
       { owner: "root", repo: "gsv-manual", branch: "main" },
       "root",
       "root@gsv.local",
-      "bootstrap root/gsv-manual from https://github.com/deathbyknowledge/gsv-manual#main",
+      "gsv: update manual",
       "https://github.com/deathbyknowledge/gsv-manual",
-      "main",
+      manualVersion.revision,
     );
     expect(BUILTIN_SKILL_FILES.map((skill) => skill.path)).toEqual([
       "browser-target/SKILL.md",
@@ -132,7 +141,7 @@ describe("handleSysBootstrap", () => {
     expect(result).toEqual({
       repo: "root/gsv-manual",
       remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
-      ref: "main",
+      ref: manualVersion.revision,
       head: "manual123",
       changed: true,
     });
@@ -170,7 +179,7 @@ describe("handleSysBootstrap", () => {
       expect.any(Object),
       "root",
       "root@gsv.local",
-      "bootstrap root/gsv-manual from https://github.com/example/private-manual#release",
+      "gsv: update manual",
       "https://github.com/example/private-manual",
       "release",
     );

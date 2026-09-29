@@ -585,15 +585,18 @@ return { exitCode: res.exitCode, output };
 ## Conversations: `conversation.*`
 
 `conversation.*` is the direct-client interface for canonical user-visible messages. It is
-separate from raw `proc.history` activity. These operations require an authenticated direct user
-client; Process and adapter service callers use private Kernel-owned admission paths.
+separate from raw `proc.history` activity. Mutations require an authenticated direct user client;
+Process and adapter service callers use private Kernel-owned admission paths. History and search
+also admit the caller's canonical Ship, with their respective syscall capabilities and the same
+conversation ownership checks. Delegated processes do not inherit this read authority.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -639,8 +642,16 @@ type ConversationSyscalls = {
     result: { conversations: ConversationSummary[] };
   };
   "conversation.history": {
-    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    args: { conversationId: string; beforeSequence?: number; afterSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.search": {
+    args: { conversationId?: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversation: ConversationSummary;
+      hits: { id: string; sequence: number; author: ConversationMessage["author"]; createdAt: number; snippet: string }[];
+      nextBeforeSequence: number | null;
+    };
   };
   "conversation.send": {
     args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
@@ -1371,7 +1382,7 @@ Runtime behavior:
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills (`browser-target`, `gsv-concepts`, `gsv-manual`, `image-reading`, `memory`, `process-orchestration`, `skill-authoring`) into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills (`browser-target`, `gsv-concepts`, `gsv-manual`, `image-reading`, `memory`, `process-orchestration`, `skill-authoring`) into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |

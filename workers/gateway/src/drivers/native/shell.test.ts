@@ -267,7 +267,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.6.1";
+        if (key === "config/server/version") return "0.6.2";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -342,7 +342,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.6.1",
+    serverVersion: "0.6.2",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -4389,6 +4389,30 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain(`conversation=${conversation.id}`);
     expect(history.stdout).toContain("Flynn (contact:friend)");
     expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("lets Ship search its conversation through the shared syscall and enforces the capability", async () => {
+    const conversation = { id: "conv:ship", ownerUid: IDENTITY.uid, kind: "ship" as const,
+      title: "Ship", handlerPid: "proc:ship", latestSequence: 12, createdAt: 1, updatedAt: 2 };
+    const search = vi.fn(async () => ({ hits: [{ id: "msg:one", sequence: 12,
+      author: { kind: "user" as const, uid: IDENTITY.uid }, createdAt: 1, snippet: "Rotterdam events" }],
+      nextBeforeSequence: null }));
+    getConversationByIdMock.mockReturnValue({ search });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "conversation.search"],
+      procs: { get: vi.fn(() => makeProcess({ processId: "proc:ship", isPersonalController: true })) },
+      processId: "proc:ship",
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      getShip: vi.fn(() => conversation), get: vi.fn(() => conversation),
+    });
+    const result = await handleShellExec({ input: "message search 'Rotterdam events' --limit 10 --json" }, ctx);
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(search).toHaveBeenCalledWith({ query: "Rotterdam events", limit: 10, beforeSequence: undefined });
+    expect(JSON.parse(result.stdout!)).toMatchObject({ conversation: { id: conversation.id }, hits: [{ id: "msg:one", sequence: 12 }] });
+    const denied = await handleShellExec({ input: "message search Rotterdam" }, makeContext({ capabilities: ["shell.exec"] }));
+    expect(denied.exitCode).toBe(1);
+    expect(search).toHaveBeenCalledTimes(1);
   });
 
   it("reports Contact delivery acceptance and later state separately", async () => {

@@ -153,6 +153,9 @@ stale hidden view still use `sys.ledger.list`. Ordinary row changes do not.
 An overflowing client buffer during a stalled fetch recovers with a snapshot;
 failed delivery closes that connection so reconnect recovers it too.
 
+Fleet labels `conversation.search` as “searched a conversation”; its query remains
+inspectable in the owning user's ledger arguments like other syscall inputs.
+
 ## Cost
 
 One insert per dispatch and one count per hundred, in the transaction the

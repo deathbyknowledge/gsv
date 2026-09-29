@@ -647,7 +647,8 @@ function receive(text: string): Sent {
 
 const pidArgs = z.object({ pid: z.string() });
 const historyArgs = z.object({ pid: z.string(), since: z.string().optional() });
-const conversationArgs = z.object({ conversationId: z.string() });
+const conversationArgs = z.object({ conversationId: z.string(), beforeSequence: z.number().optional(), afterSequence: z.number().optional(), limit: z.number().optional() });
+const searchArgs = z.object({ conversationId: z.string().optional(), query: z.string(), beforeSequence: z.number().optional(), limit: z.number().optional() });
 const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
@@ -708,8 +709,23 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
-      const ship = conversationArgs.parse(args).conversationId === SHIP_CONVERSATION;
-      return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), messages: ship ? world.messages : [], hasMore: false });
+      const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);
+      const ship = conversationId === SHIP_CONVERSATION;
+      const all = ship ? world.messages : [];
+      const eligible = all.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0));
+      const messages = afterSequence === undefined ? eligible.slice(-limit) : eligible.slice(0, limit);
+      return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), messages,
+        hasMore: messages.length > 0 && all.some((message) => message.sequence < messages[0].sequence) });
+    }
+    case "conversation.search": {
+      const { conversationId = SHIP_CONVERSATION, query, beforeSequence = Infinity, limit = 20 } = searchArgs.parse(args);
+      const ship = conversationId === SHIP_CONVERSATION;
+      const terms = query.toLowerCase().trim().split(/\s+/);
+      const matches = (ship ? world.messages : []).filter((message) => message.sequence < beforeSequence
+        && terms.every((term) => message.text.toLowerCase().includes(term))).reverse();
+      const hits = matches.slice(0, limit).map(({ id, sequence, author, createdAt, text }) => ({ id, sequence, author, createdAt, snippet: text }));
+      return respond(id, { conversation: conversation(ship ? SHIP.pid : HELPER.pid), hits,
+        nextBeforeSequence: matches.length > limit ? hits.at(-1)!.sequence : null });
     }
     case "conversation.send": {
       const sent = receive(sendArgs.parse(args).text);
