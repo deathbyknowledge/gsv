@@ -10,6 +10,7 @@ import type {
   FederationOutboxRecord,
 } from "../federation-store";
 import { isReadyFederationOutbox } from "../federation-store";
+import { MAX_DELIVERY_AGE_MS } from "./limits";
 import { FederationHttpError } from "./errors";
 
 export function currentFederationDeliveryContact(
@@ -49,7 +50,10 @@ export function contactDeliveryStatus(
   record: FederationOutboxRecord,
   contact: FederationContactRecord,
 ): ContactDeliveryStatus {
+  const local = isReadyFederationOutbox(record) ? record.localMessage : record.preparation.localMessage;
   return {
+    ...(local ? { messageId: local.messageId } : undefined),
+    ...(isReadyFederationOutbox(record) && record.localSequence ? { messageSequence: record.localSequence } : undefined),
     deliveryId: record.deliveryId,
     contactId: record.contactId,
     conversationId: contact.conversationId,
@@ -58,6 +62,7 @@ export function contactDeliveryStatus(
       : record.state === "delivered"
         ? "delivered"
         : "failed",
+    retryable: record.retryable && contact.state === "active" && contact.generation === record.contactGeneration && Date.now() - record.createdAtMs < MAX_DELIVERY_AGE_MS,
     attemptCount: record.attemptCount,
     createdAtMs: record.createdAtMs,
     updatedAtMs: record.updatedAtMs,

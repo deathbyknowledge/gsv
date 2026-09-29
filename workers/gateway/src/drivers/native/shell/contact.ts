@@ -168,11 +168,12 @@ async function manageRequest(args: string[], ctx: KernelContext): Promise<ExecRe
     }
     const result = handleContactRequestList({ contactId, includeTerminal }, ctx);
     if (outputJson) return json(result);
-    const lines = ["REQUEST\tSTATE\tDIRECTION\tKIND\tTITLE"];
+    const lines = ["REQUEST\tSTATE\tEXCHANGE\tDIRECTION\tKIND\tTITLE"];
     for (const request of result.requests) {
       lines.push([
         request.id,
         request.state,
+        request.exchange?.state ?? "unconfirmed",
         request.direction,
         request.kind,
         request.title,

@@ -10,6 +10,7 @@ import type { WebSearchService } from "@humansandmachines/gsv/services/web-searc
  * Deployment service contracts augment the generated platform bindings.
  */
 type GatewayDeploymentBindings = TelemetryEnvironment & {
+  GSV_FEDERATION_LOCAL_DEVELOPMENT?: "1";
   INSTALLATION_DIRECTORY: InstallationDirectoryService & InstallationOnboardingService;
   INSTALLATION_OWNERSHIP?: InstallationOwnershipService;
   INFERENCE_EXECUTION: InferenceExecutionService;
