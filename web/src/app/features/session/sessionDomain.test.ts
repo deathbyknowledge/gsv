@@ -12,7 +12,7 @@ describe("setup account validation", () => {
 
   it("requires a username and reserves the Ship account name", () => {
     expect(validateSetupAccount({ username: "", password: "password123", passwordConfirm: "password123" })).toEqual({ username: "Username is required." });
-    expect(validateSetupAccount({ username: "algo", password: "password123", passwordConfirm: "password123" })).toEqual({ username: "Choose a different username. This name belongs to your Ship." });
+    expect(validateSetupAccount({ username: "ship", password: "password123", passwordConfirm: "password123" })).toEqual({ username: "Choose a different username. This name belongs to your Ship." });
   });
 
   it("applies the setup service's password length after trimming", () => {

@@ -67,6 +67,8 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
 
+Ship's default delegation uses an ordinary owned Crew account through `proc delegate --as`. Account homes separate conversation and execution instructions; the human owner's context and memory remain shared. Account identity selects prompt context, and children follow ordinary spawn rules.
+
 A Process context epoch freezes the exact rendered system prompt, its source manifest, and the initial responsibility baseline across normal runs. Later responsibility revisions enter as ordered GSV events rather than rewriting the prompt. Kernel-owned availability facts such as accessible targets, ready MCP servers, the current date and timezone, and the skill catalog follow the same rule: Process stores an initial and last-observed projection and atomically appends meaningful deltas before generation. Reset, compaction, Process replacement, or effective standing-context changes close and archive the epoch, including its exact prompt, Process activity, projection and responsibility transitions, and run boundaries.
 
 Process history stores typed message, note, call, result, and event records. Runtime events retain registered payloads, severity, and audience; admission preserves queue provenance. An assistant turn can own several records under one compatibility message identity. During the typed-history transition, the existing prose and provider projection remain available alongside those records; archives, forks, and media cleanup preserve the entire group.
@@ -140,6 +142,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Enforce authorization in the Kernel, not only in UI or callers.
 - Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
+- Accounts owns hashed, single-use space-creation invites. A verified owner claims an invite and resumes one durable creation operation; private policy prepares its allowance before setup authorization. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
 - A signed-in human issues device enrollment invitations scoped to the installation, account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
@@ -166,6 +169,7 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 ### Protected prompt and context content
 
 - Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `workers/gateway/src/prompts/**`.
+- Write active standing defaults and standalone task prompts as Markdown files imported by TypeScript. Use `npm run review:prompts` to edit and preview them; keep runtime selection and structured event formatting in code.
 - Treat `workers/gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
 - Do not edit prompt or seeded `context.d` content to work around runtime, protocol, tool-discovery, or UI behavior. Fix the owning implementation boundary.
 - If a task appears to require changing protected prompt or context content without explicit authorization, stop and ask first.
@@ -233,6 +237,12 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
+Documentation is an output of the change, not a follow-up. A change to product-facing behaviour updates `docs/` in the same pull request, and the GSV Manual (`deathbyknowledge/gsv-manual`, which every installation imports for its agents) in its own pull request when the operating model or a user workflow moved.
+
+- Docs: `npm run docs:check`
+
+That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without changing one of the pages that own it. `tools/docs/coverage-map.json` maps source paths to those pages; when a new page takes over a surface, add it there. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
+
 ## Deployment model
 
 - Operator stack: build and inspect `npm run deployment:plan`, then apply `npm run deployment:deploy` with the existing operator configuration and Alchemy state.
@@ -260,6 +270,7 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 - Architecture: `docs/architecture/`
 - Rust CLI, daemon, Desktop, and local IPC: `docs/architecture/rust-host-applications.md`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
+- Public documentation and its currency rule: `docs/` and `tools/docs/coverage-map.json`
 - Web product and app design: `engineering/builtin-app-design.md`
 
 Read the relevant detailed guide before changing that subsystem; do not duplicate its full policy here.

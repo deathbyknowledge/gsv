@@ -1,0 +1,7 @@
+{
+  "extends": "../../workers/gateway/tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "../../workers/gateway/worker-configuration.d.ts"]
+  },
+  "include": ["./prompt-preview.ts"]
+}

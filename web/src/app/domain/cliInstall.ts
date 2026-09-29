@@ -1,5 +1,7 @@
 const INSTALL_URL = "https://install.gsv.space";
 const RELEASE_DOWNLOAD_URL = "https://github.com/deathbyknowledge/gsv/releases/download";
+/** The GitHub release page listing every host download, including the beta Desktop app. */
+export const LATEST_RELEASE_PAGE_URL = "https://github.com/deathbyknowledge/gsv/releases/latest";
 
 export type CliInstallPlatform = "unix" | "windows";
 

@@ -4,6 +4,7 @@ import { hasExpectedOrigin, noStoreFormHeaders, noStoreHeaders, readRequestBody 
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
 import { sha256Hex } from "./tokens";
+import { sendOwnerVerification } from "./owner-verification";
 
 type Purpose = "login" | "link" | "recover";
 type ChallengeForm = { challengeId: string; purpose: Purpose; ownerAttemptId?: string; email: string };
@@ -83,23 +84,9 @@ export class InstallationOwnerEmailHttp {
 
   private async sendCode(challenge: ChallengeForm, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
     try {
-      const issued = await this.auth.issue({ ...challenge, browserSecret, ip, resend });
-      if (issued.sendRequired && issued.deliveryId) {
-        let sent = false;
-        try {
-          const purpose = challenge.purpose === "recover" ? "root recovery" : challenge.purpose === "link" ? "space ownership" : "sign-in";
-          const text = `Your GSV ${purpose} code is ${issued.code}.\n\nThis code expires at ${new Date(issued.expiresAt).toUTCString()} and works only in the browser where you requested it. Do not share it.\n\nIf you did not request this code, you can ignore this email.`;
-          await this.mail.send({ from: { email: this.from, name: "GSV" }, to: issued.email,
-            subject: `Your GSV ${purpose} code`, text, html: `<p>${html(text).replaceAll("\n\n", "</p><p>").replaceAll("\n", "<br>")}</p>` });
-          sent = true;
-        } catch {
-          // Delivery errors can contain addresses and mail bodies. Only expose the outcome.
-        }
-        await this.auth.recordDelivery({ challengeId: challenge.challengeId, deliveryId: issued.deliveryId, browserSecret, sent });
-        if (!sent) return codePage(challenge, "We could not send the code. Wait a minute, then try sending it again.", 503);
-      } else if (issued.deliveryStatus !== "sent") {
-        return codePage(challenge, "Sending is still pending. Wait a minute before trying again.", 202);
-      }
+      const issued = await sendOwnerVerification(this.auth, this.mail, this.from, { ...challenge, browserSecret, ip, resend });
+      if (issued.deliveryStatus === "failed" && issued.attemptedDelivery) return codePage(challenge, "We could not send the code. Wait a minute, then try sending it again.", 503);
+      if (issued.deliveryStatus !== "sent") return codePage(challenge, "Sending is still pending. Wait a minute before trying again.", 202);
       return codePage(challenge, `Check your email for a six-digit code. It expires at ${new Date(issued.expiresAt).toUTCString()}.`);
     } catch (error) {
       const code = error instanceof OwnerAuthError ? error.code : "unavailable";

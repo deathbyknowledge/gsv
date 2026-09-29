@@ -621,7 +621,7 @@ describe("console agent service", () => {
 
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-    await expect(startConsoleOpenAiCodexOAuth({ call } as any))
+    await expect(startConsoleOpenAiCodexOAuth({ call } as any, { accountKey: "second" }))
       .resolves.toMatchObject({
         provider: "openai-codex",
         userCode: "ABCD-EFGH",
@@ -630,6 +630,7 @@ describe("console agent service", () => {
     expect(call).toHaveBeenCalledWith("sys.oauth.device.start", {
       kind: "ai-provider",
       provider: "openai-codex",
+      accountKey: "second",
     });
   });
 
@@ -685,15 +686,18 @@ describe("console agent service", () => {
           createdAt: 1,
           updatedAt: 2,
           lastUsedAt: null,
-          metadata: { chatgptAccountId: "chatgpt-account-1" },
+          metadata: { chatgptAccountId: "chatgpt-account-1", chatgptEmail: "first@example.com" },
         },
       ],
     }));
 
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-    await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: true });
-    expect(call).toHaveBeenCalledWith("sys.oauth.list", {});
+    const client = { call } as Parameters<typeof checkConsoleOpenAiCodexOAuth>[0];
+    await expect(checkConsoleOpenAiCodexOAuth(client, { uid: 42, accountKey: "default" })).resolves.toEqual({ connected: true, email: "first@example.com" });
+    await expect(checkConsoleOpenAiCodexOAuth(client, { uid: 42, accountKey: "second" })).resolves.toEqual({ connected: false });
+    await expect(checkConsoleOpenAiCodexOAuth(client, { uid: 0, accountKey: "default" })).resolves.toEqual({ connected: false });
+    expect(call).toHaveBeenCalledWith("sys.oauth.list", { uid: 42 });
   });
 
   // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
@@ -722,7 +726,7 @@ describe("console agent service", () => {
 
     // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
-    await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: false });
+    await expect(checkConsoleOpenAiCodexOAuth({ call } as any, { uid: 42, accountKey: "default" })).resolves.toEqual({ connected: false });
   });
 
   it("validates text model settings without disabling configured reasoning", async () => {
@@ -810,6 +814,7 @@ describe("console agent service", () => {
       values: {
         "config/ai/provider": " openai-codex ",
         "config/ai/model": " gpt-5.5 ",
+        "config/ai/oauth_account_key": " second ",
       },
     })).resolves.toEqual({
       ok: true,
@@ -822,6 +827,7 @@ describe("console agent service", () => {
         modelConfig: {
           provider: "openai-codex",
           model: "gpt-5.5",
+          oauthAccountKey: "second",
         },
       },
       sessionAffinityKey: "gsv-console:model-validation",

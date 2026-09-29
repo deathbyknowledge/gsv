@@ -1,7 +1,9 @@
 mod control;
+mod downloads;
 mod input;
 mod machine;
 mod session;
+mod welcome;
 
 use fs2::FileExt;
 use std::collections::BTreeMap;
@@ -22,6 +24,7 @@ use url::Url;
 struct Host {
     _instance_lock: std::fs::File,
     session: Mutex<SessionStore>,
+    welcome: Mutex<welcome::WelcomeStore>,
     input: InputRuntime,
     machine: machine::MachineRuntime,
     control: ControlBridge,
@@ -62,14 +65,39 @@ async fn desktop_configure(
     window: WebviewWindow,
     host: State<'_, Host>,
     origin: Option<String>,
+    onboarding_token: Option<String>,
 ) -> Result<Session, String> {
     main_window(&window)?;
     let mut session = host.session.lock().await;
-    let next = session.configure(origin)?;
+    let next = if onboarding_token.is_some() {
+        session.configure_onboarding(origin, onboarding_token)?
+    } else {
+        session.configure(origin)?
+    };
     host.machine.cancel();
     host.control.reset();
     host.input.reset().await;
     Ok(next)
+}
+
+#[tauri::command]
+async fn desktop_welcome(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+) -> Result<welcome::Snapshot, String> {
+    main_window(&window)?;
+    Ok(host.welcome.lock().await.current.clone())
+}
+
+#[tauri::command]
+async fn desktop_save_welcome(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    revision: String,
+    value: Option<welcome::Welcome>,
+) -> Result<welcome::Snapshot, String> {
+    main_window(&window)?;
+    host.welcome.lock().await.save(&revision, value)
 }
 
 #[tauri::command]
@@ -295,6 +323,8 @@ fn main() {
             desktop_session,
             desktop_configure,
             desktop_store,
+            desktop_welcome,
+            desktop_save_welcome,
             desktop_open,
             desktop_quit,
             machine_status,
@@ -328,6 +358,8 @@ fn main() {
                 .map_err(std::io::Error::other)?;
             }
             let session = SessionStore::open(directory.clone()).map_err(std::io::Error::other)?;
+            let welcome =
+                welcome::WelcomeStore::open(directory.clone()).map_err(std::io::Error::other)?;
             let control = ControlBridge::default();
             let server = tauri::async_runtime::block_on(async {
                 DesktopControlServer::bind(
@@ -354,6 +386,7 @@ fn main() {
             app.manage(Host {
                 _instance_lock: instance_lock,
                 session: Mutex::new(session),
+                welcome: Mutex::new(welcome),
                 input: InputRuntime::start(),
                 machine: machine::MachineRuntime::default(),
                 control,
@@ -361,16 +394,22 @@ fn main() {
                 control_task: Mutex::new(Some(control_task)),
                 exiting: AtomicBool::new(false),
             });
+            app.manage(downloads::Downloads::default());
             let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .data_directory(directory.join("webview"))
                 .on_navigation(trusted_navigation)
+                .on_download(downloads::handle)
                 .on_new_window(|url, _| {
                     let _ = open_external(url.as_str());
                     tauri::webview::NewWindowResponse::Deny
                 });
             #[cfg(target_os = "linux")]
             let window = window.decorations(false);
-            window.build()?;
+            let window = window.build()?;
+            #[cfg(target_os = "linux")]
+            downloads::track_completion(&window)?;
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
             Ok(())
         })
         .build(tauri::generate_context!())

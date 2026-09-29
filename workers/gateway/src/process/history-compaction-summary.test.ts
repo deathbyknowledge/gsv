@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AiAssistantMessage, AiTextGenerateArgs } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import type { GatewayEnv } from "../runtime-env";
@@ -219,4 +219,29 @@ describe("compaction summary completion", () => {
     expect(outcome.segments).toBe(0);
     expect(outcome.archiveKeys).toEqual([]);
   });
+});
+
+
+it("reports compaction failure stages without exporting the summary, prompt or exception", async () => {
+  const pid = "compaction-failure-telemetry";
+  const stub = await initProcess(pid, ROOT_IDENTITY);
+  const events = await runInProcess(stub, async (process) => {
+    seedConversation(process);
+    installCompactionProvider(process, pid, "process", () => { throw new Error("private diagnostic"); });
+    const enabled = process.env.GSV_TELEMETRY_ENABLED;
+    process.env.GSV_TELEMETRY_ENABLED = "1";
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect((await compact(process)).result.ok).toBe(false);
+      return log.mock.calls.map(([record]) => record);
+    } finally {
+      log.mockRestore();
+      process.env.GSV_TELEMETRY_ENABLED = enabled;
+    }
+  });
+  expect(events).toContainEqual(expect.objectContaining({ event: expect.objectContaining({
+    name: "process.compaction.failed", properties: expect.objectContaining({ stage: "summary", outcome: "failed" }),
+  }) }));
+  expect(JSON.stringify(events)).not.toContain("private diagnostic");
+  expect(JSON.stringify(events)).not.toContain("deployment checklist");
 });

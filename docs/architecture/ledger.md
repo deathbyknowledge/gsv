@@ -24,6 +24,7 @@ Kernel at all. Both remain in their own records.
 | `target` | The place the call went to: a target id, or `gsv` for the cloud home |
 | `call` | The syscall name |
 | `args` | The call's arguments as sent, as JSON text, whole; cut at 16 KB with the cut marked |
+| `purpose` | The one-sentence purpose the calling tool supplied for the person, when there was one; see [tool purpose](../reference/syscalls.md#tool-purpose) |
 | `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight. A call whose own result reports failure inside an ok envelope (`ok: false` on fs calls, `status: "failed"` on shell.exec) closes as `failed` |
 | `durationMs` | From dispatch to response |
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
@@ -151,6 +152,9 @@ a received completion. Initial loading, pagination, reconnect and reopening a
 stale hidden view still use `sys.ledger.list`. Ordinary row changes do not.
 An overflowing client buffer during a stalled fetch recovers with a snapshot;
 failed delivery closes that connection so reconnect recovers it too.
+
+Fleet labels `conversation.search` as “searched a conversation”; its query remains
+inspectable in the owning user's ledger arguments like other syscall inputs.
 
 ## Cost
 

@@ -26,6 +26,7 @@ function createCtx(overrides?: {
   ];
   const groups: GroupRow[] = [usersGroup];
   const shadowRoot = { username: "root", hash: "!" };
+  const shadows = new Map([["root", shadowRoot]]);
   const personalAgents = new Map<number, number>();
   const configValues = new Map<string, string>();
   const capsTable: { gid: number; capability: string }[] = [];
@@ -55,7 +56,7 @@ function createCtx(overrides?: {
         shell: entry.shell ?? "/bin/init",
       });
     }),
-    setShadow: vi.fn(),
+    setShadow: vi.fn((entry: { username: string; hash: string }) => { shadows.set(entry.username, entry); }),
     getGroupByName: vi.fn((name: string) => {
       const found = groups.find((g) => g.name === name);
       return found ? { ...found, members: [...found.members] } : null;
@@ -112,7 +113,7 @@ function createCtx(overrides?: {
       expiresAt: null,
     })),
     resolveGids: vi.fn((_username: string, primaryGid: number) => [primaryGid]),
-    getShadowByUsername: vi.fn((username: string) => (username === "root" ? shadowRoot : null)),
+    getShadowByUsername: vi.fn((username: string) => shadows.get(username) ?? null),
   };
 
   const config = {
@@ -339,6 +340,7 @@ describe("handleSysSetup", () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
+        if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "home123" }, tags: {} });
         if (url.pathname.endsWith("/apply")) {
           return new Response(JSON.stringify({ ok: true, head: "home123" }), {
             headers: { "Content-Type": "application/json" },
@@ -447,11 +449,13 @@ describe("handleSysSetup", () => {
   });
 
   it("recovers a completed setup only for the matching credentials", async () => {
-    const { ctx } = createCtx();
+    const { ctx, auth } = createCtx();
     await handleSysSetup({
       username: "alice",
       password: "password-123",
     }, ctx);
+    auth.addUser({ username: "crew", uid: 1002, gid: 1002, gecos: "Crew", home: "/home/crew", shell: "/bin/init" });
+    auth.setShadow({ username: "crew", hash: "!" });
 
     await expect(recoverCompletedSysSetup({
       username: "alice",

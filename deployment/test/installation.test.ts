@@ -9,8 +9,9 @@ import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
-type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[] };
-const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [] };
+type RecordedRoute = { id: string; zoneId: string; pattern: string; script: unknown };
+type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
+const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [], routes: [] };
 const recordedCloudflare = {
   ...Cloudflare,
   Worker(id: string, props: RecordedWorker["props"]) {
@@ -26,7 +27,11 @@ const recordedCloudflare = {
   DurableObject(binding: string, props: { className: string }) { return { binding, ...props }; },
   WorkerLoader() { return { kind: "loader" }; },
   WorkerEntrypoint(worker: { workerName: string }, options: string | { entrypoint: string; props: { authority: string } }) { return { worker: worker.workerName, options }; },
-  Workers: { AI() { return { kind: "ai" }; } },
+  DNS: { Record() { return Effect.void; } },
+  Workers: {
+    AI() { return { kind: "ai" }; },
+    WorkerRoute(id: string, props: Omit<RecordedRoute, "id">) { recorded.routes.push({ id, ...props }); return Effect.void; },
+  },
 };
 // SAFETY: this injected recorder implements every constructor/bind operation used
 // by these compositions, returns local Effects, and never invokes a provider.
@@ -37,7 +42,7 @@ function run<A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> {
   // so these Effects have no Cloudflare provider services at runtime.
   return Effect.runPromise(effect as Effect.Effect<A, E>);
 }
-beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; });
+beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; recorded.routes.length = 0; });
 
 const input: GsvDeploymentProps = {
   logicalPrefix: "Fixture", domain: "example.com", adminOrigin: "https://accounts.example.com", access: { kind: "operator" },
@@ -57,6 +62,42 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it("routes a configured signup alias to Accounts alongside the administration hostname", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+      ...input.installations, ownerSignupOrigin: "https://join.example.com",
+    } }, dependencies));
+    expect(recorded.routes).toEqual([
+      { id: "FixtureInstallationsRoute", zoneId: "zone", pattern: "accounts.example.com/*", script: "directory" },
+      { id: "FixtureInstallationsSignupRoute", zoneId: "zone", pattern: "join.example.com/*", script: "directory" },
+      { id: "FixtureGatewayRoute", zoneId: "zone", pattern: "*.example.com/*", script: "gateway" },
+    ]);
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.env?.GSV_OWNER_SIGNUP_ORIGIN)
+      .toBe("https://join.example.com");
+  });
+
+  it.each([undefined, input.adminOrigin])("does not duplicate Accounts routing for signup origin %s", async (ownerSignupOrigin) => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+      ...input.installations, ownerSignupOrigin,
+    } }, dependencies));
+    expect(recorded.routes.map((route) => route.pattern)).toEqual(["accounts.example.com/*", "*.example.com/*"]);
+  });
+
+  it("leaves a separately hosted signup alias to the operator overlay when routing is omitted", async () => {
+    await run(GsvDeployment({ ...input, installations: {
+      ...input.installations, ownerSignupOrigin: "https://join.other.example",
+    } }, dependencies));
+    expect(recorded.routes).toEqual([]);
+  });
+
+  it.each(["http://join.example.com", "https://join.example.com/path", "https://join.other.example"])(
+    "rejects an unroutable signup origin before allocating resources: %s", async (ownerSignupOrigin) => {
+      await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+        ...input.installations, ownerSignupOrigin,
+      } }, dependencies))).rejects.toThrow("Signup requires an HTTPS origin");
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    });
+
   it.each([
     { monthlyRequests: 0, monthlyOutputTokens: 1000 },
     { monthlyRequests: 100, monthlyOutputTokens: 0 },

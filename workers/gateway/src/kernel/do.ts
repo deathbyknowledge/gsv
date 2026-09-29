@@ -138,6 +138,7 @@ const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
 const LEDGER_ROTATION_RETRY_MS = 60_000;
 const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
+import { ManualUpdater } from "./sys/manual";
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
@@ -399,6 +400,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
+  readonly manual: ManualUpdater;
   readonly targets: TargetRegistry;
   readonly routes: RoutingTable;
   readonly ledger: LedgerStore;
@@ -471,6 +473,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (!this.retirement.state) this.caps.seed();
 
     this.config = new ConfigStore(sql);
+    this.manual = new ManualUpdater(ctx.storage, { env: this.bindings, config: this.config },
+      async () => (await this.onboarding.managedWorkGate()).allowed);
 
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
@@ -703,7 +707,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       code: url.searchParams.get("code"),
       error: url.searchParams.get("error"),
       errorDescription: url.searchParams.get("error_description"),
-    }, this.oauth);
+    }, this.oauth, fetch, { env: this.bindings, installationId: this.installationId });
     return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
   }
 
@@ -1422,6 +1426,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
+      manual: this.manual,
       targets: this.targets,
       procs: this.procs,
       conversations: this.conversations,
@@ -1544,6 +1549,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       this.completeLedger(denied);
       return denied;
     }
+
+    if (inputFrame.call !== "sys.bootstrap") ctx.defer(this.manual.ensureCurrent());
 
     const callerSignal = ctx.requestSignal && options.signal && ctx.requestSignal !== options.signal
       ? AbortSignal.any([ctx.requestSignal, options.signal])

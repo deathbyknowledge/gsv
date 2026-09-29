@@ -220,7 +220,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
           npm run gsv:build
-          npm run build --workspace web -- --config vite.desktop.config.ts
+          npm run build:desktop --workspace web
 
       - name: Build Desktop and local helpers
         working-directory: host

@@ -193,7 +193,7 @@ describe("parsePromptInput", () => {
 
 describe("places", () => {
   it("labels the cloud home and known places", () => {
-    expect(placeLabel("gsv", places)).toBe("your cloud home");
+    expect(placeLabel("gsv", places)).toBe("your cloud");
     expect(placeLabel("laptop", places)).toBe("MacBook 16");
     expect(placeLabel("ghost", places)).toBe("ghost");
   });
@@ -586,6 +586,33 @@ describe("momentsFromConversation", () => {
     expect(moments[0]).toMatchObject({ role: "ship", text: "", thinking: true, runId: "r2" });
   });
 
+  it("shows run activity before output and throughout reasoning, keeping its identity when work arrives", () => {
+    const input = message({ id: "question", role: "user", text: "Hello", runId: "run", processId: "ship", timestamp: 100 });
+    const reasoning = message({ id: "reasoning", role: "assistant", text: "", thinking: ["Considering the request"],
+      runId: "run", processId: "ship", timestamp: 110, streaming: true });
+    const started = momentsFromConversation([input], [], "run", "ship");
+    const thinking = momentsFromConversation([input], [reasoning], "run", "ship");
+    const working = momentsFromConversation([input], [message({ id: "tool", role: "tool", toolSyscall: "fs.read",
+      toolArgs: { path: "~/a" }, runId: "run", processId: "ship", timestamp: 120, status: "running" })], "run", "ship");
+    for (const moments of [started, thinking, working]) {
+      expect(moments).toHaveLength(2);
+      expect(moments[0].role).toBe("human");
+      expect(moments[1]).toMatchObject({ id: started[1].id, thinking: true, processId: "ship", runId: "run", text: "" });
+    }
+    expect(momentsFromConversation([input], [reasoning], null, "ship")).toHaveLength(1);
+  });
+
+  it("hands activity over to a streaming reply, resumes after a send, and clears when the run ends", () => {
+    const reply = message({ id: "conversation:reply", messageId: "reply", role: "assistant", text: "An update",
+      runId: "run", processId: "ship", timestamp: 200, streaming: true });
+    expect(momentsFromConversation([reply], [], "run", "ship")).toHaveLength(1);
+    const committed = { ...reply, streaming: false };
+    const continuing = momentsFromConversation([committed], [], "run", "ship");
+    expect(continuing).toHaveLength(2);
+    expect(continuing[1]).toMatchObject({ text: "", thinking: true, runId: "run", processId: "ship" });
+    expect(momentsFromConversation([committed], [], null, "ship")).toHaveLength(1);
+  });
+
   const sent = (id: string, timestamp: number, overrides: Partial<ChatTranscriptRow> = {}) => message({
     id: `conversation:${id}`, messageId: id, runId: "run", processId: "ship", text: id, timestamp, ...overrides,
   });
@@ -710,11 +737,12 @@ describe("momentsFromConversation", () => {
     const pending = call("slow", 10, { role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined, toolTarget: "laptop" });
     const between = call("quick", 30);
     const before = momentsFromConversation(messages, [pending, between], "run");
-    expect(before.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(before.map(callsOf)).toEqual([["slow"], ["quick"], []]);
+    expect(before.at(-1)?.thinking).toBe(true);
     expect(before[0].activities[0].live).toBe(true);
     const result = call("slow", 60, { toolArgs: undefined, toolTarget: undefined, toolSyscall: undefined, toolOutput: "finished later" });
     const after = momentsFromConversation(messages, [pending, between, result], "run");
-    expect(after.map(callsOf)).toEqual([["slow"], ["quick"]]);
+    expect(after.map(callsOf)).toEqual([["slow"], ["quick"], []]);
     expect(after[0].activities[0]).toMatchObject({ target: "laptop", startedAt: 10, endedAt: 60, live: false });
     expect(after[0].activities[0].calls[0]).toMatchObject({ finished: true, output: "finished later", filePath: "/pages/slow.md" });
     const reloaded = momentsFromConversation(messages, [{ ...result, toolStartedAt: 10, toolTarget: "laptop", toolSyscall: "fs.read", toolArgs: pending.toolArgs }, between], "run");
@@ -759,7 +787,8 @@ describe("momentsFromConversation", () => {
     const projected = transcriptRowsFromRecords(before).map((entry) => ({ ...entry, processId: "ship" }));
     const messages = [sent("first", 20), sent("second", 40)];
     const pending = momentsFromConversation(messages, projected, "run");
-    expect(pending.map(callsOf)).toEqual([["slow"], []]);
+    expect(pending.map(callsOf)).toEqual([["slow"], [], []]);
+    expect(pending.at(-1)?.thinking).toBe(true);
     expect(pending[0].activities[0].live).toBe(true);
     const merged = mergeTranscriptRows(projected, [row({
       id: "finish", role: "toolResult", runId: "run", toolCallId: "slow", toolName: "Read", text: "", toolOutput: "finished", status: "done", timestamp: 60,
@@ -772,7 +801,7 @@ describe("momentsFromConversation", () => {
     const durable = momentsFromConversation(messages, transcriptRowsFromRecords(after).map((entry) => ({ ...entry, processId: "ship" })), "run");
     expect(live).toEqual(durable);
     expect(durable[0].activities[0]).toMatchObject({ startedAt: 10, endedAt: 60, target: "laptop", live: false });
-    expect(durable.map(callsOf)).toEqual([["slow"], []]);
+    expect(durable.map(callsOf)).toEqual([["slow"], [], []]);
   });
 
   it("retains distinct identities and unknown times for unlinked historical work", () => {
@@ -881,8 +910,8 @@ describe("momentsFromConversation", () => {
       ["call", "du", "laptop", null],
     ]);
     expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
-    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and your cloud home · 1 failed and retried");
-    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud home"]);
+    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and your cloud · 1 failed and retried");
+    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud"]);
   });
 
   it("shows the current purpose or action count without thinking text or a timer", () => {

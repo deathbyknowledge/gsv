@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionService, type SessionClient } from "../app/services/session/sessionService";
 import { deferred } from "../app/testing/testHarness";
 import { disconnectSpace, nativeSessionStorage, type DesktopSession } from "./bridge";
+import { ONBOARDING_KEY, type WelcomeSnapshot, type WelcomeState } from "../app/services/session/ownerWelcome";
+import { completeDesktopOnboarding, loadDesktopWelcome } from "./welcome";
 
 const tokenKey = "gsv.ui.session.token.v1";
 const pendingKey = "gsv.ui.session.pending-revokes.v1";
 
-function sessionHarness(connected = true, restoredValues?: Record<string, string>) {
+function sessionHarness(connected = true, restoredValues?: Record<string, string>, welcomeState: WelcomeState | null = null) {
   const session: DesktopSession = {
     generation: "first-generation",
     origin: "https://first.example",
@@ -19,7 +21,10 @@ function sessionHarness(connected = true, restoredValues?: Record<string, string
   let writeGate = Promise.resolve();
   let writeFailure = false;
   let configureFailure = false;
-  const invoke = vi.fn(async (command: string, args: { generation?: string; values?: Record<string, string>; origin?: string | null }) => {
+  let welcome: WelcomeSnapshot = { revision: "welcome-initial", value: welcomeState };
+  let welcomeWriteFailure = false;
+  const invoke = vi.fn(async (command: string, args: { generation?: string; values?: Record<string, string>; origin?: string | null;
+    revision?: string; value?: WelcomeState | null } = {}) => {
     if (command === "desktop_store") {
       await writeGate;
       if (writeFailure) throw new Error("storage unavailable");
@@ -29,6 +34,13 @@ function sessionHarness(connected = true, restoredValues?: Record<string, string
       if (configureFailure) throw new Error("configuration unavailable");
       expect(args).toEqual({ origin: null });
       forgotten = { ...stored };
+    } else if (command === "desktop_welcome") {
+      return structuredClone(welcome);
+    } else if (command === "desktop_save_welcome") {
+      if (welcomeWriteFailure) throw new Error("welcome unavailable");
+      if (args.revision !== welcome.revision || args.value === undefined) throw new Error("stale welcome write");
+      welcome = { revision: crypto.randomUUID(), value: args.value };
+      return structuredClone(welcome);
     } else {
       throw new Error(`Unexpected native command ${command}`);
     }
@@ -51,12 +63,15 @@ function sessionHarness(connected = true, restoredValues?: Record<string, string
       list: vi.fn<SessionClient["sys"]["token"]["list"]>(),
     } },
   } satisfies SessionClient;
-  const service = createSessionService(client, { url: "wss://first.example/ws", storage, onboarding: false });
+  const onboardingToken = storage.getItem(ONBOARDING_KEY);
+  const service = createSessionService(client, { url: "wss://first.example/ws", storage,
+    onboarding: onboardingToken ? { token: onboardingToken, complete: () => completeDesktopOnboarding(storage) } : false });
   return { service, storage, client, invoke, onError, revocation, unsubscribe,
     stored: () => stored, forgotten: () => forgotten,
     blockWrites: (promise: Promise<void>) => { writeGate = promise; },
     failWrites: (fail: boolean) => { writeFailure = fail; },
     failConfigure: (fail: boolean) => { configureFailure = fail; },
+    failWelcomeWrites: (fail: boolean) => { welcomeWriteFailure = fail; },
   };
 }
 
@@ -64,6 +79,59 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("desktop session persistence", () => {
+  const pendingWelcome: WelcomeState = {
+    origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64),
+    challenge: null, inviteCode: null, inviteId: "invite_fixture", handle: "first",
+  };
+  const setupResult = {
+    server: { version: "test", release: "test" },
+    user: { uid: 1, gid: 1, gids: [1], username: "alice", home: "/home/alice", cwd: "/home/alice" },
+    rootLocked: false,
+  };
+
+  it("finishes invite signup before login and preserves an intentional disconnect after reopening", async () => {
+    const onboardingToken = `onboard_${"a".repeat(43)}`;
+    const h = sessionHarness(false, { [ONBOARDING_KEY]: onboardingToken }, pendingWelcome);
+    h.client.requestOnce.mockResolvedValue(setupResult);
+    h.client.connect.mockImplementation(async () => {
+      expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", inviteId: null, handle: null });
+      expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
+      return {
+        protocol: 4, server: { ...setupResult.server, connectionId: "connection:alice" },
+        peer: { id: "web", sessionId: "connection:alice", principal: { kind: "human", account: setupResult.user },
+          grant: { calls: [], signals: [], implements: [] } },
+      };
+    });
+    h.client.sys.token.create.mockResolvedValue({ token: {
+      tokenId: "created-token", token: "fixture-credential", tokenPrefix: "fixture", uid: 1, kind: "human",
+      label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+    } });
+    await h.service.setup({ username: "alice", password: "fixture-password" });
+    expect(h.service.snapshot().phase).toBe("ready");
+    expect(h.client.requestOnce).toHaveBeenCalledWith("wss://first.example/ws", "sys.setup", {
+      username: "alice", password: "fixture-password", onboardingToken,
+    });
+    await disconnectSpace(h.service, h.storage);
+    expect(h.forgotten()).not.toBeNull();
+    expect((await loadDesktopWelcome()).state).toEqual({ ...pendingWelcome, flow: "open", inviteId: null, handle: null });
+  });
+
+  it("retains setup recovery until the completed creation flow is durably cleared", async () => {
+    const onboardingToken = `onboard_${"a".repeat(43)}`;
+    const h = sessionHarness(false, { [ONBOARDING_KEY]: onboardingToken }, pendingWelcome);
+    h.client.requestOnce.mockResolvedValue(setupResult);
+    h.failWelcomeWrites(true);
+    await expect(h.service.setup({ username: "alice", password: "fixture-password" })).rejects.toThrow("welcome unavailable");
+    expect(h.stored()[ONBOARDING_KEY]).toBe(onboardingToken);
+    expect((await loadDesktopWelcome()).state).toEqual(pendingWelcome);
+    expect(h.client.connect).not.toHaveBeenCalled();
+    h.failWelcomeWrites(false);
+    await completeDesktopOnboarding(h.storage);
+    expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
+    expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", inviteId: null });
+    h.service.dispose?.();
+  });
+
   it("announces sign-in only after token issuance and the native credential write complete", async () => {
     const h = sessionHarness(true, {});
     const writes = deferred<void>();

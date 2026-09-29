@@ -3,6 +3,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipResult,
   ConversationListResult,
   ConversationMediaReadArgs,
@@ -80,6 +82,7 @@ export async function handleConversationHistory(
   const conversation = ownedConversation(args?.conversationId, ctx);
   const history = await getConversationById(ctx.installationId, conversation.id).history({
     beforeSequence: args.beforeSequence,
+    afterSequence: args.afterSequence,
     limit: args.limit,
   });
   if (history.latestSequence > conversation.latestSequence) {
@@ -90,6 +93,18 @@ export async function handleConversationHistory(
     messages: history.messages,
     hasMore: history.hasMore,
   };
+}
+
+export async function handleConversationSearch(
+  args: ConversationSearchArgs,
+  ctx: KernelContext,
+): Promise<ConversationSearchResult> {
+  const ownerUid = requireConversationReader(ctx);
+  const conversation = ownedConversation(args.conversationId ?? ctx.conversations.getShip(ownerUid)?.id, ctx);
+  const result = await getConversationById(ctx.installationId, conversation.id).search({
+    query: args.query, beforeSequence: args.beforeSequence, limit: args.limit,
+  });
+  return { conversation, ...result };
 }
 
 export async function handleConversationSend(

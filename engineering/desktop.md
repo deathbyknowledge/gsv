@@ -12,7 +12,7 @@ embedded desktop frontend (`web/dist-desktop`).
   conversations, Process observation, approvals, attachments, navigation and
   retained screen state. Signals update the existing state owners.
 - Rust owns window lifecycle, external browser navigation, private session
-  persistence, same-user CLI control and native input supervision.
+  persistence, attachment downloads, same-user CLI control and native input supervision.
 - `desktop-native` supervises `gsv-transcribe` and `gsv-vision`. Camera and audio
   capture stay local. Helpers start only after explicit user action.
 - `gsvd` independently owns the machine connection. Desktop enrolls this computer
@@ -32,10 +32,42 @@ Only the bundled main window may invoke host commands. Remote navigation is
 rejected; HTTP(S) links open in the system browser. There is no general shell,
 filesystem, remote-webview or credential-export bridge.
 
+Attachment downloads use the webview's native download lifecycle. Only blobs
+from the bundled frontend are accepted, and files go to the system Downloads
+directory without replacing existing names. Completion and failure reach the
+frontend as status events without file contents, URLs or local paths. Image
+previews stay in a modal inside the main window, retain their own blob URL, and
+release it on close or sign-out. External browser navigation respects handled
+links so it does not intercept an in-app preview.
+
+Linux observes completion on each WebKit download directly: the pinned Wry
+version shares a failure flag across downloads, which otherwise misreports all
+later successes after one failure. The native download admission and destination
+policy remains shared with macOS.
+
 Session writes are serialized, origin-bound and generation-fenced. Native input
 has its own expiring lease, bounded intent delivery and explicit acknowledgement.
 Suspension, disconnect or view changes cancel input authority. Quit flushes the
-session, closes local control, and waits for helper shutdown.
+session, closes local control, and waits for helper shutdown. The root frontend
+owns one close listener across welcome, sign-in and connected views. Reloading
+after disconnect must install that listener again even with no configured space.
+
+## Welcome and space creation
+
+The welcome screen opens an existing space or redeems an operator-issued invite.
+The packaged frontend talks to Accounts over HTTPS using explicit owner bearer
+authentication; browser cookies never authorize the native API. The default
+Accounts origin is `https://gsv.space`; operator builds may set
+`VITE_GSV_ACCOUNTS_ORIGIN`. Direct handle/custom-domain connections remain available.
+
+Rust saves the pending email challenge, client-chosen owner session secret, and
+invite operation in private `welcome.json` before network mutation. Atomic writes
+are revision-fenced; these credentials never enter web storage. Reopening probes
+the saved owner session and resumes the same claimed invitation. The per-space
+session stores the temporary onboarding capability until Kernel setup completes.
+If setup was interrupted, Accounts renews it for the same installation. A global
+owner session can list spaces and create an invited space, but cannot sign in to
+an existing Kernel or reset its root credential.
 
 ## This computer
 
@@ -83,7 +115,8 @@ not write into the prompt. Input feedback updates its own small component;
 there is no periodic conversation render or gateway refetch loop.
 
 Linux windows omit the native title bar. The space-name menu provides the
-connection and Quit controls within Instrument.
+connection and Quit controls within Instrument. Welcome also exposes Quit in its
+header; both actions follow the same window-close path.
 
 The star field has no per-star blurred halo. The dark background avoids the
 banded gradient. On NVIDIA Linux systems the app defaults WebKit GPU painting

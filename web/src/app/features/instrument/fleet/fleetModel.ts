@@ -8,7 +8,7 @@ import type { FleetRow } from "../Instrument";
 
 /** The cloud home is a place too; the target list does not carry it, so Fleet adds it. */
 export const CLOUD_TARGET_ID = "gsv";
-export const CLOUD_TARGET_LABEL = "your cloud home";
+export const CLOUD_TARGET_LABEL = "your cloud";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
 export type FleetConnectReference = { kind: "connect"; to: "place" | "contact" };
@@ -73,6 +73,7 @@ export type LedgerLine = {
 };
 
 export function placeFromTarget(target: ConsoleTarget): Place {
+  if (target.deviceId === CLOUD_TARGET_ID) return cloudPlace();
   return {
     id: target.deviceId,
     label: target.label || target.deviceId,
@@ -101,12 +102,13 @@ export function cloudPlace(): Place {
 }
 
 /** Machines first, then the cloud home, then browsers and the rest, each group alphabetical. */
+// The current UI pins the cloud first, before the remaining groups described above.
 export function orderPlaces(targets: readonly ConsoleTarget[]): Place[] {
   const places = targets.map(placeFromTarget);
   if (!places.some((place) => place.id === CLOUD_TARGET_ID)) {
     places.push(cloudPlace());
   }
-  const rank = (kind: PlaceKind) => (kind === "machine" ? 0 : kind === "cloud" ? 1 : kind === "browser" ? 2 : 3);
+  const rank = (kind: PlaceKind) => (kind === "cloud" ? 0 : kind === "machine" ? 1 : kind === "browser" ? 2 : 3);
   return places.sort((a, b) => rank(a.kind) - rank(b.kind) || a.label.localeCompare(b.label));
 }
 

@@ -1,1 +1,1 @@
-export const INITIAL_AGENT = { username: "algo", displayName: "Algo" } as const;
+export const INITIAL_AGENT = { username: "ship", displayName: "Ship" } as const;

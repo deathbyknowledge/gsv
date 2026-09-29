@@ -157,7 +157,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     Response::from_json(&serde_json::json!({
         "name": "ripgit",
-        "version": "0.6.0",
+        "version": "0.6.2",
         "description": "Git remote backed by Cloudflare Durable Objects"
     }))
 }
@@ -198,7 +198,8 @@ impl DurableObject for Repository {
         if url.path().starts_with("/.gsv/") {
             return retirement::handle(&self.sql, &self.state, &self.env, req).await;
         }
-        self.sql.assert_active()?;
+        let sql = self.sql.for_request();
+        sql.assert_active()?;
         let path = url.path();
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
@@ -217,7 +218,7 @@ impl DurableObject for Repository {
                 }
                 match parts.get(3).copied().unwrap_or("") {
                     "read" if req.method() == Method::Get => {
-                        hyperspace::handle_read(&self.sql, &req).await
+                        hyperspace::handle_read(&sql, &req).await
                     }
                     "refs" if req.method() == Method::Get => api::handle_refs(&self.sql),
                     "log" if req.method() == Method::Get => {
@@ -225,16 +226,16 @@ impl DurableObject for Repository {
                         api::handle_log(&self.sql, &url)
                     }
                     "search" if req.method() == Method::Get => {
-                        hyperspace::handle_search(&self.sql, &req).await
+                        hyperspace::handle_search(&sql, &req).await
                     }
                     "compare" if req.method() == Method::Get => {
-                        hyperspace::handle_compare(&self.sql, &req).await
+                        hyperspace::handle_compare(&sql, &req).await
                     }
                     "apply" if req.method() == Method::Post => {
-                        hyperspace::handle_apply(&self.sql, &mut req).await
+                        hyperspace::handle_apply(&sql, &mut req).await
                     }
                     "import" if req.method() == Method::Post => {
-                        hyperspace::handle_import(&self.sql, &mut req).await
+                        hyperspace::handle_import(&sql, &mut req).await
                     }
                     _ => Response::error("Not Found", 404),
                 }
@@ -261,11 +262,11 @@ impl DurableObject for Repository {
                     return resp;
                 }
                 let body = req.bytes().await?;
-                git::handle_receive_pack(&self.sql, &body)
+                git::handle_receive_pack(&sql, &body)
             }
             (Method::Post, "git-upload-pack") => {
                 let body = req.bytes().await?;
-                git::handle_upload_pack(&self.sql, &body)
+                git::handle_upload_pack(&sql, &body)
             }
             (Method::Delete, "") => {
                 if let Some(resp) = check_write_access(&req, &actor, owner) {

@@ -146,6 +146,7 @@ function integrationEmailConfig(
     send_email: config.send_email,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       {
         binding: "GATEWAY",
         service: gatewayService,
@@ -231,6 +232,7 @@ function integrationManagedInferenceConfig(
     migrations: config.migrations,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       { binding: "INSTALLATION_DIRECTORY", service: ACCOUNTS_WORKER },
       { binding: "AI", service: DEPENDENCY_WORKER },
     ],

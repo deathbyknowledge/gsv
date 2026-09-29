@@ -282,7 +282,7 @@ Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, provider binding, and `mail.send` transport;
 chat pairing does not implicitly enable a mailbox.
 
-Existing Mail deployments must follow the [two-stage queue upgrade](../../deployment/mail-queue-upgrade.md)
+Existing Mail deployments must follow the [two-stage queue upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md)
 before enabling version-2 producers.
 
 Each adapter derives a stable account-scoped ingress `deliveryId` from the

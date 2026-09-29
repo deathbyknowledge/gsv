@@ -56,6 +56,7 @@ export type OpenAICodexToken = {
   tokenType: string;
   expiresAt: number;
   accountId: string | null;
+  email: string | null;
 };
 
 export async function startOpenAICodexDeviceFlow(
@@ -208,6 +209,7 @@ export async function refreshOpenAICodexAccount(
   if (token.accountId) {
     metadata.chatgptAccountId = token.accountId;
   }
+  if (token.email) metadata.chatgptEmail = token.email;
   return oauth.upsertAccount({
     uid: account.uid,
     kind: account.kind,
@@ -273,13 +275,23 @@ async function exchangeOpenAICodexToken(
   }
   const accountId = extractOpenAICodexAccountId(accessToken)
     ?? (idToken ? extractOpenAICodexAccountId(idToken) : null);
+  const email = (idToken ? emailFromToken(idToken) : null) ?? emailFromToken(accessToken);
   return {
     accessToken,
     refreshToken,
     tokenType: stringField(json, "token_type") ?? "Bearer",
     expiresAt: Date.now() + expiresIn * 1000,
     accountId,
+    email,
   };
+}
+
+function emailFromToken(token: string): string | null {
+  try {
+    return stringValue(decodeJwtPayload(token).email);
+  } catch {
+    return null;
+  }
 }
 
 async function readJsonObject(response: Response): Promise<JsonObject> {

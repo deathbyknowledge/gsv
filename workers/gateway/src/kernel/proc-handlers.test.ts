@@ -32,11 +32,13 @@ const PERSONAL_AGENT_ACCOUNT = {
 };
 
 function makePersonalAgentAuth() {
+  const crew = { ...PERSONAL_AGENT_ACCOUNT, uid: 1002, gid: 1002, username: "crew", home: "/home/crew" };
   return {
     getPasswdByUsername: vi.fn((username: string) => (
       username === PERSONAL_AGENT_ACCOUNT.username ? PERSONAL_AGENT_ACCOUNT : null
     )),
     getPasswdByUid: vi.fn((uid: number) => {
+      if (uid === crew.uid) return crew;
       if (uid === IDENTITY.uid) {
         return {
           username: IDENTITY.username,
@@ -50,10 +52,10 @@ function makePersonalAgentAuth() {
       return uid === PERSONAL_AGENT_ACCOUNT.uid ? PERSONAL_AGENT_ACCOUNT : null;
     }),
     getShadowByUsername: vi.fn((username: string) => (
-      username === PERSONAL_AGENT_ACCOUNT.username ? { username, hash: "!" } : null
+      username === PERSONAL_AGENT_ACCOUNT.username || username === crew.username ? { username, hash: "!" } : null
     )),
     getGroupByGid: vi.fn((gid: number) => (
-      gid === PERSONAL_AGENT_ACCOUNT.gid
+      gid === crew.gid ? { name: crew.username, gid, members: [IDENTITY.username] } : gid === PERSONAL_AGENT_ACCOUNT.gid
         ? { name: PERSONAL_AGENT_ACCOUNT.username, gid, members: [IDENTITY.username] }
         : null
     )),
@@ -941,6 +943,7 @@ describe("proc handlers", () => {
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
+      config: { get: vi.fn(() => "1002") },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -1007,6 +1010,7 @@ describe("proc handlers", () => {
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
+      config: { get: vi.fn(() => "1002") },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),

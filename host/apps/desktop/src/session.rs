@@ -11,6 +11,7 @@ const KEYS: &[&str] = &[
     "gsv.ui.gateway.username",
     "gsv.ui.session.token.v1",
     "gsv.ui.session.pending-revokes.v1",
+    "gsv.ui.installation-onboarding.v1",
 ];
 const PENDING_REVOKES: &str = "gsv.ui.session.pending-revokes.v1";
 const MAX_SESSION_BYTES: usize = 128 * 1024;
@@ -116,7 +117,26 @@ impl SessionStore {
     }
 
     pub fn configure(&mut self, origin: Option<String>) -> Result<Session, String> {
+        self.configure_onboarding(origin, None)
+    }
+
+    pub fn configure_onboarding(
+        &mut self,
+        origin: Option<String>,
+        onboarding_token: Option<String>,
+    ) -> Result<Session, String> {
         let origin = origin.as_deref().map(gateway_origin).transpose()?;
+        if let Some(token) = &onboarding_token {
+            if origin.is_none()
+                || !token.starts_with("onboard_")
+                || token.len() != 51
+                || !token[8..]
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                return Err("Invalid setup authorization.".into());
+            }
+        }
         let mut pending_revokes = self.pending_revokes.clone();
         if let Some(previous_origin) = &self.current.origin {
             let pending: Vec<String> = self
@@ -134,6 +154,9 @@ impl SessionStore {
             }
         }
         let mut values = BTreeMap::new();
+        if let Some(token) = onboarding_token {
+            values.insert("gsv.ui.installation-onboarding.v1".into(), token);
+        }
         if let Some(pending) = origin
             .as_ref()
             .and_then(|origin| pending_revokes.remove(origin))
@@ -412,5 +435,36 @@ mod tests {
             "https://space.example"
         );
         assert!(gateway_origin("http://localhost:8787").is_ok());
+    }
+
+    #[test]
+    fn setup_authority_survives_restart_and_never_moves_to_another_space() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
+        let token = format!("onboard_{}", "a".repeat(43));
+        let saved = store
+            .configure_onboarding(Some("https://first.example".into()), Some(token.clone()))
+            .unwrap();
+        let mut reopened = SessionStore::open(directory.path().to_owned()).unwrap();
+        assert_eq!(
+            reopened
+                .current
+                .values
+                .get("gsv.ui.installation-onboarding.v1"),
+            Some(&token)
+        );
+        assert!(reopened
+            .configure_onboarding(
+                Some("https://second.example".into()),
+                Some("invalid".into())
+            )
+            .is_err());
+        assert_eq!(reopened.current.generation, saved.generation);
+        assert!(reopened
+            .configure(Some("https://second.example".into()))
+            .unwrap()
+            .values
+            .is_empty());
+        assert!(reopened.store(&saved.generation, saved.values).is_err());
     }
 }

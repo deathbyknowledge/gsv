@@ -1,76 +1,67 @@
-import type { AsciiAnimationFrame, AsciiAnimationScene } from "../../../../components/ui/AsciiAnimation";
-import type { ColorTheme } from "../../../../components/ui/useColorTheme";
-import { buildOpenCountry, sampleShipSurface, type ShipModel, type ShipPoint } from "./openCountry";
-import { rotationMatrix, AsciiMeshRaster } from "../../../../components/ui/asciiMesh";
+import type { AsciiAnimationScene } from "../../../../components/ui/AsciiAnimation";
+import { AsciiMeshRaster, rotationMatrix } from "../../../../components/ui/asciiMesh";
+import { buildVoyager, type VoyagerPoint } from "./voyager";
 
-const COLS = 160;
-const ROWS = 80;
-const PROJECTION = { centerX: 0.43, centerY: 0.51, aspect: 1.62, perspective: 0.035 };
-const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
-const smooth = (start: number, end: number, time: number) => {
-  const amount = Math.max(0, Math.min(1, (time - start) / (end - start)));
-  return amount * amount * (3 - 2 * amount);
-};
-
-export function createShipScene(arrival: boolean): AsciiAnimationScene {
-  const raster = new AsciiMeshRaster(COLS, ROWS, PROJECTION);
+export function createShipScene() {
+  const raster = new AsciiMeshRaster(120, 60, { aspect: 1.62, perspective: 0.1 });
   let particles: AsciiMeshRaster | undefined;
-  let points: ShipPoint[] | undefined;
-  let model: ShipModel;
-  return {
-    prepare() { model = buildOpenCountry(!arrival); },
-    stillAt: 7,
-    frame(seconds: number, motion: boolean, palette: ColorTheme = "dark"): AsciiAnimationFrame {
-      const time = arrival ? seconds : 7;
-      const idle = smooth(4.5, 7, time);
-      const clock = motion ? seconds : 0;
-      const surface = smooth(1.9, 4.5, time);
-      if (surface === 1) {
-        particles = undefined;
-        points = undefined;
-      }
-      const turn = smooth(1.8, 5.8, time);
-      const yaw = mix(-0.93, -0.65, turn) + Math.sin(clock * 0.18) * 0.025 * idle;
-      const pitch = mix(-0.23, -0.37, turn);
-      const matrix = rotationMatrix(yaw, pitch, -0.035);
-      const bob = Math.sin(clock * 0.4) * 0.025 * idle;
-      const unit = raster.width / (6.65 * 1.62);
-      const ignition = smooth(1.3, 4.1, time);
+  let model: ReturnType<typeof buildVoyager>;
+  let heading = 0, pitch = 0;
+  const listeners = new Set<() => void>();
+  const scene: AsciiAnimationScene & { turn(dx: number, dy: number): void; reset(): void } = {
+    prepare() { model = buildVoyager(); },
+    stillAt: 4,
+    subscribe(redraw) { listeners.add(redraw); return () => { listeners.delete(redraw); }; },
+    turn(dx, dy) {
+      heading = (heading + dx) % (Math.PI * 2);
+      pitch = Math.max(-1.35, Math.min(1.35, pitch + dy));
+      for (const listener of listeners) listener();
+    },
+    reset() { heading = 0; pitch = 0; for (const listener of listeners) listener(); },
+    frame(seconds, motion, palette = "dark") {
+      const time = motion ? seconds : 4;
+      const idle = motion ? Math.max(0, seconds - 3.2) : 0;
+      const angle = heading + Math.sin(idle * 0.16) * 0.22;
+      const cosine = Math.cos(angle), sine = Math.sin(angle);
+      const view = rotationMatrix(0, 0.82 + pitch, 0.65);
+      // Voyager's wings lie in XY. Turn around their normal before tilting the view.
+      const matrix = [
+        view[0] * cosine + view[1] * sine, view[1] * cosine - view[0] * sine, view[2],
+        view[3] * cosine + view[4] * sine, view[4] * cosine - view[3] * sine, view[5],
+        view[6] * cosine + view[7] * sine, view[7] * cosine - view[6] * sine, view[8],
+      ];
+      const unit = raster.height * 0.335;
+      const exposure = palette === "dark" ? 1.65 : 1;
+      const transition = Math.max(0, Math.min(1, (time - 1.8) / 1.4));
+      const surface = transition * transition * (3 - 2 * transition);
       raster.clear();
-      if (surface > 0) raster.mesh(model.mesh, matrix, unit, bob, ignition);
-      const drawParticle = (point: ShipPoint, target: AsciiMeshRaster) => {
-        const formed = smooth(0.3 + point.delay, 3.2 + point.delay, time);
-        if (point.noise > 0.07 + formed * 0.93) return;
-        const swirl = (1 - formed) * 0.9;
-        const cosine = Math.cos(swirl), sine = Math.sin(swirl);
-        const px = mix(point.sx * cosine - point.sy * sine, point.x, formed);
-        const py = mix(point.sx * sine * 0.35 + point.sy * cosine, point.y, formed) + bob;
-        const pz = mix(point.sz, point.z, formed);
+      if (surface > 0) raster.mesh(model.mesh, matrix, unit);
+      const drawPoint = (point: VoyagerPoint, target: AsciiMeshRaster) => {
+        if (time <= point.delay) return;
+        const t = Math.max(0, Math.min(1, (time - point.delay) / 2.4));
+        const formed = 1 - (1 - t) ** 3;
+        const px = point.sx + (point.x - point.sx) * formed;
+        const py = point.sy + (point.y - point.sy) * formed;
+        const pz = point.sz + (point.z - point.sz) * formed;
         const x = matrix[0] * px + matrix[1] * py + matrix[2] * pz;
         const y = matrix[3] * px + matrix[4] * py + matrix[5] * pz;
         const z = matrix[6] * px + matrix[7] * py + matrix[8] * pz;
-        const perspective = 1 + z * 0.035;
-        const column = raster.width * 0.43 + x * unit * 1.62 * perspective;
-        const row = raster.height * 0.51 + y * unit * perspective;
-        const nx = matrix[0] * point.nx + matrix[1] * point.ny + matrix[2] * point.nz;
-        const ny = matrix[3] * point.nx + matrix[4] * point.ny + matrix[5] * point.nz;
-        const nz = matrix[6] * point.nx + matrix[7] * point.ny + matrix[8] * point.nz;
-        const diffuse = Math.max(0, -0.42 * nx - 0.69 * ny + 0.58 * nz);
-        const rim = Math.pow(1 - Math.min(1, Math.abs(nz)), 3);
-        let light = Math.max((0.25 + diffuse * 0.65 + rim * 0.1) * point.albedo, point.emission * ignition);
-        light = mix(0.1 + point.noise * 0.1, light, formed);
-        target.splat(column, row, z, Math.min(1, light), 1.15);
+        const perspective = 1 + z * 0.1;
+        const flicker = point.flicker === undefined ? 1 : 0.91 + Math.sin(idle * 3 + point.flicker) * 0.09;
+        const light = Math.min(1, point.brightness * (0.8 + (z + 1) * 0.19) * (0.3 + 0.7 * formed) * flicker * exposure);
+        target.splat(raster.width / 2 + x * unit * 1.62 * perspective, raster.height / 2 + y * unit * perspective, z, light, 1.15);
       };
       if (surface < 1) {
-        particles ??= new AsciiMeshRaster(COLS, ROWS, PROJECTION);
-        points ??= sampleShipSurface(model.mesh);
+        particles ??= new AsciiMeshRaster(120, 60);
         particles.clear();
-        for (const point of points) drawParticle(point, particles);
+        for (const point of model.points) drawPoint(point, particles);
         raster.crossfadeFrom(particles, surface);
+      } else {
+        particles = undefined;
       }
-      raster.glow(model.driveGlow, matrix, unit, bob, ignition);
-
+      for (const point of model.details) drawPoint(point, raster);
       return raster.frame(palette);
     },
   };
+  return scene;
 }

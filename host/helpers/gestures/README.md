@@ -35,7 +35,7 @@ From the repository root:
 
 ```bash
 npm run gsv:build
-npm run build --workspace web -- --config vite.desktop.config.ts
+npm run build:desktop --workspace web
 cargo build --manifest-path host/Cargo.toml --package gestures --package desktop
 cargo run --manifest-path host/Cargo.toml --package desktop
 ```

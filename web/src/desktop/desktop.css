@@ -13,6 +13,15 @@
 .desktop-connect .gsv-ti-affix { letter-spacing: 0; }
 .desktop-error { position: fixed; bottom: 0; z-index: 200; padding: 14px; background: #542c38; color: white; width: 100%; }
 .desktop-error button { margin-left: 20px; }
+.desktop-attachment-preview { position: fixed; inset: 0; margin: auto; width: min(1200px, calc(100vw - 40px)); height: calc(100dvh - 40px); max-width: none; max-height: none; padding: 20px; border: 1px solid var(--border-raised); color: var(--text); background: var(--panel); }
+.desktop-attachment-preview[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 20px; }
+.desktop-attachment-preview::backdrop { background: rgb(0 0 0 / .65); }
+.desktop-attachment-preview header { display: flex; align-items: center; gap: 24px; min-width: 0; }
+.desktop-attachment-preview header > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-attachment-preview header a, .desktop-attachment-preview header button { flex-shrink: 0; }
+.desktop-attachment-image { display: grid; place-items: center; min-width: 0; min-height: 0; overflow: auto; }
+.desktop-attachment-image img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.desktop-download-status { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; align-items: center; gap: 20px; max-width: calc(100vw - 48px); padding: 12px 16px; border: 1px solid var(--border-raised); color: var(--text); background: var(--panel); }
 .desktop-machine { position: fixed; inset: 0; margin: auto; width: min(460px, calc(var(--desktop-machine-width, 100vw) - 32px)); max-width: none; height: fit-content; max-height: calc(var(--desktop-machine-height, 100dvh) - 32px); overflow-y: auto; padding: 28px; border: 1px solid var(--border-raised); color: var(--text); background: var(--panel); text-align: left; font-size: 13px; letter-spacing: normal; text-transform: none; }
 .desktop-machine::backdrop { background: rgb(0 0 0 / .4); }
 .desktop-machine form { display: flex; flex-direction: column; gap: 20px; max-height: calc(var(--desktop-machine-height, 100dvh) - 90px); }

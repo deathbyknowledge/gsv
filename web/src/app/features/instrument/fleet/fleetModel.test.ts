@@ -123,15 +123,18 @@ function sysLine(overrides: Partial<SysLine>): SysLine {
 }
 
 describe("places", () => {
-  it("adds the cloud home and orders machines first", () => {
+  it("adds your cloud first, followed by machines and browsers", () => {
     const places = orderPlaces([target({ deviceId: "browser-1", kind: "browser", label: "Chrome" }), target({})]);
-    expect(places.map((place) => place.id)).toEqual(["laptop", CLOUD_TARGET_ID, "browser-1"]);
-    expect(places[1].kind).toBe("cloud");
+    expect(places.map((place) => place.id)).toEqual([CLOUD_TARGET_ID, "laptop", "browser-1"]);
+    expect(places[0].kind).toBe("cloud");
+    expect(places[0].label).toBe("your cloud");
   });
 
   it("keeps an existing cloud target instead of adding a second one", () => {
     const places = orderPlaces([target({ deviceId: CLOUD_TARGET_ID, kind: "unknown", label: "gsv" })]);
     expect(places).toHaveLength(1);
+    expect(places[0].label).toBe("your cloud");
+    expect(places[0].kind).toBe("cloud");
   });
 
   it("maps every kind to a planet", () => {
@@ -155,7 +158,7 @@ describe("processes", () => {
 
   it("lists row keys as places then processes", () => {
     const keys = rowKeys(orderPlaces([target({})]), [process({ pid: "7" })]);
-    expect(keys).toEqual(["target:laptop", "target:gsv", "proc:7"]);
+    expect(keys).toEqual(["target:gsv", "target:laptop", "proc:7"]);
   });
 
   it("reveals a linked process beyond the first page when the list arrives", () => {

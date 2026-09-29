@@ -142,6 +142,7 @@ type AiModelStackConfig = Pick<
 type ResolvedAiTextModelStack = {
   primary: AiModelStackConfig;
   fallbacks: AiConfigFallback[];
+  missingModelId?: string;
 };
 
 type AiMediaModelConfig = {
@@ -241,6 +242,7 @@ export async function handleAiConfig(
     accountUids: accountConfigUids,
     modelConfig: input.modelConfig,
     modelId: input.modelId,
+    inheritIfModelMissing: input.inheritIfModelMissing,
     reasoning: input.reasoning,
   });
   const primary = textModels.primary;
@@ -299,6 +301,7 @@ export async function handleAiConfig(
     media,
   };
   if (primary.baseUrl) result.baseUrl = primary.baseUrl;
+  if (textModels.missingModelId) result.missingModelId = textModels.missingModelId;
   if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;
   if (textModels.fallbacks.length > 0) result.fallbacks = textModels.fallbacks;
   return result;
@@ -793,6 +796,7 @@ async function resolveAiTextModelStack(options: {
   accountUids: number[];
   modelConfig: AiConfigArgs["modelConfig"];
   modelId: string | null | undefined;
+  inheritIfModelMissing?: boolean;
   reasoning: string | null | undefined;
 }): Promise<ResolvedAiTextModelStack> {
   const ownerUid = resolveAiModelOwnerUid(options.ctx, options.uid, options.owner);
@@ -886,17 +890,20 @@ export function handleAiModels(ctx: KernelContext): AiModelsResult {
   const preferredModelId = resolvePreferredAiModelId(ctx, accountUids, effective);
   // Layered order on purpose: clients re-serialize a layer from this listing.
   const result: AiModelsResult = {
-    models: effective.map((item) => ({
-      ...item.entry,
-      source: item.source,
+    models: effective.map((item) => {
+      const hasOAuthAccount = hasStoredAiProviderOAuthAccount(
+        ctx,
+        item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
+        item.entry.provider,
+        item.entry.oauthAccountKey,
+      );
       // A stored key or a saved OAuth account in the entry's credential scope both count.
-      hasCredential: storedCredential(ctx, item).length > 0
-        || hasStoredAiProviderOAuthAccount(
-          ctx,
-          item.source === "personal" ? accountUids : withRootAiCredentialScope(accountUids),
-          item.entry.provider,
-        ),
-    })),
+      // An explicit OAuth reference requires that exact saved connection.
+      const hasCredential = item.entry.provider === "openai-codex" && item.entry.oauthAccountKey
+        ? hasOAuthAccount
+        : storedCredential(ctx, item).length > 0 || hasOAuthAccount;
+      return { ...item.entry, source: item.source, hasCredential };
+    }),
     preferredModelId,
   };
   if (modelOrder) result.modelOrder = modelOrder;
@@ -909,6 +916,7 @@ async function resolveStoredAiTextModelStack(
     uid: number;
     accountUids: number[];
     modelId: string | null | undefined;
+    inheritIfModelMissing?: boolean;
     reasoning: string | null | undefined;
   },
   effective: readonly EffectiveAiModelEntry[],
@@ -916,13 +924,13 @@ async function resolveStoredAiTextModelStack(
 ): Promise<ResolvedAiTextModelStack> {
   const resolveConfig = createAiConfigValueResolver(options.ctx.config, options.accountUids);
   const requestedModelId = normalizeOptionalString(options.modelId);
-  if (
-    requestedModelId &&
+  const missingModelId = requestedModelId &&
     !effective.some((item) => item.entry.id.toLowerCase() === requestedModelId.toLowerCase())
-  ) {
+    ? requestedModelId : undefined;
+  if (missingModelId && !options.inheritIfModelMissing) {
     throw new Error(`AI model not found: ${requestedModelId}`);
   }
-  const preferredModelId = requestedModelId
+  const preferredModelId = (missingModelId ? undefined : requestedModelId)
     ?? resolvePreferredAiModelId(options.ctx, options.accountUids, effective);
   const models = orderEffectiveAiModels(effective, preferredModelId, modelOrder);
   const reasoning = normalizeOptionalString(options.reasoning)
@@ -968,7 +976,7 @@ async function resolveStoredAiTextModelStack(
   if (!primary) {
     throw new Error("No usable AI model is configured");
   }
-  return {
+  const stack: ResolvedAiTextModelStack = {
     primary: primary.config,
     fallbacks: fallbacks.map(({ entry, config }) => ({
       modelId: entry.id,
@@ -976,6 +984,8 @@ async function resolveStoredAiTextModelStack(
       ...config,
     })),
   };
+  if (missingModelId) stack.missingModelId = missingModelId;
+  return stack;
 }
 
 async function resolveRequestAiModelConfig(
@@ -1046,6 +1056,7 @@ async function resolveCompleteAiModelConfig(options: {
     options.systemOwned ? withRootAiCredentialScope(options.accountUids) : options.accountUids,
     provider,
     options.apiKey,
+    options.model.oauthAccountKey?.trim() || undefined,
   );
   const modelContextWindow = options.model.contextWindowTokens === undefined
     ? await resolveModelContextWindow(options.ctx, provider, model, options.generationTimeoutMs)

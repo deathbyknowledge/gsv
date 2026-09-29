@@ -1,3 +1,4 @@
+import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
 import type {
   MailSendArgs,
   MailSendResult,
@@ -20,7 +21,6 @@ import type {
   RecordMailOutboundInput,
 } from "./mailbox-store";
 
-const MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
 const MAX_OUTBOUND_SUBJECT_BYTES = 998;
 const MAX_OUTBOUND_IDENTIFIER_BYTES = 256;
 const MAX_OUTBOUND_HEADER_BYTES = 998;

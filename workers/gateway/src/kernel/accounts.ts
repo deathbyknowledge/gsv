@@ -14,9 +14,7 @@
 
 import type { AccountKind, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { hashPassword, makeShadowEntry } from "../auth/shadow";
-import { ensureAccountHomeLayout } from "./account-home";
-import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
-import { accountHomeRepoRef } from "../fs/ripgit/repos";
+import { ensureAccountHomeLayout, seedAccountHome } from "./account-home";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
 import type { PasswdEntry } from "../auth/passwd";
@@ -252,25 +250,9 @@ export async function seedContextFile(
   name: string,
   text: string,
 ): Promise<void> {
-  if (!env.RIPGIT) return;
-
   const path = `context.d/${name}`;
-  const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity.username);
-  const existing = await client.readPath(repo, path);
-  if (existing.kind !== "missing") return;
-
-  const ops: RipgitApplyOp[] = [{
-    type: "put",
-    path,
-    contentBytes: Array.from(TEXT_ENCODER.encode(text)),
-  }];
-
-  await client.apply(
-    repo,
-    identity.username,
-    `${identity.username}@gsv.local`,
-    `gsv: scaffold ${name}`,
-    ops,
-  );
+  await seedAccountHome(env, identity, `gsv: scaffold ${name}`, async (client, snapshot) => {
+    if ((await client.readPath(snapshot, path)).kind !== "missing") return [];
+    return [{ type: "put", path, contentBytes: Array.from(TEXT_ENCODER.encode(text)) }];
+  });
 }

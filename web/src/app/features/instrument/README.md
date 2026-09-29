@@ -22,6 +22,18 @@ installation capability and signs in immediately after creating the account.
 Failed account creation keeps the form available for retry. If only sign-in
 fails, the ordinary login form shows the error with the created username filled.
 
+Before choosing a space, Desktop presents two equal paths: create a space with
+an invite, or open an existing space. Open shows email sign-in beside direct
+address entry; email discovers owned spaces, while an address connects to that
+space's own login. The welcome choices pair Create with the existing galaxy
+forming GSV, and Open with the same Open Country ship assembling from particles.
+Both use the shared ASCII animation host at 18 fps, pause while hidden, and show
+completed stills for reduced motion. Glyph frames fit their panels at every
+size and use no blurred shadows. The illustrations leave with the choices;
+invite, verification and handle forms stay centered in the full composition.
+The two columns stack on narrow windows. The web signup entry uses the same
+invite flow.
+
 The session layout also owns one ASCII Open Country ship: a broad habitat hull,
 landscape, observation deck and three recessed stern drives. Setup forms it from
 particles; sign-in and recovery show the same ship already formed with gentle
@@ -98,7 +110,7 @@ Only interactive processes offer a conversation action. Ledger process links and
 
 Zen accepts attachments through its quiet attach action, paste, or drag-and-drop. Files stay local until Send, use the shared 25 MiB limit, and travel through the existing staged body upload service. Send moves the draft into the optimistic outbox; retries reuse its identity and upload paths, cancellation stops uploads and cleans staging, and a completed send preserves text/files added in the meantime. View changes retain the draft and uploads; teardown warns before discarding unsent work. Attachments cannot be silently consumed by a direct shell command. Canonical resource references and older media descriptors use the same reader in both chat surfaces; Zen renders images, documents, audio and video, including messages containing only media.
 
-The shell keeps one star field and one header mounted across Zen, Fleet, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has three view shortcuts: z for Fleet, m for Memory and comma for Settings. The current view's shortcut becomes Zen and returns there using the same key or button; Zen has no separate navigation item. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. During an active run, the quiet feedback line shows the model being attempted and target readiness, plus a waiting state when approval is needed. It has no thinking label or elapsed counter. It clears when the run ends or is aborted; an idle or queued process has no run strip. Connection and send errors appear when needed, and model attribution remains with the message. Fleet presents Places, Processes, Contacts, Responsibilities, Routines, Ledger and Files in reading order.
+The shell keeps one star field and one header mounted across Zen, Fleet, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has three view shortcuts: z for Fleet, m for Memory and comma for Settings. The current view's shortcut becomes Zen and returns there using the same key or button; Zen has no separate navigation item. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. During an active run, the quiet feedback line shows the selected model and target readiness, plus a waiting state when approval is needed. It has no thinking label or elapsed counter. It clears when the run ends or is aborted; an idle or queued process has no run strip. Connection and send errors appear when needed, and model attribution remains with the message. Fleet presents Places, Processes, Contacts, Responsibilities, Routines, Ledger and Files in reading order.
 
 Header controls have transparent backgrounds so they follow the pane underneath. Keyboard focus uses an underline on controls and table labels. Fleet has no permanent footer: Keys lists its shortcuts and the Ledger heading shows its status. Fleet’s command action opens Zen on the selected target, with a direct-shell prompt ready to type.
 
@@ -107,6 +119,11 @@ In the WebKitGTK prototype, removing just that shadow restored navigation and
 typing responsiveness while retaining the stars, overlays and interface glows.
 This is the default for both web and desktop; the star cadence and colors remain
 the same.
+
+The background uses a seeded sphere with a fixed viewing direction and angular
+scale. Resizing reveals or crops the same sky around its centre. Projection is
+cached; only visible glyphs are mounted, and resize retains their elements and
+twinkle phase. The sphere is not recomputed during animation.
 
 Zen opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Zen's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Keys lists navigation and appearance controls plus shortcuts for the current view, separating Zen browse and input behavior. Zen browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Keys. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 

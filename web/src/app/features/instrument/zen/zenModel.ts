@@ -36,10 +36,12 @@ export type Place = {
   id: string;
   label: string;
   online: boolean;
+  /** Absent for the cloud place, which is addressed by id alone. */
+  kind?: string;
 };
 
 export const CLOUD_PLACE_ID = "gsv";
-export const CLOUD_PLACE_LABEL = "your cloud home";
+export const CLOUD_PLACE_LABEL = "your cloud";
 
 export function placeLabel(id: string, places: readonly Place[]): string {
   if (id === CLOUD_PLACE_ID) return CLOUD_PLACE_LABEL;
@@ -725,6 +727,7 @@ export function momentsFromConversation(
   messages: readonly ChatTranscriptRow[],
   transcript: readonly ChatTranscriptRow[],
   activeRunId: string | null,
+  activeProcessId?: string,
 ): Moment[] {
   const moments: Moment[] = [];
   const processesByRun = new Map<string, Set<string>>();
@@ -858,6 +861,20 @@ export function momentsFromConversation(
       moment.narration = work.filter((entry) => entry.rows[0].role === "assistant").map((entry) => entry.rows[0].text.trim()).join("\n\n");
       moment.timeline = timelineForWork(entries, moment.id, active);
     }
+  }
+  if (activeRunId && !moments.some((moment) => moment.runId === activeRunId
+    && (!activeProcessId || moment.processId === activeProcessId)
+    && (moment.thinking || moment.streaming))) {
+    const candidates = processesByRun.get(activeRunId);
+    const processId = activeProcessId ?? (candidates?.size === 1 ? [...candidates][0] : undefined);
+    const runKey = JSON.stringify([processId ?? null, activeRunId, null]);
+    const previous = runs.get(runKey)?.boundaries.at(-1)?.id ?? null;
+    moments.push({
+      id: `work:${JSON.stringify([runKey, ["after", previous]])}`,
+      role: "ship", text: "", streaming: false, thinking: true, runId: activeRunId, processId,
+      timestamp: moments.reduce((latest, moment) => Math.max(latest, moment.timestamp ?? 0), 0) + 1,
+      activities: [], narration: "",
+    });
   }
   return moments.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }

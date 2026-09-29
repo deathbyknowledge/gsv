@@ -9,6 +9,8 @@
     "allow-desktop-session",
     "allow-desktop-configure",
     "allow-desktop-store",
+    "allow-desktop-welcome",
+    "allow-desktop-save-welcome",
     "allow-desktop-open",
     "allow-desktop-quit",
     "allow-machine-status",

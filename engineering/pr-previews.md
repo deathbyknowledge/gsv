@@ -68,6 +68,15 @@ bringing them into a trusted branch.
 Jobs serialize per PR and recheck its current state and revision after taking
 the lock. Builds run before the step that receives the Cloudflare token.
 Successful deploys publish a PR link; successful teardown marks it removed.
+GitHub tracks each PR under `gsv-preview-pr-<number>`. A successful update
+supersedes that PR's earlier deployments; successful teardown marks its records
+inactive, which GitHub displays as destroyed. The history remains available.
+Failed builds, updates or cleanup do not retire the last successful deployment.
+The shared `gsv-previews` environment supplies credentials with
+[`deployment: false`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idenvironment),
+so cleanup and skipped jobs do not create deployment entries. No additional
+environment credentials are needed. GitHub custom deployment protection apps
+are incompatible with this option.
 Reopening or retargeting back to `main` after deletion creates a fresh preview
 when previews are enabled. Existing CI checks remain independent of that flag.
 

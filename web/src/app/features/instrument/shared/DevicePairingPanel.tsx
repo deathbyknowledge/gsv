@@ -75,9 +75,10 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
         <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
         <SetupCommand text={code} label="copy invitation" />
       </> : <>
-        <p class="note">1 · Install GSV on that computer.</p>
+        <p class="note">Open {draft.platform === "windows" ? "PowerShell" : "Terminal"} on the computer you want to connect.</p>
+        <p class="note">1 · Paste and run this command to install GSV.</p>
         <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label="copy install command" />
-        <p class="note">2 · Connect it to your Ship.</p>
+        <p class="note">2 · When it finishes, run this command in the same window to connect.</p>
         <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label="copy connect command" />
       </>}
       <p class="note">You can close this panel and come back. Cancelling an invitation leaves an already-paired device connected.</p>

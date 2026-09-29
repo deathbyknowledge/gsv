@@ -372,8 +372,14 @@ export async function handleRepoDelete(
   const repo = parseRepoSlug(args.repo);
   assertCanWriteRepo(repo, ctx);
   const actor = requireIdentity(ctx).account;
-  await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
-  unregisterRepo(ctx, repo);
+  const finishDeletion = repo.owner === "root" && repo.repo === "gsv-manual"
+    ? ctx.manual.beginDeletion() : undefined;
+  try {
+    await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
+    unregisterRepo(ctx, repo);
+  } finally {
+    finishDeletion?.();
+  }
   return {
     deleted: true,
     repo: repoSlug(repo),
@@ -690,7 +696,7 @@ function clampContext(context: number | undefined): number {
 }
 
 export function registerRepo(
-  ctx: KernelContext,
+  ctx: Pick<KernelContext, "config">,
   repo: RipgitRepoRef,
   description?: string,
 ): void {

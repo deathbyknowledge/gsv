@@ -462,9 +462,10 @@ export async function recoverCompletedSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { username, password } = parseSetupIdentity(args);
-  const humans = ctx.auth.getPasswdEntries().filter(
-    (entry) => entry.uid >= 1000 && !ctx.auth.isPersonalAgentUid(entry.uid),
-  );
+  const humans = ctx.auth.getPasswdEntries().filter((entry) => {
+    const shadow = ctx.auth.getShadowByUsername(entry.username);
+    return entry.uid >= 1000 && shadow && !isLocked(shadow);
+  });
   const user = ctx.auth.getPasswdByUsername(username);
   if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
     throw new Error("System already initialized");

@@ -7,6 +7,8 @@ import type {
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
 } from "@humansandmachines/gsv/services/onboarding";
+import { InstallationCreationInvites } from "./creation-invites";
+import { InstallationInvitesAdminHttp } from "./admin/invites";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
@@ -31,7 +33,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
-    const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID);
+    const invitations = new InstallationCreationInvites(this.env.INSTALLATIONS_DB, this.accounts(), this.onboarding());
+    const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, invitations);
     if (ownerResponse) return ownerResponse;
     if (new URL(request.url).origin !== this.env.GSV_ADMIN_ORIGIN) return new Response("Forbidden", { status: 403 });
     const accounts = this.accounts();
@@ -42,16 +45,14 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     const bootstrap = new InstallationBootstrapService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), administration, mode);
     const operatorResponse = await new InstallationOperatorHttp(bootstrap, this.env.GSV_ADMIN_ORIGIN, mode).handle(request);
     if (operatorResponse) return operatorResponse;
-    const api = new InstallationAdminHttp(
-      administration,
-      new OperatorInstallationAdminAccess(bootstrap, mode, new CloudflareInstallationAdminAccess({
-        environment: this.env.ENVIRONMENT,
-        origin: this.env.GSV_ADMIN_ORIGIN,
-        teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN,
-        audience: this.env.GSV_ADMIN_ACCESS_AUD,
-      })),
-      this.env.GSV_ADMIN_ORIGIN,
-      {},
+    const access = new OperatorInstallationAdminAccess(bootstrap, mode, new CloudflareInstallationAdminAccess({
+      environment: this.env.ENVIRONMENT, origin: this.env.GSV_ADMIN_ORIGIN,
+      teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
+    }));
+    const inviteResponse = await new InstallationInvitesAdminHttp(invitations, access, this.env.GSV_ADMIN_ORIGIN).handle(request);
+    if (inviteResponse) return inviteResponse;
+    const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
+      { navigation: [{ section: "invites", href: "/admin/invites", label: "Invites" }] },
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
     );
     const response = await api.handle(request);
@@ -77,7 +78,9 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
 
   private accounts(): AccountStore {
     return new AccountStore(this.env.INSTALLATIONS_DB, this.env.GSV_BASE_DOMAIN,
-      this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE || undefined, [new URL(this.env.GSV_ADMIN_ORIGIN).hostname]);
+      this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE || undefined,
+      [this.env.GSV_ADMIN_ORIGIN, this.env.GSV_OWNER_SIGNUP_ORIGIN]
+        .filter((origin): origin is string => Boolean(origin)).map((origin) => new URL(origin).hostname));
   }
 
   private onboarding(): InstallationOnboardingStore {
