@@ -20,5 +20,24 @@ export const KERNEL_V053_TRACK_REQUEST_EXCHANGES: SqlMigration = {
          WHEN 'outgoing' THEN r.request_id ELSE r.remote_request_id END
        AND r.revision = json_extract(i.payload_json, '$.expectedRevision') + 1
        AND r.state = json_extract(i.payload_json, '$.state') AND r.updated_at = i.received_at`,
+    `UPDATE federation_requests AS r SET
+       exchange_state = CASE o.state WHEN 'delivered' THEN 'acknowledged' WHEN 'terminal' THEN 'failed' ELSE 'pending' END,
+       exchange_source = 'local', exchange_delivery_id = o.delivery_id, exchange_error = o.last_error
+     FROM federation_outbox AS o
+     WHERE r.exchange_state = 'unconfirmed'
+       AND o.contact_id = r.contact_id AND o.contact_generation = r.contact_generation
+       AND o.created_at = r.updated_at AND o.state IN ('pending', 'delivered', 'terminal')
+       AND (
+         (json_extract(o.payload_json, '$.kind') = 'request' AND r.direction = 'outgoing'
+          AND json_extract(o.payload_json, '$.request.id') = r.request_id
+          AND json_extract(o.payload_json, '$.request.revision') = r.revision
+          AND json_extract(o.payload_json, '$.request.state') = r.state)
+         OR
+         (json_extract(o.payload_json, '$.kind') = 'request.update'
+          AND json_extract(o.payload_json, '$.requestId') = CASE r.direction
+            WHEN 'outgoing' THEN r.request_id ELSE r.remote_request_id END
+          AND json_extract(o.payload_json, '$.expectedRevision') + 1 = r.revision
+          AND json_extract(o.payload_json, '$.state') = r.state)
+       )`,
   ],
 };

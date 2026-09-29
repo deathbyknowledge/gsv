@@ -4,6 +4,8 @@ import { testPeer } from "../../test-support/peers";
 import { FederationStore } from "../federation-store";
 import type { KernelContext } from "../context";
 import { handleContactDeliveryList, handleContactDeliveryRetry } from "../federation";
+import { DurableTaskScheduler } from "../../shared/durable-tasks";
+import { z } from "zod";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 
@@ -23,8 +25,36 @@ describe("human message delivery recovery", () => {
       expect(store.markOutboxFailed(deliveryId, contact.generation, "pending", "Late failure", null, true, Date.now(), false, 0)).toBe(false);
       expect(store.markDeliverySucceeded(deliveryId, contact.generation, Date.now(), 0)).toBe(false);
       expect(store.markDeliverySucceeded(deliveryId, contact.generation, Date.now(), 1)).toBe(true);
-      expect(ctx.scheduleFederationDelivery).toHaveBeenCalledWith(deliveryId, expect.any(Number), true);
+      expect(ctx.scheduleFederationDelivery).toHaveBeenCalledWith(deliveryId, expect.any(Number), false);
       await expect(handleContactDeliveryRetry({ deliveryId, expectedUpdatedAtMs: failed.updatedAtMs }, ctx)).rejects.toThrow("cannot be retried");
+    });
+  });
+
+  it("keeps a successor when retry arrives before the failed background task exits", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const { ctx, store, contact, deliveryId } = fixture(storage);
+      const tasks = new DurableTaskScheduler(storage,
+        (callback, payload) => ({ callback, payload: z.string().parse(JSON.parse(payload)) }),
+        async () => {
+          const record = store.outbox(deliveryId)!;
+          if (record.retryEpoch === 0) {
+            store.markOutboxFailed(deliveryId, contact.generation, "pending", "Response lost", null, true, Date.now(), true);
+            await handleContactDeliveryRetry({ deliveryId, expectedUpdatedAtMs: store.outbox(deliveryId)!.updatedAtMs }, ctx);
+          } else {
+            store.markDeliverySucceeded(deliveryId, contact.generation, Date.now(), record.retryEpoch);
+          }
+        });
+      ctx.scheduleFederationDelivery = async (id, due, idempotent) => {
+        await tasks.schedule(new Date(due), { callback: "onFederationDelivery", payload: id }, { idempotent });
+      };
+      const original = await tasks.schedule(new Date(Date.now()), { callback: "onFederationDelivery", payload: deliveryId });
+      await tasks.alarm();
+      const pending = sql.exec<{ id: string }>("SELECT id FROM cf_agents_schedules WHERE callback = 'onFederationDelivery'").toArray();
+      expect(pending).toHaveLength(1);
+      expect(pending[0].id).not.toBe(original.id);
+      expect(store.outbox(deliveryId)).toMatchObject({ state: "pending", retryEpoch: 1 });
+      await tasks.alarm();
+      expect(store.outbox(deliveryId)?.state).toBe("delivered");
     });
   });
 

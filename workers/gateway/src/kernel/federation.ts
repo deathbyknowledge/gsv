@@ -726,7 +726,7 @@ export async function handleContactDeliveryRetry(args: ContactDeliveryRetryArgs,
     return { record: ctx.federation.retryMessage(record, now), contact };
   });
   ctx.broadcastToUserUid(ownerUid, "contact.delivery.changed", { contactId: retried.contact.id });
-  await ctx.scheduleFederationDelivery(retried.record.deliveryId, now, true);
+  await ctx.scheduleFederationDelivery(retried.record.deliveryId, now, false);
   const record = retried.record.state === "preparing"
     ? await advanceFederationMessagePreparationOrRecordFailure(retried.record, ctx) : retried.record;
   return contactSendResult(record, retried.contact);
