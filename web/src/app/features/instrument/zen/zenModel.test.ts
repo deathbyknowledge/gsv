@@ -203,9 +203,8 @@ describe("places", () => {
     expect(resolvePlace("cloud", places)).toBe("gsv");
     expect(resolvePlace("nowhere", places)).toBeNull();
   });
-  it("defaults the prompt to the first online machine", () => {
-    expect(defaultPlace(places)).toBe("laptop");
-    expect(defaultPlace([{ id: "office", label: "Office box", online: false }])).toBe("gsv");
+  it("defaults the prompt to the cloud home", () => {
+    expect(defaultPlace()).toBe("gsv");
   });
 });
 

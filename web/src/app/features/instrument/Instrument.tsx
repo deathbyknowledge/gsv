@@ -25,7 +25,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `ledger:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
@@ -258,7 +258,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
               <dt>Space / Enter</dt><dd>Open the highlighted item or toggle a folder</dd>
               <dt>Esc</dt><dd>Close the inspector</dd>
               <dt>/</dt><dd>Open a command prompt for the highlighted place</dd>
-              <dt>t</dt><dd>Switch between human labels and technical details</dd>
             </dl>
             <h4>Expanded file</h4>
             <dl>
@@ -297,7 +296,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings onDirtyChange={setSettingsDirty} onSignOut={() => {
+          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
             if ((settingsDirty || zenDirty || fleetDirty || memoryDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />

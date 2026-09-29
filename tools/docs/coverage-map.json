@@ -278,6 +278,9 @@
     {
       "id": "ledger",
       "paths": [
+        "web/src/app/features/instrument/settings/Logs.tsx",
+        "web/src/app/features/instrument/settings/LedgerLine.tsx",
+        "web/src/app/features/instrument/wire/useLedger.ts",
         "workers/gateway/src/kernel/ledger.ts",
         "workers/gateway/src/kernel/ledger-feed.ts",
         "workers/gateway/src/kernel/sys/ledger.ts"
