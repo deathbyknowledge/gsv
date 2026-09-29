@@ -72,6 +72,32 @@ These are shell behaviors, not special memory syscalls. Page changes use normal
 filesystem and repository operations, so permissions, diffs, and history stay
 inspectable.
 
+## Built-in Manual updates
+
+`root/gsv-manual` is a local, searchable copy of the Manual. The Gateway pins its
+compatible upstream commit in `workers/gateway/src/kernel/sys/manual-version.json`.
+Maintainers advance this pin alongside changes documented in the Manual; a Manual
+repository merge alone does not change an already deployed Gateway's dependency.
+
+Setup imports that revision. On subsequent authenticated activity, the Kernel
+checks a durable update record and refreshes an existing installation when the
+configured source or bundled revision changes. Requests keep using the installed
+copy during the refresh. Successful checks survive eviction; there is no polling
+alarm or fetch on every request. Failed or interrupted updates retry on activity
+after five minutes. Installation lifecycle admission also gates these updates.
+
+The importer preserves local edits, including edits made during a fetch. An
+untouched imported copy can follow a version upgrade or rollback. A divergent
+copy remains in place; `wiki info gsv-manual` shows the last synchronization
+outcome and observed local revision. `wiki refresh gsv-manual` explicitly retries
+without changing account skills. It retains its existing `sys.bootstrap`
+capability requirement.
+
+Operators can retain a custom upstream/ref through
+`GSV_MANUAL_BOOTSTRAP_UPSTREAM` and `GSV_MANUAL_BOOTSTRAP_REF`. Mutable custom refs
+are checked on a bundled-revision/configuration change or explicit refresh, not
+continuously. A custom upstream without a ref continues to use `main`.
+
 ## Source references
 
 Knowledge pages may point back to live sources instead of copying content.

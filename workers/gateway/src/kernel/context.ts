@@ -5,6 +5,7 @@
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
+import type { ManualUpdater } from "./sys/manual";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
@@ -59,6 +60,7 @@ export type KernelContext = {
   invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
+  manual: ManualUpdater;
   targets: TargetRegistry;
   procs: ProcessRegistry;
   conversations: ConversationRegistry;

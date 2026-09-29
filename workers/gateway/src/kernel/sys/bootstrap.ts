@@ -1,28 +1,13 @@
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
-import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
+import { RipgitClient } from "../../fs/ripgit/client";
 import type { KernelContext } from "../context";
 import { principalOf, requirePrincipal } from "../context";
-import { registerRepo } from "../repo";
-import { setRepoVisibility } from "../repo-visibility";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
-
-const DEFAULT_GSV_MANUAL_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv-manual";
-const DEFAULT_GSV_MANUAL_UPSTREAM_REF = "main";
-const GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV = "GSV_MANUAL_BOOTSTRAP_UPSTREAM";
-const GSV_MANUAL_BOOTSTRAP_REF_ENV = "GSV_MANUAL_BOOTSTRAP_REF";
-const ROOT_GSV_MANUAL_REPO: RipgitRepoRef = {
-  owner: "root",
-  repo: "gsv-manual",
-  branch: "main",
-};
 
 type BootstrapTiming = {
   label: string;
   ms: number;
 };
-type BootstrapUpstream = { remoteUrl: string; ref?: string };
-type BootstrapResolvedUpstream = { remoteUrl: string; ref: string };
-type BootstrapRefSplit = { upstream: string; ref?: string };
 
 async function timeBootstrapStep<T>(
   timings: BootstrapTiming[],
@@ -58,105 +43,27 @@ export async function handleSysBootstrap(
     throw new Error("Authenticated identity required");
   }
 
-  const { remoteUrl, ref } = resolveManualBootstrapUpstream(ctx.env);
   const ripgit = new RipgitClient(ctx.env.RIPGIT);
-  const actorName = requirePrincipal(ctx).account.username;
   const startedAt = Date.now();
   const timings: BootstrapTiming[] = [];
 
   try {
-    const imported = await timeBootstrapStep(timings, "import-gsv-manual", () => ripgit.importFromUpstream(
-      ROOT_GSV_MANUAL_REPO,
-      actorName,
-      `${actorName}@gsv.local`,
-      `bootstrap root/gsv-manual from ${remoteUrl}#${ref}`,
-      remoteUrl,
-      ref,
-    ));
-    registerRepo(ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
-    setPublicRepo(ctx, ROOT_GSV_MANUAL_REPO);
+    const imported = await timeBootstrapStep(timings, "import-gsv-manual", () => ctx.manual.refresh());
     await timeBootstrapStep(timings, "seed-skills", () => seedBuiltinSkillsToHome(
       ripgit,
       requirePrincipal(ctx).account,
     ));
 
     console.info(
-      `[sys.bootstrap] ${remoteUrl}#${ref} completed in ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)})`,
+      `[sys.bootstrap] completed in ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)})`,
     );
 
-    return {
-      repo: "root/gsv-manual",
-      remoteUrl: imported.remoteUrl,
-      ref: imported.remoteRef,
-      head: imported.head ?? null,
-      changed: imported.changed,
-    };
+    return imported;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(
-      `[sys.bootstrap] ${remoteUrl}#${ref} failed after ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)}): ${message}`,
+      `[sys.bootstrap] failed after ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)}): ${message}`,
     );
     throw error;
   }
-}
-
-function resolveManualBootstrapUpstream(env: KernelContext["env"]): BootstrapResolvedUpstream {
-  const configuredUpstream = readEnvString(env, GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV);
-  const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
-  return {
-    remoteUrl: configured?.remoteUrl ?? DEFAULT_GSV_MANUAL_UPSTREAM_URL,
-    ref: readEnvString(env, GSV_MANUAL_BOOTSTRAP_REF_ENV)
-      ?? configured?.ref
-      ?? DEFAULT_GSV_MANUAL_UPSTREAM_REF,
-  };
-}
-
-function setPublicRepo(ctx: KernelContext, repo: Pick<RipgitRepoRef, "owner" | "repo">): void {
-  setRepoVisibility(repo, "public", ctx.config);
-}
-
-function parseConfiguredUpstream(value: string): BootstrapUpstream {
-  const split = splitUpstreamRef(value);
-  return {
-    remoteUrl: bootstrapUpstreamUrl(split.upstream),
-    ref: split.ref,
-  };
-}
-
-function splitUpstreamRef(value: string): BootstrapRefSplit {
-  const hashIndex = value.lastIndexOf("#");
-  if (hashIndex <= 0 || hashIndex === value.length - 1) {
-    return { upstream: value };
-  }
-  const upstream = value.slice(0, hashIndex).trim();
-  const ref = value.slice(hashIndex + 1).trim();
-  if (!upstream || !ref) {
-    return { upstream: value };
-  }
-  return { upstream, ref };
-}
-
-function bootstrapUpstreamUrl(value: string): string {
-  if (looksLikeGitRemoteUrl(value)) {
-    return value;
-  }
-  return githubRepoUrl(value);
-}
-
-function githubRepoUrl(repo: string): string {
-  const trimmed = repo.replace(/^\/+|\/+$/g, "");
-  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(trimmed)) {
-    throw new Error(`Invalid bootstrap repo: ${repo}`);
-  }
-  return `https://github.com/${trimmed}`;
-}
-
-function readEnvString(env: KernelContext["env"], name: string): string | undefined {
-  const value = Object.entries(env).find(([key]) => key === name)?.[1];
-  const trimmed = String(value ?? "").trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function looksLikeGitRemoteUrl(value: string): boolean {
-  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value) || /^[^@]+@[^:]+:.+$/.test(value);
 }

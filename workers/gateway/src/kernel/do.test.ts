@@ -26,6 +26,7 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.manual = { ensureCurrent: vi.fn(async () => {}) };
   kernel.retirement = { assertActive: vi.fn(), state: undefined };
   Object.assign(kernel, kernelRuntimes(kernel));
   return kernel;
@@ -986,6 +987,7 @@ describe("Kernel nested dispatch", () => {
     kernel.transport.sendWebSocketFrame = vi.fn(() => null);
     kernel.transport.requestTarget = vi.fn();
     const ctx = {
+      defer: vi.fn(),
       peer: {
         peer: {
           ...connectedPeer("human", "client"),

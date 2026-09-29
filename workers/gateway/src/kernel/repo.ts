@@ -690,7 +690,7 @@ function clampContext(context: number | undefined): number {
 }
 
 export function registerRepo(
-  ctx: KernelContext,
+  ctx: Pick<KernelContext, "config">,
   repo: RipgitRepoRef,
   description?: string,
 ): void {
