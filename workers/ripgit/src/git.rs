@@ -374,13 +374,18 @@ pub async fn fetch_remote_ref_with_options(
     options: RemoteFetchOptions,
 ) -> Result<RemoteFetchResult> {
     let remote = normalize_remote_base_url(remote_url)?;
-    let advertised = fetch_advertised_refs(&remote).await?;
-    let remote_ref_name = normalize_remote_ref_name(remote_ref);
-    let wanted_hash = advertised
-        .refs
-        .get(&remote_ref_name)
-        .cloned()
-        .ok_or_else(|| Error::RustError(format!("remote ref not found: {}", remote_ref_name)))?;
+    let wanted_hash = if remote_ref.len() == 40 && remote_ref.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        remote_ref.to_ascii_lowercase()
+    } else {
+        let advertised = fetch_advertised_refs(&remote).await?;
+        let remote_ref_name = normalize_remote_ref_name(remote_ref);
+        advertised
+            .refs
+            .get(&remote_ref_name)
+            .cloned()
+            .ok_or_else(|| Error::RustError(format!("remote ref not found: {}", remote_ref_name)))?
+    };
     let current_head = api::resolve_ref(sql, local_ref)?;
 
     if current_head.as_deref() == Some(wanted_hash.as_str()) {
