@@ -1,6 +1,19 @@
+import type { ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
 export const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
+
+/**
+ * A caller may choose any dedupe key on `r12y.create`, but the Kernel derives
+ * `source` from the actor, so only the record this module seeds carries the
+ * system onboarding source.
+ */
+export function isInitialOnboardingResponsibility(record: ResponsibilityRecord): boolean {
+  return record.dedupeKey === INITIAL_ONBOARDING_DEDUPE_KEY
+    && record.source.kind === "system"
+    && record.source.component === "onboarding";
+}
 
 export function ensureInitialOnboardingResponsibility(
   ownerUid: number,

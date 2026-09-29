@@ -58,11 +58,32 @@ describe("initial onboarding responsibility", () => {
         now: 1_000,
       }).record;
 
+      const forged = responsibilities.create({
+        ownerUid: 2000,
+        title: "Looks like onboarding",
+        source: { kind: "process", processId: "worker-1" },
+        assignee: { kind: "ship" },
+        state: "active",
+        priority: "normal",
+        dedupeKey: "onboarding.initial",
+        actor: { kind: "process", processId: "worker-1" },
+        observedByShip: true,
+        now: 1_000,
+      }).record;
+
       responsibilities.update({
         ownerUid: 1000,
         id: other.id,
         patch: { state: "resolved" },
         actor: { kind: "system", component: "test" },
+        observedByShip: true,
+        now: 2_000,
+      });
+      responsibilities.update({
+        ownerUid: 2000,
+        id: forged.id,
+        patch: { state: "resolved" },
+        actor: { kind: "process", processId: "worker-1" },
         observedByShip: true,
         now: 2_000,
       });
