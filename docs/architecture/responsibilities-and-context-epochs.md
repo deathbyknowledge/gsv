@@ -217,15 +217,15 @@ System-owned producers use the same ledger contract:
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
-- Activating either side of a contact invite creates one generation-scoped
-  `contact.added` responsibility. It asks Ship to learn about the contact and preserve
-  useful context in the owner's existing knowledge system without assuming a specific
-  wiki or inventing missing facts. Acceptance retries return the same responsibility;
-  pairing again after revocation creates another for the new generation.
-- Receiving a contact message or request asks Ship to inspect it and consult the owner.
-  Ship does not reply or decide for the owner by default. It may continue directly only
-  when the owner explicitly authorizes the action or has granted applicable standing
-  permission.
+- Pairing a contact and accepting a first message create no agent responsibility.
+  An explicit standing handoff reuses one `contact.handoff` responsibility for that
+  contact generation. Task-specific sends can instead bind replies to existing Ship
+  work. A relevant reply reopens that responsibility regardless of human or Process
+  authorship. Duplicates and acknowledgements create no work. Revocation cancels the
+  standing handoff and returns unfinished tasks to Ship with the disconnection recorded.
+  The former global `contact.added` and `federation.received` source switches are retired.
+- Structured work requests retain their own participant-authorized lifecycle. A remote
+  offer alone creates no local commitment; accepting work locally records that commitment.
 - The first registration of a physical machine creates one `machine.added`
   responsibility. Browser-backed targets and later reconnects do not create another.
 - An owned messaging account first becoming connected and authenticated creates one

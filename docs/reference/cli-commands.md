@@ -71,7 +71,7 @@ message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--lim
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -277,6 +277,11 @@ name; the remote Ship's authenticated identity remains visible and unchanged.
 never a recoverable code. `message history --with contact:...` reads the Contact
 conversation. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
+
+When Ship contacts someone for an existing task, pass `--responsibility ID` to
+associate replies with that open Ship responsibility. A reply continues the same
+work without enabling permanent handling of that contact. Acceptance and new
+messages stay in People unless the person chooses **Let Ship handle this**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

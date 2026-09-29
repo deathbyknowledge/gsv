@@ -9,6 +9,7 @@ import { Zen } from "./zen/Zen";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
+import { People } from "./people/People";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
@@ -22,19 +23,20 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
-export type Distance = "zen" | "fleet" | "memory" | "settings";
+export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `contact:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/zen",
   fleet: "/fleet",
   memory: "/memory",
   settings: "/zen/settings",
+  people: "/people",
 } satisfies Record<Distance, string>;
 
-const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings"];
+const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
 
 function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
@@ -76,6 +78,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [zenDirty, setZenDirty] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
+  const [peopleDirty, setPeopleDirty] = useState(false);
+  const [settingsEntry, setSettingsEntry] = useState<{ section: "profile" } | null>(null);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
@@ -176,6 +180,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         event.preventDefault();
         move(distance === "memory" ? "zen" : "memory");
       }
+      if (event.key === "p") {
+        event.preventDefault();
+        move(distance === "people" ? "zen" : "people");
+      }
       if (event.key === ",") {
         event.preventDefault();
         move(distance === "settings" ? "zen" : "settings");
@@ -213,6 +221,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           <dl>
             <dt>z</dt><dd>Fleet · press again to return to Zen</dd>
             <dt>m</dt><dd>Memory · press again to return to Zen</dd>
+            <dt>p</dt><dd>People · press again to return to Zen</dd>
             <dt>,</dt><dd>Settings · press again to return to Zen</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
@@ -296,10 +305,13 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+          <Settings openRequest={settingsEntry} onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
+            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
+        </RetainedView>
+        <RetainedView active={distance === "people"}>
+          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet

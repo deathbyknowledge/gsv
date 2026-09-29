@@ -80,6 +80,14 @@ Do not introduce a second helper runtime, Process role system or per-contact san
 
 ## Validation when implementation resumes
 
+## People surface
+
+People owns conversations with other people, their message requests and the private address book. At a glance it answers who wrote, what is unread, and whether the user or Ship is handling a conversation. Primary actions are read/reply, accept/decline a request, and hand a conversation to Ship or take it back.
+
+Use a conversation list and a spacious message pane, with Inbox, Requests and Contacts as filters. Keep search within the selected conversation and reuse main's search endpoint. Put infrequent relationship actions in its details rather than beside every message. A new-conversation dialog supports a public profile address and private invitations. Public profile editing remains in Settings. Fleet keeps processes, targets and responsibilities and links to People where needed.
+
+Ship handoff uses ordinary capabilities and an ordinary responsibility. Per-task reply continuation is separate from the standing contact preference. No assistant persona, scoped helper runtime, shared social graph or digest is part of this screen.
+
 Integrate against current main and obtain CI for the actual head. Test the owning boundaries and a two-space flow: first contact and acceptance preserving the first message; human and Ship authorship; delegated reply continuation; no work from delivery acknowledgements or duplicate deliveries; interrupted/retried delivery; media; mute/block/reconnect; and main's search.
 
 The review of the old branch is recorded locally at `/tmp/gsv-pr-sweep-2026-09-29/social-assessment.md`. That assessment is evidence and history; this file records the approved direction.

@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Conversation } from "./do";
+import type { SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
 import { getConversationById } from "../shared/utils";
 import { ConversationStore } from "./store";
 
@@ -45,6 +46,43 @@ describe("Conversation Durable Object", () => {
     await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "Rotterdam", limit: 51 }))).rejects.toThrow("Search limit");
   });
 
+  it("discards only unaccepted intake history and keeps a durable fence against late appends", async () => {
+    const stub = conversation("intake-retention");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:expired" });
+    await stub.append(message(1));
+    expect((await stub.search({ query: "message" })).hits).toHaveLength(1);
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await stub.discardIntake({ ownerUid: 1000, id: "approach:expired" });
+    await evictDurableObject(stub);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append(message(1)))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.initialize({ ownerUid: 1000, kind: "contact" }))).rejects.toThrow("expired");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "message" }))).rejects.toThrow("expired");
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
+        expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).one().count).toBe(0);
+      }
+    });
+
+    const accepted = conversation("accepted-intake");
+    await accepted.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:accepted" });
+    await accepted.append(message(1));
+    await accepted.initialize({ ownerUid: 1000, kind: "contact" });
+    await expect(runInDurableObject(accepted, (instance: Conversation) => instance.discardIntake({ ownerUid: 1000, id: "approach:accepted" }))).rejects.toThrow("not an unaccepted");
+    expect((await accepted.history()).messages).toHaveLength(1);
+  });
+
+  it("measures the bounded first-message index and metadata footprint", async () => {
+    const stub = conversation("intake-capacity");
+    await stub.initialize({ ownerUid: 1000, kind: "contact", intakeId: "approach:capacity" });
+    const measurement = await runInDurableObject(stub, async (instance: Conversation, state) => {
+      const before = state.storage.sql.databaseSize;
+      await instance.append({ ...message(1), text: "request detail ".repeat(2184).slice(0, 32_768) });
+      return { before, after: state.storage.sql.databaseSize };
+    });
+    expect(measurement.after - measurement.before).toBeLessThan(256 * 1024);
+    console.info("first-contact Conversation capacity (fixture bytes)", measurement);
+  });
+
   it("stores canonical messages idempotently and rejects changed replays", async () => {
     const stub = conversation("append");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
@@ -82,9 +120,13 @@ describe("Conversation Durable Object", () => {
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const social: SocialMessageMetadata = {
+      threadId: "thread:one", reference: { actor: { shipId: "ship:one", subjectId: "subject:one" }, messageId: "origin:one" },
+      provenance: { kind: "human" },
+    };
     await runInDurableObject(stub, async (instance: Conversation) => {
       for (let index = 1; index <= 1_001; index += 1) {
-        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined, social: index === 1 ? social : undefined });
       }
     });
     await stub.compact();
@@ -100,7 +142,7 @@ describe("Conversation Durable Object", () => {
     expect(aroundArchiveBoundary.messages.map((message) => message.sequence)).toEqual([499, 500, 501, 502]);
     expect(aroundArchiveBoundary.hasMore).toBe(true);
     expect((await stub.history({ afterSequence: 1_000, limit: 4 })).messages.map((message) => message.sequence)).toEqual([1_001]);
-    expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook", social })).toEqual({
       message: archived.messages[0],
       created: false,
     });
@@ -119,9 +161,19 @@ describe("Conversation Durable Object", () => {
     });
     expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
     expect((await stub.history({ beforeSequence: 3, limit: 2 })).messages).toEqual(archived.messages);
-    expect(await stub.append({ ...message(1), selectedTarget: "macbook" }))
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook", social }))
       .toEqual({ message: archived.messages[0], created: false });
     expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
+    expect(archived.messages[0]?.social).toEqual(social);
+    expect(await stub.resolveOrigin(social.reference, social.threadId)).toEqual({ messageId: "msg:1", sequence: 1 });
+    expect(await stub.resolveOrigin(social.reference, "thread:other")).toBeNull();
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook", social })).toEqual({
+      message: archived.messages[0],
+      created: false,
+    });
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({
+      ...message(1), selectedTarget: "macbook", social: { ...social, provenance: { kind: "process", processId: "proc:forged" } },
+    }))).rejects.toThrow("idempotency key payload changed");
   }, 30_000);
 
   it("keeps legacy conversation-owned media readable", async () => {

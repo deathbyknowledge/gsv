@@ -66,6 +66,93 @@ describe("FederationStore", () => {
     });
   });
 
+  it("preserves private preferences across re-pairing and rejects stale or foreign edits", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      expect(contact.preferences).toEqual({ saved: true, muted: false, shipHandlesMessages: false, revision: 1 });
+      const updated = store.updatePreferences(contact.ownerUid, {
+        contactId: contact.id, expectedRevision: 1, patch: { saved: false, muted: true, shipHandlesMessages: true },
+      });
+      expect(updated.preferences).toEqual({ saved: false, muted: true, shipHandlesMessages: true, revision: 2 });
+      expect(updated.state).toBe("active");
+      expect(updated.conversationId).toBe(contact.conversationId);
+      expect(() => store.updatePreferences(contact.ownerUid, { contactId: contact.id, expectedRevision: 1, patch: { saved: true } })).toThrow("preferences changed");
+      expect(() => store.updatePreferences(2000, { contactId: contact.id, expectedRevision: 2, patch: { muted: false } })).toThrow("Contact not found");
+      const replacement = store.activateContact({
+        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
+        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey, sharedSecret: "new-secret",
+        generation: "generation:replacement", threadId: "thread:replacement",
+      });
+      expect(replacement.preferences).toEqual({ saved: false, muted: true, shipHandlesMessages: false, revision: 3 });
+      expect(replacement.conversationId).toBe(contact.conversationId);
+    });
+  });
+
+  it("keeps actor blocks independent of generations and paginates them within one owner", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      const actor = { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id };
+      store.transaction(() => {
+        store.setActorBlock(contact.ownerUid, actor, true, 10);
+        store.revoke(contact.id, contact.ownerUid, 10);
+      });
+      expect(store.setActorBlock(contact.ownerUid, actor, true, 20)).toMatchObject({ changed: false, block: { createdAtMs: 10 } });
+      expect(() => store.activateContact({
+        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
+        remoteOrigin: "https://another-origin.example", remotePublicKey: contact.remotePublicKey,
+        sharedSecret: "new-secret", generation: "generation:new", threadId: "thread:new",
+      })).toThrow("pairing is unavailable");
+      expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: true });
+      const another = { shipId: "ship:z", subjectId: "subject:z" };
+      store.setActorBlock(contact.ownerUid, another, true, 30);
+      store.setActorBlock(2000, actor, true, 40);
+      const page = store.listActorBlocks(contact.ownerUid, 1);
+      expect(page.blocks).toEqual([{ actor, createdAtMs: 10 }]);
+      expect(store.listActorBlocks(contact.ownerUid, 1, page.nextCursor)).toEqual({ blocks: [{ actor: another, createdAtMs: 30 }] });
+      store.setActorBlock(contact.ownerUid, actor, false);
+      expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: false });
+      expect(store.isActorBlocked(2000, actor)).toBe(true);
+    });
+  });
+
+  it("keeps delivery versions immutable across protocol refresh and contact replacement", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 2_000 });
+      const social = {
+        threadId: contact.threadId,
+        reference: { actor: { shipId: "ship:local", subjectId: "subject:local" }, messageId: "message:v2" },
+        provenance: { kind: "human" as const },
+      };
+      const payload = { kind: "message" as const, messageId: "message:v2", threadId: contact.threadId, text: "Hello", social };
+      const record = store.enqueue({
+        deliveryId: "delivery:v2", ownerUid: contact.ownerUid, contactId: contact.id, contactGeneration: contact.generation,
+        idempotencyKey: "key:v2", fingerprint: "fingerprint:v2", wireVersion: 2, payload,
+      }).record;
+      expect(record).toMatchObject({ wireVersion: 2, payload });
+      store.setProtocol(contact.id, contact.generation, { version: 1, features: [], checkedAtMs: 3_000 });
+      expect(store.outbox(record.deliveryId)).toEqual(record);
+
+      const inbound = {
+        contactId: contact.id, contactGeneration: contact.generation, deliveryId: "delivery:received", payloadHash: "hash:received",
+        payload: { kind: "contact.revoked" as const, generation: contact.generation }, wireVersion: 2 as const,
+      };
+      store.receive(inbound);
+      expect(() => store.receive({ ...inbound, wireVersion: 1 })).toThrow("delivery id was reused");
+
+      const replacement = store.activateContact({
+        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
+        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
+        sharedSecret: "new-secret", generation: "generation:replacement", threadId: "thread:replacement",
+      });
+      expect(replacement.protocol).toBeUndefined();
+      expect(() => store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 4_000 }))
+        .toThrow("Contact generation changed");
+      expect(store.get(contact.id)?.protocol).toBeUndefined();
+      expect(store.outbox(record.deliveryId)).toMatchObject({ wireVersion: 2, payload, contactGeneration: contact.generation });
+    });
+  });
+
   it("retains unsettled request outcomes beyond delivery retention and fences late receipts", async () => {
     await withStore((store) => {
       const contact = activateContact(store);

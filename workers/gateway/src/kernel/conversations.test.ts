@@ -3,6 +3,20 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ConversationRegistry } from "./conversations";
 
 describe("ConversationRegistry", () => {
+  it("keeps contact conversations independent of Process handlers", async () => {
+    await runWithRealKernelSql((sql) => {
+      const registry = new ConversationRegistry(sql);
+      const contact = registry.ensureContact(1000, "Alice", "conv:alice");
+      registry.recordSequence(contact.id, 42);
+      const renamed = registry.ensureContact(1000, "Alice Smith", contact.id);
+      expect(renamed).toMatchObject({ id: contact.id, kind: "contact", title: "Alice Smith", latestSequence: 42 });
+      expect(renamed.handlerPid).toBeUndefined();
+      expect(registry.members(contact.id)).toEqual([{ kind: "account", id: "1000", role: "member" }]);
+      expect(() => registry.setHandler(contact.id, "proc:ship")).toThrow("do not dispatch");
+      expect(() => registry.ensureContact(1001, "Alice", contact.id)).toThrow("identity does not match");
+    });
+  });
+
   it("keeps one stable Ship address while rotating its process handler", async () => {
     await runWithRealKernelSql((sql) => {
       const registry = new ConversationRegistry(sql);

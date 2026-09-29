@@ -1,6 +1,7 @@
 import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
+import type { ActorRef, FederationFeature, OriginMessageRef } from "../social";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
@@ -57,6 +58,30 @@ export type FederationSubject = {
 
 export type ContactState = "active" | "revoked";
 
+export type ContactPreferences = {
+  saved: boolean;
+  muted: boolean;
+  shipHandlesMessages: boolean;
+  revision: number;
+};
+
+export const contactPreferencesPatchSchema = z.strictObject({
+  saved: z.optional(z.boolean()),
+  muted: z.optional(z.boolean()),
+  shipHandlesMessages: z.optional(z.boolean()),
+});
+export type ContactPreferencesUpdateArgs = {
+  contactId: string;
+  expectedRevision: number;
+  patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "shipHandlesMessages">>;
+};
+export type ContactPreferencesUpdateResult = { contact: ContactSummary };
+export type ContactBlock = { actor: ActorRef; displayName?: string; createdAtMs: number };
+export type ContactBlockSetArgs = { actor: ActorRef; blocked: boolean };
+export type ContactBlockSetResult = { block: ContactBlock | null };
+export type ContactBlockListArgs = { actor?: ActorRef; cursor?: ActorRef; limit?: number };
+export type ContactBlockListResult = { blocks: ContactBlock[]; nextCursor?: ActorRef };
+
 export type ContactSummary = {
   id: string;
   ownerUid: number;
@@ -72,6 +97,9 @@ export type ContactSummary = {
   revokedAtMs?: number;
   lastReceivedAtMs?: number;
   lastDeliveredAtMs?: number;
+  protocol?: { version: 1 | 2; features: FederationFeature[]; checkedAtMs: number };
+  preferences?: ContactPreferences;
+  blocked?: boolean;
 };
 
 export type ContactIdentityArgs = Record<string, never>;
@@ -134,7 +162,11 @@ export type ContactListArgs = {
 
 export type ContactListResult = {
   contacts: ContactSummary[];
+  attentionNotice?: { previousContactAdded: boolean; previousReceived: boolean };
 };
+
+export type ContactNoticeDismissArgs = Record<string, never>;
+export type ContactNoticeDismissResult = Record<string, never>;
 
 export type ContactAliasSetArgs = {
   contactId: string;
@@ -162,8 +194,11 @@ export type ContactRevokeResult = {
 export type ContactSendArgs = {
   contactId: string;
   text: string;
+  replyTo?: OriginMessageRef;
   media?: ResourceBlock[];
   idempotencyKey?: string;
+  /** Continue this Ship responsibility when the contact replies. Local only. */
+  responsibilityId?: string;
 };
 
 export type ContactSendResult = {

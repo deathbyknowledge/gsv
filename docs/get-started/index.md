@@ -46,7 +46,8 @@ Existing standalone deployments should read the
 The web console is called **Instrument** and has four views:
 
 - **Zen** is your Ship conversation, and where you inspect what a run did.
-- **Fleet** lists your places, processes, contacts and responsibilities, and recently touched files.
+- **Fleet** lists your places, processes and responsibilities, and recently touched files.
+- **People** holds conversations, message requests and private contacts across GSV spaces.
 - **Memory** shows your personal knowledge pages.
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
 

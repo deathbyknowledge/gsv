@@ -1,5 +1,6 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
+import type { SocialMessageMetadata } from "../social";
 
 export type ConversationKind = "ship" | "work" | "group" | "contact";
 
@@ -13,14 +14,15 @@ export type ConversationMember = {
 
 export type ConversationSummary = {
   id: string;
-  kind: ConversationKind;
   ownerUid: number;
   title: string | null;
-  handlerPid: string;
   latestSequence: number;
   createdAt: number;
   updatedAt: number;
-};
+} & (
+  | { kind: "ship" | "work" | "group"; handlerPid: string }
+  | { kind: "contact"; handlerPid?: string }
+);
 
 export type ConversationMessageAuthor =
   | { kind: "user"; uid: number }
@@ -67,6 +69,8 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
+  /** Absent on historical and v1 messages whose remote submission path is unspecified. */
+  social?: SocialMessageMetadata;
   /** Target selected for this message, independently of its source and reply endpoint. */
   selectedTarget?: string;
   media?: MessageAttachment[];
@@ -84,6 +88,49 @@ export type ConversationForProcessResult = { conversation: ConversationSummary }
 
 export type ConversationListArgs = Record<string, never>;
 export type ConversationListResult = { conversations: ConversationSummary[] };
+
+export type ConversationView = {
+  readThroughSequence: number;
+  archived: boolean;
+  revision: number;
+};
+
+export type ConversationPreview = Pick<ConversationMessage, "id" | "sequence" | "author" | "createdAt"> & {
+  text: string;
+  attachmentCount: number;
+  provenance?: SocialMessageMetadata["provenance"];
+};
+
+export type ConversationInboxEntry = {
+  conversation: ConversationSummary;
+  contactId: string;
+  view: ConversationView;
+  unread: boolean;
+  latestIncomingSequence: number;
+  preview: ConversationPreview | null;
+};
+
+export type ConversationInboxArgs = {
+  archived?: boolean;
+  before?: { updatedAt: number; conversationId: string };
+  limit?: number;
+};
+export type ConversationInboxResult = {
+  entries: ConversationInboxEntry[];
+  next?: { updatedAt: number; conversationId: string };
+};
+
+export type ConversationViewGetArgs = { conversationId: string };
+export type ConversationViewGetResult = { entry: ConversationInboxEntry };
+
+export type ConversationViewUpdateArgs = {
+  conversationId: string;
+  readThroughSequence?: number;
+  archived?: boolean;
+  /** Required for an archive change; read position always merges monotonically. */
+  expectedRevision?: number;
+};
+export type ConversationViewUpdateResult = { entry: ConversationInboxEntry };
 
 export type ConversationHistoryArgs = {
   conversationId: string;
@@ -167,6 +214,8 @@ export type ConversationMessageDeltaSignal = ConversationMessageStartedSignal & 
 export type ConversationMessageCommittedSignal = {
   message: ConversationMessage;
   directed: boolean;
+  /** Private human attention policy, derived locally rather than supplied by a peer. */
+  attention?: "notify" | "quiet";
 };
 
 export type ConversationMessageAbortedSignal = ConversationMessageStartedSignal & {
@@ -174,6 +223,7 @@ export type ConversationMessageAbortedSignal = ConversationMessageStartedSignal 
 };
 
 export type ConversationChangedSignal = {
+  viewOnly?: boolean;
   conversationId: string;
   latestSequence: number;
 };

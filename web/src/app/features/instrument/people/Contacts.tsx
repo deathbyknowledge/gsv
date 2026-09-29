@@ -8,16 +8,18 @@ import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { RelationshipPreferences } from "./RelationshipPreferences";
+import { ConversationViewControls } from "./ConversationViewControls";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "../shared/SetupCommand";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
 
-export function useFleetContacts(account: ConsoleAccount | undefined) {
+export function useContacts(account: ConsoleAccount | undefined) {
   const { client, connected } = useGateway();
   return useQuery({
     queryKey: CONTACTS_KEY,
     enabled: connected && !!account && canConfigure(account, "contact.list"),
-    queryFn: async () => (await client.contact.list({ includeRevoked: true })).contacts,
+    queryFn: () => client.contact.list({ includeRevoked: true }),
   });
 }
 
@@ -69,7 +71,7 @@ export function AddContact({ account, onClose, onAdded }: {
     <div class="fleet-place-form">
       <h4>Invite someone</h4>
       {issued ? <>
-        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted. Your new contact is in Fleet.</p>
+        {currentInvite?.state === "accepted" ? <p class="note is-on" role="status">Invitation accepted.</p>
           : currentInvite?.state === "expired" || currentInvite?.state === "cancelled" ? <p class="note" role="status">This invitation has {currentInvite.state === "expired" ? "expired" : "been cancelled"}.</p>
           : <>
             <p class="note">Share this one-use code with them. It expires {new Date(issued.expiresAtMs).toLocaleString()}.</p>
@@ -98,8 +100,23 @@ export function AddContact({ account, onClose, onAdded }: {
   </section>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests">(draft.text || draft.media.length ? "messages" : "details");
+export function ContactAttentionNotice({ account }: { account: ConsoleAccount | undefined }) {
+  const { client, connected } = useGateway();
+  const cache = useQueryClient();
+  const dismiss = useMutation({
+    mutationFn: () => client.contact.notice.dismiss({}),
+    onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }),
+  });
+  return <aside class="people-note" aria-label="Contact handling changed">
+    <p>Accepting a contact no longer starts Ship. Choose “Let Ship handle this” in a conversation to hand it over.</p>
+    <button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>dismiss</button>
+    {dismiss.error && <p class="people-error" role="alert">{dismiss.error.message}</p>}
+  </aside>;
+}
+
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
+  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
+  useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
   const { client, connected } = useGateway();
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const alias = aliasDraft ?? contact.localAlias ?? "";
@@ -119,9 +136,10 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
 
   return <section class="fleet-connection" aria-label="Contact details">
     <h3>{contactDisplayName(contact)}</h3>
-    <div class="sub">contact · {contact.state}</div>
+    <div class="sub">{contact.state !== "active" ? "Connection ended · history available" : contact.preferences?.shipHandlesMessages ? "Ship is handling this conversation" : null}</div>
+    <ConversationViewControls conversationId={contact.conversationId} account={account} />
     <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} />
+    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} />
       : section === "requests" ? <ContactRequests contact={contact} account={account} />
       : <>
     <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
@@ -129,6 +147,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend }: C
       <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
       <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
     </form>
+    <RelationshipPreferences contact={contact} account={account} />
     {contact.state === "active" && <div class="fleet-place-form">
       {confirm ? <>
         <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>

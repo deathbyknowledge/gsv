@@ -6,6 +6,8 @@ import {
   type ConversationMessage,
   type FederationDeliveryEnvelope,
   type FederationDeliveryPayload,
+  type FederationMessageDeliveryV2,
+  type FederationDeliveryEnvelopeV2,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type {
@@ -29,7 +31,7 @@ import type { FederationContactRecord, FederationStore } from "./federation-stor
 import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
-import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { syncFederationRequestResponsibility } from "./federation/requests";
 
 const OWNER: ProcessIdentity = {
@@ -49,7 +51,6 @@ type KernelInternals = {
   federation: FederationStore;
   procs: ProcessRegistry;
   responsibilities: ResponsibilityStore;
-  responsibilitySources: ResponsibilitySourcePolicyStore;
   pendingFederationInbound: Map<string, Promise<unknown>>;
   coordinateFederationContact: <Value>(
     contactId: string,
@@ -99,7 +100,6 @@ describe("federation inbound boundary", () => {
         interactive: true,
         isPersonalController: true,
       });
-      internal.responsibilitySources.set(OWNER.uid, "federation.received", false);
       const subject = internal.federation.ensureSubject(OWNER.uid, OWNER.username, 1_000);
       const activated = internal.federation.activateContact({
         ownerUid: OWNER.uid,
@@ -120,6 +120,40 @@ describe("federation inbound boundary", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("commits v2 provenance and replays a version-bound receipt without waking Ship", async () => {
+    getConversationById.mockRestore();
+    const payload: FederationMessageDeliveryV2 = {
+      kind: "message", messageId: "origin:v2", threadId: contact.threadId, text: "Written by my helper",
+      social: {
+        threadId: contact.threadId,
+        reference: { actor: { shipId: REMOTE_SHIP_ID, subjectId: REMOTE_SUBJECT_ID }, messageId: "origin:v2" },
+        provenance: { kind: "process", processId: "proc:remote-helper" },
+      },
+    };
+    const envelope = await signedV2Envelope(payload, "delivery:v2");
+    const response = await deliverV2(envelope);
+    expect(response.status).toBe(200);
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({ version: 2, domain: "gsv-federation/2/receipt", deliveryId: envelope.deliveryId });
+    expect(await (await deliverV2(envelope)).json()).toEqual(receipt);
+    const installationId = await runInDurableObject(kernel, (instance: Kernel) => instance.installationId);
+    const conversation = utils.getConversationById(installationId, contact.conversationId);
+    const history = await conversation.history();
+    expect(history.messages).toHaveLength(1);
+    expect(history.messages[0]?.social).toEqual(payload.social);
+    expect(await conversation.resolveOrigin(payload.social.reference, contact.threadId))
+      .toMatchObject({ messageId: history.messages[0]?.id, sequence: 1 });
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+
+    const forged = await signedV2Envelope({ ...payload, social: {
+      ...payload.social, reference: { ...payload.social.reference, actor: { shipId: "ship:someone-else", subjectId: REMOTE_SUBJECT_ID } },
+    } }, "delivery:v2-forged");
+    const rejected = await deliverV2(forged);
+    expect(rejected.status).toBe(409);
+    await rejected.arrayBuffer();
+    expect((await conversation.history()).messages).toHaveLength(1);
   });
 
   it.each([
@@ -172,6 +206,10 @@ describe("federation inbound boundary", () => {
     expect(await concurrent.json()).toEqual(await first.clone().json());
     expect(await replay.json()).toEqual(await first.json());
     expect(messages).toHaveLength(1);
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      expect(instance.conversations.get(contact.conversationId)?.handlerPid).toBeUndefined();
+    });
     expect(messages[0]).toMatchObject({
       text: "Hello from another Ship",
       author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
@@ -201,7 +239,6 @@ describe("federation inbound boundary", () => {
 
     const control = await runInDurableObject(kernel, (instance: Kernel) => {
       instance.auth.addUser({ username: "control", uid: 1001, gid: 1001, gecos: "Control", home: "/home/control", shell: "/bin/init" });
-      instance.responsibilitySources.set(1001, "federation.received", false);
       const subject = instance.federation.ensureSubject(1001, "Control");
       return { subject, contact: instance.federation.activateContact({ ownerUid: 1001, remoteShipId: REMOTE_SHIP_ID,
         remoteSubject: contact.remoteSubject, remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
@@ -574,7 +611,10 @@ describe("federation inbound boundary", () => {
     });
 
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
+      console.info("inbound recovery fixture: removing owner");
       await removeOwner(instance);
+      console.info("inbound recovery fixture: owner removed");
+      console.info("inbound recovery fixture: inspecting schedules");
       const recoveryTasks = state.storage.sql.exec<{ callback: string; payload: string }>(
         `SELECT callback, payload FROM cf_agents_schedules
          WHERE callback = 'onFederationInbox'`,
@@ -594,8 +634,11 @@ describe("federation inbound boundary", () => {
       );
     });
 
+    console.info("inbound recovery fixture: evicting Kernel");
     await evictDurableObject(kernel);
+    console.info("inbound recovery fixture: Kernel evicted");
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
+      console.info("inbound recovery fixture: inspecting schedules");
       const recoveryTasks = state.storage.sql.exec<{ callback: string; payload: string }>(
         `SELECT callback, payload FROM cf_agents_schedules
          WHERE callback = 'onFederationInbox'`,
@@ -758,13 +801,6 @@ describe("federation inbound boundary", () => {
   });
 
   it.each([false, true])("keeps one responsibility through the complete request lifecycle after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
     const requestId = "request:stable-responsibility";
     await seedOutgoingRequest(requestId, true);
     if (removed) await runInDurableObject(kernel, removeOwner);
@@ -816,12 +852,11 @@ describe("federation inbound boundary", () => {
     ]);
   });
 
-  it.each([false, true])("controls missing request responsibility creation after a source toggle and removal=%s", async (removed) => {
+  it.each([false, true])("does not infer a local commitment from remote updates after removal=%s", async (removed) => {
     const requestId = "request:source-toggle";
     await seedOutgoingRequest(requestId, false);
     await runInDurableObject(kernel, async (instance: Kernel) => {
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
-      instance.responsibilitySources.set(OWNER.uid, "federation.received", true);
       if (removed) await removeOwner(instance);
     });
 
@@ -842,24 +877,13 @@ describe("federation inbound boundary", () => {
         expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId))
           .toMatchObject({ state: "committed" });
         const responsibilities = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
-        expect(responsibilities).toHaveLength(removed ? 0 : 1);
-        if (!removed) expect(responsibilities[0]).toMatchObject({
-          details: { state, revision: index + 2 },
-          state: state === "completed" ? "resolved" : "active",
-        });
+        expect(responsibilities).toHaveLength(0);
       });
     }
     expect(messages).toHaveLength(3);
   });
 
-  it("keeps exact contact content in Conversation history rather than responsibility details", async () => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
+  it("stores incoming contact text without admitting Ship work", async () => {
     const text = "Private instructions that belong only in Contact history";
     const envelope = await signedEnvelope({
       kind: "message",
@@ -876,39 +900,50 @@ describe("federation inbound boundary", () => {
         includeTerminal: true,
       }).records[0]
     ));
-    expect(responsibility?.details).toMatchObject({
-      eventType: "federation.message.received",
-      contactId: contact.id,
-      conversationId: contact.conversationId,
-      deliveryId: "delivery:private",
-      resourceCount: 0,
-      contentTrust: "untrusted",
+    expect(responsibility).toBeUndefined();
+    expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
+  });
+
+  it("recovers Ship scheduling after committing contact attention without repeating the handoff", async () => {
+    await runInDurableObject(kernel, async (instance: Kernel) => {
+      instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
+      instance.federation.updatePreferences(OWNER.uid, {
+        contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true },
+      });
     });
-    expect(responsibility?.title).toMatch(/^Review contact message .* with the owner$/);
-    expect(responsibility?.details).not.toHaveProperty("text");
-    expect(responsibility?.details).not.toHaveProperty("resources");
-    expect(JSON.stringify(responsibility)).not.toContain(text);
+    const wake = vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake")
+      .mockRejectedValueOnce(new Error("Injected scheduler failure"));
+    const envelope = await signedEnvelope({
+      kind: "message", messageId: "message:handoff", threadId: contact.threadId, text: "Continue our conversation",
+    }, "delivery:handoff");
+    const failed = await deliver(envelope);
+    expect(failed.status).toBe(500);
+    await failed.arrayBuffer();
+    const committed = await runInDurableObject(kernel, (instance: Kernel) => {
+      const records = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
+      expect(records).toHaveLength(1);
+      expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)?.state).toBe("received");
+      return records[0]!;
+    });
+    expect(wake).toHaveBeenCalledOnce();
+    wake.mockRestore();
+    await runInDurableObject(kernel, async (instance: Kernel, state) => {
+      await instance.federationRuntime.onFederationInbox({
+        contactId: contact.id, contactGeneration: contact.generation, deliveryId: envelope.deliveryId,
+      });
+      expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)?.state).toBe("committed");
+      expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([committed]);
+      expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onResponsibilityWake'").toArray()).toHaveLength(1);
+    });
+    expect(messages).toHaveLength(1);
+    const replay = await deliver(envelope);
+    expect(replay.status).toBe(200);
+    await replay.arrayBuffer();
+    expect(messages).toHaveLength(1);
   });
 
   it.each([false, true])("cancels the request responsibility on revocation after removal=%s", async (removed) => {
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      kernelInternals(instance).responsibilitySources.set(
-        OWNER.uid,
-        "federation.received",
-        true,
-      );
-    });
-    const requestDelivery = await signedEnvelope({
-      kind: "request",
-      request: {
-        id: "request:revoked-responsibility",
-        kind: "task",
-        title: "Work that becomes impossible after revocation",
-        state: "offered",
-        revision: 1,
-      },
-    }, "delivery:request-before-revoke");
-    expect((await deliver(requestDelivery)).status).toBe(200);
+    await seedOutgoingRequest("request:revoked-responsibility", true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
     const revocation = await signedEnvelope({
@@ -937,7 +972,7 @@ describe("federation inbound boundary", () => {
         ),
       };
     });
-    expect(state.newRevocationResponsibilities).toBe(removed ? 0 : 1);
+    expect(state.newRevocationResponsibilities).toBe(0);
     expect(state.request).toMatchObject({ state: "cancelled", revision: 2 });
     expect(state.responsibility).toMatchObject({
       state: "cancelled",
@@ -948,7 +983,7 @@ describe("federation inbound boundary", () => {
       },
     });
     expect(state.transitions).toEqual([
-      expect.objectContaining({ kind: "created", afterState: "open" }),
+      expect.objectContaining({ kind: "created", afterState: "waiting" }),
       expect.objectContaining({ kind: "cancelled", afterState: "cancelled" }),
     ]);
   });
@@ -1085,6 +1120,21 @@ describe("federation inbound boundary", () => {
         request, contact, conversationId: contact.conversationId, remoteInput: false, createAllowed: true, now,
       }, instance.buildKernelContext({}));
     });
+  }
+
+  async function signedV2Envelope(payload: FederationMessageDeliveryV2, deliveryId: string): Promise<FederationDeliveryEnvelopeV2> {
+    const unsigned = {
+      version: 2 as const, domain: "gsv-federation/2/delivery" as const, deliveryId,
+      senderShipId: REMOTE_SHIP_ID, senderSubjectId: REMOTE_SUBJECT_ID, recipientSubjectId,
+      generation: contact.generation, timestampMs: Date.now(), nonce: randomBase64Url(18), payload,
+    };
+    return { ...unsigned, signature: await signContactEnvelope(sharedSecret, jsonValueSchema.parse(unsigned)) };
+  }
+
+  async function deliverV2(envelope: FederationDeliveryEnvelopeV2): Promise<Response> {
+    return kernel.fetch(new Request("https://local.example/_gsv/federation/v2/deliver", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope),
+    }));
   }
 
   async function deliver(envelope: FederationDeliveryEnvelope): Promise<Response> {
