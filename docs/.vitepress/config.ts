@@ -130,6 +130,7 @@ export default defineConfig({
             { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
             { text: "Run GSV for Your Organisation", link: "/how-to/organisations" },
             { text: "Invite People", link: "/how-to/invite-people" },
+            { text: "Contact People", link: "/how-to/contact-people" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Connect Devices", link: "/how-to/connect-devices" },
             { text: "Connect a Messenger", link: "/how-to/messengers" },
