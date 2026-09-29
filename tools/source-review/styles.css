@@ -27,6 +27,7 @@ body {
 
 button,
 input,
+select,
 textarea { font: inherit; }
 
 button {
@@ -134,6 +135,15 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
   overflow: auto;
 }
 
+.file-group {
+  margin: 18px 8px 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.file-group:first-child { margin-top: 0; }
+
 .file-row {
   width: 100%;
   display: block;
@@ -177,8 +187,14 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
   gap: 12px;
   color: var(--muted);
   font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  white-space: nowrap;
+  text-align: right;
 }
+
+.preview-controls { display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
+.preview-controls[hidden] { display: none; }
+.preview-controls label { font-size: 12px; color: var(--muted); }
+select { color: inherit; background: var(--panel); border: 1px solid var(--border); padding: 6px; border-radius: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 .review-note {
   padding: 9px 16px;
@@ -216,6 +232,10 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
 
 .prompt-block.is-system { border-left-color: var(--system); }
 .prompt-block.is-personal { border-left-color: var(--personal); }
+.prompt-block.is-selected { outline: 1px solid var(--accent); }
+.prompt-block header button { padding: 0; border: 0; background: none; color: var(--accent-strong); font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+.prompt-block header button:hover { text-decoration: underline; }
+.source-links { display: grid; gap: 5px; min-width: 0; }
 
 .prompt-block header {
   display: flex;
@@ -229,11 +249,12 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
 .prompt-block small { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 .prompt-block pre,
+.exact-prompt,
 #diff {
   margin: 0;
   overflow: auto;
   color: #e9e2e6;
-  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }
 
@@ -244,6 +265,7 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
   font-size: 14px;
   line-height: 1.65;
 }
+.manual-article { overflow-wrap: anywhere; }
 
 .manual-article h1,
 .manual-article h2,
@@ -278,7 +300,7 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
   outline: none;
   background: #0d0c0d;
   color: #f4edf1;
-  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   tab-size: 2;
 }
 

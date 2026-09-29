@@ -1,0 +1,351 @@
+import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
+import {
+  DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES, DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
+  DEFAULT_IMAGE_READING_MAX_TOKENS, DEFAULT_IMAGE_READING_TIMEOUT_MS, DEFAULT_MAX_IMAGE_READING_BYTES,
+} from "../inference/media-defaults";
+import type { MediaExecutor } from "../inference/media-client";
+import { isVectorImageMimeType } from "../inference/image-mime";
+import { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
+import { z } from "zod";
+
+export { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
+
+export {
+  DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+} from "../inference/media-defaults";
+
+export {
+  DEFAULT_IMAGE_READING_MODEL,
+} from "../inference/media-defaults";
+
+const ARCHIVED_PROCESS_MEDIA_KEY =
+  /^(?:root|home\/(?!\.{1,2}\/)[^/\\]+)\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/;
+export const storedProcessMediaSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  size: z.number().finite().optional(),
+  duration: z.number().finite().optional(),
+  transcription: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export type StoredProcessMedia = z.infer<typeof storedProcessMediaSchema>;
+
+function archivedProcessMediaPath(key: string): string | null {
+  return ARCHIVED_PROCESS_MEDIA_KEY.test(key) ? `/${key}` : null;
+}
+
+export type StoreIncomingProcessMediaOptions = {
+  execute?: MediaExecutor;
+  signal?: AbortSignal;
+  audioTranscriptionProvider?: string;
+  audioTranscriptionModel?: string;
+  audioTranscriptionApiKey?: string;
+  maxTranscriptionBytes?: number;
+  imageReadingMaxBytes?: number;
+  imageReadingMaxTokens?: number;
+  imageReadingTimeoutMs?: number;
+  allowedStoredKeys?: ReadonlySet<string>;
+};
+
+function mediaProcessingLimit(
+  type: ProcMediaInput["type"],
+  options: StoreIncomingProcessMediaOptions,
+): number {
+  if (type === "audio") {
+    return options.maxTranscriptionBytes ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
+  }
+  if (type === "image") {
+    return options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES;
+  }
+  return 0;
+}
+
+async function resolveIncomingMediaSource(
+  bucket: R2Bucket,
+  prefix: string,
+  input: ProcMediaInput,
+  stored: StoredProcessMedia,
+  options: StoreIncomingProcessMediaOptions,
+): Promise<Uint8Array | null> {
+  if (!input.key) {
+    if (input.url) stored.url = input.url;
+    return null;
+  }
+  const path = processMediaPath(input.key) ?? archivedProcessMediaPath(input.key);
+  const processOwned = input.key.startsWith(prefix) && processMediaPath(input.key) !== null;
+  if ((!processOwned && !options.allowedStoredKeys?.has(input.key)) || !path) {
+    throw new Error("media key is outside this process");
+  }
+  const metadata = await bucket.head(input.key);
+  if (!metadata) throw new Error(`media not found: ${input.key}`);
+  stored.key = input.key;
+  stored.path = path;
+  stored.size = metadata.size;
+  const limit = mediaProcessingLimit(input.type, options);
+  if (limit === 0 || metadata.size > limit) return null;
+  const object = await bucket.get(input.key);
+  if (!object) return null;
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  options.signal?.throwIfAborted();
+  return bytes;
+}
+
+export async function storeIncomingProcessMedia(
+  bucket: R2Bucket,
+  uid: number,
+  pid: string,
+  media: ProcMediaInput[] | undefined,
+  options: StoreIncomingProcessMediaOptions = {},
+): Promise<string | null> {
+  if (!media || media.length === 0) {
+    return null;
+  }
+
+  const prefix = processMediaPrefix(uid, pid);
+  const stored: StoredProcessMedia[] = [];
+
+  for (const item of media) {
+    options.signal?.throwIfAborted();
+    const next: StoredProcessMedia = {
+      type: item.type,
+      mimeType: item.mimeType,
+      filename: item.filename,
+      size: item.size,
+      duration: item.duration,
+      transcription: item.transcription,
+    };
+
+    const bytes = await resolveIncomingMediaSource(bucket, prefix, item, next, options);
+
+    if (shouldTranscribeAudio(item, next, bytes, options)) {
+      const result = await transcribeIncomingAudio(options.execute, bytes!, {
+        provider: options.audioTranscriptionProvider!,
+        apiKey: options.audioTranscriptionApiKey,
+        model: options.audioTranscriptionModel!,
+        mimeType: item.mimeType,
+        filename: item.filename,
+        signal: options.signal,
+      });
+      if (result) {
+        next.transcription = result.text;
+        if (next.duration === undefined && result.duration !== undefined) {
+          next.duration = result.duration;
+        }
+      }
+    }
+
+    if (shouldReadImage(item, next, bytes, options)) {
+      const result = await describeIncomingImage(
+        options.execute,
+        bytes!,
+        item.mimeType,
+        {
+          maxTokens: options.imageReadingMaxTokens,
+          timeoutMs: options.imageReadingTimeoutMs,
+          signal: options.signal,
+        },
+      );
+      if (result) {
+        next.description = result;
+      }
+    }
+
+    stored.push(next);
+  }
+
+  return stringifyStoredProcessMedia(stored);
+}
+
+export async function deleteProcessMedia(
+  bucket: R2Bucket,
+  uid: number,
+  pid: string,
+): Promise<void> {
+  const prefix = processMediaPrefix(uid, pid);
+  let cursor: string | undefined;
+
+  for (;;) {
+    const listing = await bucket.list({
+      prefix,
+      cursor,
+      limit: 1000,
+    });
+    if (listing.objects.length > 0) {
+      await bucket.delete(listing.objects.map((object) => object.key));
+    }
+    if (!listing.truncated) {
+      break;
+    }
+    cursor = listing.cursor;
+  }
+}
+
+export function parseStoredProcessMedia(raw: string | null): StoredProcessMedia[] {
+  if (!raw) {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  const entries = z.array(storedProcessMediaSchema).safeParse(parsed);
+  if (!entries.success) {
+    return [];
+  }
+
+  return entries.data.flatMap((candidate) => {
+    const { type, mimeType } = candidate;
+    const next: StoredProcessMedia = {
+      type,
+      mimeType,
+    };
+    if (candidate.key && candidate.key.length > 0) {
+      next.key = candidate.key;
+      const persistedPath =
+        candidate.path && candidate.path === `/${candidate.key}`
+          ? archivedProcessMediaPath(candidate.key)
+          : null;
+      next.path = processMediaPath(candidate.key) ?? persistedPath ?? undefined;
+    }
+    if (candidate.url && candidate.url.length > 0) next.url = candidate.url;
+    if (candidate.filename && candidate.filename.length > 0) next.filename = candidate.filename;
+    if (candidate.size !== undefined) next.size = candidate.size;
+    if (candidate.duration !== undefined) next.duration = candidate.duration;
+    if (candidate.transcription && candidate.transcription.length > 0)
+      next.transcription = candidate.transcription;
+    if (candidate.description && candidate.description.length > 0)
+      next.description = candidate.description;
+    return [next];
+  });
+}
+
+export function stringifyStoredProcessMedia(media: StoredProcessMedia[]): string | null {
+  if (media.length === 0) {
+    return null;
+  }
+  return JSON.stringify(media);
+}
+
+function shouldTranscribeAudio(
+  input: ProcMediaInput,
+  stored: StoredProcessMedia,
+  bytes: Uint8Array | null,
+  options: StoreIncomingProcessMediaOptions,
+): boolean {
+  if (input.type !== "audio") {
+    return false;
+  }
+  if (stored.transcription && stored.transcription.trim().length > 0) {
+    return false;
+  }
+  const provider = options.audioTranscriptionProvider?.trim();
+  if (!provider || !options.audioTranscriptionModel?.trim()) {
+    return false;
+  }
+  if (!options.execute) {
+    return false;
+  }
+  if (!bytes || bytes.byteLength === 0) {
+    return false;
+  }
+  const maxBytes = options.maxTranscriptionBytes ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
+  return bytes.byteLength <= maxBytes;
+}
+
+function shouldReadImage(
+  input: ProcMediaInput,
+  stored: StoredProcessMedia,
+  bytes: Uint8Array | null,
+  options: StoreIncomingProcessMediaOptions,
+): boolean {
+  if (input.type !== "image") {
+    return false;
+  }
+  if (isVectorImageMimeType(input.mimeType)) {
+    return false;
+  }
+  if (stored.description && stored.description.trim().length > 0) {
+    return false;
+  }
+  if (!options.execute) {
+    return false;
+  }
+  if (!bytes || bytes.byteLength === 0) {
+    return false;
+  }
+  const maxBytes = options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES;
+  return bytes.byteLength <= maxBytes;
+}
+
+async function transcribeIncomingAudio(
+  execute: MediaExecutor | undefined,
+  bytes: Uint8Array,
+  options: {
+    provider: string;
+    apiKey?: string;
+    model: string;
+    mimeType?: string;
+    filename?: string;
+    signal?: AbortSignal;
+  },
+): Promise<{ text: string; duration?: number } | null> {
+  try {
+    if (!execute) return null;
+    const response = await execute({ kind: "transcription", input: {
+      provider: options.provider, apiKey: options.apiKey, model: options.model,
+      mimeType: options.mimeType, filename: options.filename,
+      mode: "transcribe", vadFilter: true, conditionOnPreviousText: false,
+      maxInputBytes: bytes.byteLength,
+    } }, mediaBody(bytes), DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS, options.signal);
+    if (response.kind !== "transcription") throw new Error("Invalid transcription response");
+    return response.result;
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? error;
+    }
+    console.warn("[ProcessMedia] audio transcription failed:", error);
+    return null;
+  }
+}
+
+async function describeIncomingImage(
+  execute: MediaExecutor | undefined,
+  bytes: Uint8Array,
+  mimeType: string,
+  options: {
+    maxTokens?: number;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  },
+): Promise<string | null> {
+  try {
+    if (!execute) return null;
+    const response = await execute({ kind: "image-read", input: {
+      mimeType, mode: "caption", captionLength: "normal",
+      maxTokens: options.maxTokens ?? DEFAULT_IMAGE_READING_MAX_TOKENS,
+      maxInputBytes: bytes.byteLength,
+    } }, mediaBody(bytes), options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS, options.signal);
+    if (response.kind !== "image-read") throw new Error("Invalid image reading response");
+    if (response.body) await response.body.cancel();
+    return response.result.mode === "caption" && "text" in response.result ? response.result.text : null;
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? error;
+    }
+    console.warn("[ProcessMedia] image reading failed:", error);
+    return null;
+  }
+}
+
+function mediaBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+}

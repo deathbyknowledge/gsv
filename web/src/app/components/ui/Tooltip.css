@@ -87,6 +87,19 @@
 .gsv-tt-bub.gsv-tt-portal {
   position: fixed;
   z-index: 75;
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.6;
+  padding: 10px 12px;
+  max-width: min(300px, calc(100vw - 40px));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--void) 45%, transparent);
+}
+.gsv-tt-portal .gsv-tt-arrow {
+  background: var(--panel);
+  border-color: var(--border);
 }
 .gsv-tt-bub.gsv-tt-portal.is-open {
   opacity: 1;

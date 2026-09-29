@@ -1,3 +1,4 @@
+use crate::content_type::{content_type_for, sniff_header};
 use crate::protocol::ToolDefinition;
 use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
@@ -130,9 +131,13 @@ impl Tool for CopyTool {
                 e
             )
         })?;
-        let content_type = mime_guess::from_path(&source)
-            .first()
-            .map(|mime| mime.essence_str().to_string());
+        let content_type = match tokio::fs::File::open(&source).await {
+            Ok(mut file) => sniff_header(&mut file)
+                .await
+                .ok()
+                .map(|header| content_type_for(&header, &source).to_string()),
+            Err(_) => None,
+        };
 
         Ok(ToolOutput::json(json!({
             "ok": true,

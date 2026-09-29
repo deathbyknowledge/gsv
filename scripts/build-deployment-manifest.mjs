@@ -15,9 +15,8 @@ const manifest = {
       id: adapter.id,
       displayName: adapter.displayName,
       gatewayBinding: adapter.gatewayBinding,
-      standalone: adapter.standalone,
+      deployment: { ...adapter.deployment, main: `dist/cloudflare/${adapter.component}/worker/index.js`, bundle: false },
     };
-    if (adapter.managed) deployment.managed = adapter.managed;
     return deployment;
   }),
 };

@@ -1,0 +1,432 @@
+import { canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
+import type {
+  AdapterPairingCandidate,
+  AdapterPairingPreparation,
+  AdapterPairingWorkerInterface,
+} from "../adapter-interface";
+import type {
+  AdapterPairConfirmArgs,
+  AdapterPairConfirmResult,
+  AdapterPairDisconnectArgs,
+  AdapterPairDisconnectResult,
+  AdapterPairInfoArgs,
+  AdapterPairInfoResult,
+  AdapterPairInspectArgs,
+  AdapterPairInspectResult,
+} from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
+import type { KernelContext } from "./context";
+import type { IdentityLinkRecord } from "./identity-links";
+import {
+  stableOpaqueId,
+} from "../shared/stable-id";
+import {
+  recordAdapterStatusTransition,
+} from "./lifecycle-responsibilities";
+import {
+  adapterInstallationContext,
+  adapterSupportsPairing,
+  describeAdapterService,
+  readAdapterPairingInfo,
+  normalizeAdapterName,
+  resolveAdapterService,
+} from "./adapter-service";
+
+/** Managed adapter pairing. */
+const pairingCandidateSchema = z.object({
+  accountId: z.string().check(z.minLength(1), z.maxLength(200)),
+  actorId: z.string().check(z.minLength(1), z.maxLength(200)),
+  surfaceId: z.string().check(z.minLength(1), z.maxLength(200)),
+  routeScope: z.optional(z.enum(["surface", "actor"])),
+  actorName: z.optional(z.string()),
+  actorHandle: z.optional(z.string()),
+  expiresAt: z.number(),
+  linked: z.boolean(),
+});
+
+const pairingRouteSchema = z.object({
+  installationId: z.string(),
+  localUid: z.number().check(z.int(), z.nonnegative()),
+  generation: z.string().check(
+    z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/),
+  ),
+});
+
+const pairingPreparationSchema = z.object({
+  candidate: pairingCandidateSchema,
+  route: pairingRouteSchema,
+  previousRoute: z.optional(pairingRouteSchema),
+});
+
+const managedIdentityLinkMetadataSchema = z.looseObject({
+  managed: z.literal(true),
+  surfaceId: z.string().check(z.minLength(1)),
+  routeScope: z.optional(z.enum(["surface", "actor"])),
+  routeGeneration: z.string().check(z.minLength(1)),
+});
+
+function requireInteractivePairingOwner(ctx: KernelContext, syscall: string): number {
+  const uid = interactivePairingOwner(ctx);
+  if (uid === null) throw new Error(`${syscall} requires a direct signed-in user with an active human account`);
+  if (syscall === "adapter.pair.confirm" && !canLinkAdapter(ctx)) throw new Error("This account cannot complete messenger linking");
+  return uid;
+}
+
+export async function handleAdapterPairInfo(
+  args: AdapterPairInfoArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairInfoResult> {
+  requireInteractivePairingOwner(ctx, "adapter.pair.info");
+  const adapter = normalizeAdapterName(args.adapter);
+  const service = await requirePairingService(ctx, adapter);
+  const info = await readAdapterPairingInfo(service, ctx);
+  const result: AdapterPairInfoResult = {
+    adapter,
+    accountId: info.accountId,
+    configured: info.configured,
+  };
+  if (info.botUsername) result.botUsername = info.botUsername;
+  if (info.installUrl) result.installUrl = info.installUrl;
+  return result;
+}
+
+export async function handleAdapterPairInspect(
+  args: AdapterPairInspectArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairInspectResult> {
+  requireInteractivePairingOwner(ctx, "adapter.pair.inspect");
+  const adapter = normalizeAdapterName(args.adapter);
+  const code = normalizePairingCode(args.code);
+  const service = await requirePairingService(ctx, adapter);
+  if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
+  const candidate = requirePairingCandidate(await service.adapterPairingInspect!(
+    adapterInstallationContext(ctx),
+    code,
+  ));
+  return { adapter, ...candidate };
+}
+
+export async function handleAdapterPairConfirm(
+  args: AdapterPairConfirmArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairConfirmResult> {
+  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.confirm");
+  const credentialEpoch = ctx.auth.credentialEpoch(uid);
+  const adapter = normalizeAdapterName(args.adapter);
+  const code = normalizePairingCode(args.code);
+  const service = await requirePairingService(ctx, adapter);
+  if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
+  const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
+  if (!canonicalOrigin) {
+    throw new Error("Managed adapter pairing is not available in this installation");
+  }
+  const operationId = await stableOpaqueId("adapter-pair", [
+    adapter,
+    ctx.installationId,
+    uid,
+    code,
+  ]);
+  const existingCandidate = requirePairingCandidate(await service.adapterPairingInspect!(
+    adapterInstallationContext(ctx),
+    code,
+  ).catch(async () => {
+    const prepared = await service.adapterPairingPrepare!(adapterInstallationContext(ctx), {
+      code,
+      installationId: ctx.installationId,
+      localUid: uid,
+      operationId,
+      canonicalOrigin,
+    });
+    return requirePairingPreparation(prepared, ctx.installationId, uid).candidate;
+  }));
+  const existingLink = ctx.adapters.identityLinks.get(
+    adapter,
+    existingCandidate.accountId,
+    existingCandidate.actorId,
+  );
+  if (existingLink && existingLink.uid !== uid) {
+    throw new Error("This external identity is linked to another user in this GSV");
+  }
+  const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
+  if (retainedLink && (!existingLink || (
+    retainedLink.metadata?.managed === true
+    && retainedLink.metadata.operationId !== operationId
+  ))) {
+    // Only a live, inspected external claim may release a revoked or superseded route for a successor.
+    if (existingCandidate.expiresAt <= Date.now()) throw new Error("Pairing code expired");
+    if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+      throw new Error("Account credentials changed during pairing; sign in again");
+    }
+    if (retainedLink.metadata?.managed === true) {
+      await disconnectManagedIdentityLink(retainedLink, ctx);
+    } else {
+      ctx.adapters.identityLinks.unlink(adapter, existingCandidate.accountId, existingCandidate.actorId);
+    }
+  }
+
+  const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
+    adapterInstallationContext(ctx),
+    {
+      code,
+      installationId: ctx.installationId,
+      localUid: uid,
+      operationId,
+      canonicalOrigin,
+    },
+  ), ctx.installationId, uid);
+  if (
+    prepared.candidate.actorId !== existingCandidate.actorId
+    || prepared.candidate.surfaceId !== existingCandidate.surfaceId
+    || prepared.candidate.accountId !== existingCandidate.accountId
+    || pairingRouteScope(prepared.candidate) !== pairingRouteScope(existingCandidate)
+  ) {
+    throw new Error("Adapter pairing changed during preparation");
+  }
+
+  // A password reset or removal during provider preparation cannot restore the old user's link.
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
+  ctx.adapters.identityLinks.link(
+    adapter,
+    prepared.candidate.accountId,
+    prepared.candidate.actorId,
+    uid,
+    uid,
+    {
+      managed: true,
+      surfaceKind: "dm",
+      surfaceId: prepared.candidate.surfaceId,
+      routeScope: pairingRouteScope(prepared.candidate),
+      routeGeneration: prepared.route.generation,
+      operationId,
+    },
+  );
+  const activated = requirePairingPreparation(await service.adapterPairingActivate!(
+    adapterInstallationContext(ctx),
+    {
+      code,
+      operationId,
+      route: prepared.route,
+      canonicalOrigin,
+    },
+  ), ctx.installationId, uid);
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
+  if (
+    activated.candidate.actorId !== prepared.candidate.actorId
+    || activated.candidate.surfaceId !== prepared.candidate.surfaceId
+    || activated.candidate.accountId !== prepared.candidate.accountId
+    || pairingRouteScope(activated.candidate) !== pairingRouteScope(prepared.candidate)
+    || activated.route.generation !== prepared.route.generation
+  ) {
+    throw new Error("Adapter pairing changed during confirmation");
+  }
+  await service.adapterPairingFinalize!(adapterInstallationContext(ctx), {
+    code,
+    operationId,
+    route: activated.route,
+    canonicalOrigin,
+  });
+  if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
+    throw new Error("Account credentials changed during pairing; sign in again");
+  }
+  const finalizedLink = ctx.adapters.identityLinks.get(adapter, activated.candidate.accountId, activated.candidate.actorId);
+  if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
+    throw new Error("Adapter pairing changed during finalization");
+  }
+  const previousStatus = ctx.adapters.status.get(
+    adapter,
+    activated.candidate.accountId,
+  );
+  ctx.adapters.status.setOwner(adapter, activated.candidate.accountId, uid);
+  ctx.adapters.status.upsert(adapter, activated.candidate.accountId, {
+    accountId: activated.candidate.accountId,
+    connected: true,
+    authenticated: true,
+    mode: "managed-shared",
+    lastActivity: Date.now(),
+  });
+  const currentStatus = ctx.adapters.status.get(
+    adapter,
+    activated.candidate.accountId,
+  );
+  if (currentStatus) {
+    recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+      suppressAuthenticationRequired: true,
+    });
+  }
+  ctx.broadcastToUserUid(uid, "adapter.status", {
+    adapter,
+    accountId: activated.candidate.accountId,
+  });
+  return {
+    paired: true,
+    adapter,
+    accountId: activated.candidate.accountId,
+    actorId: activated.candidate.actorId,
+    surfaceId: activated.candidate.surfaceId,
+    uid,
+  };
+}
+
+export async function handleAdapterPairDisconnect(
+  args: AdapterPairDisconnectArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairDisconnectResult> {
+  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.disconnect");
+  const adapter = normalizeAdapterName(args.adapter);
+  const accountId = args.accountId.trim();
+  const actorId = args.actorId.trim();
+  if (!accountId || !actorId) throw new Error("Adapter pairing identity is required");
+  const link = ctx.adapters.identityLinks.getForCleanup(adapter, accountId, actorId);
+  if (!link) return { disconnected: false, adapter, accountId, actorId };
+  if (link.uid !== uid) throw new Error("Permission denied");
+  return await disconnectManagedIdentityLink(link, ctx);
+}
+
+/** The caller owns authorization; the saved link owns the exact remote route and retry identity. */
+export async function disconnectManagedIdentityLink(
+  link: IdentityLinkRecord,
+  ctx: KernelContext,
+): Promise<AdapterPairDisconnectResult> {
+  const { adapter, accountId, actorId, uid } = link;
+  const metadata = managedIdentityLinkMetadataSchema.safeParse(link.metadata);
+  if (!metadata.success) {
+    throw new Error("This identity is not managed by adapter pairing");
+  }
+  const { surfaceId, routeGeneration: generation } = metadata.data;
+  const service = await requirePairingService(ctx, adapter);
+  const operationId = await stableOpaqueId("adapter-pair-disconnect", [
+    adapter,
+    ctx.installationId,
+    uid,
+    actorId,
+    generation,
+  ]);
+  const previousStatus = ctx.adapters.status.get(adapter, accountId);
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
+  try {
+    const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
+      operationId,
+      installationId: ctx.installationId,
+      accountId,
+      actorId,
+      surfaceId,
+      localUid: uid,
+      generation,
+    });
+    const current = ctx.adapters.identityLinks.getForCleanup(adapter, accountId, actorId);
+    if (
+      current?.uid === uid
+      && current.metadata?.routeGeneration === generation
+    ) {
+      ctx.adapters.identityLinks.unlink(adapter, accountId, actorId);
+    }
+    const stillLinked = ctx.adapters.identityLinks.listByAccount(adapter, accountId).length > 0;
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: true,
+      authenticated: stillLinked,
+      mode: "managed-shared",
+      lastActivity: Date.now(),
+    });
+    const currentStatus = ctx.adapters.status.get(adapter, accountId);
+    if (currentStatus) {
+      recordAdapterStatusTransition(previousStatus, currentStatus, ctx, {
+        suppressAuthenticationRequired: true,
+        intentionalDisconnect: !stillLinked,
+      });
+    }
+    ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
+    return { disconnected: result.disconnected, adapter, accountId, actorId };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
+  }
+}
+
+async function requirePairingService(
+  ctx: KernelContext,
+  adapter: string,
+): Promise<AdapterPairingWorkerInterface> {
+  if (!adapter) throw new Error("adapter is required");
+  const service = resolveAdapterService(ctx.env, adapter);
+  if (!adapterSupportsPairing(service)) throw new Error(`Adapter does not support managed pairing: ${adapter}`);
+  const descriptor = await describeAdapterService(adapter, service);
+  if (!descriptor?.capabilities.pairing) throw new Error(`Adapter does not advertise pairing: ${adapter}`);
+  return {
+    adapterPairingInfo: (...args) => service.adapterPairingInfo!(...args),
+    adapterPairingInspect: (...args) => service.adapterPairingInspect!(...args),
+    adapterPairingPrepare: (...args) => service.adapterPairingPrepare!(...args),
+    adapterPairingActivate: (...args) => service.adapterPairingActivate!(...args),
+    adapterPairingFinalize: (...args) => service.adapterPairingFinalize!(...args),
+    adapterPairingDisconnect: (...args) => service.adapterPairingDisconnect!(...args),
+  };
+}
+
+function normalizePairingCode(value: string): string {
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "");
+  if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+    throw new Error("Pairing code is invalid");
+  }
+  return normalized;
+}
+
+function requirePairingCandidate(value: AdapterPairingCandidate): AdapterPairingCandidate {
+  const parsed = pairingCandidateSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error("Adapter returned an invalid pairing candidate");
+  }
+  const accountId = parsed.data.accountId.trim();
+  const actorId = parsed.data.actorId.trim();
+  const surfaceId = parsed.data.surfaceId.trim();
+  if (!accountId || !actorId || !surfaceId) {
+    throw new Error("Adapter returned an invalid pairing candidate");
+  }
+  return {
+    ...parsed.data,
+    accountId,
+    actorId,
+    surfaceId,
+  };
+}
+
+function pairingRouteScope(candidate: AdapterPairingCandidate): "surface" | "actor" {
+  return candidate.routeScope ?? "surface";
+}
+
+function requirePairingPreparation(
+  value: AdapterPairingPreparation,
+  installationId: string,
+  localUid: number,
+): AdapterPairingPreparation {
+  const parsed = pairingPreparationSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error("Adapter returned an invalid pairing preparation");
+  }
+  const preparation = parsed.data;
+  const candidate = requirePairingCandidate(preparation.candidate);
+  const route = preparation.route;
+  if (
+    !route
+    || route.installationId !== installationId
+    || route.localUid !== localUid
+  ) {
+    throw new Error("Adapter returned an invalid pairing route");
+  }
+  const previous = preparation.previousRoute;
+  if (previous && (
+    previous.installationId.length === 0
+    || !Number.isSafeInteger(previous.localUid)
+    || previous.generation.length === 0
+  )) {
+    throw new Error("Adapter returned an invalid previous pairing route");
+  }
+  const result: AdapterPairingPreparation = {
+    candidate,
+    route,
+  };
+  if (previous) result.previousRoute = previous;
+  return result;
+}

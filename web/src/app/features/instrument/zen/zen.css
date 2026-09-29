@@ -1,0 +1,640 @@
+/* Zen: the response is the page. */
+.zen {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.zen-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px 1fr 56px;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+@media (max-width: 720px) {
+  .zen-body { grid-template-columns: 18px 1fr 18px; }
+}
+.zen-timeline {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 20px;
+}
+.zen-timeline i {
+  width: 5px;
+  height: 5px;
+  background: var(--faint);
+  display: block;
+}
+.zen-timeline i.is-here {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.zen-timeline i.is-human {
+  background: var(--idle);
+}
+.zen-moments {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  scroll-padding-top: calc(var(--instrument-header-height) + 12px);
+  overflow-anchor: none;
+  min-height: 0;
+}
+.zen-content {
+  position: relative;
+  min-height: 100%;
+  padding: calc(var(--instrument-header-height) + 5vh) 0 6vh;
+  display: flex;
+  flex-direction: column;
+}
+/* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
+.zen-content > :first-child { margin-top: auto; }
+.zen-moments::-webkit-scrollbar { display: none; }
+.zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
+.zen-history-status.is-err { color: var(--error); }
+.zen-moment {
+  flex-shrink: 0;
+  max-width: min(var(--measure-response), 92%);
+  margin: 0 auto;
+  width: 100%;
+  padding: 2.2vh 0;
+}
+.zen-moment.is-older { opacity: 0.55; }
+.zen-moment.is-work { padding-block: 1vh; }
+.zen-moment > .who {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+/* when it was sent: kept in the row so nothing moves, visible on hover, focus or under the browse cursor */
+.zen-moment > .who .when {
+  margin-left: 12px;
+  font-family: var(--gsv-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+.zen-moment:hover > .who .when,
+.zen-moment:focus-within > .who .when,
+.zen-moment.is-focus > .who .when { opacity: 1; }
+.zen-moment .answer-model {
+  letter-spacing: normal;
+  text-transform: none;
+}
+.zen-model-fallback {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.zen-moment.is-human .text {
+  font-family: var(--gsv-font-prose);
+  font-weight: 500;
+  font-size: clamp(18px, 1.7vw, 24px);
+  line-height: 1.3;
+  color: var(--accent);
+  white-space: pre-wrap;
+}
+.zen-moment.is-ship .text {
+  font-family: var(--gsv-font-prose);
+  font-weight: 400;
+  font-size: clamp(20px, 2.3vw, 32px);
+  line-height: 1.28;
+  color: var(--text-hi);
+  text-wrap: pretty;
+}
+.zen-moment.is-ship.is-older .text {
+  font-size: clamp(17px, 1.6vw, 22px);
+}
+.zen-moment .text p { margin: 0 0 0.6em; }
+.zen-moment .text p:last-child { margin-bottom: 0; }
+.zen-moment .text code {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.72em;
+  color: var(--label);
+  background: var(--panel-2);
+  padding: 0.05em 0.3em;
+}
+.zen-moment .text a.ref {
+  color: var(--target);
+  border-bottom: 1px solid rgba(151, 170, 255, 0.35);
+}
+.zen-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  background: var(--accent);
+  vertical-align: -0.15em;
+  margin-left: 2px;
+  box-shadow: 0 0 8px var(--accent);
+}
+/* a reply with no words yet: a mark that is not a caret, so nobody types at it (ThinkingMark chooses which) */
+.zen-thinking { display: inline-flex; align-items: center; min-height: 1.28em; vertical-align: top; }
+.zen-thinking.is-glyphs { color: var(--glyph); }
+.zen-thinking.is-glyphs i { display: inline-block; width: 0.6em; text-align: center; font-style: normal; }
+.zen-thinking.is-dot .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: zen-breathe 2.4s ease-in-out infinite;
+}
+@keyframes zen-breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .zen-thinking.is-dot .dot { animation: none; opacity: 0.7; }
+}
+
+/* activity along the target axis: collapsed by default, the raw run one click away */
+.activity {
+  margin: 12px 0 4px;
+  max-width: 900px;
+}
+.activity .line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  color: var(--label);
+  cursor: pointer;
+  padding: 4px 0;
+  letter-spacing: 0.02em;
+}
+.activity .line:hover { color: var(--text-hi); }
+.activity .tri {
+  color: var(--faint);
+  width: 1ch;
+  display: inline-block;
+}
+.activity.is-open .tri { color: var(--accent); }
+.activity .place { color: var(--target); }
+.activity.is-you .place { color: var(--principal); }
+.activity .n { color: var(--text-dim); }
+.activity .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+
+/* the receipt under a ship's message: what it did, in words; the working opens beneath */
+.receipt {
+  margin: 0 0 12px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  border-left: 2px solid var(--border-raised);
+  padding-left: 12px;
+  letter-spacing: 0.02em;
+}
+.receipt-toggle, .zen .work-link {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.receipt-toggle:hover, .zen .work-link:hover { color: var(--text-hi); }
+.receipt-toggle { color: var(--label); }
+.receipt-chevron { display: inline-block; width: 1ch; margin-right: 8px; color: var(--faint); }
+.receipt-toggle[aria-expanded="true"] .receipt-chevron { transform: rotate(90deg); }
+.receipt.is-live .receipt-toggle { font-family: var(--gsv-font-prose); font-size: 14px; letter-spacing: 0; }
+.receipt-toggle .place { color: var(--target); }
+.zen .work-link { text-decoration: underline; text-underline-offset: 3px; }
+.receipt em { font-style: normal; color: var(--path); }
+.receipt .n { color: var(--faint); }
+.receipt .is-failed { color: var(--warn); }
+.receipt .now { color: var(--text); }
+.receipt .pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.receipt .detail { margin-top: 8px; }
+.receipt-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text-dim); }
+.receipt-meta:empty { display: none; }
+.receipt-reply, .receipt .memory-references { margin: 10px 0; }
+.receipt .ph { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
+.receipt .place-rail:first-child .ph { margin-top: 0; }
+
+/* the open receipt as the run happened: purposes open readable requests and results, places named inline */
+.receipt-timeline { list-style: none; margin: 4px 0 12px; padding: 0; display: grid; gap: 2px; }
+.tl-row { min-width: 0; }
+.tl-toggle { display: grid; grid-template-columns: 12px 6px minmax(0, 1fr) auto; gap: 8px; align-items: start; width: 100%; padding: 5px 0; border: 0; background: none; color: var(--text); text-align: left; font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.tl-toggle:hover .tl-purpose, .tl-toggle:focus-visible .tl-purpose { color: var(--text-hi); text-decoration: underline; text-underline-offset: 3px; }
+.tl-chevron { color: var(--faint); font-size: 18px; line-height: 20px; text-align: center; }
+.tl-toggle[aria-expanded="true"] .tl-chevron { transform: rotate(90deg); }
+.tl-row .dot { width: 6px; height: 6px; display: block; margin-top: 8px; }
+.tl-row .dot { background: var(--idle); }
+.tl-row .dot.is-done { background: var(--online); }
+.tl-row .dot.is-failed { background: var(--error); }
+.tl-row .dot.is-running { background: var(--live); box-shadow: 0 0 8px var(--live); }
+.tl-row .dot.is-waiting { background: var(--warn); }
+.tl-thought { margin: 6px 0; font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.5; color: var(--text-dim); text-wrap: pretty; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tl-body { min-width: 0; margin: 2px 0 10px 34px; padding: 4px 0 6px 12px; border-left: 1px solid var(--border); }
+.receipt .tl-place { color: var(--target); }
+.tl-purpose { color: var(--text); font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; letter-spacing: 0; }
+.tl-state { color: var(--text-dim); font-size: 11px; line-height: 21px; }
+.tl-row.is-running .tl-state { color: var(--live); }
+.tl-row.is-waiting .tl-state { color: var(--warn); }
+.tl-row.is-failed .tl-state, .tl-row.is-failed .work-output { color: var(--error); }
+.tl-meta { color: var(--text-dim); }
+.tl-label { margin: 10px 0 4px; color: var(--faint); font-size: 11px; }
+.tl-body .work-call { margin: 6px 0; padding: 0; border: 0; }
+.tl-run-notes { margin: 8px 0 12px 20px; }
+
+.work-calls { margin: 8px 0; display: grid; gap: 14px; }
+.work-calls .machine-rail { margin: 0; }
+.work-call { min-width: 0; }
+.work-heading {
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.work-heading .work-subject { font-family: var(--gsv-font-mono); font-size: 12px; color: var(--path); white-space: pre-wrap; }
+.work-detail, .work-state { color: var(--text-dim); }
+.work-pending { display: inline-flex; vertical-align: middle; margin-right: 6px; }
+.work-call.is-failed .work-state, .work-call.is-failed .work-output { color: var(--error); }
+.work-command, .work-source, .work-output {
+  margin: 0;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--label);
+}
+.work-command, .work-source { color: var(--text-hi); }
+.work-source code { font: inherit; }
+.work-source, .work-output { max-height: min(24rem, 50vh); overflow: auto; }
+.work-shell { border-left: 2px solid var(--border); padding-left: 12px; }
+.work-operation .work-output { margin-top: 4px; }
+.work-code .work-source { margin-top: 6px; border-left: 2px solid var(--border); padding-left: 12px; }
+.work-code .work-output { padding-left: 12px; }
+.work-output-label { margin: 8px 0 4px; font-size: 10px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* approvals: a boxed question with keys, as the TUI does it */
+.zen-approval {
+  margin: 16px 0 4px;
+  border: 1px solid var(--update);
+  padding: 12px 16px;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  color: var(--text);
+  max-width: 720px;
+  box-shadow: 0 0 18px rgba(255, 210, 77, 0.12);
+}
+.zen-approval .q {
+  color: var(--update);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.zen-approval .keys {
+  margin-top: 10px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+}
+.zen-approval kbd {
+  color: var(--text-hi);
+  padding: 0 6px;
+}
+.zen-approval.is-decided {
+  border-color: var(--border);
+  color: var(--text-dim);
+  box-shadow: none;
+}
+.zen-approval.is-decided .q { color: var(--text-dim); }
+
+.zen-bottom {
+  min-width: 0;
+  padding: 0 56px 22px;
+}
+.zen-bottom > * {
+  width: 100%;
+  max-width: min(var(--measure-response), 92%);
+  margin-inline: auto;
+}
+.zen-composer { position: relative; }
+.zen-delegated-approvals {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+.zen-delegated-approvals .zen-approval { margin: 8px 0; }
+.zen-delegated-approvals .fleet-approval { margin-top: 10px; }
+.zen-place-section { margin-top: 12px; }
+.zen-places {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-raised) transparent;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0 0 8px;
+  list-style: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.zen-places li { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; }
+.zen-place {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: left;
+}
+.zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
+.zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
+.zen-place:disabled { color: var(--text-dim); cursor: default; }
+.zen-place-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--idle);
+}
+.zen-place-status.is-online { background: var(--online); }
+.zen-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding-bottom: 10px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.zen-feedback .is-warn { color: var(--update); }
+.zen-feedback .is-err { color: var(--error); }
+@media (max-width: 720px) {
+  .zen-bottom { padding: 0 18px 14px; }
+  .prompt-line { font-size: 15px; }
+  .prompt-line .dir { display: none; }
+}
+.zen-empty {
+  font-family: var(--gsv-font-prose);
+  font-size: clamp(20px, 2.3vw, 30px);
+  line-height: 1.28;
+  color: var(--text-hi);
+  max-width: min(var(--measure-response), 92%);
+  margin: auto;
+  text-wrap: pretty;
+}
+.zen-empty .place { color: var(--target); }
+.zen-empty h1 { margin: 0 0 16px; font-size: inherit; font-weight: 500; }
+.zen-empty .zen-welcome-copy { max-width: 460px; margin: 0; color: var(--text-dim); font-size: 17px; line-height: 1.7; }
+
+/* materialising: a moment before its turn holds its room unseen; at its turn the labels and receipt flicker in and the text settles over a ghost of itself */
+/* The ghost is now the final rendered text: a paint-only mask preserves its exact layout. */
+.zen-moment.is-pending { visibility: hidden; }
+.zen-moment.is-materialising .who,
+.zen-moment.is-materialising .receipt,
+.zen-moment.is-materialising .note-line,
+.zen-moment.is-materialising .activity { animation: zen-materialise 200ms steps(6) both; }
+@keyframes zen-materialise { from { opacity: 0; } to { opacity: 1; } }
+.zen-resolving-text { position: relative; }
+.zen-glyphs { position: absolute; left: 0; pointer-events: none; color: var(--glyph); }
+::highlight(gsv-zen-glyphs) { color: transparent; text-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .zen-moment.is-materialising .who,
+  .zen-moment.is-materialising .receipt,
+  .zen-moment.is-materialising .note-line,
+  .zen-moment.is-materialising .activity { animation: none; }
+  .zen-moment > .who .when { transition: none; }
+}
+.zen-moment .text p {
+  margin: 0 0 0.6em;
+}
+.zen-moment .text a {
+  color: var(--link);
+}
+.zen-moment .text a[href^="#place:"] {
+  color: var(--target);
+  border-bottom: 1px solid rgba(151, 170, 255, 0.35);
+}
+.zen-moment .text pre {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.6em;
+  line-height: 1.5;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.zen-moment .text ul,
+.zen-moment .text ol {
+  padding-left: 1.2em;
+}
+.zen-approval .keys .ibtn {
+  padding: 6px 12px;
+}
+.zen-approval .keys .ibtn kbd {
+  color: inherit;
+  border-color: currentColor;
+  margin-right: 6px;
+}
+/* what Ship wants to do, in the person's words; the raw request folds beneath it */
+.zen-approval .ask {
+  margin: 0;
+  font-family: var(--gsv-font-prose);
+  font-size: clamp(17px, 1.6vw, 22px);
+  line-height: 1.3;
+  color: var(--text-hi);
+  text-wrap: pretty;
+  max-width: var(--measure-prose);
+}
+.zen-approval .fold { margin-top: 10px; }
+.zen-approval .fold summary {
+  list-style: none;
+  display: inline-block;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.zen-approval .fold summary::-webkit-details-marker { display: none; }
+.zen-approval .fold summary::before { content: "▸ "; color: var(--faint); }
+.zen-approval .fold[open] summary::before { content: "▾ "; color: var(--accent); }
+.zen-approval .fold summary:hover { color: var(--accent); }
+.zen-approval .fold summary:focus-visible { outline: none; text-decoration: underline; color: var(--accent); }
+.zen-approval .fold .machine-rail { margin: 8px 0 0; }
+
+/* a folded note: the ship's memory, one line unless opened */
+.zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }
+.zen-moment.is-note { padding: 1.2vh 0; }
+.zen-moment.is-note .who { color: var(--faint); }
+.zen-moment.is-note .note-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  padding: 4px 0;
+}
+.zen-moment.is-note .note-line:hover { color: var(--label); }
+.zen-moment.is-note .tri { color: var(--faint); width: 1ch; }
+.zen-moment.is-note.is-open .tri { color: var(--accent); }
+.zen-moment.is-note .note-text {
+  margin-top: 8px;
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--label);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
+
+/* browse mode: the TUI's block cursor rests on the focused moment; the prompt steps back */
+.zen-moment { position: relative; }
+.zen-moment.is-focus::before {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 2.2vh;
+  width: 8px;
+  height: 1.1em;
+}
+.zen-moment.is-focus.is-older { opacity: 0.85; }
+.zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.zen.is-browse .prompt-line { opacity: 0.55; }
+
+/* the ship's own narration, folded: it is not a message */
+.activity.is-thoughts .line { color: var(--text-dim); }
+.machine-rail.narration { white-space: pre-wrap; font-size: 12px; color: var(--text-dim); max-width: var(--measure-prose); }
+
+/* the place picker floats above the prompt, as the TUI's environment picker does */
+.zen-bottom { position: relative; }
+.zen-picker {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% - 12px);
+  width: 320px;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--panel);
+  border: 1px solid var(--border-raised);
+  padding: 6px;
+  z-index: 4;
+  box-shadow: 0 14px 40px rgba(5, 3, 18, 0.55);
+}
+.instrument.is-light .zen-picker { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
+.zen-picker .pick { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; padding: 6px 10px; font: inherit; color: var(--text); }
+.zen-picker .pick.is-sel, .zen-picker .pick:hover { background: var(--selected); }
+.zen-picker .pick .dot { width: 6px; height: 6px; display: inline-block; background: var(--idle); align-self: center; border-radius: 0; box-shadow: none; }
+.zen-picker .pick .dot.is-on { background: var(--online); }
+.zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
+.zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }
+
+.zen-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; font-size: .7rem; color: var(--text-dim); }
+.zen-connection-status { min-height: 1.5em; white-space: nowrap; }
+.zen-connection-status:empty { display: none; }
+
+.zen-search-dialog { position: fixed; inset: 0; box-sizing: border-box; width: min(760px, calc(100vw / var(--type-scale) - 32px)); max-width: none; height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px)); max-height: calc(var(--instrument-height) / var(--type-scale) - 32px); margin: auto; padding: 0; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); font: inherit; overflow: hidden; }
+.zen-search-dialog[open] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+.zen-search-dialog::backdrop { background: #0005; }
+.zen-search-head, .zen-search-footer { display: flex; align-items: center; gap: 16px; padding: 16px 24px; }
+.zen-search-head { border-bottom: 1px solid var(--rule-inner); }
+.zen-search-head input { flex: 1; min-width: 0; padding: 6px 0; border: 0; outline: none; background: none; color: var(--text); font: inherit; }
+.zen-search-head:focus-within { border-bottom-color: var(--accent); }
+.zen-search-head > button:last-child { margin-left: auto; }
+.zen-search-dialog button { border: 0; background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
+.zen-search-dialog button:hover { color: var(--accent); }
+.zen-search-dialog button:disabled { opacity: .45; cursor: default; }
+.zen-search-dialog kbd { color: var(--faint); font: inherit; margin-left: 8px; }
+.zen-search-results, .zen-search-excerpt { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.zen-search-results > p { margin: 24px; }
+.zen-search-dialog .zen-search-hit { display: block; width: 100%; padding: 18px 24px; text-align: left; border-bottom: 1px solid var(--rule-inner); }
+.zen-search-hit.is-selected { background: var(--accent-soft, #8881); box-shadow: inset 2px 0 var(--accent); }
+.zen-search-byline { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; color: var(--faint); font-size: .7rem; margin-bottom: 8px; }
+.zen-search-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--text); font: 1rem/1.6 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.zen-search-footer { min-height: 1.4em; border-top: 1px solid var(--rule-inner); color: var(--faint); font-size: .7rem; flex-wrap: wrap; }
+.zen-search-footer > span { margin-right: auto; }
+.zen-search-excerpt { padding: 12px 24px; }
+.zen-search-excerpt > article { margin: 0 -12px; padding: 18px 12px; border-left: 2px solid transparent; }
+.zen-search-excerpt > article.is-match { border-left-color: var(--accent); background: var(--accent-soft, #8881); }
+.zen-search-excerpt .text { font: 1rem/1.6 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.zen-search-excerpt pre { overflow: auto; }
+@container instrument (max-width: 380px) {
+  .zen-search-head, .zen-search-footer { gap: 8px; padding: 12px; }
+  .zen-search-head kbd { display: none; }
+  .zen-search-dialog .zen-search-hit { padding: 16px 12px; }
+  .zen-search-excerpt { padding: 12px; }
+}
+.zen-send-status { display: inline-flex; margin-left: 10px; vertical-align: middle; }
+.zen-send-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem; margin-top: .65rem; font-size: .75rem; color: var(--text-dim); }
+.zen-send-actions .is-err { color: var(--error); }
+.zen-send-actions button { padding: .25rem 0; background: none; border: 0; color: var(--text-dim); font: inherit; cursor: pointer; }
+.zen-send-actions button:hover { color: var(--accent); }
+.zen-send-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.zen-compose-actions button, .zen-draft-attachment button, .zen-media button { padding: .2rem 0; border: 0; background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
+.zen-compose-actions button:hover, .zen-draft-attachment button:hover, .zen-media button:hover { color: var(--accent); }
+.zen-compose-actions button:disabled, .zen-draft-attachment button:disabled { opacity: .45; cursor: not-allowed; }
+.zen-draft-attachments { display: flex; flex-wrap: wrap; gap: .75rem; padding: 0; margin: 0 0 1rem; list-style: none; max-height: 22vh; overflow: auto; }
+.zen-draft-attachment { display: flex; align-items: center; gap: .65rem; max-width: 100%; padding: .5rem .75rem; border: 1px solid var(--border); font-size: .75rem; }
+.zen-draft-attachment img { width: 3rem; height: 3rem; object-fit: cover; flex-shrink: 0; }
+.zen-draft-attachment .file-name { overflow-wrap: anywhere; min-width: 0; }
+.zen-draft-attachment small { display: block; color: var(--text-dim); margin-top: .35rem; }
+.zen-draft-attachment button { font-size: 1rem; padding: .25rem; }
+.zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
+.zen-media { margin: 1rem 0; max-width: 100%; font: .75rem/1.6 var(--gsv-font-mono); }
+.zen-media-image { display: block; width: fit-content; max-width: 100%; }
+.zen-media img, .zen-media video { display: block; max-width: 100%; max-height: min(28rem, 55vh); object-fit: contain; }
+.zen-media audio { max-width: 100%; }
+.zen-media figcaption { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .5rem; color: var(--text-dim); overflow-wrap: anywhere; }
+.zen-media a { color: var(--accent); text-underline-offset: 3px; }
+.zen-media.is-document { border-left: 1px solid var(--border); padding-left: 1rem; }
+.zen-media-error { color: var(--error); }
+.zen-media details { margin-top: .5rem; }
+.zen-media details p { font-family: var(--gsv-font-prose); white-space: pre-wrap; }
+.terminal-controls { margin-top: 8px; }
+.terminal-actions, .terminal-input { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.terminal-controls button { border: 0; background: transparent; padding: 4px 0; color: var(--text-dim); font: inherit; cursor: pointer; }
+.terminal-controls button:hover { color: var(--text); }
+.terminal-controls button.is-danger, .terminal-error { color: var(--error); }
+.terminal-controls button:disabled { opacity: 0.45; cursor: default; }
+.terminal-input input { min-width: 0; flex: 1; background: transparent; color: var(--text); border: 0; border-bottom: 1px solid var(--rule-inner); font: inherit; padding: 4px 0; }
+.terminal-input input:focus { outline: none; border-bottom-color: var(--accent); caret-color: var(--accent); }
+.terminal-note { color: var(--text-dim); }

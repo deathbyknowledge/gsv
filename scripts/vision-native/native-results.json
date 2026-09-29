@@ -1,0 +1,4536 @@
+{
+  "date": "2026-09-09",
+  "description": "Public-fixture gesture helper benchmarks on one live Linux desktop; logical CPUs 0-3 are distinct physical cores.",
+  "units": "microseconds unless specified otherwise",
+  "tractBaseline": {
+    "schemaVersion": 4,
+    "gitRevision": "75b839d1d6c103410c45db17c7e216d925aae87f",
+    "workingTreeDirty": false,
+    "rustcVersion": "rustc 1.100.0-nightly (bff8e12ff 2026-08-26)",
+    "inferenceThreads": 4,
+    "depthwiseKernel": "channel-simd",
+    "system": {
+      "operatingSystem": "linux",
+      "architecture": "x86_64",
+      "logicalCpus": 4,
+      "processor": "AMD Ryzen 9 5900X 12-Core Processor"
+    },
+    "warmupIterations": 6,
+    "measuredIterations": 30,
+    "modelLoad": {
+      "executions": 6,
+      "minimumUs": 76514,
+      "medianUs": 77273,
+      "p95Us": 79344,
+      "maximumUs": 82223,
+      "meanUs": 78290
+    },
+    "scenarios": [
+      {
+        "name": "fullDetection",
+        "description": "Palm discovery and one-hand landmark and gesture inference",
+        "samples": 30,
+        "framesPerSecond": 27.29910813813713,
+        "total": {
+          "executions": 30,
+          "minimumUs": 35205,
+          "medianUs": 36211,
+          "p95Us": 39196,
+          "maximumUs": 40190,
+          "meanUs": 36631
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 30,
+            "minimumUs": 8948,
+            "medianUs": 9499,
+            "p95Us": 10795,
+            "maximumUs": 13080,
+            "meanUs": 9714
+          },
+          "landmarkPostprocess": {
+            "executions": 30,
+            "minimumUs": 1,
+            "medianUs": 1,
+            "p95Us": 1,
+            "maximumUs": 2,
+            "meanUs": 1
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1029,
+            "medianUs": 1194,
+            "p95Us": 1236,
+            "maximumUs": 1248,
+            "meanUs": 1167
+          },
+          "palmInference": {
+            "executions": 30,
+            "minimumUs": 23868,
+            "medianUs": 24520,
+            "p95Us": 26188,
+            "maximumUs": 28118,
+            "meanUs": 24894
+          },
+          "palmPostprocess": {
+            "executions": 30,
+            "minimumUs": 10,
+            "medianUs": 12,
+            "p95Us": 13,
+            "maximumUs": 18,
+            "meanUs": 11
+          },
+          "palmPreprocess": {
+            "executions": 30,
+            "minimumUs": 818,
+            "medianUs": 828,
+            "p95Us": 845,
+            "maximumUs": 927,
+            "meanUs": 833
+          },
+          "poseRecognition": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "continuousTracking",
+        "description": "One tracked hand while palm discovery continues looking for a second hand",
+        "samples": 30,
+        "framesPerSecond": 86.64209881820177,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1080,
+          "medianUs": 10496,
+          "p95Us": 12400,
+          "maximumUs": 38146,
+          "meanUs": 11541
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 9324,
+            "p95Us": 10607,
+            "maximumUs": 11153,
+            "meanUs": 8566
+          },
+          "landmarkPostprocess": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 1,
+            "p95Us": 1,
+            "maximumUs": 3,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1078,
+            "medianUs": 1170,
+            "p95Us": 1269,
+            "maximumUs": 1394,
+            "meanUs": 1186
+          },
+          "palmInference": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 26375,
+            "meanUs": 1727
+          },
+          "palmPostprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 12,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 815,
+            "meanUs": 54
+          },
+          "poseRecognition": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandProcessing",
+        "description": "Two known hand regions without repeating full-frame palm discovery",
+        "samples": 30,
+        "framesPerSecond": 254.76192498110515,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1170,
+          "medianUs": 1354,
+          "p95Us": 12663,
+          "maximumUs": 13210,
+          "meanUs": 3925
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 11418,
+            "maximumUs": 11756,
+            "meanUs": 2617
+          },
+          "landmarkPostprocess": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 5,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 1160,
+            "medianUs": 1289,
+            "p95Us": 1430,
+            "maximumUs": 1493,
+            "meanUs": 1287
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      }
+    ],
+    "modelProfiles": [
+      {
+        "name": "palmDetector",
+        "samples": 30,
+        "nodeCount": 369,
+        "total": {
+          "executions": 30,
+          "minimumUs": 23740,
+          "medianUs": 24392,
+          "p95Us": 25156,
+          "maximumUs": 25736,
+          "meanUs": 24445
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 100,
+          "medianUs": 120,
+          "p95Us": 162,
+          "maximumUs": 175,
+          "meanUs": 124
+        },
+        "operationGroups": {
+          "Add": {
+            "executions": 30,
+            "minimumUs": 32,
+            "medianUs": 35,
+            "p95Us": 38,
+            "maximumUs": 38,
+            "meanUs": 34
+          },
+          "ChannelDepthWiseConv": {
+            "executions": 30,
+            "minimumUs": 8182,
+            "medianUs": 8388,
+            "p95Us": 8685,
+            "maximumUs": 8812,
+            "meanUs": 8400
+          },
+          "Concat": {
+            "executions": 30,
+            "minimumUs": 3,
+            "medianUs": 4,
+            "p95Us": 6,
+            "maximumUs": 6,
+            "meanUs": 4
+          },
+          "IntoShape": {
+            "executions": 30,
+            "minimumUs": 13,
+            "medianUs": 17,
+            "p95Us": 19,
+            "maximumUs": 20,
+            "meanUs": 16
+          },
+          "LazyIm2col": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "OptAddUnicast": {
+            "executions": 30,
+            "minimumUs": 2457,
+            "medianUs": 2504,
+            "p95Us": 2575,
+            "maximumUs": 2649,
+            "meanUs": 2509
+          },
+          "OptMatMul": {
+            "executions": 30,
+            "minimumUs": 2055,
+            "medianUs": 2239,
+            "p95Us": 2375,
+            "maximumUs": 2546,
+            "meanUs": 2237
+          },
+          "OptMatMulPack": {
+            "executions": 30,
+            "minimumUs": 889,
+            "medianUs": 954,
+            "p95Us": 1036,
+            "maximumUs": 1111,
+            "meanUs": 967
+          },
+          "OptMaxByScalar": {
+            "executions": 30,
+            "minimumUs": 555,
+            "medianUs": 574,
+            "p95Us": 602,
+            "maximumUs": 615,
+            "meanUs": 577
+          },
+          "OptMaxPool": {
+            "executions": 30,
+            "minimumUs": 375,
+            "medianUs": 388,
+            "p95Us": 451,
+            "maximumUs": 557,
+            "meanUs": 403
+          },
+          "OptMinByScalar": {
+            "executions": 30,
+            "minimumUs": 260,
+            "medianUs": 268,
+            "p95Us": 292,
+            "maximumUs": 302,
+            "meanUs": 271
+          },
+          "OptMulUnicast": {
+            "executions": 30,
+            "minimumUs": 2149,
+            "medianUs": 2181,
+            "p95Us": 2256,
+            "maximumUs": 2309,
+            "meanUs": 2191
+          },
+          "Pad": {
+            "executions": 30,
+            "minimumUs": 130,
+            "medianUs": 144,
+            "p95Us": 160,
+            "maximumUs": 212,
+            "meanUs": 147
+          },
+          "Resize": {
+            "executions": 30,
+            "minimumUs": 6431,
+            "medianUs": 6486,
+            "p95Us": 6669,
+            "maximumUs": 7364,
+            "meanUs": 6550
+          },
+          "Source": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "model_1/model/up_sampling2d_1/resize/ResizeBilinear",
+            "operation": "Resize",
+            "detail": "Resize",
+            "outputFacts": [
+              "1,24,24,256,F32"
+            ],
+            "sharePercent": 21.68342075999106,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 5133,
+              "medianUs": 5196,
+              "p95Us": 5386,
+              "maximumUs": 5624,
+              "meanUs": 5238
+            }
+          },
+          {
+            "name": "model_1/model/up_sampling2d/resize/ResizeBilinear",
+            "operation": "Resize",
+            "detail": "Resize",
+            "outputFacts": [
+              "1,12,12,256,F32"
+            ],
+            "sharePercent": 5.42827104931305,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 1276,
+              "medianUs": 1290,
+              "p95Us": 1319,
+              "maximumUs": 1787,
+              "meanUs": 1311
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 4.6880648125408735,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 1087,
+              "medianUs": 1101,
+              "p95Us": 1131,
+              "maximumUs": 1695,
+              "meanUs": 1132
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_3/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 4.6578494973772,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 1090,
+              "medianUs": 1101,
+              "p95Us": 1194,
+              "maximumUs": 1375,
+              "meanUs": 1125
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_1/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 4.623357128468897,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 1087,
+              "medianUs": 1105,
+              "p95Us": 1132,
+              "maximumUs": 1373,
+              "meanUs": 1117
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_2/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 4.566237765556748,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 1091,
+              "medianUs": 1099,
+              "p95Us": 1126,
+              "maximumUs": 1131,
+              "meanUs": 1103
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_5/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,48,48,64,F32"
+            ],
+            "sharePercent": 1.7978802369763713,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 417,
+              "medianUs": 421,
+              "p95Us": 521,
+              "maximumUs": 560,
+              "meanUs": 434
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_7/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,48,48,64,F32"
+            ],
+            "sharePercent": 1.7984321148789042,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 414,
+              "medianUs": 422,
+              "p95Us": 447,
+              "maximumUs": 608,
+              "meanUs": 434
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_6/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,48,48,64,F32"
+            ],
+            "sharePercent": 1.7795302967171542,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 416,
+              "medianUs": 421,
+              "p95Us": 453,
+              "maximumUs": 556,
+              "meanUs": 429
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_8/depthwise1",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,48,48,64,F32"
+            ],
+            "sharePercent": 1.7789784188146214,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 417,
+              "medianUs": 420,
+              "p95Us": 433,
+              "maximumUs": 584,
+              "meanUs": 429
+            }
+          },
+          {
+            "name": "model_1/model/p_re_lu/add;model_1/model/p_re_lu/Relu;model_1/model/p_re_lu/Neg_1;model_1/model/p_re_lu/Relu_1;model_1/model/p_re_lu/mul1.scaled",
+            "operation": "OptMulUnicast",
+            "detail": "OptMulUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2537286250789876,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 293,
+              "medianUs": 299,
+              "p95Us": 309,
+              "maximumUs": 397,
+              "meanUs": 302
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_4/FusedBatchNormV3;model_1/model/depthwise_conv2d_4/depthwise;model_1/model/conv2d_4/Conv2D1",
+            "operation": "OptAddUnicast",
+            "detail": "OptAddUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.252072991371389,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 294,
+              "medianUs": 298,
+              "p95Us": 305,
+              "maximumUs": 413,
+              "meanUs": 302
+            }
+          },
+          {
+            "name": "model_1/model/p_re_lu_4/add;model_1/model/p_re_lu_4/Relu;model_1/model/p_re_lu_4/Neg_1;model_1/model/p_re_lu_4/Relu_1;model_1/model/p_re_lu_4/mul1.scaled",
+            "operation": "OptMulUnicast",
+            "detail": "OptMulUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2524868997982885,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 295,
+              "medianUs": 297,
+              "p95Us": 318,
+              "maximumUs": 400,
+              "meanUs": 302
+            }
+          },
+          {
+            "name": "model_1/model/p_re_lu_1/add;model_1/model/p_re_lu_1/Relu;model_1/model/p_re_lu_1/Neg_1;model_1/model/p_re_lu_1/Relu_1;model_1/model/p_re_lu_1/mul1.scaled",
+            "operation": "OptMulUnicast",
+            "detail": "OptMulUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2466921818216938,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 294,
+              "medianUs": 297,
+              "p95Us": 305,
+              "maximumUs": 382,
+              "meanUs": 301
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_1/FusedBatchNormV3;model_1/model/depthwise_conv2d_4/depthwise;model_1/model/conv2d_1/Conv2D1",
+            "operation": "OptAddUnicast",
+            "detail": "OptAddUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2346888374416045,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 293,
+              "medianUs": 296,
+              "p95Us": 302,
+              "maximumUs": 344,
+              "meanUs": 298
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_3/FusedBatchNormV3;model_1/model/depthwise_conv2d_4/depthwise;model_1/model/conv2d_3/Conv2D1",
+            "operation": "OptAddUnicast",
+            "detail": "OptAddUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2342749290147048,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 293,
+              "medianUs": 297,
+              "p95Us": 306,
+              "maximumUs": 310,
+              "meanUs": 298
+            }
+          },
+          {
+            "name": "model_1/model/p_re_lu_3/add;model_1/model/p_re_lu_3/Relu;model_1/model/p_re_lu_3/Neg_1;model_1/model/p_re_lu_3/Relu_1;model_1/model/p_re_lu_3/mul1.scaled",
+            "operation": "OptMulUnicast",
+            "detail": "OptMulUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2363444711492029,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 294,
+              "medianUs": 298,
+              "p95Us": 302,
+              "maximumUs": 313,
+              "meanUs": 298
+            }
+          },
+          {
+            "name": "model_1/model/p_re_lu_2/add;model_1/model/p_re_lu_2/Relu;model_1/model/p_re_lu_2/Neg_1;model_1/model/p_re_lu_2/Relu_1;model_1/model/p_re_lu_2/mul1.scaled",
+            "operation": "OptMulUnicast",
+            "detail": "OptMulUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.2333091426852723,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 295,
+              "medianUs": 297,
+              "p95Us": 302,
+              "maximumUs": 306,
+              "meanUs": 297
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_2/FusedBatchNormV3;model_1/model/depthwise_conv2d_4/depthwise;model_1/model/conv2d_2/Conv2D1",
+            "operation": "OptAddUnicast",
+            "detail": "OptAddUnicast",
+            "outputFacts": [
+              "1,96,96,32,F32"
+            ],
+            "sharePercent": 1.227928333135577,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 293,
+              "medianUs": 296,
+              "p95Us": 300,
+              "maximumUs": 303,
+              "meanUs": 296
+            }
+          },
+          {
+            "name": "model_1/model/depthwise_conv2d_4/depthwise2",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([2, 2]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,48,48,32,F32"
+            ],
+            "sharePercent": 1.1923322084222088,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 274,
+              "medianUs": 278,
+              "p95Us": 304,
+              "maximumUs": 466,
+              "meanUs": 288
+            }
+          }
+        ]
+      },
+      {
+        "name": "landmarkDetector",
+        "samples": 30,
+        "nodeCount": 256,
+        "total": {
+          "executions": 30,
+          "minimumUs": 8806,
+          "medianUs": 9423,
+          "p95Us": 10686,
+          "maximumUs": 11822,
+          "meanUs": 9667
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 64,
+          "medianUs": 94,
+          "p95Us": 125,
+          "maximumUs": 136,
+          "meanUs": 95
+        },
+        "operationGroups": {
+          "Add": {
+            "executions": 30,
+            "minimumUs": 666,
+            "medianUs": 707,
+            "p95Us": 756,
+            "maximumUs": 767,
+            "meanUs": 713
+          },
+          "ChannelDepthWiseConv": {
+            "executions": 30,
+            "minimumUs": 3356,
+            "medianUs": 3612,
+            "p95Us": 4114,
+            "maximumUs": 4333,
+            "meanUs": 3644
+          },
+          "IntoShape": {
+            "executions": 30,
+            "minimumUs": 28,
+            "medianUs": 37,
+            "p95Us": 45,
+            "maximumUs": 48,
+            "meanUs": 37
+          },
+          "LazyIm2col": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "OptAddUnicast": {
+            "executions": 30,
+            "minimumUs": 613,
+            "medianUs": 628,
+            "p95Us": 657,
+            "maximumUs": 744,
+            "meanUs": 635
+          },
+          "OptMatMul": {
+            "executions": 30,
+            "minimumUs": 2190,
+            "medianUs": 2465,
+            "p95Us": 2800,
+            "maximumUs": 4727,
+            "meanUs": 2566
+          },
+          "OptMatMulPack": {
+            "executions": 30,
+            "minimumUs": 805,
+            "medianUs": 879,
+            "p95Us": 1032,
+            "maximumUs": 1194,
+            "meanUs": 898
+          },
+          "OptMaxByScalar": {
+            "executions": 30,
+            "minimumUs": 444,
+            "medianUs": 465,
+            "p95Us": 526,
+            "maximumUs": 589,
+            "meanUs": 473
+          },
+          "OptMinByScalar": {
+            "executions": 30,
+            "minimumUs": 443,
+            "medianUs": 461,
+            "p95Us": 527,
+            "maximumUs": 617,
+            "meanUs": 471
+          },
+          "OptMulByScalar": {
+            "executions": 30,
+            "minimumUs": 1,
+            "medianUs": 3,
+            "p95Us": 3,
+            "maximumUs": 4,
+            "meanUs": 2
+          },
+          "Pad": {
+            "executions": 30,
+            "minimumUs": 95,
+            "medianUs": 106,
+            "p95Us": 123,
+            "maximumUs": 206,
+            "meanUs": 110
+          },
+          "Reduce<Sum>": {
+            "executions": 30,
+            "minimumUs": 10,
+            "medianUs": 12,
+            "p95Us": 17,
+            "maximumUs": 19,
+            "meanUs": 12
+          },
+          "Sigmoid": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 1,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 1
+          },
+          "Source": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "model_1/model/re_lu_1/Relu6;model_1/model/batch_normalization_1/FusedBatchNormV3;model_1/model/depthwise_conv2d/depthwise;model_1/model/conv2d_5/Conv2D",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[3, 3] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,112,112,24,F32"
+            ],
+            "sharePercent": 5.924157243928418,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 516,
+              "medianUs": 534,
+              "p95Us": 659,
+              "maximumUs": 825,
+              "meanUs": 559
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_9/Relu6;model_1/model/batch_normalization_13/FusedBatchNormV3;model_1/model/batch_normalization_16/FusedBatchNormV3;model_1/model/depthwise_conv2d_5/depthwise;model_1/model/depthwise_conv2d_4/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,28,28,240,F32"
+            ],
+            "sharePercent": 5.294955807769086,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 463,
+              "medianUs": 474,
+              "p95Us": 651,
+              "maximumUs": 737,
+              "meanUs": 500
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_5/Relu6;model_1/model/batch_normalization_7/FusedBatchNormV3;model_1/model/batch_normalization_10/FusedBatchNormV3;model_1/model/depthwise_conv2d_3/depthwise;model_1/model/depthwise_conv2d_2/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[3, 3] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,56,56,144,F32"
+            ],
+            "sharePercent": 5.151057721472557,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 442,
+              "medianUs": 455,
+              "p95Us": 562,
+              "maximumUs": 758,
+              "meanUs": 486
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_2/Relu6;model_1/model/batch_normalization_3/FusedBatchNormV3;model_1/model/batch_normalization_4/FusedBatchNormV3;model_1/model/depthwise_conv2d_1/depthwise;model_1/model/conv2d_2/Conv2D",
+            "operation": "OptAddUnicast",
+            "detail": "OptAddUnicast",
+            "outputFacts": [
+              "1,112,112,64,F32"
+            ],
+            "sharePercent": 4.8131793717861,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 442,
+              "medianUs": 449,
+              "p95Us": 473,
+              "maximumUs": 563,
+              "meanUs": 454
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_7/Relu6;model_1/model/batch_normalization_10/FusedBatchNormV3;model_1/model/depthwise_conv2d_3/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([2, 2]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,28,28,144,F32"
+            ],
+            "sharePercent": 3.418990315094486,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 286,
+              "medianUs": 293,
+              "p95Us": 439,
+              "maximumUs": 533,
+              "meanUs": 323
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_19/Relu6;model_1/model/batch_normalization_28/FusedBatchNormV3;model_1/model/batch_normalization_34/FusedBatchNormV3;model_1/model/depthwise_conv2d_11/depthwise;model_1/model/depthwise_conv2d_9/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,14,14,672,F32"
+            ],
+            "sharePercent": 3.192562444010242,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 274,
+              "medianUs": 281,
+              "p95Us": 383,
+              "maximumUs": 427,
+              "meanUs": 301
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_21/Relu6;model_1/model/batch_normalization_31/FusedBatchNormV3;model_1/model/depthwise_conv2d_10/depthwise;model_1/model/depthwise_conv2d_11/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,14,14,672,F32"
+            ],
+            "sharePercent": 3.0571289510252737,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 272,
+              "medianUs": 277,
+              "p95Us": 339,
+              "maximumUs": 390,
+              "meanUs": 288
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_3/Relu6;model_1/model/batch_normalization_4/FusedBatchNormV3;model_1/model/depthwise_conv2d_1/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[3, 3] (strides:Some([2, 2]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,56,56,64,F32"
+            ],
+            "sharePercent": 2.557717945643203,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 229,
+              "medianUs": 233,
+              "p95Us": 266,
+              "maximumUs": 332,
+              "meanUs": 241
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_2/FusedBatchNormV3;model_1/model/conv2d_1/Conv2D1",
+            "operation": "Add",
+            "detail": "Add",
+            "outputFacts": [
+              "112,112,16,F32"
+            ],
+            "sharePercent": 2.432512502909704,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 207,
+              "medianUs": 230,
+              "p95Us": 235,
+              "maximumUs": 258,
+              "meanUs": 229
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_17/Relu6;model_1/model/batch_normalization_25/FusedBatchNormV3;model_1/model/depthwise_conv2d_8/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,14,14,480,F32"
+            ],
+            "sharePercent": 2.3066016774002414,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 197,
+              "medianUs": 201,
+              "p95Us": 285,
+              "maximumUs": 325,
+              "meanUs": 218
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_2/Relu6;model_1/model/batch_normalization_3/FusedBatchNormV3;model_1/model/batch_normalization_4/FusedBatchNormV3;model_1/model/depthwise_conv2d_1/depthwise;model_1/model/conv2d_2/Conv2D.einsum",
+            "operation": "OptMatMul",
+            "detail": "OptMatMul: c_shape:1,12544,64,F32, c_m_axis:Some(1) c_n_axis:Some(2) m:12544 n:64; Mult: m:12544 k:16 n:64 with [fma_mmm_f32_24x4]; Ops: matmul(k=16, PackedF32[24]@256+1\u2022PackedF32[4]@4+1) >>> store",
+            "outputFacts": [
+              "1,12544,64,F32"
+            ],
+            "sharePercent": 1.5712401334584212,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 125,
+              "medianUs": 143,
+              "p95Us": 175,
+              "maximumUs": 193,
+              "meanUs": 148
+            }
+          },
+          {
+            "name": "model_1/model/re_lu/Relu6;model_1/model/batch_normalization/FusedBatchNormV3;model_1/model/batch_normalization_1/FusedBatchNormV3;model_1/model/depthwise_conv2d/depthwise;model_1/model/conv2d_5/Conv2D;model_1/model/conv2d/Conv2D.matmatmul",
+            "operation": "OptMatMul",
+            "detail": "OptMatMul: c_shape:1,12544,1,24,F32, c_m_axis:Some(3) c_n_axis:Some(1) m:24 n:12544; Mult: m:24 k:27 n:12544 with [fma_mmm_f32_24x4]; Ops: matmul(k=27, PackedF32[24]@256+1\u2022PackedF32[4]@4+1) >>> rowAdd >>> store",
+            "outputFacts": [
+              "1,12544,1,24,F32"
+            ],
+            "sharePercent": 1.5017599300260287,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 127,
+              "medianUs": 131,
+              "p95Us": 181,
+              "maximumUs": 187,
+              "meanUs": 141
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_38/FusedBatchNormV3;model_1/model/conv2d_29/Conv2D;model_1/model/conv2d_25/Conv2D1.einsum",
+            "operation": "OptMatMul",
+            "detail": "OptMatMul: c_shape:49,192,F32, c_m_axis:Some(1) c_n_axis:Some(0) m:192 n:49; Mult: m:192 k:1152 n:49 with [fma_mmm_f32_16x5]; Ops: matmul(k=1152, PackedF32[16]@256+1\u2022PackedF32[5]@4+1) >>> store",
+            "outputFacts": [
+              "49,192,F32"
+            ],
+            "sharePercent": 1.4721338534355668,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 64,
+              "medianUs": 74,
+              "p95Us": 103,
+              "maximumUs": 1929,
+              "meanUs": 139
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_8/FusedBatchNormV3;model_1/model/conv2d_5/Conv2D1.einsum.pack_a",
+            "operation": "OptMatMulPack",
+            "detail": "OptMatMulPack: [PackedF32[16]@256+1]. k axis: 2, mn axis: 1",
+            "outputFacts": [
+              "1,F32 \ud83d\udd0d DynPackedExoticFact { k: Val(144), mn: Val(3136), packers: [PackedF32[16]@256+1] } "
+            ],
+            "sharePercent": 1.4410970112931782,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 121,
+              "medianUs": 126,
+              "p95Us": 177,
+              "maximumUs": 227,
+              "meanUs": 136
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_25/Relu6;model_1/model/batch_normalization_37/FusedBatchNormV3;model_1/model/depthwise_conv2d_12/depthwise;model_1/model/depthwise_conv2d_15/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,7,7,1152,F32"
+            ],
+            "sharePercent": 1.2594609464826088,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 105,
+              "medianUs": 111,
+              "p95Us": 153,
+              "maximumUs": 163,
+              "meanUs": 119
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_32/FusedBatchNormV3;model_1/model/conv2d_21/Conv2D1.einsum",
+            "operation": "OptMatMul",
+            "detail": "OptMatMul: c_shape:196,112,F32, c_m_axis:Some(0) c_n_axis:Some(1) m:196 n:112; Mult: m:196 k:672 n:112 with [fma_mmm_f32_40x2]; Ops: matmul(k=672, PackedF32[40]@256+1\u2022PackedF32[2]@4+1) >>> store",
+            "outputFacts": [
+              "196,112,F32"
+            ],
+            "sharePercent": 1.240062920143616,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 98,
+              "medianUs": 115,
+              "p95Us": 134,
+              "maximumUs": 156,
+              "meanUs": 117
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_4/Relu6;model_1/model/batch_normalization_6/FusedBatchNormV3;model_1/model/batch_normalization_10/FusedBatchNormV3;model_1/model/depthwise_conv2d_3/depthwise;model_1/model/conv2d_4/Conv2D",
+            "operation": "Add",
+            "detail": "Add",
+            "outputFacts": [
+              "1,56,56,144,F32"
+            ],
+            "sharePercent": 1.2347725493238906,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 98,
+              "medianUs": 114,
+              "p95Us": 128,
+              "maximumUs": 142,
+              "meanUs": 116
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_6/Relu6;model_1/model/batch_normalization_9/FusedBatchNormV3;model_1/model/batch_normalization_10/FusedBatchNormV3;model_1/model/depthwise_conv2d_3/depthwise;model_1/model/conv2d_6/Conv2D",
+            "operation": "Add",
+            "detail": "Add",
+            "outputFacts": [
+              "1,56,56,144,F32"
+            ],
+            "sharePercent": 1.2192541282526963,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 100,
+              "medianUs": 112,
+              "p95Us": 131,
+              "maximumUs": 146,
+              "meanUs": 115
+            }
+          },
+          {
+            "name": "model_1/model/batch_normalization_29/FusedBatchNormV3;model_1/model/conv2d_21/Conv2D;model_1/model/conv2d_19/Conv2D1.einsum",
+            "operation": "OptMatMul",
+            "detail": "OptMatMul: c_shape:196,112,F32, c_m_axis:Some(0) c_n_axis:Some(1) m:196 n:112; Mult: m:196 k:672 n:112 with [fma_mmm_f32_40x2]; Ops: matmul(k=672, PackedF32[40]@256+1\u2022PackedF32[2]@4+1) >>> store",
+            "outputFacts": [
+              "196,112,F32"
+            ],
+            "sharePercent": 1.1956238052579231,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 97,
+              "medianUs": 110,
+              "p95Us": 122,
+              "maximumUs": 159,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "model_1/model/re_lu_29/Relu6;model_1/model/batch_normalization_43/FusedBatchNormV3;model_1/model/depthwise_conv2d_14/depthwise;model_1/model/depthwise_conv2d_15/depthwise",
+            "operation": "ChannelDepthWiseConv",
+            "detail": "ChannelDepthWiseConv: Data format: NHWC; Kernel shape:[5, 5] (strides:Some([1, 1]), padding:SameUpper, dilations:Some([1, 1]))",
+            "outputFacts": [
+              "1,7,7,1152,F32"
+            ],
+            "sharePercent": 1.2005614846896668,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 100,
+              "medianUs": 110,
+              "p95Us": 139,
+              "maximumUs": 165,
+              "meanUs": 113
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "litertFourThreadsInitial": {
+    "schemaVersion": 5,
+    "gitRevision": "75b839d1d6c103410c45db17c7e216d925aae87f",
+    "workingTreeDirty": true,
+    "rustcVersion": "rustc 1.100.0-nightly (bff8e12ff 2026-08-26)",
+    "inferenceThreads": 4,
+    "landmarkThreads": 2,
+    "backend": "litert-2.2.0-xnnpack",
+    "system": {
+      "operatingSystem": "linux",
+      "architecture": "x86_64",
+      "logicalCpus": 4,
+      "processor": "AMD Ryzen 9 5900X 12-Core Processor"
+    },
+    "warmupIterations": 6,
+    "measuredIterations": 30,
+    "modelLoad": {
+      "executions": 6,
+      "minimumUs": 12311,
+      "medianUs": 12345,
+      "p95Us": 12415,
+      "maximumUs": 12490,
+      "meanUs": 12375
+    },
+    "scenarios": [
+      {
+        "name": "fullDetection",
+        "description": "Palm discovery and one-hand landmark and gesture inference",
+        "samples": 30,
+        "framesPerSecond": 113.94842694196606,
+        "total": {
+          "executions": 30,
+          "minimumUs": 8481,
+          "medianUs": 8734,
+          "p95Us": 9076,
+          "maximumUs": 9175,
+          "meanUs": 8775
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 30,
+            "minimumUs": 3686,
+            "medianUs": 3866,
+            "p95Us": 4039,
+            "maximumUs": 4222,
+            "meanUs": 3885
+          },
+          "landmarkPostprocess": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1062,
+            "medianUs": 1172,
+            "p95Us": 1193,
+            "maximumUs": 1201,
+            "meanUs": 1151
+          },
+          "palmInference": {
+            "executions": 30,
+            "minimumUs": 2668,
+            "medianUs": 2859,
+            "p95Us": 2981,
+            "maximumUs": 2997,
+            "meanUs": 2855
+          },
+          "palmPostprocess": {
+            "executions": 30,
+            "minimumUs": 9,
+            "medianUs": 10,
+            "p95Us": 12,
+            "maximumUs": 14,
+            "meanUs": 10
+          },
+          "palmPreprocess": {
+            "executions": 30,
+            "minimumUs": 844,
+            "medianUs": 861,
+            "p95Us": 886,
+            "maximumUs": 904,
+            "meanUs": 865
+          },
+          "poseRecognition": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "continuousTracking",
+        "description": "One tracked hand while palm discovery continues looking for a second hand",
+        "samples": 30,
+        "framesPerSecond": 208.27981699146747,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1158,
+          "medianUs": 4917,
+          "p95Us": 5049,
+          "maximumUs": 8917,
+          "meanUs": 4801
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 3760,
+            "p95Us": 3867,
+            "maximumUs": 3884,
+            "meanUs": 3385
+          },
+          "landmarkPostprocess": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1127,
+            "medianUs": 1150,
+            "p95Us": 1179,
+            "maximumUs": 1196,
+            "meanUs": 1155
+          },
+          "palmInference": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 3004,
+            "meanUs": 199
+          },
+          "palmPostprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 11,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 855,
+            "meanUs": 56
+          },
+          "poseRecognition": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandProcessing",
+        "description": "Two known hand regions without repeating full-frame palm discovery",
+        "samples": 30,
+        "framesPerSecond": 409.35512921976914,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1195,
+          "medianUs": 1263,
+          "p95Us": 5996,
+          "maximumUs": 8768,
+          "meanUs": 2442
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 4764,
+            "maximumUs": 7322,
+            "meanUs": 1175
+          },
+          "landmarkPostprocess": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 4,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 1184,
+            "medianUs": 1209,
+            "p95Us": 1379,
+            "maximumUs": 1559,
+            "meanUs": 1250
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandInference",
+        "description": "Two known hand regions with fresh landmark inference on every frame",
+        "samples": 30,
+        "framesPerSecond": 179.3732697953351,
+        "total": {
+          "executions": 30,
+          "minimumUs": 5128,
+          "medianUs": 5551,
+          "p95Us": 5874,
+          "maximumUs": 6396,
+          "meanUs": 5574
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 60,
+            "minimumUs": 3877,
+            "medianUs": 4194,
+            "p95Us": 4440,
+            "maximumUs": 4561,
+            "meanUs": 4197
+          },
+          "landmarkPostprocess": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 1,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 1243,
+            "medianUs": 1282,
+            "p95Us": 1411,
+            "maximumUs": 1946,
+            "meanUs": 1324
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      }
+    ],
+    "modelProfiles": [
+      {
+        "name": "palmDetector",
+        "samples": 30,
+        "nodeCount": 139,
+        "total": {
+          "executions": 30,
+          "minimumUs": 2427,
+          "medianUs": 2464,
+          "p95Us": 2795,
+          "maximumUs": 3107,
+          "meanUs": 2534
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 115,
+          "medianUs": 123,
+          "p95Us": 147,
+          "maximumUs": 157,
+          "meanUs": 125
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 98,
+            "medianUs": 109,
+            "p95Us": 118,
+            "maximumUs": 135,
+            "meanUs": 110
+          },
+          "Constant Pad (ND, X32)": {
+            "executions": 30,
+            "minimumUs": 16,
+            "medianUs": 17,
+            "p95Us": 19,
+            "maximumUs": 23,
+            "meanUs": 17
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 868,
+            "medianUs": 885,
+            "p95Us": 1043,
+            "maximumUs": 1244,
+            "meanUs": 913
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 215,
+            "medianUs": 220,
+            "p95Us": 323,
+            "maximumUs": 355,
+            "meanUs": 238
+          },
+          "Copy (NC, X32)": {
+            "executions": 30,
+            "minimumUs": 2,
+            "medianUs": 2,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 2
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 949,
+            "medianUs": 964,
+            "p95Us": 1026,
+            "maximumUs": 1103,
+            "meanUs": 973
+          },
+          "Max Pooling (NHWC, F32)": {
+            "executions": 30,
+            "minimumUs": 16,
+            "medianUs": 16,
+            "p95Us": 17,
+            "maximumUs": 19,
+            "meanUs": 16
+          },
+          "PReLU (ND)": {
+            "executions": 30,
+            "minimumUs": 113,
+            "medianUs": 123,
+            "p95Us": 143,
+            "maximumUs": 160,
+            "meanUs": 125
+          },
+          "Resize Bilinear (NHWC)": {
+            "executions": 30,
+            "minimumUs": 11,
+            "medianUs": 11,
+            "p95Us": 12,
+            "maximumUs": 14,
+            "meanUs": 11
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 9.89785184364965,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 215,
+              "medianUs": 220,
+              "p95Us": 323,
+              "maximumUs": 355,
+              "meanUs": 238
+            }
+          },
+          {
+            "name": "xnnpack/2",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.910862584431403,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 103,
+              "medianUs": 106,
+              "p95Us": 168,
+              "maximumUs": 222,
+              "meanUs": 118
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.741999778540582,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 104,
+              "medianUs": 107,
+              "p95Us": 129,
+              "maximumUs": 212,
+              "meanUs": 114
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.730926807662496,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 105,
+              "medianUs": 107,
+              "p95Us": 143,
+              "maximumUs": 213,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.6963237736684755,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 108,
+              "medianUs": 110,
+              "p95Us": 123,
+              "maximumUs": 154,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "xnnpack/122",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.8249916952718412,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 66,
+              "medianUs": 68,
+              "p95Us": 72,
+              "maximumUs": 72,
+              "meanUs": 68
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8685638356771122,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 43,
+              "medianUs": 44,
+              "p95Us": 51,
+              "maximumUs": 53,
+              "meanUs": 45
+            }
+          },
+          {
+            "name": "xnnpack/24",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8270401948842874,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 42,
+              "medianUs": 43,
+              "p95Us": 48,
+              "maximumUs": 51,
+              "meanUs": 44
+            }
+          },
+          {
+            "name": "xnnpack/28",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8422655298416566,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 42,
+              "medianUs": 44,
+              "p95Us": 49,
+              "maximumUs": 51,
+              "meanUs": 44
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8173513453659618,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 42,
+              "medianUs": 43,
+              "p95Us": 47,
+              "maximumUs": 50,
+              "meanUs": 43
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6927804229874874,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 38,
+              "p95Us": 42,
+              "maximumUs": 82,
+              "meanUs": 40
+            }
+          },
+          {
+            "name": "xnnpack/7",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6650979957922711,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 38,
+              "p95Us": 42,
+              "maximumUs": 76,
+              "meanUs": 40
+            }
+          },
+          {
+            "name": "xnnpack/11",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6512567821946629,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 38,
+              "p95Us": 42,
+              "maximumUs": 75,
+              "meanUs": 39
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.5903554423651867,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 38,
+              "p95Us": 42,
+              "maximumUs": 42,
+              "meanUs": 38
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.540527073413797,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 36,
+              "medianUs": 37,
+              "p95Us": 40,
+              "maximumUs": 41,
+              "meanUs": 37
+            }
+          },
+          {
+            "name": "xnnpack/25",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4962351899014505,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 36,
+              "p95Us": 37,
+              "maximumUs": 38,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/29",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.5253017384564278,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 36,
+              "p95Us": 40,
+              "maximumUs": 42,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.5156128889381022,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 36,
+              "p95Us": 38,
+              "maximumUs": 40,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/73",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4602480345476692,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 34,
+              "medianUs": 34,
+              "p95Us": 39,
+              "maximumUs": 39,
+              "meanUs": 35
+            }
+          },
+          {
+            "name": "xnnpack/126",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4602480345476692,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 34,
+              "medianUs": 35,
+              "p95Us": 39,
+              "maximumUs": 39,
+              "meanUs": 35
+            }
+          }
+        ]
+      },
+      {
+        "name": "landmarkDetector",
+        "samples": 30,
+        "nodeCount": 67,
+        "total": {
+          "executions": 30,
+          "minimumUs": 3601,
+          "medianUs": 3696,
+          "p95Us": 3973,
+          "maximumUs": 4442,
+          "meanUs": 3757
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 85,
+          "medianUs": 96,
+          "p95Us": 134,
+          "maximumUs": 148,
+          "meanUs": 103
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 16,
+            "medianUs": 17,
+            "p95Us": 19,
+            "maximumUs": 23,
+            "meanUs": 17
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 864,
+            "medianUs": 888,
+            "p95Us": 942,
+            "maximumUs": 1015,
+            "meanUs": 896
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 209,
+            "medianUs": 214,
+            "p95Us": 233,
+            "maximumUs": 252,
+            "meanUs": 216
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 2420,
+            "medianUs": 2481,
+            "p95Us": 2642,
+            "maximumUs": 3006,
+            "meanUs": 2521
+          },
+          "Mean (ND) Reduce2": {
+            "executions": 30,
+            "minimumUs": 2,
+            "medianUs": 2,
+            "p95Us": 3,
+            "maximumUs": 3,
+            "meanUs": 2
+          },
+          "Sigmoid (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 5.922871297065022,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 209,
+              "medianUs": 214,
+              "p95Us": 233,
+              "maximumUs": 252,
+              "meanUs": 216
+            }
+          },
+          {
+            "name": "xnnpack/8",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.688483609922542,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 165,
+              "medianUs": 168,
+              "p95Us": 185,
+              "maximumUs": 222,
+              "meanUs": 171
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.64568602943189,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 130,
+              "medianUs": 132,
+              "p95Us": 138,
+              "maximumUs": 148,
+              "meanUs": 133
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.1648860951199262,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 112,
+              "medianUs": 115,
+              "p95Us": 120,
+              "maximumUs": 125,
+              "meanUs": 115
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.126568073789561,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 110,
+              "medianUs": 112,
+              "p95Us": 121,
+              "maximumUs": 143,
+              "meanUs": 114
+            }
+          },
+          {
+            "name": "xnnpack/31",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.093724055506391,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 109,
+              "medianUs": 112,
+              "p95Us": 116,
+              "maximumUs": 146,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "xnnpack/39",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.093724055506391,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 107,
+              "medianUs": 111,
+              "p95Us": 118,
+              "maximumUs": 150,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "xnnpack/35",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.0417210265580383,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 107,
+              "medianUs": 111,
+              "p95Us": 114,
+              "maximumUs": 124,
+              "meanUs": 111
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.9842439945624903,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 105,
+              "medianUs": 108,
+              "p95Us": 114,
+              "maximumUs": 135,
+              "meanUs": 109
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.994279666815681,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 105,
+              "medianUs": 107,
+              "p95Us": 117,
+              "maximumUs": 137,
+              "meanUs": 109
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.6612778147779834,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 92,
+              "medianUs": 96,
+              "p95Us": 103,
+              "maximumUs": 112,
+              "meanUs": 97
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.6567161455719877,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 92,
+              "medianUs": 95,
+              "p95Us": 103,
+              "maximumUs": 117,
+              "meanUs": 97
+            }
+          },
+          {
+            "name": "xnnpack/46",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.483372715744145,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 84,
+              "medianUs": 88,
+              "p95Us": 99,
+              "maximumUs": 135,
+              "meanUs": 90
+            }
+          },
+          {
+            "name": "xnnpack/48",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4851973834265433,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 83,
+              "medianUs": 87,
+              "p95Us": 102,
+              "maximumUs": 137,
+              "meanUs": 90
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4596520358729665,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 87,
+              "medianUs": 88,
+              "p95Us": 93,
+              "maximumUs": 121,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/50",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4587397020317674,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 84,
+              "medianUs": 87,
+              "p95Us": 100,
+              "maximumUs": 126,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/54",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.442317692890182,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 84,
+              "medianUs": 86,
+              "p95Us": 94,
+              "maximumUs": 127,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4313696867957924,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 87,
+              "medianUs": 88,
+              "p95Us": 91,
+              "maximumUs": 98,
+              "meanUs": 88
+            }
+          },
+          {
+            "name": "xnnpack/42",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.435019022160589,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 83,
+              "medianUs": 86,
+              "p95Us": 101,
+              "maximumUs": 124,
+              "meanUs": 88
+            }
+          },
+          {
+            "name": "xnnpack/44",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.414947677654207,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 83,
+              "medianUs": 85,
+              "p95Us": 94,
+              "maximumUs": 116,
+              "meanUs": 88
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "litertFourThreads": {
+    "schemaVersion": 5,
+    "gitRevision": "75b839d1d6c103410c45db17c7e216d925aae87f",
+    "workingTreeDirty": true,
+    "rustcVersion": "rustc 1.100.0-nightly (bff8e12ff 2026-08-26)",
+    "inferenceThreads": 4,
+    "landmarkThreads": 2,
+    "backend": "litert-2.2.0-xnnpack",
+    "system": {
+      "operatingSystem": "linux",
+      "architecture": "x86_64",
+      "logicalCpus": 4,
+      "processor": "AMD Ryzen 9 5900X 12-Core Processor"
+    },
+    "warmupIterations": 6,
+    "measuredIterations": 30,
+    "firstModelLoadUs": 29680,
+    "modelLoad": {
+      "executions": 6,
+      "minimumUs": 11928,
+      "medianUs": 12570,
+      "p95Us": 12752,
+      "maximumUs": 12918,
+      "meanUs": 12498
+    },
+    "scenarios": [
+      {
+        "name": "fullDetection",
+        "description": "Palm discovery and one-hand landmark and gesture inference",
+        "samples": 30,
+        "framesPerSecond": 103.75883679426698,
+        "total": {
+          "executions": 30,
+          "minimumUs": 8946,
+          "medianUs": 9373,
+          "p95Us": 10721,
+          "maximumUs": 11618,
+          "meanUs": 9637
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 30,
+            "minimumUs": 3729,
+            "medianUs": 3858,
+            "p95Us": 4590,
+            "maximumUs": 5028,
+            "meanUs": 4003
+          },
+          "landmarkPostprocess": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1231,
+            "medianUs": 1408,
+            "p95Us": 1597,
+            "maximumUs": 1648,
+            "meanUs": 1413
+          },
+          "palmInference": {
+            "executions": 30,
+            "minimumUs": 2863,
+            "medianUs": 2985,
+            "p95Us": 3666,
+            "maximumUs": 3979,
+            "meanUs": 3113
+          },
+          "palmPostprocess": {
+            "executions": 30,
+            "minimumUs": 15,
+            "medianUs": 18,
+            "p95Us": 26,
+            "maximumUs": 26,
+            "meanUs": 18
+          },
+          "palmPreprocess": {
+            "executions": 30,
+            "minimumUs": 971,
+            "medianUs": 989,
+            "p95Us": 1060,
+            "maximumUs": 1089,
+            "meanUs": 1000
+          },
+          "poseRecognition": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "continuousTracking",
+        "description": "One tracked hand while palm discovery continues looking for a second hand",
+        "samples": 30,
+        "framesPerSecond": 197.04304076820515,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1311,
+          "medianUs": 5098,
+          "p95Us": 5993,
+          "maximumUs": 9283,
+          "meanUs": 5075
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 3729,
+            "p95Us": 4031,
+            "maximumUs": 4590,
+            "meanUs": 3440
+          },
+          "landmarkPostprocess": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 1,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1281,
+            "medianUs": 1326,
+            "p95Us": 1377,
+            "maximumUs": 1495,
+            "meanUs": 1335
+          },
+          "palmInference": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 2914,
+            "meanUs": 190
+          },
+          "palmPostprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 18,
+            "meanUs": 1
+          },
+          "palmPreprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 976,
+            "meanUs": 64
+          },
+          "poseRecognition": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandProcessing",
+        "description": "Two known hand regions without repeating full-frame palm discovery",
+        "samples": 30,
+        "framesPerSecond": 425.85205899470526,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1209,
+          "medianUs": 1265,
+          "p95Us": 5678,
+          "maximumUs": 7165,
+          "meanUs": 2348
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 4351,
+            "maximumUs": 5928,
+            "meanUs": 1051
+          },
+          "landmarkPostprocess": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 1196,
+            "medianUs": 1234,
+            "p95Us": 1338,
+            "maximumUs": 1423,
+            "meanUs": 1249
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandInference",
+        "description": "Two known hand regions with fresh landmark inference on every frame",
+        "samples": 30,
+        "framesPerSecond": 171.54326035120624,
+        "total": {
+          "executions": 30,
+          "minimumUs": 5208,
+          "medianUs": 5708,
+          "p95Us": 6444,
+          "maximumUs": 8263,
+          "meanUs": 5829
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 60,
+            "minimumUs": 3834,
+            "medianUs": 4353,
+            "p95Us": 5129,
+            "maximumUs": 6955,
+            "meanUs": 4496
+          },
+          "landmarkPostprocess": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 1,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 1245,
+            "medianUs": 1300,
+            "p95Us": 1439,
+            "maximumUs": 1496,
+            "meanUs": 1325
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      }
+    ],
+    "modelProfiles": [
+      {
+        "name": "palmDetector",
+        "samples": 30,
+        "nodeCount": 139,
+        "total": {
+          "executions": 30,
+          "minimumUs": 2409,
+          "medianUs": 2485,
+          "p95Us": 2766,
+          "maximumUs": 3624,
+          "meanUs": 2596
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 120,
+          "medianUs": 130,
+          "p95Us": 142,
+          "maximumUs": 156,
+          "meanUs": 130
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 97,
+            "medianUs": 107,
+            "p95Us": 116,
+            "maximumUs": 122,
+            "meanUs": 108
+          },
+          "Constant Pad (ND, X32)": {
+            "executions": 30,
+            "minimumUs": 14,
+            "medianUs": 17,
+            "p95Us": 20,
+            "maximumUs": 20,
+            "meanUs": 17
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 852,
+            "medianUs": 883,
+            "p95Us": 1026,
+            "maximumUs": 1150,
+            "meanUs": 928
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 215,
+            "medianUs": 221,
+            "p95Us": 336,
+            "maximumUs": 339,
+            "meanUs": 243
+          },
+          "Copy (NC, X32)": {
+            "executions": 30,
+            "minimumUs": 1,
+            "medianUs": 2,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 1
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 934,
+            "medianUs": 953,
+            "p95Us": 1053,
+            "maximumUs": 1845,
+            "meanUs": 1011
+          },
+          "Max Pooling (NHWC, F32)": {
+            "executions": 30,
+            "minimumUs": 15,
+            "medianUs": 16,
+            "p95Us": 18,
+            "maximumUs": 18,
+            "meanUs": 16
+          },
+          "PReLU (ND)": {
+            "executions": 30,
+            "minimumUs": 112,
+            "medianUs": 126,
+            "p95Us": 138,
+            "maximumUs": 172,
+            "meanUs": 127
+          },
+          "Resize Bilinear (NHWC)": {
+            "executions": 30,
+            "minimumUs": 11,
+            "medianUs": 11,
+            "p95Us": 13,
+            "maximumUs": 14,
+            "meanUs": 11
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 9.870751426331017,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 215,
+              "medianUs": 221,
+              "p95Us": 336,
+              "maximumUs": 339,
+              "meanUs": 243
+            }
+          },
+          {
+            "name": "xnnpack/2",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.922531974150285,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 103,
+              "medianUs": 109,
+              "p95Us": 168,
+              "maximumUs": 211,
+              "meanUs": 121
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.6561933861503935,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 103,
+              "medianUs": 107,
+              "p95Us": 129,
+              "maximumUs": 187,
+              "meanUs": 114
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.630505908119947,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 104,
+              "medianUs": 106,
+              "p95Us": 130,
+              "maximumUs": 157,
+              "meanUs": 114
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.5466836113890166,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 103,
+              "medianUs": 107,
+              "p95Us": 126,
+              "maximumUs": 158,
+              "meanUs": 112
+            }
+          },
+          {
+            "name": "xnnpack/122",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.778303544871968,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 66,
+              "medianUs": 68,
+              "p95Us": 73,
+              "maximumUs": 78,
+              "meanUs": 68
+            }
+          },
+          {
+            "name": "xnnpack/28",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8670740610550793,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 43,
+              "medianUs": 43,
+              "p95Us": 52,
+              "maximumUs": 61,
+              "meanUs": 46
+            }
+          },
+          {
+            "name": "xnnpack/24",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8427385555525513,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 43,
+              "medianUs": 43,
+              "p95Us": 51,
+              "maximumUs": 54,
+              "meanUs": 45
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8427385555525513,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 42,
+              "medianUs": 43,
+              "p95Us": 51,
+              "maximumUs": 55,
+              "meanUs": 45
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.823810940161696,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 42,
+              "medianUs": 43,
+              "p95Us": 51,
+              "maximumUs": 52,
+              "meanUs": 44
+            }
+          },
+          {
+            "name": "xnnpack/63",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.8102912148825137,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 17,
+              "medianUs": 17,
+              "p95Us": 20,
+              "maximumUs": 818,
+              "meanUs": 44
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.643998593948571,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 38,
+              "p95Us": 46,
+              "maximumUs": 55,
+              "meanUs": 40
+            }
+          },
+          {
+            "name": "xnnpack/7",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6237190060297975,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 37,
+              "p95Us": 47,
+              "maximumUs": 55,
+              "meanUs": 40
+            }
+          },
+          {
+            "name": "xnnpack/11",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6047913906389422,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 37,
+              "p95Us": 43,
+              "maximumUs": 59,
+              "meanUs": 39
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.5763999675526594,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 37,
+              "medianUs": 37,
+              "p95Us": 42,
+              "maximumUs": 43,
+              "meanUs": 38
+            }
+          },
+          {
+            "name": "xnnpack/25",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4709461103750372,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 35,
+              "p95Us": 39,
+              "maximumUs": 41,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/29",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4655382202633642,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 35,
+              "p95Us": 38,
+              "maximumUs": 40,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4898737257658925,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 36,
+              "p95Us": 41,
+              "maximumUs": 43,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.4831138631263012,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 35,
+              "medianUs": 36,
+              "p95Us": 39,
+              "maximumUs": 44,
+              "meanUs": 36
+            }
+          },
+          {
+            "name": "xnnpack/47",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.429034962009572,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 34,
+              "medianUs": 35,
+              "p95Us": 38,
+              "maximumUs": 40,
+              "meanUs": 35
+            }
+          }
+        ]
+      },
+      {
+        "name": "landmarkDetector",
+        "samples": 30,
+        "nodeCount": 67,
+        "total": {
+          "executions": 30,
+          "minimumUs": 3646,
+          "medianUs": 3679,
+          "p95Us": 3847,
+          "maximumUs": 3986,
+          "meanUs": 3721
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 93,
+          "medianUs": 104,
+          "p95Us": 120,
+          "maximumUs": 138,
+          "meanUs": 105
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 14,
+            "medianUs": 16,
+            "p95Us": 17,
+            "maximumUs": 20,
+            "meanUs": 16
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 860,
+            "medianUs": 872,
+            "p95Us": 911,
+            "maximumUs": 971,
+            "meanUs": 881
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 210,
+            "medianUs": 212,
+            "p95Us": 219,
+            "maximumUs": 230,
+            "meanUs": 213
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 2451,
+            "medianUs": 2482,
+            "p95Us": 2574,
+            "maximumUs": 2702,
+            "meanUs": 2502
+          },
+          "Mean (ND) Reduce2": {
+            "executions": 30,
+            "minimumUs": 2,
+            "medianUs": 2,
+            "p95Us": 3,
+            "maximumUs": 3,
+            "meanUs": 2
+          },
+          "Sigmoid (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 5.9094638067233864,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 210,
+              "medianUs": 212,
+              "p95Us": 219,
+              "maximumUs": 230,
+              "meanUs": 213
+            }
+          },
+          {
+            "name": "xnnpack/8",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.678901619548886,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 164,
+              "medianUs": 165,
+              "p95Us": 174,
+              "maximumUs": 220,
+              "meanUs": 169
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.6585028620940756,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 127,
+              "medianUs": 130,
+              "p95Us": 139,
+              "maximumUs": 166,
+              "meanUs": 132
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.16351267893849,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 113,
+              "medianUs": 113,
+              "p95Us": 118,
+              "maximumUs": 123,
+              "meanUs": 114
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.124798362937495,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 110,
+              "medianUs": 111,
+              "p95Us": 115,
+              "maximumUs": 134,
+              "meanUs": 113
+            }
+          },
+          {
+            "name": "xnnpack/35",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.113737129794353,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 108,
+              "medianUs": 110,
+              "p95Us": 114,
+              "maximumUs": 172,
+              "meanUs": 112
+            }
+          },
+          {
+            "name": "xnnpack/39",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.1082065132227825,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 108,
+              "medianUs": 109,
+              "p95Us": 116,
+              "maximumUs": 171,
+              "meanUs": 112
+            }
+          },
+          {
+            "name": "xnnpack/31",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.041839114363933,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 108,
+              "medianUs": 110,
+              "p95Us": 113,
+              "maximumUs": 116,
+              "meanUs": 110
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.9957506429341763,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 106,
+              "medianUs": 107,
+              "p95Us": 113,
+              "maximumUs": 114,
+              "meanUs": 108
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.0058901066487227,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 106,
+              "medianUs": 108,
+              "p95Us": 114,
+              "maximumUs": 118,
+              "meanUs": 108
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.648243568353812,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 93,
+              "medianUs": 94,
+              "p95Us": 101,
+              "maximumUs": 109,
+              "meanUs": 95
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.6169034077815776,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 91,
+              "medianUs": 93,
+              "p95Us": 103,
+              "maximumUs": 109,
+              "meanUs": 94
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4970733820642104,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 87,
+              "medianUs": 88,
+              "p95Us": 95,
+              "maximumUs": 120,
+              "meanUs": 90
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4694202992063565,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 86,
+              "medianUs": 88,
+              "p95Us": 93,
+              "maximumUs": 112,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/42",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4767944546351175,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 85,
+              "medianUs": 87,
+              "p95Us": 94,
+              "maximumUs": 119,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/50",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4823250712066884,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 86,
+              "medianUs": 89,
+              "p95Us": 94,
+              "maximumUs": 99,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/54",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4703420686349515,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 87,
+              "medianUs": 88,
+              "p95Us": 94,
+              "maximumUs": 95,
+              "meanUs": 89
+            }
+          },
+          {
+            "name": "xnnpack/46",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4426889857770977,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 86,
+              "medianUs": 88,
+              "p95Us": 91,
+              "maximumUs": 93,
+              "meanUs": 88
+            }
+          },
+          {
+            "name": "xnnpack/52",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4555937577774296,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 85,
+              "medianUs": 88,
+              "p95Us": 94,
+              "maximumUs": 99,
+              "meanUs": 88
+            }
+          },
+          {
+            "name": "xnnpack/44",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4196447500622194,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 85,
+              "medianUs": 86,
+              "p95Us": 91,
+              "maximumUs": 99,
+              "meanUs": 87
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "litertOneThread": {
+    "schemaVersion": 5,
+    "gitRevision": "75b839d1d6c103410c45db17c7e216d925aae87f",
+    "workingTreeDirty": true,
+    "rustcVersion": "rustc 1.100.0-nightly (bff8e12ff 2026-08-26)",
+    "inferenceThreads": 1,
+    "landmarkThreads": 1,
+    "backend": "litert-2.2.0-xnnpack",
+    "system": {
+      "operatingSystem": "linux",
+      "architecture": "x86_64",
+      "logicalCpus": 4,
+      "processor": "AMD Ryzen 9 5900X 12-Core Processor"
+    },
+    "warmupIterations": 6,
+    "measuredIterations": 30,
+    "firstModelLoadUs": 19575,
+    "modelLoad": {
+      "executions": 6,
+      "minimumUs": 7280,
+      "medianUs": 8221,
+      "p95Us": 8965,
+      "maximumUs": 9124,
+      "meanUs": 8393
+    },
+    "scenarios": [
+      {
+        "name": "fullDetection",
+        "description": "Palm discovery and one-hand landmark and gesture inference",
+        "samples": 30,
+        "framesPerSecond": 55.83161185863436,
+        "total": {
+          "executions": 30,
+          "minimumUs": 17461,
+          "medianUs": 17781,
+          "p95Us": 19183,
+          "maximumUs": 19869,
+          "meanUs": 17911
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 30,
+            "minimumUs": 6988,
+            "medianUs": 7100,
+            "p95Us": 7627,
+            "maximumUs": 8059,
+            "meanUs": 7177
+          },
+          "landmarkPostprocess": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1042,
+            "medianUs": 1166,
+            "p95Us": 1248,
+            "maximumUs": 1350,
+            "meanUs": 1160
+          },
+          "palmInference": {
+            "executions": 30,
+            "minimumUs": 8559,
+            "medianUs": 8628,
+            "p95Us": 9167,
+            "maximumUs": 9724,
+            "meanUs": 8708
+          },
+          "palmPostprocess": {
+            "executions": 30,
+            "minimumUs": 9,
+            "medianUs": 10,
+            "p95Us": 12,
+            "maximumUs": 19,
+            "meanUs": 10
+          },
+          "palmPreprocess": {
+            "executions": 30,
+            "minimumUs": 830,
+            "medianUs": 840,
+            "p95Us": 873,
+            "maximumUs": 926,
+            "meanUs": 846
+          },
+          "poseRecognition": {
+            "executions": 30,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "continuousTracking",
+        "description": "One tracked hand while palm discovery continues looking for a second hand",
+        "samples": 30,
+        "framesPerSecond": 123.21391167205385,
+        "total": {
+          "executions": 30,
+          "minimumUs": 1109,
+          "medianUs": 8111,
+          "p95Us": 8713,
+          "maximumUs": 17892,
+          "meanUs": 8115
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 6982,
+            "p95Us": 7188,
+            "maximumUs": 7589,
+            "meanUs": 6340
+          },
+          "landmarkPostprocess": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 30,
+            "minimumUs": 1107,
+            "medianUs": 1122,
+            "p95Us": 1181,
+            "maximumUs": 1230,
+            "meanUs": 1133
+          },
+          "palmInference": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 8778,
+            "meanUs": 581
+          },
+          "palmPostprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 11,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 2,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 834,
+            "meanUs": 55
+          },
+          "poseRecognition": {
+            "executions": 27,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandProcessing",
+        "description": "Two known hand regions without repeating full-frame palm discovery",
+        "samples": 30,
+        "framesPerSecond": 173.33626079018222,
+        "total": {
+          "executions": 30,
+          "minimumUs": 2335,
+          "medianUs": 2377,
+          "p95Us": 16669,
+          "maximumUs": 18073,
+          "meanUs": 5769
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 14305,
+            "maximumUs": 15665,
+            "meanUs": 3377
+          },
+          "landmarkPostprocess": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 2332,
+            "medianUs": 2359,
+            "p95Us": 2442,
+            "maximumUs": 2835,
+            "meanUs": 2386
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 14,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      },
+      {
+        "name": "twoHandInference",
+        "description": "Two known hand regions with fresh landmark inference on every frame",
+        "samples": 30,
+        "framesPerSecond": 60.25197375424023,
+        "total": {
+          "executions": 30,
+          "minimumUs": 16332,
+          "medianUs": 16579,
+          "p95Us": 16777,
+          "maximumUs": 16855,
+          "meanUs": 16596
+        },
+        "stages": {
+          "landmarkInference": {
+            "executions": 60,
+            "minimumUs": 13915,
+            "medianUs": 14134,
+            "p95Us": 14375,
+            "maximumUs": 14413,
+            "meanUs": 14162
+          },
+          "landmarkPostprocess": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 1,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          },
+          "landmarkPreprocess": {
+            "executions": 60,
+            "minimumUs": 2385,
+            "medianUs": 2422,
+            "p95Us": 2466,
+            "maximumUs": 2518,
+            "meanUs": 2426
+          },
+          "palmInference": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPostprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "palmPreprocess": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "poseRecognition": {
+            "executions": 60,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 1,
+            "maximumUs": 1,
+            "meanUs": 0
+          }
+        }
+      }
+    ],
+    "modelProfiles": [
+      {
+        "name": "palmDetector",
+        "samples": 30,
+        "nodeCount": 139,
+        "total": {
+          "executions": 30,
+          "minimumUs": 8576,
+          "medianUs": 8641,
+          "p95Us": 8893,
+          "maximumUs": 9316,
+          "meanUs": 8701
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 124,
+          "medianUs": 135,
+          "p95Us": 161,
+          "maximumUs": 172,
+          "meanUs": 138
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 264,
+            "medianUs": 272,
+            "p95Us": 279,
+            "maximumUs": 302,
+            "meanUs": 272
+          },
+          "Constant Pad (ND, X32)": {
+            "executions": 30,
+            "minimumUs": 29,
+            "medianUs": 30,
+            "p95Us": 33,
+            "maximumUs": 35,
+            "meanUs": 30
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 3258,
+            "medianUs": 3292,
+            "p95Us": 3371,
+            "maximumUs": 3498,
+            "meanUs": 3305
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 836,
+            "medianUs": 841,
+            "p95Us": 854,
+            "maximumUs": 868,
+            "meanUs": 844
+          },
+          "Copy (NC, X32)": {
+            "executions": 30,
+            "minimumUs": 2,
+            "medianUs": 2,
+            "p95Us": 4,
+            "maximumUs": 5,
+            "meanUs": 2
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 3664,
+            "medianUs": 3685,
+            "p95Us": 3799,
+            "maximumUs": 4011,
+            "meanUs": 3714
+          },
+          "Max Pooling (NHWC, F32)": {
+            "executions": 30,
+            "minimumUs": 55,
+            "medianUs": 56,
+            "p95Us": 60,
+            "maximumUs": 64,
+            "meanUs": 56
+          },
+          "PReLU (ND)": {
+            "executions": 30,
+            "minimumUs": 287,
+            "medianUs": 295,
+            "p95Us": 310,
+            "maximumUs": 356,
+            "meanUs": 298
+          },
+          "Resize Bilinear (NHWC)": {
+            "executions": 30,
+            "minimumUs": 37,
+            "medianUs": 37,
+            "p95Us": 39,
+            "maximumUs": 43,
+            "meanUs": 37
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 9.864264666383804,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 836,
+              "medianUs": 841,
+              "p95Us": 854,
+              "maximumUs": 868,
+              "meanUs": 844
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.835400958360744,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 408,
+              "medianUs": 412,
+              "p95Us": 425,
+              "maximumUs": 444,
+              "meanUs": 414
+            }
+          },
+          {
+            "name": "xnnpack/2",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.807763422694698,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 403,
+              "medianUs": 409,
+              "p95Us": 426,
+              "maximumUs": 476,
+              "meanUs": 411
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.784018497685843,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 403,
+              "medianUs": 407,
+              "p95Us": 416,
+              "maximumUs": 456,
+              "meanUs": 409
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.752099090296889,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 403,
+              "medianUs": 406,
+              "p95Us": 410,
+              "maximumUs": 425,
+              "meanUs": 406
+            }
+          },
+          {
+            "name": "xnnpack/122",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.070880547456763,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 260,
+              "medianUs": 262,
+              "p95Us": 266,
+              "maximumUs": 270,
+              "meanUs": 262
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.021432714278485,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 169,
+              "medianUs": 170,
+              "p95Us": 183,
+              "maximumUs": 201,
+              "meanUs": 173
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.987177740495218,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 163,
+              "medianUs": 165,
+              "p95Us": 184,
+              "maximumUs": 236,
+              "meanUs": 170
+            }
+          },
+          {
+            "name": "xnnpack/24",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.9821173466408717,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 167,
+              "medianUs": 169,
+              "p95Us": 172,
+              "maximumUs": 182,
+              "meanUs": 169
+            }
+          },
+          {
+            "name": "xnnpack/28",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.9708287757350222,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 165,
+              "medianUs": 166,
+              "p95Us": 173,
+              "maximumUs": 196,
+              "meanUs": 168
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.7777552871384252,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 148,
+              "medianUs": 149,
+              "p95Us": 153,
+              "maximumUs": 235,
+              "meanUs": 152
+            }
+          },
+          {
+            "name": "xnnpack/7",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.7458358797494715,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 147,
+              "medianUs": 149,
+              "p95Us": 152,
+              "maximumUs": 158,
+              "meanUs": 149
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.7279298707264001,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 145,
+              "medianUs": 147,
+              "p95Us": 152,
+              "maximumUs": 153,
+              "meanUs": 147
+            }
+          },
+          {
+            "name": "xnnpack/11",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.713916472360518,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 145,
+              "medianUs": 146,
+              "p95Us": 149,
+              "maximumUs": 155,
+              "meanUs": 146
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6508561797140489,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 136,
+              "medianUs": 139,
+              "p95Us": 145,
+              "maximumUs": 176,
+              "meanUs": 141
+            }
+          },
+          {
+            "name": "xnnpack/25",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.63567499815101,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 136,
+              "medianUs": 139,
+              "p95Us": 144,
+              "maximumUs": 166,
+              "meanUs": 140
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6395676088081994,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 136,
+              "medianUs": 139,
+              "p95Us": 143,
+              "maximumUs": 176,
+              "meanUs": 140
+            }
+          },
+          {
+            "name": "xnnpack/29",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.6243864272451605,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 137,
+              "medianUs": 139,
+              "p95Us": 142,
+              "maximumUs": 143,
+              "meanUs": 139
+            }
+          },
+          {
+            "name": "xnnpack/47",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.571057661241665,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 133,
+              "medianUs": 134,
+              "p95Us": 138,
+              "maximumUs": 140,
+              "meanUs": 134
+            }
+          },
+          {
+            "name": "xnnpack/55",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 1.5656080063215998,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 131,
+              "medianUs": 133,
+              "p95Us": 138,
+              "maximumUs": 144,
+              "meanUs": 134
+            }
+          }
+        ]
+      },
+      {
+        "name": "landmarkDetector",
+        "samples": 30,
+        "nodeCount": 67,
+        "total": {
+          "executions": 30,
+          "minimumUs": 6906,
+          "medianUs": 6985,
+          "p95Us": 7119,
+          "maximumUs": 7208,
+          "meanUs": 7008
+        },
+        "unattributed": {
+          "executions": 30,
+          "minimumUs": 87,
+          "medianUs": 94,
+          "p95Us": 108,
+          "maximumUs": 168,
+          "meanUs": 98
+        },
+        "operationGroups": {
+          "Add (ND)": {
+            "executions": 30,
+            "minimumUs": 19,
+            "medianUs": 19,
+            "p95Us": 20,
+            "maximumUs": 21,
+            "meanUs": 19
+          },
+          "Convolution (NHWC, F32) DWConv": {
+            "executions": 30,
+            "minimumUs": 1632,
+            "medianUs": 1646,
+            "p95Us": 1666,
+            "maximumUs": 1685,
+            "meanUs": 1648
+          },
+          "Convolution (NHWC, F32) IGEMM": {
+            "executions": 30,
+            "minimumUs": 411,
+            "medianUs": 415,
+            "p95Us": 423,
+            "maximumUs": 432,
+            "meanUs": 415
+          },
+          "Fully Connected (NC, F32) GEMM": {
+            "executions": 30,
+            "minimumUs": 4735,
+            "medianUs": 4810,
+            "p95Us": 4911,
+            "maximumUs": 4946,
+            "meanUs": 4824
+          },
+          "Mean (ND) Reduce2": {
+            "executions": 30,
+            "minimumUs": 2,
+            "medianUs": 2,
+            "p95Us": 2,
+            "maximumUs": 2,
+            "meanUs": 2
+          },
+          "Sigmoid (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          },
+          "Static Reshape (NC)": {
+            "executions": 0,
+            "minimumUs": 0,
+            "medianUs": 0,
+            "p95Us": 0,
+            "maximumUs": 0,
+            "meanUs": 0
+          }
+        },
+        "hottestNodes": [
+          {
+            "name": "xnnpack/0",
+            "operation": "Convolution (NHWC, F32) IGEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 6.019865217538122,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 411,
+              "medianUs": 415,
+              "p95Us": 423,
+              "maximumUs": 432,
+              "meanUs": 415
+            }
+          },
+          {
+            "name": "xnnpack/8",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 4.804700502178035,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 327,
+              "medianUs": 333,
+              "p95Us": 338,
+              "maximumUs": 341,
+              "meanUs": 332
+            }
+          },
+          {
+            "name": "xnnpack/14",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.767058857581152,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 256,
+              "medianUs": 259,
+              "p95Us": 264,
+              "maximumUs": 270,
+              "meanUs": 260
+            }
+          },
+          {
+            "name": "xnnpack/15",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.295754400690796,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 223,
+              "medianUs": 229,
+              "p95Us": 231,
+              "maximumUs": 233,
+              "meanUs": 227
+            }
+          },
+          {
+            "name": "xnnpack/3",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.1606824990231406,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 214,
+              "medianUs": 217,
+              "p95Us": 224,
+              "maximumUs": 232,
+              "meanUs": 218
+            }
+          },
+          {
+            "name": "xnnpack/35",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.068544166099847,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 208,
+              "medianUs": 212,
+              "p95Us": 216,
+              "maximumUs": 221,
+              "meanUs": 212
+            }
+          },
+          {
+            "name": "xnnpack/39",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.066614567504595,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 208,
+              "medianUs": 211,
+              "p95Us": 216,
+              "maximumUs": 220,
+              "meanUs": 211
+            }
+          },
+          {
+            "name": "xnnpack/31",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.0453889829568204,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 208,
+              "medianUs": 210,
+              "p95Us": 213,
+              "maximumUs": 217,
+              "meanUs": 210
+            }
+          },
+          {
+            "name": "xnnpack/33",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.0289873948971766,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 206,
+              "medianUs": 208,
+              "p95Us": 216,
+              "maximumUs": 221,
+              "meanUs": 209
+            }
+          },
+          {
+            "name": "xnnpack/37",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 3.006314611402963,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 205,
+              "medianUs": 207,
+              "p95Us": 211,
+              "maximumUs": 215,
+              "meanUs": 207
+            }
+          },
+          {
+            "name": "xnnpack/32",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.662846061448067,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 180,
+              "medianUs": 183,
+              "p95Us": 187,
+              "maximumUs": 193,
+              "meanUs": 184
+            }
+          },
+          {
+            "name": "xnnpack/36",
+            "operation": "Convolution (NHWC, F32) DWConv",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.6454796740907973,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 179,
+              "medianUs": 181,
+              "p95Us": 189,
+              "maximumUs": 193,
+              "meanUs": 182
+            }
+          },
+          {
+            "name": "xnnpack/6",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.529221358726851,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 172,
+              "medianUs": 174,
+              "p95Us": 178,
+              "maximumUs": 179,
+              "meanUs": 174
+            }
+          },
+          {
+            "name": "xnnpack/50",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.512819770667207,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 168,
+              "medianUs": 172,
+              "p95Us": 181,
+              "maximumUs": 194,
+              "meanUs": 173
+            }
+          },
+          {
+            "name": "xnnpack/10",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4993125805004412,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 171,
+              "medianUs": 172,
+              "p95Us": 176,
+              "maximumUs": 177,
+              "meanUs": 172
+            }
+          },
+          {
+            "name": "xnnpack/42",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4988301808516282,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 167,
+              "medianUs": 170,
+              "p95Us": 178,
+              "maximumUs": 186,
+              "meanUs": 172
+            }
+          },
+          {
+            "name": "xnnpack/46",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.496418182607563,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 167,
+              "medianUs": 170,
+              "p95Us": 178,
+              "maximumUs": 198,
+              "meanUs": 172
+            }
+          },
+          {
+            "name": "xnnpack/44",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.469886201922845,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 165,
+              "medianUs": 170,
+              "p95Us": 177,
+              "maximumUs": 180,
+              "meanUs": 170
+            }
+          },
+          {
+            "name": "xnnpack/48",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.46120300824421,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 163,
+              "medianUs": 168,
+              "p95Us": 177,
+              "maximumUs": 179,
+              "meanUs": 170
+            }
+          },
+          {
+            "name": "xnnpack/52",
+            "operation": "Fully Connected (NC, F32) GEMM",
+            "detail": "XNNPACK operator",
+            "outputFacts": [],
+            "sharePercent": 2.4655446050835277,
+            "latency": {
+              "executions": 30,
+              "minimumUs": 163,
+              "medianUs": 170,
+              "p95Us": 176,
+              "maximumUs": 192,
+              "meanUs": 170
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "releaseExecutableBytes": {
+    "tract": 22803800,
+    "litert": 16229104
+  },
+  "validation": {
+    "localPlatform": "x86_64-unknown-linux-gnu",
+    "fixtureParity": "Four public fixtures; composite two-hand tracking loss and reacquisition.",
+    "modelParity": "Every output of both models at 1, 2, and 4 threads against pinned LiteRT 2.2.0 synthetic references.",
+    "concurrency": "Independent landmark state under simultaneous callers.",
+    "nativeMemory": "Bridge instrumented with ASan/UBSan; load, concurrent inference, profiling, invalid sizes, and destruction passed. Upstream archives were not sanitizer-instrumented.",
+    "runtimeDependencies": "libstdc++, libgcc_s, libm, libc and the system loader; no separate inference runtime or models.",
+    "cachedBuild": "Release benchmark rebuilt successfully with Cargo offline and unreachable HTTP/HTTPS proxies.",
+    "otherPlatforms": "CI and release tests configured for Linux ARM64, macOS Intel and Apple Silicon; not executed locally."
+  }
+}

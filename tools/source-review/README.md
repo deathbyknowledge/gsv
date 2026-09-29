@@ -11,7 +11,81 @@ npm run review:manual
 
 Both commands listen on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
 
-The prompt view evaluates the exported strings in `gateway/src/prompts/`, groups them by role, and shows their source path and approximate size. It is a source catalog, not an exact live Process prompt: runtime identity, installed skills, targets, and user-edited `context.d` files are not included.
+The prompt workspace is for editing the repository's shipped instructions. Select
+a source under a category and edit it beside the **Category** preview. Each source
+shows its scope: shared, Ship, Crew, owner, or standalone task.
+Choose **Sections** or **Exact text** and pick **Ship** or **Crew** to inspect the
+assembled standing prompt. **Sections** links to every source that contributes to a
+saved context file; **All sources** also includes standalone task prompts.
+Typing updates the preview before saving. **Save** (or Ctrl/Cmd+S) writes the file;
+**Refresh** reloads changes made in another editor.
+
+The preview calls the production prompt assembler and its providers. It supplies
+sample accounts (`alex`, `ship`, `crew`), a laptop target, a fixed date, and the
+built-in skill index. It is a reproducible preview of repository defaults, not a
+connection to a live space or its customized instructions. It makes no inference
+requests.
+
+## Prompt files
+
+Active standing defaults and standalone task prompts live in
+`workers/gateway/src/prompts/` as Markdown:
+
+| Category directory | What it teaches |
+| --- | --- |
+| `world-model/` | What GSV is and how its environments relate |
+| `interaction/` | Input provenance, authority, message delivery, and run completion |
+| `computer-and-discovery/` | Targets, files, commands, manuals, skills, and integrations |
+| `durable-work/` | Context snapshots and updates, responsibilities, delegation, scheduling, and follow-through |
+| `knowledge/` | Shared memory, retrieval, and what to preserve |
+| `role-and-judgment/` | Ship's responsiveness and follow-through; Crew's assignment and reporting duties |
+| `voice/` | Ship's public voice |
+| `instance-facts/` | Runtime values, responsibility snapshot, Crew account name, and owner context template |
+| `tasks/` | Separate compaction, setup, delegated-run, and correction instructions |
+
+Category and scope are independent. `knowledge/shared.md` contributes once to
+each account's prompt: through Ship's saved role file or an ordinary agent's
+memory file. Ship has a public voice; Crew's role defines what its report needs
+to contain without imposing a writing persona.
+
+The category files contain the model-facing explanations, not just an outline:
+`world-model/gsv.md` orients the agent within a persistent, Linux-like computer;
+`interaction/` explains input provenance and Send's delivery contract;
+`durable-work/responsibilities.md` explains initial snapshots and subsequent updates.
+Computer/discovery guidance covers target selection and capability discovery.
+
+Write each rule in its owning category. Keep shared mechanics out of role files,
+procedural recipes in skills/manuals, and instance templates limited to values.
+Voice describes how to write; the role decides when communication is useful.
+
+Write from the agent's perspective: assume familiar Unix concepts and explain
+GSV's differences when they affect a decision or action. Leave implementation
+details in architecture docs and tool syntax in schemas or manuals. State
+priorities and observable behavior rather than narrating internal machinery.
+For Ship, acknowledgment precedes detailed planning and responsibility work;
+bookkeeping precedes execution or delegation, with updates throughout.
+
+Stored `context.d` paths and layer order remain stable. Some stored files are
+composed from several source categories. The TypeScript wrappers in `prompts/`
+own that composition; `prompt-sources.ts` maps it for the editor. Editing a
+category's wording changes its rendered contribution without changing its scope.
+
+TypeScript imports this text during the build. Keep `{{...}}` placeholders intact:
+system placeholders are expanded by the existing runtime provider;
+`{{crew.username}}` is filled when the delegation file is seeded. Retired migration
+matching strings and structured event formatters remain in TypeScript and are not
+part of this prose editor.
+
+Changing a shipped account default does not rewrite copies already saved in an
+account's home. System defaults remain live where no explicit config override
+exists. Saving here only changes the worktree; deployment and changes to an
+existing space are separate actions. Generic voice files are no longer seeded;
+home scaffolding retires only exact generated style text, preserving customized
+files, including edits made concurrently with cleanup.
+
+When adding a prompt, wire it into its owning runtime path and the source
+map in `prompt-sources.ts`. The editor uses that map to connect assembled sections
+to their editable files; it does not choose runtime prompt order or policy.
 
 The manual view reads the sibling `../gsv-manual` worktree by default. Set `GSV_MANUAL_ROOT` when the manual lives elsewhere:
 

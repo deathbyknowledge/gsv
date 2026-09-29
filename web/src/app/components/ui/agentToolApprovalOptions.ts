@@ -69,6 +69,12 @@ export const CAPABILITY_FAMILIES: CapabilityFamily[] = [
     ],
   },
   {
+    label: "Web search",
+    options: [
+      { match: "web.search", label: "Search the web", description: "Send a query to the configured search service." },
+    ],
+  },
+  {
     label: "Repositories",
     options: [
       { match: "repo.*", label: "All repository tools", description: "Every ripgit repository operation." },

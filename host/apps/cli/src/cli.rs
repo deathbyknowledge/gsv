@@ -30,6 +30,23 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    /// Pair this computer with one invitation from GSV (omit it to resume)
+    Pair {
+        /// Invitation (use - to read from stdin, omit to resume)
+        code: Option<String>,
+        /// Filesystem workspace to expose (defaults to the home directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Save pairing without installing or starting the background service
+        #[arg(long)]
+        no_install: bool,
+        /// Leave the CLI's selected space and login unchanged
+        #[arg(long)]
+        preserve_cli_login: bool,
+        /// Refuse to replace an existing machine credential
+        #[arg(long)]
+        no_replace: bool,
+    },
     /// Send a message to the agent (interactive or one-shot)
     Chat {
         /// Message to send (if omitted, enters interactive mode)
@@ -56,6 +73,9 @@ pub(crate) enum Commands {
     },
 
     /// Authentication and onboarding
+    #[command(
+        after_help = "Create a space using the Accounts-issued browser setup link, then run `gsv auth login`."
+    )]
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -328,45 +348,6 @@ pub(crate) enum AuthAction {
         actor_id: String,
     },
 
-    /// Initialize gateway identity/auth (setup mode only)
-    Setup {
-        /// First user username
-        #[arg(long)]
-        username: Option<String>,
-
-        /// First user password
-        #[arg(long = "new-password")]
-        new_password: Option<String>,
-
-        /// Optional root password (omit to keep root locked)
-        #[arg(long)]
-        root_password: Option<String>,
-
-        /// Optional AI provider
-        #[arg(long)]
-        ai_provider: Option<String>,
-
-        /// Optional AI model
-        #[arg(long)]
-        ai_model: Option<String>,
-
-        /// Optional AI API key
-        #[arg(long)]
-        ai_api_key: Option<String>,
-
-        /// Optional device id to pre-issue a device token for
-        #[arg(long = "device-id", alias = "node-id")]
-        device_id: Option<String>,
-
-        /// Optional device token label
-        #[arg(long = "device-label", alias = "node-label")]
-        device_label: Option<String>,
-
-        /// Optional device token expiry unix ms
-        #[arg(long = "device-expires-at", alias = "node-expires-at")]
-        device_expires_at: Option<i64>,
-    },
-
     /// Manage auth tokens
     Token {
         #[command(subcommand)]
@@ -379,7 +360,7 @@ pub(crate) enum AuthTokenAction {
     /// Create a new auth token
     Create {
         /// Token kind
-        #[arg(long, value_enum, default_value = "device")]
+        #[arg(long, value_enum, default_value = "machine")]
         kind: TokenKindArg,
 
         /// Optional owner uid (root only)
@@ -390,13 +371,9 @@ pub(crate) enum AuthTokenAction {
         #[arg(long)]
         label: Option<String>,
 
-        /// Optional explicit role binding (defaults from kind)
-        #[arg(long, value_enum)]
-        role: Option<TokenRoleArg>,
-
-        /// Optional device binding (device tokens only)
-        #[arg(long)]
-        device: Option<String>,
+        /// Peer id the token may connect as (machine tokens only)
+        #[arg(long, alias = "device")]
+        peer: Option<String>,
 
         /// Optional expiry timestamp (unix ms)
         #[arg(long)]
@@ -427,35 +404,19 @@ pub(crate) enum AuthTokenAction {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum TokenKindArg {
-    #[value(alias = "node")]
-    Device,
+    #[value(alias = "device", alias = "node")]
+    Machine,
     Service,
-    User,
+    #[value(alias = "user")]
+    Human,
 }
 
 impl TokenKindArg {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Device => "node",
+            Self::Machine => "machine",
             Self::Service => "service",
-            Self::User => "user",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum TokenRoleArg {
-    Driver,
-    Service,
-    User,
-}
-
-impl TokenRoleArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Driver => "driver",
-            Self::Service => "service",
-            Self::User => "user",
+            Self::Human => "human",
         }
     }
 }
@@ -475,6 +436,14 @@ pub(crate) enum ProcAction {
         /// (default: personal agent)
         #[arg(long = "as", visible_alias = "run-as")]
         run_as: Option<String>,
+
+        /// First-choice model ID from the owning human's stack (fallbacks still apply)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Reasoning effort: off, minimal, low, medium, high, or xhigh
+        #[arg(long, visible_alias = "reasoning", value_parser = ["off", "minimal", "low", "medium", "high", "xhigh"])]
+        effort: Option<String>,
 
         /// Optional process label
         #[arg(long)]
@@ -595,6 +564,59 @@ pub(crate) enum LocalConfigAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_setup_is_removed_and_help_points_to_accounts() {
+        let error = Cli::try_parse_from(["gsv", "auth", "setup"])
+            .err()
+            .expect("setup is no longer an auth command");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        let help = Cli::try_parse_from(["gsv", "auth", "--help"])
+            .err()
+            .expect("help is displayed")
+            .to_string();
+        assert!(help.contains("Accounts-issued browser setup link"));
+        assert!(help.contains("gsv auth login"));
+    }
+
+    #[test]
+    fn auth_login_and_machine_pairing_remain_available() {
+        let login = Cli::try_parse_from(["gsv", "auth", "login", "--username", "owner"])
+            .expect("login parses");
+        assert!(matches!(login.command, Commands::Auth {
+            action: AuthAction::Login { username: Some(username), .. }
+        } if username == "owner"));
+        let pair = Cli::try_parse_from(["gsv", "pair", "fixture-invitation", "--no-install"])
+            .expect("device enrollment parses");
+        assert!(
+            matches!(pair.command, Commands::Pair { code: Some(code), no_install: true, .. }
+            if code == "fixture-invitation")
+        );
+    }
+
+    #[test]
+    fn desktop_can_pair_from_stdin_without_replacing_existing_login_or_machine() {
+        let pair =
+            Cli::try_parse_from(["gsv", "pair", "-", "--preserve-cli-login", "--no-replace"])
+                .expect("desktop pairing parses");
+        assert!(
+            matches!(pair.command, Commands::Pair { code: Some(code), preserve_cli_login: true, no_replace: true, no_install: false, .. } if code == "-")
+        );
+    }
+
+    #[test]
+    fn spawn_accepts_initial_model_and_effort() {
+        let cli = Cli::try_parse_from([
+            "gsv", "proc", "spawn", "--model", "quick", "--effort", "high", "--prompt", "do work",
+        ])
+        .expect("spawn options parse");
+        assert!(
+            matches!(cli.command, Commands::Proc { action: ProcAction::Spawn {
+            model: Some(model), effort: Some(effort), prompt: Some(prompt), ..
+        }} if model == "quick" && effort == "high" && prompt == "do work")
+        );
+        assert!(Cli::try_parse_from(["gsv", "proc", "spawn", "--effort", "unlimited"]).is_err());
+    }
 
     #[test]
     fn desktop_without_a_subcommand_means_activate() {

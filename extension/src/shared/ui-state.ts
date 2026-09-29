@@ -89,6 +89,7 @@ export type RuntimeMessage =
   | { type: "grant-media-capture"; tabId?: number }
   | { type: "clear-diagnostics" }
   | { type: "save-config"; config: ExtensionConfig }
+  | { type: "pair"; code: string }
   | { type: "open-side-panel"; windowId?: number };
 
 export type RuntimeResponse =

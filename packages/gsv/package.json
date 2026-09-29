@@ -41,6 +41,10 @@
       "types": "./dist/services/*.d.ts",
       "default": "./dist/services/*.js"
     },
+    "./telemetry": {
+      "types": "./dist/telemetry.d.ts",
+      "default": "./dist/telemetry.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

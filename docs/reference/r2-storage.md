@@ -13,16 +13,16 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 
 ## Installation Namespaces
 
-Managed installations share the deployment R2 bucket through scoped bucket
+Spaces share the deployment R2 bucket through scoped bucket
 views. Runtime code continues to address logical keys such as
 `home/alice/file.txt`, while the view maps them beneath
 `installations/{installationId}/`. Returned object keys and list results are
 mapped back to logical keys, so filesystem, media, archive, and cleanup code do
 not handle physical prefixes.
 
-The standalone `singleton` installation maps to the historical unprefixed
-keyspace. Existing self-hosted filesystem objects, Process media, and archives
-therefore retain their current keys after upgrade.
+Every space uses the scoped prefix. Historical unprefixed standalone objects
+are not mounted, reassigned, or deleted by the current runtime; see the
+[standalone retirement guide](../how-to/standalone-retirement.md).
 
 ## Virtual Filesystem Mapping
 
@@ -59,9 +59,9 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `routing_table` | In-flight device-routed syscalls. |
 | `processes` | Process registry, identity, cwd, workspace, state. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
-| `run_routes` | Routes process run signals back to clients or adapter surfaces. |
+| `run_routes` | Retains the exact client endpoint or adapter destination for a process run. |
 | `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
-| `signal_watches` | Process-owned signal watches. |
+| `signal_watches` | Process-owned target connection watches. |
 
 ## Process SQLite
 

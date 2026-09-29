@@ -24,6 +24,27 @@ parent, and state. Process SQLite stores the mutable run state:
 - `pending_hil`: human-in-the-loop tool approval state.
 - `process_kv`: process metadata.
 
+History records have five shapes: incoming or committed outgoing messages, model
+notes, individual tool calls, typed tool results, and runtime events. Process schema
+14 adds `kind` and `payload_json` to the existing `messages` table. Related records
+use `group_message_id` to retain the original assistant turn's identity, order,
+provider metadata, and lifetime. Outgoing messages are recorded from the confirmed
+Conversation commit and deduplicated by its identity.
+
+Runtime producers write event source data with explicit severity and audience.
+Queued events retain that data in `record_json`; incoming messages retain their
+queue kind, provenance, and canonical conversation identities. Legacy rows are
+inferred at the storage boundary without rewriting them during migration or
+inventing missing provenance.
+
+The provider renderer, compaction renderer, and public history consumers read
+typed records. The captured provider-context fixtures remain byte-identical;
+compatibility messages are retained for supported older clients and histories.
+Archives and fork imports retain typed records alongside compatibility messages,
+and media retention includes every member of a group. Format-2 clients synchronize
+complete groups using durable history revisions and reset detection. See
+[Process History](./process-history.md) for record identity, rendering, and cursors.
+
 The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
 append canonical input with `conversation.send`, which privately admits the same
 interaction to its handler Process. Adapter ingress follows the same Kernel-owned
@@ -140,6 +161,13 @@ for shell and low-level callers.
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
 
+After classifying a generation failure and selecting a fallback, the Process
+limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),
+including a truncation marker that records the original length. The same preview
+is announced and retained as `metadata.fallback.reason`; provider and model
+identifiers remain separate fields. Classification uses the original error.
+Existing history and imported diagnostics retain their full stored values.
+
 The model response can contain text, thinking blocks, and tool calls:
 
 - Text, reasoning, and tool-call blocks are raw Process activity. They are emitted
@@ -147,15 +175,22 @@ The model response can contain text, thinking blocks, and tool calls:
   that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- In a human-facing run, a direct Shell call with a literal `message send <<'GSV_MESSAGE'` block
-  commits one canonical user-visible message and any media registered by `message attach`. The run
-  continues, allowing multiple exactly-once messages from one run.
-- A direct `yield` finishes the run. Composing the final send as `message send ... && yield` avoids
-  another generation; a bare `yield` finishes without another Message.
-- Once the Process validates a message command, the originating client receives
-  `message.started` and `message.delta`. Adapters wait for `message.committed`.
-- Ordinary assistant text in a human-facing run that stops without yielding causes one `[GSV EVENT]`
-  correction. A second omission ends the run with an inspectable bounded error.
+- In a human-facing run, the `Send` tool commits one canonical user-visible message and any files it
+  names in `attach`, a path on the cloud home or `target:path` for a file on a place, along with media
+  registered by `message attach`: `text` alone sends and the run continues, allowing multiple
+  exactly-once messages from one run; `text` with `yield: true` sends and finishes without another
+  generation; `yield: true` alone finishes without another Message, whatever the turn narrated as
+  assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
+  `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
+  command, for people, scripts, and the model alike.
+- The originating client receives `message.started` and `message.delta` while the model is still
+  writing a Send's `text`; a Shell `message send` streams once the Process validates it. Adapters
+  wait for `message.committed`.
+- Ordinary assistant text in a human-facing run that stops without yielding causes a `[GSV EVENT]`
+  correction that names `Send`. The tool set is part of the cached prompt prefix and never changes
+  between turns, corrections included. After three omissions the run ends with an inspectable bounded
+  error, and the person receives a short notice that a reply was written but not sent, rather than
+  silence.
 - A rejected message or run-control command gets five correction attempts. Delivery failures use a
   separate three-attempt budget and tell the model to retry the exact same message command.
 - If there are tool calls, the process evaluates approval rules and dispatches
@@ -169,15 +204,20 @@ still preserved in assistant history with synthetic terminal tool results so
 provider history remains structurally valid and the next model turn can recover
 instead of silently completing or hanging.
 
-Only the fixed syscall-backed tool surface is exposed to the model. Current agent-visible
-tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
-they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
-`shell.exec`, and `codemode.exec`.
+The model sees a fixed surface of eight tools. Seven are syscall-backed: `Read`, `Write`, `Edit`,
+`Delete`, `Search`, `Shell`, and `CodeMode` map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`,
+`web.search`, `shell.exec`, and `codemode.exec`. Search is offered when the caller has
+`web.search` and either a native search service or an accessible online search target;
+filesystem search remains available through Shell commands and CodeMode `fs.search`.
+Each run stores its tool-to-syscall routing with the offered schemas; already-active filesystem
+Search calls and legacy history keep their original meaning across an upgrade.
+The eighth, `Send`, is the run control as a tool and
+backs no syscall; it is offered to human-facing runs only.
 
-The message and run-control commands are Process-owned Shell intrinsics. They do not add model tools,
-require `shell.exec` approval, target a device, or enlarge the composable tool surface. An explicit
-`message send --to ... --also` remains an ordinary approved shell operation for additional or
-cross-channel delivery.
+The message and run-control commands are Process-owned Shell intrinsics, the same actions as `Send`
+in command form. They do not require `shell.exec` approval, target a device, or enlarge the composable
+tool surface. An explicit `message send --to ... --also` remains an ordinary approved shell operation
+for additional or cross-channel delivery.
 
 `CodeMode` remains the programmable tool for multi-step orchestration. It can
 call `fs.*`, `shell.exec`, and connected MCP tools as generated async
@@ -209,8 +249,8 @@ schedules/continues the loop:
 4. Background-origin queued messages are promoted as separate runs after the
    current run finishes.
 
-This repeats until a human-facing run uses `yield`. `message send` alone commits a Message and
-continues the loop. A bounded IPC call omits the human-delivery instruction and finishes when the worker
+This repeats until a human-facing run yields. A `Send` without `yield`, or `message send` alone,
+commits a Message and continues the loop. A bounded IPC call omits the human-delivery instruction and finishes when the worker
 returns ordinary assistant output; that output becomes its caller result.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
@@ -239,21 +279,27 @@ Approval outcomes are:
 - `deny`: append a synthetic tool error.
 - `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
-The run pauses while a HIL request is pending. A native client resumes it through
-`proc.hil` with the exact pending `requestId`. An adapter DM prompt renders that
-identity as `hil[requestId]`; its approval or denial must include the exact
-current token, for example `approve hil[...]` or `deny hil[...]`. A bare decision
-or stale token does not call `proc.hil` and receives a reminder for the current
-request. The provider `replyToId` remains threading metadata, not authorization.
+The run pauses while a HIL request is pending. Web, Desktop, and CLI receive
+`proc.run.hil.requested`; an exact adapter route receives the same structured
+request in `adapter.send`. Decisions resume through `proc.hil` with the exact
+pending `requestId`. Each peer owns presentation.
+Telegram and Slack render native controls; adapters without controls use a
+safe handoff that shows the action and directs the user to Chat. A native
+callback is bound durably to the exact request, linked actor, route generation,
+surface, and provider message before its controls are exposed. The provider
+`replyToId` remains threading metadata, not authorization.
 Interactive and background processes both pause durably when a policy asks.
 Background children inherit the spawning run's human approval route, while the
 pending request remains inspectable and actionable from Process activity even
 when that endpoint disconnects.
 
-The Kernel broadcasts an admitted HIL request to native clients before handling
-its adapter notification. Adapter notification retries are Kernel-owned durable
-scheduled work with a stable delivery id; notification failure never rolls back
-or clears `pending_hil`.
+The Kernel broadcasts an admitted HIL request to connected user clients and,
+when an adapter route exists, schedules a targeted `adapter.send` carrying that
+same structured request. The adapter returns a correlated provider outcome; its
+delivery ledger makes a Kernel retry with the same id safe. A callback uses a
+Kernel-derived, interaction-scoped linked-human peer for ordinary `proc.hil`;
+the adapter service account has no direct approval capability. Notification
+failure never rolls back or clears `pending_hil`.
 
 ## Queueing and Abort
 

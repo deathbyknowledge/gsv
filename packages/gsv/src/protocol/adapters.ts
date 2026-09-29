@@ -1,6 +1,14 @@
-import { binaryBodySchema, type BinaryBody } from "./body";
+import type { BinaryBody } from "./body";
+import {
+  bodyFrameSchemas,
+  type FrameEnvelope,
+  type RequestEnvelope,
+  type ResponseEnvelope,
+  type SignalEnvelope,
+} from "./frame";
 import type { JsonPrimitive, JsonValue } from "./json";
-import { jsonPrimitiveSchema, jsonValueSchema } from "./json";
+import { jsonPrimitiveSchema } from "./json";
+import { procHilRequestSchema, type ProcHilRequest } from "./syscalls/proc";
 import * as z from "zod/mini";
 
 const ADAPTER_INSTALLATION_ID_PATTERN =
@@ -140,6 +148,57 @@ export const adapterOutboundMessageSchema = z.strictObject({
   text: z.string(),
   media: z.optional(z.array(adapterMediaSchema)),
   replyToId: z.optional(z.string()),
+});
+
+/**
+ * Kernel-owned route metadata carried beside a frame delivered to an adapter.
+ * The adapter id and installation id remain deployment-owned service-binding
+ * context and are deliberately absent from this record.
+ */
+export type AdapterDeliveryContext = {
+  /** Stable identity for one logical provider delivery. */
+  deliveryId: string;
+  accountId: string;
+  actorId?: string;
+  surface: AdapterSurface;
+  routeGeneration?: string;
+  processId?: string;
+  runId?: string;
+  /** Semantic process projection that adapters may present in their own style. */
+  processMode?: "ship" | "work";
+  shipDisplaced?: boolean;
+  /** Exact structured approval being presented by this send, when applicable. */
+  hil?: ProcHilRequest;
+};
+
+export const adapterDeliveryContextSchema = z.strictObject({
+  deliveryId: nonEmptyStringSchema,
+  accountId: trimmedNonEmptyStringSchema,
+  actorId: z.optional(nonEmptyStringSchema),
+  surface: adapterSurfaceSchema,
+  routeGeneration: z.optional(nonEmptyStringSchema),
+  processId: z.optional(nonEmptyStringSchema),
+  runId: z.optional(nonEmptyStringSchema),
+  processMode: z.optional(z.enum(["ship", "work"])),
+  shipDisplaced: z.optional(z.boolean()),
+  hil: z.optional(procHilRequestSchema),
+});
+
+/** Interaction-scoped external human identity presented by a trusted adapter. */
+export type AdapterLinkedPeerContext = {
+  accountId: string;
+  actorId: string;
+  surface: AdapterSurface;
+  routeGeneration?: string;
+  interactionId: string;
+};
+
+export const adapterLinkedPeerContextSchema = z.strictObject({
+  accountId: trimmedNonEmptyStringSchema,
+  actorId: nonEmptyStringSchema,
+  surface: adapterSurfaceSchema,
+  routeGeneration: z.optional(nonEmptyStringSchema),
+  interactionId: nonEmptyStringSchema,
 });
 
 export type AdapterActivity =
@@ -332,8 +391,8 @@ export function isAdapterWorkerDisconnectResult(
   return adapterWorkerDisconnectResultSchema.safeParse(value).success;
 }
 
-/** Result returned by an adapter worker's `adapterSend` RPC method. */
-export const adapterWorkerSendResultSchema = z.discriminatedUnion("ok", [
+/** Provider delivery result normalized by an adapter's canonical frame handler. */
+export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
     messageId: z.optional(z.string()),
@@ -347,7 +406,7 @@ export const adapterWorkerSendResultSchema = z.discriminatedUnion("ok", [
   }).check(z.refine((result) => !(result.retryable === true && result.ambiguous === true))),
 ]);
 
-export type AdapterWorkerSendResult =
+export type AdapterProviderSendResult =
   | { ok: true; messageId?: string; deduplicated?: boolean }
   | {
       ok: false;
@@ -359,8 +418,8 @@ export type AdapterWorkerSendResult =
     };
 
 /** Validate an adapter Worker's private send RPC result. */
-export function isAdapterWorkerSendResult(value: JsonValue): value is AdapterWorkerSendResult {
-  return adapterWorkerSendResultSchema.safeParse(value).success;
+export function isAdapterProviderSendResult(value: JsonValue): value is AdapterProviderSendResult {
+  return adapterProviderSendResultSchema.safeParse(value).success;
 }
 
 export const adapterWorkerActivityResultSchema = z.discriminatedUnion("ok", [
@@ -487,124 +546,22 @@ export function isAdapterWorkerStatusResult(
   return z.array(adapterAccountStatusSchema).safeParse(value).success;
 }
 
-/** Request frame sent from an adapter worker to the Gateway service binding. */
-export const adapterGatewayRequestFrameSchema = z.strictObject({
-  type: z.literal("req"),
-  id: z.string(),
-  call: z.string(),
-  args: jsonValueSchema,
-  body: z.optional(binaryBodySchema),
-});
-
-export type AdapterGatewayRequestFrame = {
-  type: "req";
-  id: string;
-  call: string;
-  args: JsonValue;
-  body?: BinaryBody;
-};
-
-/** Response frame returned by the Gateway service binding to an adapter worker. */
-export const adapterGatewayResponseFrameSchema = z.strictObject({
-  type: z.literal("res"),
-  id: z.string(),
-  ok: z.boolean(),
-  data: z.optional(jsonValueSchema),
-  body: z.optional(binaryBodySchema),
-  error: z.optional(z.strictObject({
-    code: z.optional(z.union([z.number(), z.string()])),
-    message: z.string(),
-    details: z.optional(jsonValueSchema),
-  })),
-});
-
-export type AdapterGatewayResponseFrame = {
-  type: "res";
-  id: string;
-  ok: boolean;
-  data?: JsonValue;
-  body?: BinaryBody;
-  error?: {
-    code?: number | string;
-    message: string;
-    details?: JsonValue;
-  };
-};
-
-export type AdapterGatewayFrame =
-  | AdapterGatewayRequestFrame
-  | AdapterGatewayResponseFrame;
-
-export const adapterGatewayFrameSchema = z.union([
-  adapterGatewayRequestFrameSchema,
-  adapterGatewayResponseFrameSchema,
-]);
+/** Frames exchanged with adapter workers over Workers RPC carry byte-stream bodies. */
+export type AdapterGatewayRequestFrame = RequestEnvelope<BinaryBody>;
+export type AdapterGatewayResponseFrame = ResponseEnvelope<BinaryBody>;
+export type AdapterGatewaySignalFrame = SignalEnvelope;
+export type AdapterGatewayFrame = FrameEnvelope<BinaryBody>;
+export const adapterGatewayFrameSchema = bodyFrameSchemas.frame;
 
 /** Gateway RPC surface consumed by adapter workers through a service binding. */
 export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
-  serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
     installation: AdapterInstallationContext,
     frame: Frame,
   ): Promise<Frame | null>;
-}
-
-/**
- * Legacy full-operation shape retained for mixed standalone deployments.
- *
- * @deprecated Implement `AdapterService` from
- * `@humansandmachines/gsv/services/adapters`; it permits intentionally omitted
- * operations and adds explicit discovery metadata.
- */
-export interface AdapterWorkerInterface {
-  readonly adapterId: string;
-  /**
-   * Kept distinct from `connect`: Cloudflare service bindings reserve that
-   * method name for socket connections and would bypass the adapter RPC.
-   */
-  adapterConnect(
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterWorkerConnectResult>;
-  adapterConnect(
+  linkedPeerFrame(
     installation: AdapterInstallationContext,
-    accountId: string,
-    config?: AdapterConnectConfig,
-  ): Promise<AdapterWorkerConnectResult>;
-  adapterDisconnect(
-    accountId: string,
-  ): Promise<AdapterWorkerDisconnectResult>;
-  adapterDisconnect(
-    installation: AdapterInstallationContext,
-    accountId: string,
-  ): Promise<AdapterWorkerDisconnectResult>;
-  adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterWorkerSendResult>;
-  adapterSend(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterWorkerSendResult>;
-  adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<AdapterWorkerActivityResult>;
-  adapterSetActivity(
-    installation: AdapterInstallationContext,
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<AdapterWorkerActivityResult>;
-  adapterStatus(
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
-  adapterStatus(
-    installation: AdapterInstallationContext,
-    accountId?: string,
-  ): Promise<AdapterAccountStatus[]>;
+    context: AdapterLinkedPeerContext,
+    frame: Frame,
+  ): Promise<Frame | null>;
 }

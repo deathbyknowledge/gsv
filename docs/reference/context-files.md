@@ -36,6 +36,7 @@ Conventional files include:
 ```text
 <agent home>/context.d/00-role.md
 <agent home>/context.d/05-voice.md
+<personal agent home>/context.d/10-delegation.md
 <human home>/context.d/10-personal.md
 ```
 
@@ -46,6 +47,28 @@ occasionally relevant personal information belongs in the human-owned
 in the Kernel `r12y` responsibility ledger rather than either context or memory
 layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
 context file.
+
+The default personal account for new installations is `ship`. Personal-agent
+provisioning also creates an ordinary owned `crew` account for delegated work
+(`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
+execution and memory guidance; Ship's conversation instructions and voice stay
+in Ship's home. Both receive the human owner's context and access to personal
+memory through the existing account permissions.
+
+Ship sends its acknowledgment before detailed planning or bookkeeping, makes the
+appropriate responsibility updates, then works directly or delegates. It keeps
+the user informed throughout. Its `10-delegation.md` names the
+Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
+outcomes belong in `r12y` before delegation or yielding.
+
+These are editable account defaults. Existing account names and customized context files
+are preserved; revised prompt text seeds missing files, without rewriting an
+existing account's instructions. To adopt the new defaults in an existing
+space, edit that account's context files deliberately.
+Seeding checks the repository revision before committing, preserving owner
+edits made while defaults are being prepared.
+Generic style files are no longer seeded. Home scaffolding removes only exact
+generated versions of `00-style.md`; customized styles remain in place.
 
 ## Skills: `skills.d/`
 
@@ -98,6 +121,13 @@ seeded `skill-authoring` skill contains the full authoring workflow.
 ## Editing Guidance
 
 Agents should treat these paths like normal files. Read before editing, preserve user-authored structure, and keep changes narrow.
+
+Repository authors use `npm run review:prompts` to edit the shipped Markdown by
+category: world model, interaction, computer/discovery, durable work, knowledge,
+role/judgment, voice, and instance facts. These authoring categories compose into
+the existing `context.d` paths above. The editor shows both the category sources
+and exact assembled Ship/Crew prompts; its sample accounts do not read a live
+space. See [Authoring defaults](../architecture/context-and-knowledge.md#authoring-defaults).
 
 Examples:
 

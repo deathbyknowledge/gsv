@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
 
@@ -11,12 +11,12 @@ export const MAX_FEDERATION_REQUEST_TITLE_BYTES = 1_024;
 export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32 * 1024;
 
 const federationTextEncoder = new TextEncoder();
-const federationRequestKindSchema = z.string()
-  .max(MAX_FEDERATION_REQUEST_KIND_BYTES)
-  .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i);
+const federationRequestKindSchema = z.string().check(
+  z.maxLength(MAX_FEDERATION_REQUEST_KIND_BYTES),
+  z.regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i),
+);
 const federationRequestTitleSchema = z.string()
-  .min(1)
-  .max(MAX_FEDERATION_REQUEST_TITLE_BYTES)
+  .check(z.minLength(1), z.maxLength(MAX_FEDERATION_REQUEST_TITLE_BYTES))
   .check(z.refine((value: string) => (
     value.trim().length > 0
       && federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_REQUEST_TITLE_BYTES
@@ -28,7 +28,7 @@ const federationRequestDetailsSchema = jsonObjectSchema.check(
   )),
 );
 const federationMessageTextSchema = z.string()
-  .max(MAX_FEDERATION_MESSAGE_BYTES)
+  .check(z.maxLength(MAX_FEDERATION_MESSAGE_BYTES))
   .check(z.refine((value: string) => (
     federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_MESSAGE_BYTES
   )));
@@ -322,62 +322,62 @@ export type FederationDeliveryReceipt = {
 export const federationPublicKeySchema = z.strictObject({
   kty: z.literal("EC"),
   crv: z.literal("P-256"),
-  x: z.string().min(1).max(128),
-  y: z.string().min(1).max(128),
-}) satisfies z.ZodType<FederationPublicKey>;
+  x: z.string().check(z.minLength(1), z.maxLength(128)),
+  y: z.string().check(z.minLength(1), z.maxLength(128)),
+}) satisfies z.ZodMiniType<FederationPublicKey>;
 
 const federationResourceIdSchema = z.string()
-  .regex(/^resource:[A-Za-z0-9_-]{1,119}$/);
+  .check(z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/));
 
 export const federationSubjectSchema = z.strictObject({
-  id: z.string().min(1).max(128),
-  displayName: z.string().min(1).max(256),
-}) satisfies z.ZodType<FederationSubject>;
+  id: z.string().check(z.minLength(1), z.maxLength(128)),
+  displayName: z.string().check(z.minLength(1), z.maxLength(256)),
+}) satisfies z.ZodMiniType<FederationSubject>;
 
 export const federationShipDocumentSchema = z.strictObject({
   version: z.literal(1),
-  shipId: z.string().min(1).max(128),
-  origin: z.string().min(1).max(2_048),
+  shipId: z.string().check(z.minLength(1), z.maxLength(128)),
+  origin: z.string().check(z.minLength(1), z.maxLength(2_048)),
   publicKey: federationPublicKeySchema,
   protocols: z.tuple([z.literal("gsv-federation/1")]),
-  issuedAtMs: z.number().int().nonnegative(),
-  signature: z.string().min(1).max(512),
-}) satisfies z.ZodType<FederationShipDocument>;
+  issuedAtMs: z.int().check(z.nonnegative()),
+  signature: z.string().check(z.minLength(1), z.maxLength(512)),
+}) satisfies z.ZodMiniType<FederationShipDocument>;
 
 export const federationResourceDescriptorSchema = z.strictObject({
   id: federationResourceIdSchema,
-  revision: z.string().min(1).max(1_024),
-  contentType: z.string().min(1).max(256),
-  size: z.number().int().nonnegative().max(MAX_FEDERATION_RESOURCE_BYTES),
+  revision: z.string().check(z.minLength(1), z.maxLength(1_024)),
+  contentType: z.string().check(z.minLength(1), z.maxLength(256)),
+  size: z.int().check(z.nonnegative(), z.maximum(MAX_FEDERATION_RESOURCE_BYTES)),
   mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
-  filename: z.optional(z.string().max(1_024)),
-  duration: z.optional(z.number().finite().nonnegative()),
-  transcription: z.optional(z.string().max(32_768)),
-}) satisfies z.ZodType<FederationResourceDescriptor>;
+  filename: z.optional(z.string().check(z.maxLength(1_024))),
+  duration: z.optional(z.number().check(z.nonnegative())),
+  transcription: z.optional(z.string().check(z.maxLength(32_768))),
+}) satisfies z.ZodMiniType<FederationResourceDescriptor>;
 
 const federationMessageDeliverySchema = z.strictObject({
   kind: z.literal("message"),
-  messageId: z.string().min(1).max(256),
-  threadId: z.string().min(1).max(128),
+  messageId: z.string().check(z.minLength(1), z.maxLength(256)),
+  threadId: z.string().check(z.minLength(1), z.maxLength(128)),
   text: federationMessageTextSchema,
   resources: z.optional(
-    z.array(federationResourceDescriptorSchema).max(MAX_FEDERATION_MESSAGE_RESOURCES),
+    z.array(federationResourceDescriptorSchema).check(z.maxLength(MAX_FEDERATION_MESSAGE_RESOURCES)),
   ),
 }).check(z.refine((value: FederationMessageDelivery) => (
   value.text.trim().length > 0 || (value.resources?.length ?? 0) > 0
-))) satisfies z.ZodType<FederationMessageDelivery>;
+))) satisfies z.ZodMiniType<FederationMessageDelivery>;
 
 const federationRequestDeliverySchema = z.strictObject({
   kind: z.literal("request"),
   request: z.strictObject({
-    id: z.string().min(1).max(256),
+    id: z.string().check(z.minLength(1), z.maxLength(256)),
     kind: federationRequestKindSchema,
     title: federationRequestTitleSchema,
     details: z.optional(federationRequestDetailsSchema),
     state: z.literal("offered"),
     revision: z.literal(1),
   }),
-}) satisfies z.ZodType<FederationRequestDelivery>;
+}) satisfies z.ZodMiniType<FederationRequestDelivery>;
 
 const contactRequestStateSchema = z.enum([
   "accepted",
@@ -389,39 +389,39 @@ const contactRequestStateSchema = z.enum([
 
 const federationRequestUpdateDeliverySchema = z.strictObject({
   kind: z.literal("request.update"),
-  requestId: z.string().min(1).max(256),
-  expectedRevision: z.number().int().positive(),
+  requestId: z.string().check(z.minLength(1), z.maxLength(256)),
+  expectedRevision: z.int().check(z.positive()),
   state: contactRequestStateSchema,
   details: z.optional(federationRequestDetailsSchema),
-}) satisfies z.ZodType<FederationRequestUpdateDelivery>;
+}) satisfies z.ZodMiniType<FederationRequestUpdateDelivery>;
 
 const federationContactRevokedDeliverySchema = z.strictObject({
   kind: z.literal("contact.revoked"),
-  generation: z.string().min(1).max(128),
-}) satisfies z.ZodType<FederationContactRevokedDelivery>;
+  generation: z.string().check(z.minLength(1), z.maxLength(128)),
+}) satisfies z.ZodMiniType<FederationContactRevokedDelivery>;
 
 export const federationDeliveryPayloadSchema = z.discriminatedUnion("kind", [
   federationMessageDeliverySchema,
   federationRequestDeliverySchema,
   federationRequestUpdateDeliverySchema,
   federationContactRevokedDeliverySchema,
-]) satisfies z.ZodType<FederationDeliveryPayload>;
+]) satisfies z.ZodMiniType<FederationDeliveryPayload>;
 
 export const federationDeliveryEnvelopeSchema = z.strictObject({
   version: z.literal(1),
-  deliveryId: z.string().min(1).max(256),
-  senderShipId: z.string().min(1).max(128),
-  senderSubjectId: z.string().min(1).max(128),
-  recipientSubjectId: z.string().min(1).max(128),
-  generation: z.string().min(1).max(128),
-  timestampMs: z.number().int().nonnegative(),
-  nonce: z.string().min(1).max(128),
+  deliveryId: z.string().check(z.minLength(1), z.maxLength(256)),
+  senderShipId: z.string().check(z.minLength(1), z.maxLength(128)),
+  senderSubjectId: z.string().check(z.minLength(1), z.maxLength(128)),
+  recipientSubjectId: z.string().check(z.minLength(1), z.maxLength(128)),
+  generation: z.string().check(z.minLength(1), z.maxLength(128)),
+  timestampMs: z.int().check(z.nonnegative()),
+  nonce: z.string().check(z.minLength(1), z.maxLength(128)),
   payload: federationDeliveryPayloadSchema,
-  signature: z.string().min(1).max(512),
-}) satisfies z.ZodType<FederationDeliveryEnvelope>;
+  signature: z.string().check(z.minLength(1), z.maxLength(512)),
+}) satisfies z.ZodMiniType<FederationDeliveryEnvelope>;
 
 export const federationDeliveryReceiptSchema = z.strictObject({
   version: z.literal(1),
-  deliveryId: z.string().min(1).max(256),
-  signature: z.string().min(1).max(512),
-}) satisfies z.ZodType<FederationDeliveryReceipt>;
+  deliveryId: z.string().check(z.minLength(1), z.maxLength(256)),
+  signature: z.string().check(z.minLength(1), z.maxLength(512)),
+}) satisfies z.ZodMiniType<FederationDeliveryReceipt>;

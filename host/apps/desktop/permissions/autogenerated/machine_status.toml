@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-machine-status"
+description = "Enables the machine_status command without any pre-configured scope."
+commands.allow = ["machine_status"]
+
+[[permission]]
+identifier = "deny-machine-status"
+description = "Denies the machine_status command without any pre-configured scope."
+commands.deny = ["machine_status"]

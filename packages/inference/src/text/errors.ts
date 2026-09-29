@@ -1,0 +1,355 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
+import { jsonObjectSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
+
+export type ProviderErrorContext = {
+  provider?: string;
+  model?: string;
+  contextWindowTokens?: number | null;
+};
+
+export const NON_STANDARD_PROVIDER_ERROR =
+  "Provider returned a non-standard error response.";
+
+/** New retained diagnostics are previews; classification must use the original error. */
+const MAX_PROVIDER_DIAGNOSTIC_CHARS = 4096;
+
+export function formatProviderErrorDiagnostic(message: string): string {
+  if (message.length <= MAX_PROVIDER_DIAGNOSTIC_CHARS) return message;
+  const suffix = `\n[truncated; original length ${message.length} characters]`;
+  const preview = message.slice(0, MAX_PROVIDER_DIAGNOSTIC_CHARS - suffix.length)
+    .replace(/[\uD800-\uDBFF]$/u, "");
+  return preview + suffix;
+}
+
+const BILLING_ERROR_PATTERN =
+  /\b(?:http\s*402|error\s*code:\s*402|402|payment[\s_-]+required|insufficient[\s_-]+(?:funds|credits|balance|quota)|out[\s_-]+of[\s_-]+(?:credits?|quota)|no[\s_-]+(?:credits?|quota)|billing|payment|balance(?:[\s_-]+low)?|credits?|quota[\s_-]+exceeded|exceeded[\s_-]+quota)\b/i;
+const RATE_LIMIT_ERROR_PATTERN =
+  /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests|http\s*429|429)\b/i;
+const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
+const HTML_CHALLENGE_OR_BLOCK_PATTERN =
+  /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
+const PROVIDER_RESPONSE_DIAGNOSTIC_PATTERN =
+  /\b(?:HTTP\s+\d{3}|content-type=[^;\s]+|cf-ray=[^;\s]+|request-id=[^;\s]+)/gi;
+
+type ProviderErrorClassifier = {
+  name: string;
+  matches: (text: string) => boolean;
+};
+
+type ProviderErrorInput = Error | JsonValue | symbol | (() => string);
+
+const PROMOTABLE_PROVIDER_ERROR_CLASSIFIERS: ProviderErrorClassifier[] = [
+  { name: "account", matches: isProviderAccountErrorText },
+  { name: "rate-limit", matches: isProviderRateLimitErrorText },
+  { name: "context-overflow", matches: isProviderContextOverflowErrorText },
+];
+
+export function errorMessageFromUnknown<T>(error: T): string {
+  // SAFETY: This public boundary accepts arbitrary thrown values and normalizes them immediately.
+  return extractErrorText(error as ProviderErrorInput, new Set()) ?? NON_STANDARD_PROVIDER_ERROR;
+}
+
+function extractErrorText(error: ProviderErrorInput | null | undefined, seen: Set<object>): string | null {
+  if (error instanceof Error) {
+    if (seen.has(error)) {
+      return null;
+    }
+    seen.add(error);
+
+    const text = normalizeOptionalErrorText(error.message);
+    // SAFETY: Error causes are recursively normalized as provider error inputs.
+    const causeText = extractErrorText((error as Error & { cause?: ProviderErrorInput }).cause, seen);
+    if (causeText && (!text || isRecognizedProviderErrorText(causeText))) {
+      return causeText;
+    }
+    return text ?? causeText;
+  }
+  const stringError = z.string().safeParse(error);
+  if (stringError.success) return normalizeOptionalErrorText(stringError.data);
+
+  let parsed: ReturnType<typeof jsonObjectSchema.safeParse>;
+  try {
+    parsed = jsonObjectSchema.safeParse(error);
+  } catch {
+    return null;
+  }
+  if (!parsed.success) return null;
+  const record = parsed.data;
+  if (seen.has(record)) return null;
+  seen.add(record);
+  for (const field of ["message", "detail", "error_description", "errorDescription"]) {
+    const text = normalizeOptionalErrorText(record[field]);
+    if (text) {
+      return text;
+    }
+  }
+
+  const nestedError = record.error;
+  const nestedText = z.string().safeParse(nestedError);
+  if (nestedText.success) {
+    const text = normalizeOptionalErrorText(nestedText.data);
+    if (text) {
+      return text;
+    }
+  }
+  const nested = extractErrorText(nestedError, seen) ??
+    extractErrorText(record.cause, seen) ??
+    extractErrorText(record.response, seen) ??
+    extractErrorText(record.data, seen);
+  if (nested) {
+    return nested;
+  }
+
+  const errors = record.errors;
+  if (Array.isArray(errors)) {
+    for (const item of errors) {
+      const text = extractErrorText(item, seen);
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  const statusOrCode = extractStatusOrCodeText(record);
+  if (statusOrCode) {
+    return statusOrCode;
+  }
+
+  return null;
+}
+
+export function formatProviderErrorMessage(
+  message: string,
+  context?: ProviderErrorContext,
+): string {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (
+    trimmed.startsWith("Provider account issue") ||
+    trimmed.startsWith("Provider rate limit")
+  ) {
+    return trimmed;
+  }
+
+  const normalized = normalizeErrorText(trimmed);
+  const htmlError = formatHtmlProviderErrorMessage(normalized, context);
+  if (htmlError) {
+    return htmlError;
+  }
+
+  const source = formatProviderSource(context);
+  if (isProviderAccountErrorText(normalized)) {
+    return [
+      `Provider account issue${source}: ${normalized}`,
+      "Check credits, quota, or billing for the configured AI provider.",
+    ].join("\n");
+  }
+
+  if (isProviderRateLimitErrorText(normalized)) {
+    return [
+      `Provider rate limit${source}: ${normalized}`,
+      "Wait and retry, or switch to another configured AI provider or model.",
+    ].join("\n");
+  }
+
+  return normalized;
+}
+
+export function isProviderContextOverflow(
+  message: AssistantMessage,
+  contextWindowTokens?: number | null,
+): boolean {
+  if (requiresUsageForOverflowDetection(message) && !hasAssistantUsage(message)) {
+    return false;
+  }
+  return isContextOverflow(message, normalizeContextWindowTokens(contextWindowTokens));
+}
+
+export function isProviderContextOverflowErrorMessage(
+  message: string,
+  context?: ProviderErrorContext,
+): boolean {
+  return isProviderContextOverflow(
+    buildProviderErrorAssistantMessage(message, context),
+    context?.contextWindowTokens,
+  );
+}
+
+export function formatProviderContextOverflowMessage(
+  providerMessage: string | undefined,
+  context?: ProviderErrorContext,
+): string {
+  const source = formatProviderModelLabel(context);
+  const lines = [
+    source
+      ? `Context limit reached for ${source}.`
+      : "Context limit reached at the AI provider.",
+    "The provider reported that this request exceeds the model context window.",
+    "Compact or reset the conversation, remove attachments, or switch to a model with a larger context window.",
+  ];
+  const normalized = providerMessage
+    ? formatProviderErrorMessage(providerMessage, context)
+    : "";
+  if (normalized) {
+    lines.push("", `Provider message: ${normalized}`);
+  }
+  return lines.join("\n");
+}
+
+function requiresUsageForOverflowDetection(message: AssistantMessage): boolean {
+  return message.stopReason === "stop" || message.stopReason === "length";
+}
+
+function hasAssistantUsage(message: AssistantMessage): boolean {
+  const usage = message.usage;
+  return usage !== undefined && usage !== null;
+}
+
+function buildProviderErrorAssistantMessage(
+  errorMessage: string,
+  context: ProviderErrorContext | undefined,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "gsv-provider-error",
+    provider: context?.provider ?? "unknown",
+    model: context?.model ?? "unknown",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "error",
+    errorMessage,
+    timestamp: Date.now(),
+  };
+}
+
+function normalizeContextWindowTokens(value: number | null | undefined): number | undefined {
+  const parsed = z.number().safeParse(value);
+  return parsed.success && parsed.data > 0 ? parsed.data : undefined;
+}
+
+function formatProviderModelLabel(context: ProviderErrorContext | undefined): string {
+  const provider = context?.provider?.trim();
+  const model = context?.model?.trim();
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return provider || model || "";
+}
+
+function normalizeErrorText(message: string): string {
+  return message.trim().replace(/\s+/g, " ");
+}
+
+function formatHtmlProviderErrorMessage(
+  message: string,
+  context: ProviderErrorContext | undefined,
+): string | null {
+  if (!HTML_DOCUMENT_PATTERN.test(message)) {
+    return null;
+  }
+  const source = formatProviderSource(context);
+  if (HTML_CHALLENGE_OR_BLOCK_PATTERN.test(message)) {
+    const lines = [
+      `Provider returned an HTML challenge or block page${source} instead of a model response.`,
+    ];
+    const diagnostics = extractProviderResponseDiagnostics(message);
+    if (diagnostics) {
+      lines.push(`Response: ${diagnostics}`);
+    }
+    lines.push("Check VPN/network access to the provider, or run GSV from an environment that can reach it.");
+    return lines.join("\n");
+  }
+  return `Provider returned an HTML error page${source} instead of a model response.`;
+}
+
+function extractProviderResponseDiagnostics(message: string): string {
+  return Array.from(message.matchAll(PROVIDER_RESPONSE_DIAGNOSTIC_PATTERN))
+    .map((match) => match[0])
+    .map((value) => value.replace(/[,:]+$/, ""))
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join("; ");
+}
+
+function normalizeOptionalErrorText(value: JsonValue | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim().length > 0 ? parsed.data.trim() : null;
+}
+
+function extractStatusOrCodeText(record: JsonObject): string | null {
+  for (const field of ["code", "type"]) {
+    const text = normalizeOptionalErrorText(record[field]);
+    if (text && isRecognizedProviderStatusOrCode(text)) {
+      return text;
+    }
+  }
+
+  for (const field of ["status", "statusCode"]) {
+    const status = providerStatusCode(record[field]);
+    if (status) {
+      return `HTTP ${status}`;
+    }
+  }
+
+  return null;
+}
+
+function isRecognizedProviderStatusOrCode(text: string): boolean {
+  return isRecognizedProviderErrorText(text);
+}
+
+function isRecognizedProviderErrorText(text: string): boolean {
+  return PROMOTABLE_PROVIDER_ERROR_CLASSIFIERS.some((classifier) => classifier.matches(text));
+}
+
+function isProviderAccountErrorText(text: string): boolean {
+  return BILLING_ERROR_PATTERN.test(text);
+}
+
+function isProviderRateLimitErrorText(text: string): boolean {
+  return RATE_LIMIT_ERROR_PATTERN.test(text);
+}
+
+function isProviderContextOverflowErrorText(text: string): boolean {
+  return isProviderContextOverflowErrorMessage(text);
+}
+
+function providerStatusCode(value: JsonValue | undefined): 402 | 429 | null {
+  const numeric = z.number().safeParse(value);
+  const text = z.string().safeParse(value);
+  const status = numeric.success
+    ? numeric.data
+    : text.success && /^\d+$/.test(text.data.trim())
+      ? Number(text.data.trim())
+      : null;
+
+  return status === 402 || status === 429 ? status : null;
+}
+
+function formatProviderSource(context: ProviderErrorContext | undefined): string {
+  const provider = context?.provider?.trim();
+  const model = context?.model?.trim();
+  if (!provider && !model) {
+    return "";
+  }
+  if (provider && model) {
+    return ` from ${provider}/${model}`;
+  }
+  return ` from ${provider ?? model}`;
+}

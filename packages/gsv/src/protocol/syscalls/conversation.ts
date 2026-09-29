@@ -67,6 +67,8 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
+  /** Target selected for this message, independently of its source and reply endpoint. */
+  selectedTarget?: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -86,6 +88,8 @@ export type ConversationListResult = { conversations: ConversationSummary[] };
 export type ConversationHistoryArgs = {
   conversationId: string;
   beforeSequence?: number;
+  /** Read the next chronological page; mutually exclusive with beforeSequence. */
+  afterSequence?: number;
   limit?: number;
 };
 
@@ -95,9 +99,33 @@ export type ConversationHistoryResult = {
   hasMore: boolean;
 };
 
+export type ConversationSearchArgs = {
+  /** Defaults to the caller's Ship conversation. */
+  conversationId?: string;
+  query: string;
+  beforeSequence?: number;
+  limit?: number;
+};
+
+export type ConversationSearchHit = {
+  id: string;
+  sequence: number;
+  author: ConversationMessageAuthor;
+  createdAt: number;
+  snippet: string;
+};
+
+export type ConversationSearchResult = {
+  conversation: ConversationSummary;
+  hits: ConversationSearchHit[];
+  nextBeforeSequence: number | null;
+};
+
 export type ConversationSendArgs = {
   conversationId: string;
   text: string;
+  /** Optional target context for this message; does not change process defaults or permissions. */
+  selectedTarget?: string;
   media?: ResourceBlock[];
   idempotencyKey?: string;
 };

@@ -1,145 +1,15 @@
-/* Create-account (register) wizard shell — sits in the AuthLayout galaxy
-   surface. Single-column flow (matches the auth-preview RegisterMock):
-   horizontal stepper on top, stacked step content, then footer nav. */
-
-/* The setup panel is wider than login's, so reserve more room for it and keep
-   the galaxy fully to its left. */
-.gsv-auth-surface-setup {
-  --gsv-galaxy-reserve: 760px;
-}
 .gsv-setup-panel {
-  width: min(640px, 92vw);
-  max-height: calc(100% - 56px);
+  width: min(480px, 100%);
+  max-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 32px 36px;
-  background: color-mix(in srgb, var(--panel) 100%, #ffffff 5%);
-  border: 1px solid var(--border);
-  box-shadow: 0 0 40px rgba(10, 6, 30, 0.5), 0 0 0 1px rgba(150, 140, 255, 0.04);
-  backdrop-filter: blur(3px);
+  padding: 4px;
 }
-@media (max-width: 380px) {
-  .gsv-setup-panel {
-    padding: 24px 18px;
-  }
-}
-
-.gsv-setup-form {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Stepper on top, centered, with a divider. */
-.gsv-setup-stepper {
-  display: flex;
-  justify-content: center;
-  padding-bottom: 26px;
-  margin-bottom: 26px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Stacked step content. Only one stage is visible at a time. */
-.gsv-setup-body {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
-/* Per-step head — kicker + prose title + sub. Shared by every stage so
-   they read identically (matches the RegisterMock). */
-.gsv-setup-head {
-  margin-bottom: 22px;
-}
-.gsv-setup-head-kicker {
-  /* size + family from .gsv-sublabel (12px); tracking kept wider */
-  display: block;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 9px;
-}
-.gsv-setup-head-title {
-  /* size + family + line-height from .gsv-prose-display (22px hero) */
-  margin: 0;
-  font-weight: 600;
-  letter-spacing: 0.005em;
-  color: var(--text-hi);
-}
-.gsv-setup-head-sub {
-  /* size + family + line-height from .gsv-prose (13px reading) */
-  margin: 8px 0 0;
-  color: #9d98d4;
-}
-
-.gsv-setup-alert {
-  /* size from .gsv-label (13px); no JSX handle (className prop) → value-normalized */
-  margin: 0;
-  font-size: 0.8125rem;
-  letter-spacing: 0.06em;
-  color: var(--error);
-}
-.gsv-setup-alert[hidden] {
-  display: none;
-}
-
-/* Footer nav: back (left) · step count (center) · primary + guide (right). */
-.gsv-setup-nav {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 28px;
-  padding-top: 22px;
-  border-top: 1px solid var(--border);
-}
-.gsv-setup-nav-spacer {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-}
-/* Primary action with the "Ask the guide" link stacked beneath it. */
-.gsv-setup-nav-primary {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-}
-.gsv-setup-stepcount {
-  /* size + family from .gsv-sublabel (12px); tracking kept */
-  letter-spacing: 0.22em;
-  color: var(--text-dim);
-}
-
-/* Floating launcher for the guide chat window — pinned to the same corner the
-   window opens at; only shown while the guide is closed. */
-.gsv-guide-launch {
-  position: fixed;
-  right: 28px;
-  bottom: 28px;
-  z-index: 49;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 17px;
-  font-family: var(--gsv-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--accent-bright);
-  background: color-mix(in srgb, var(--panel) 100%, #ffffff 6%);
-  border: 1px solid var(--primary-hi);
-  box-shadow: 0 14px 40px rgba(5, 3, 18, 0.55);
-  cursor: pointer;
-  transition: background 0.14s, border-color 0.14s, color 0.14s;
-}
-.gsv-guide-launch:hover {
-  background: var(--active);
-  border-color: var(--accent);
-  color: #ffffff;
-}
-.gsv-guide-launch:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.gsv-guide-launch-icon {
-  flex: none;
-}
+.gsv-setup-head { margin-bottom: 32px; }
+.gsv-setup-head h1 { margin: 12px 0; color: var(--text-hi); font-family: var(--gsv-font-prose); font-size: 28px; font-weight: 500; line-height: 1.3; }
+.gsv-setup-head p { margin: 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: 16px; line-height: 1.7; }
+.gsv-setup-head .gsv-setup-space { color: var(--accent); font-family: var(--gsv-font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.gsv-setup-form { display: flex; flex-direction: column; gap: 20px; }
+.gsv-setup-note { margin: -4px 0 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: 14px; }
+.gsv-setup-actions { padding-top: 8px; }
+.gsv-setup-actions button:disabled { opacity: .45; cursor: not-allowed; }

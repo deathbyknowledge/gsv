@@ -1,0 +1,114 @@
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Shared readers for the VitePress site in docs/: which pages exist, which
+ * routes the sidebar and redirects name, and how a route maps to a file.
+ */
+
+export const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const docsRoot = join(repositoryRoot, "docs");
+export const vitepressConfigPath = join(docsRoot, ".vitepress", "config.ts");
+
+const SKIPPED_DIRECTORIES = new Set([".vitepress", "node_modules", "public"]);
+
+/** Every markdown page under docs/, as a path relative to docs/. */
+export function listDocsPages() {
+  const pages = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      if (statSync(path).isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry)) walk(path);
+      } else if (entry.endsWith(".md")) {
+        pages.push(relative(docsRoot, path));
+      }
+    }
+  };
+  walk(docsRoot);
+  return pages.sort();
+}
+
+function configSection(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  if (start < 0) throw new Error(`docs/.vitepress/config.ts has no ${startMarker.trim()} block`);
+  const end = source.indexOf(endMarker, start);
+  return { text: source.slice(start, end < 0 ? source.length : end), offset: start };
+}
+
+function lineOf(source, offset) {
+  return source.slice(0, offset).split("\n").length;
+}
+
+function readLinks(startMarker, endMarker) {
+  const source = readFileSync(vitepressConfigPath, "utf8");
+  const section = configSection(source, startMarker, endMarker);
+  return [...section.text.matchAll(/link:\s*"([^"]+)"/g)].map((match) => ({
+    route: match[1],
+    line: lineOf(source, section.offset + match.index),
+  }));
+}
+
+/** Routes named by `link:` entries in the sidebar block, with config line numbers. */
+export function readSidebarLinks() {
+  return readLinks("sidebar: {", "socialLinks:");
+}
+
+/** Routes named by `link:` entries in the top navigation. */
+export function readNavLinks() {
+  return readLinks("nav: [", "sidebar: {");
+}
+
+/** Redirect pairs from the `redirects` block, with config line numbers. */
+export function readRedirects() {
+  const source = readFileSync(vitepressConfigPath, "utf8");
+  const section = configSection(source, "redirects: {", "\n  },");
+  return [...section.text.matchAll(/"([^"]+)":\s*"([^"]+)"/g)].map((match) => ({
+    from: match[1],
+    to: match[2],
+    line: lineOf(source, section.offset + match.index),
+  }));
+}
+
+/**
+ * The docs/-relative file a site route renders from, or null when the route
+ * is external. `/a/b` is `a/b.md`; `/a/` and `/` are index pages.
+ */
+export function routeToFile(route) {
+  const path = route.split("#")[0];
+  if (/^[a-z]+:/.test(path)) return null;
+  const trimmed = path.replace(/^\//, "");
+  if (trimmed === "" || trimmed.endsWith("/")) return `${trimmed}index.md`;
+  return trimmed.endsWith(".md") ? trimmed : `${trimmed}.md`;
+}
+
+export function docsFileExists(file) {
+  return existsSync(join(docsRoot, file));
+}
+
+/** VitePress heading slugs: what `#fragment` links resolve against. */
+export function slugify(heading) {
+  return heading
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\p{Cc}/gu, "")
+    .replace(/[\s~`!@#$%^&*()\-_+=[\]{}|\\;:"'“”‘’<>,.?/]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^(\d)/, "_$1")
+    .toLowerCase();
+}
+
+/** Slugs of every ATX heading in a markdown document, outside fenced code. */
+export function headingSlugs(markdown) {
+  const slugs = new Set();
+  let fenced = false;
+  for (const line of markdown.split("\n")) {
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    if (fenced) continue;
+    const match = line.match(/^#{1,6}\s+(.+?)\s*(?:\{#([^}]+)\})?\s*#*\s*$/);
+    if (match) slugs.add(match[2] ?? slugify(match[1]));
+  }
+  return slugs;
+}

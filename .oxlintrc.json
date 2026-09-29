@@ -18,7 +18,7 @@
     "**/target/**",
     "**/worker-configuration.d.ts",
     "release/**",
-    "gateway/src/protocol/generated/**",
+    "workers/gateway/src/protocol/generated/**",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [

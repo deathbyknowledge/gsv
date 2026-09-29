@@ -13,7 +13,7 @@ Its public contracts are documented in:
 
 The implementation source of truth is:
 
-- `gateway/src/adapter-interface.ts`
+- `workers/gateway/src/adapter-interface.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/syscalls/adapter.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`

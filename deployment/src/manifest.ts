@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
+import { installationResourceKindSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 
-export const GSV_DEPLOYMENT_MANIFEST_VERSION = 1;
+export const GSV_DEPLOYMENT_MANIFEST_VERSION = 3;
 
 const durableObjectSchema = z.strictObject({
   binding: z.string().check(z.minLength(1), z.maxLength(128)),
@@ -16,6 +17,15 @@ export const adapterWorkerDeploymentSchema = z.strictObject({
   requiredSecrets: z.array(
     z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
   ),
+  requiredVariables: z.optional(z.array(z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)))),
+  lifecycle: z.optional(z.strictObject({
+    entrypoint: z.string().check(z.minLength(1), z.maxLength(128)),
+    namespaces: z.array(z.strictObject({
+      className: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]*$/)),
+      kind: z.enum(installationResourceKindSchema.options),
+    })),
+  })),
+  crons: z.optional(z.array(z.string().check(z.minLength(1)))),
   selfUrlBinding: z.optional(
     z.string().check(z.regex(/^[A-Z][A-Z0-9_]*$/)),
   ),
@@ -29,12 +39,11 @@ export const adapterDeploymentSchema = z.strictObject({
   ),
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   gatewayBinding: z.string().check(z.regex(/^CHANNEL_[A-Z0-9_]+$/)),
-  standalone: adapterWorkerDeploymentSchema,
-  managed: z.optional(adapterWorkerDeploymentSchema),
+  deployment: adapterWorkerDeploymentSchema,
 });
 
 export const adapterSourceManifestSchema = z.strictObject({
-  version: z.literal(GSV_DEPLOYMENT_MANIFEST_VERSION),
+  version: z.literal(2),
   id: z.string().check(
     z.minLength(1),
     z.maxLength(64),
@@ -45,14 +54,16 @@ export const adapterSourceManifestSchema = z.strictObject({
   deployOrder: z.number().check(z.int(), z.positive()),
   wranglerConfig: z.string().check(z.minLength(1)),
   devStateDirectories: z.array(z.string().check(z.minLength(1))),
-  standalone: adapterWorkerDeploymentSchema,
-  managed: z.optional(adapterWorkerDeploymentSchema),
+  deployment: adapterWorkerDeploymentSchema,
 });
 
 const runtimeDeploymentSchema = z.strictObject({
   gatewayBundle: z.string().check(z.minLength(1)),
   webAssets: z.string().check(z.minLength(1)),
   ripgitBundle: z.string().check(z.minLength(1)),
+  installationsBundle: z.string().check(z.minLength(1)),
+  installationsMigrations: z.string().check(z.minLength(1)),
+  inferenceBundle: z.string().check(z.minLength(1)),
 });
 
 export const gsvDeploymentManifestSchema = z.strictObject({
@@ -91,8 +102,7 @@ export const resolveAdapterDeploymentManifest = (
     id: adapter.id,
     displayName: adapter.displayName,
     gatewayBinding: `CHANNEL_${adapter.id.replaceAll("-", "_").toUpperCase()}`,
-    standalone: adapter.standalone,
+    deployment: adapter.deployment,
   };
-  if (adapter.managed) deployment.managed = adapter.managed;
   return deployment;
 };

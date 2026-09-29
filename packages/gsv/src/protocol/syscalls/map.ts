@@ -18,8 +18,9 @@ import type {
   FsWriteArgs,
   FsWriteResult,
 } from "./fs";
-import type { ShellExecArgs, ShellExecResult } from "./shell";
+import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
+import type { WebSearchArgs, WebSearchResult } from "./web";
 import type {
   CodeModeExecArgs,
   CodeModeExecResult,
@@ -109,6 +110,8 @@ import type {
   AccountCreateResult,
   AccountListArgs,
   AccountListResult,
+  HumanInvitation,
+  LocalPerson,
   ConnectArgs,
   ConnectResult,
   SysBootstrapArgs,
@@ -117,14 +120,16 @@ import type {
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
-  SysDeviceDeleteArgs,
-  SysDeviceDeleteResult,
-  SysDeviceGetArgs,
-  SysDeviceGetResult,
-  SysDeviceListArgs,
-  SysDeviceListResult,
-  SysDeviceUpdateArgs,
-  SysDeviceUpdateResult,
+  SysTargetDeleteArgs,
+  SysTargetDeleteResult,
+  SysLedgerListArgs,
+  SysLedgerListResult,
+  SysTargetGetArgs,
+  SysTargetGetResult,
+  SysTargetListArgs,
+  SysTargetListResult,
+  SysTargetUpdateArgs,
+  SysTargetUpdateResult,
   SysLinkArgs,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
@@ -177,6 +182,10 @@ import type {
   SchedulerUpdateResult,
 } from "./scheduler";
 import type {
+  SysPairCreateArgs, SysPairCreateResult, SysPairListArgs, SysPairListResult,
+  SysPairCancelArgs, SysPairCancelResult, SysPairRedeemArgs, SysPairRedeemResult,
+} from "./pairing";
+import type {
   ResponsibilityChangesArgs,
   ResponsibilityChangesResult,
   ResponsibilityCreateArgs,
@@ -196,6 +205,8 @@ import type {
   AiContextArgs,
   AiContextResult,
   AiConfigArgs,
+  AiModelsArgs,
+  AiModelsResult,
   AiConfigResult,
   AiImageGenerateArgs,
   AiImageGenerateResult,
@@ -251,6 +262,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipArgs,
   ConversationShipResult,
   ConversationListArgs,
@@ -301,8 +314,10 @@ export type SyscallDomains = {
   "fs.transfer.receive": { args: FsTransferReceiveArgs; result: FsTransferReceiveResult };
 
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+  "shell.cancel": { args: ShellCancelArgs; result: ShellCancelResult };
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
+  "web.search": { args: WebSearchArgs; result: WebSearchResult };
 
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
@@ -314,6 +329,7 @@ export type SyscallDomains = {
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
   "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
   "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
+  "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
 
@@ -376,10 +392,11 @@ export type SyscallDomains = {
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
-  "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
-  "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
-  "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
-  "sys.device.delete": { args: SysDeviceDeleteArgs; result: SysDeviceDeleteResult };
+  "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };
+  "sys.target.get": { args: SysTargetGetArgs; result: SysTargetGetResult };
+  "sys.target.update": { args: SysTargetUpdateArgs; result: SysTargetUpdateResult };
+  "sys.target.delete": { args: SysTargetDeleteArgs; result: SysTargetDeleteResult };
+  "sys.ledger.list": { args: SysLedgerListArgs; result: SysLedgerListResult };
   "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
   "sys.oauth.device.start": { args: SysOAuthDeviceStartArgs; result: SysOAuthDeviceStartResult };
   "sys.oauth.device.poll": { args: SysOAuthDevicePollArgs; result: SysOAuthDevicePollResult };
@@ -393,6 +410,10 @@ export type SyscallDomains = {
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };
+  "sys.pair.create": { args: SysPairCreateArgs; result: SysPairCreateResult };
+  "sys.pair.list": { args: SysPairListArgs; result: SysPairListResult };
+  "sys.pair.cancel": { args: SysPairCancelArgs; result: SysPairCancelResult };
+  "sys.pair.redeem": { args: SysPairRedeemArgs; result: SysPairRedeemResult };
   "sys.link": { args: SysLinkArgs; result: SysLinkResult };
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
@@ -400,6 +421,17 @@ export type SyscallDomains = {
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
+  "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
+  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
+  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
+  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
+  "account.invite.list": { args: Record<string, never>; result: { invitations: HumanInvitation[] } };
+  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
+  "account.invite.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { uid: number; username: string } };
+  "account.people.list": { args: Record<string, never>; result: { people: LocalPerson[] } };
+  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
+  "account.remove": { args: { uid: number }; result: { removed: true } };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };
@@ -418,6 +450,7 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.context": { args: AiContextArgs; result: AiContextResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
+  "ai.models": { args: AiModelsArgs; result: AiModelsResult };
   "ai.text.generate": { args: AiTextGenerateArgs; result: AiTextGenerateResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
   "ai.image.read": { args: AiImageReadArgs; result: AiImageReadResult };

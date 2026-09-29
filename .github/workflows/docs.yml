@@ -1,0 +1,34 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-check:
+    name: Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # The pull request body and labels reach the scripts only as environment
+      # values; nothing here interpolates them into a shell command line.
+      - name: Check docs links, publishability and currency
+        env:
+          DOCS_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          DOCS_PR_BODY: ${{ github.event.pull_request.body }}
+          DOCS_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npm run docs:check

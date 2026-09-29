@@ -52,7 +52,7 @@ if (!actualUsername || (expectedUsername && actualUsername !== expectedUsername)
 await telegram("setWebhook", {
   url,
   secret_token: webhookSecret,
-  allowed_updates: ["message"],
+  allowed_updates: ["message", "callback_query"],
   drop_pending_updates: false,
 });
 const webhook = await telegram("getWebhookInfo");

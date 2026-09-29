@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createTestRoot,
   deferred,
-} from "../features/gsv-console/messengers/messengerTestHarness";
+} from "../testing/testHarness";
 import type { SessionPhase, SessionSnapshot } from "../services/session/sessionService";
 
 import {
@@ -70,11 +70,20 @@ function session(phase: SessionPhase, username: string): SessionSnapshot {
     connectionId: phase === "ready" ? `connection:${username}` : null,
     server: null,
     message: null,
-    setupResult: null,
   };
 }
 
 describe("authenticated query isolation", () => {
+  it("does not reuse an account's queries at a different gateway", () => {
+    const first = session("ready", "root");
+    const second = { ...first, url: "wss://another-space.test/ws" };
+    const current = resolveScopedWebQueryClient(null, webQuerySessionScope(first));
+    current.client.setQueryData(PRIVATE_QUERY_KEY, { owner: "first-space" });
+    const next = resolveScopedWebQueryClient(current, webQuerySessionScope(second));
+    expect(next.client).not.toBe(current.client);
+    expect(next.client.getQueryData(PRIVATE_QUERY_KEY)).toBeUndefined();
+  });
+
   it("does not reuse fresh private Work data across Alice lock and Bob login", async () => {
     const queryKey = ["processes", "gsv-console"] as const;
     const alice = resolveScopedWebQueryClient(

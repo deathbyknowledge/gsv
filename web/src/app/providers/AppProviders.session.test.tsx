@@ -1,7 +1,7 @@
 import { act } from "preact/test-utils";
 import { useEffect } from "preact/hooks";
 import { describe, expect, it, vi } from "vitest";
-import { createTestRoot } from "../features/gsv-console/messengers/messengerTestHarness";
+import { createTestRoot } from "../testing/testHarness";
 import type {
   SessionService,
   SessionSnapshot,
@@ -19,7 +19,6 @@ function session(phase: SessionSnapshot["phase"]): SessionSnapshot {
     connectionId: phase === "ready" ? "connection:hank" : null,
     server: null,
     message: null,
-    setupResult: null,
   };
 }
 
@@ -44,10 +43,7 @@ function createSessionHarness() {
     setup: async () => {
       throw new Error("Not used by this test");
     },
-    continueFromSetup: async () => {
-      throw new Error("Not used by this test");
-    },
-    lock: () => {},
+    lock: async () => {},
     start,
   };
 

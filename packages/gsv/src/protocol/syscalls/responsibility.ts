@@ -226,6 +226,9 @@ export function responsibilityRequiresAction(
       && (hasFutureWake || explicitlyBlocked)
     );
   }
+  if (responsibility.nextCheckAtMs !== undefined && responsibility.nextCheckAtMs <= now) {
+    return true;
+  }
   if (
     responsibility.state === "waiting"
     && (

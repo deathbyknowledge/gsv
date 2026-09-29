@@ -1,0 +1,204 @@
+import { env } from "cloudflare:workers";
+import { createInstallationStorage } from "../installation/storage";
+import { runInDurableObject } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+import type { Conversation } from "./do";
+import { getConversationById } from "../shared/utils";
+import { ConversationStore } from "./store";
+
+function conversation(name: string) {
+  return getConversationById("inst_test", `conv:test:${name}:${crypto.randomUUID()}`);
+}
+
+function message(sequence: number) {
+  return {
+    messageId: `msg:${sequence}`,
+    idempotencyKey: `input:${sequence}`,
+    author: { kind: "user" as const, uid: 1000 },
+    text: `message ${sequence}`,
+    origin: { kind: "client" as const, clientId: "test" },
+    processId: "proc:test",
+    runId: `run:${sequence}`,
+    createdAt: 1_700_000_000_000 + sequence,
+  };
+}
+
+describe("Conversation Durable Object", () => {
+  it("searches literal words and prefixes with stable pagination and plain snippets", async () => {
+    const stub = conversation("search");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    for (const [index, text] of ["Rotterdam concerts", "Rotterdam events <script>quoted</script>", "Café in Rotterdam", "Unrelated Berlin"].entries()) {
+      await stub.append({ ...message(index), text });
+    }
+    const first = await stub.search({ query: "rotter", limit: 2 });
+    expect(first.hits.map((hit) => hit.sequence)).toEqual([3, 2]);
+    expect(first.hits[1].snippet).toBe("Rotterdam events <script>quoted</script>");
+    expect(first.nextBeforeSequence).toBe(2);
+    const next = await stub.search({ query: "rotter", beforeSequence: first.nextBeforeSequence!, limit: 2 });
+    expect(next.hits.map((hit) => hit.sequence)).toEqual([1]);
+    expect(next.nextBeforeSequence).toBeNull();
+    expect((await stub.search({ query: "cafe rotter" })).hits.map((hit) => hit.sequence)).toEqual([3]);
+    expect((await stub.search({ query: 'Rotterdam OR Berlin' })).hits).toEqual([]);
+    expect((await stub.search({ query: '" OR "' })).hits).toEqual([]);
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: " " }))).rejects.toThrow("Search requires");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "r".repeat(257) }))).rejects.toThrow("Search requires");
+    await expect(runInDurableObject(stub, (instance: Conversation) => instance.search({ query: "Rotterdam", limit: 51 }))).rejects.toThrow("Search limit");
+  });
+
+  it("stores canonical messages idempotently and rejects changed replays", async () => {
+    const stub = conversation("append");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+
+    const first = await stub.append(message(1));
+    const replay = await stub.append(message(1));
+    expect(first.created).toBe(true);
+    expect(replay).toEqual({ message: first.message, created: false });
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...message(1), text: "changed" })
+    ))).rejects.toThrow("idempotency key payload changed");
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...message(1), selectedTarget: "macbook" })
+    ))).rejects.toThrow("idempotency key payload changed");
+
+    const history = await stub.history();
+    expect(history.messages).toEqual([first.message]);
+    expect(history.latestSequence).toBe(1);
+    expect(history.hasMore).toBe(false);
+    expect((await stub.search({ query: "message" })).hits).toHaveLength(1);
+  });
+
+  it("builds a bounded preview around a match without storing a text copy in the index", async () => {
+    const stub = conversation("snippet");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await stub.append({ ...message(1), text: `${"e\u0301🙂 ".repeat(200)}A café in Rotterdam.${" more context".repeat(100)}` });
+    const result = await stub.search({ query: "cafe" });
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0].snippet).toContain("A café in Rotterdam.");
+    expect([...result.hits[0].snippet].length).toBeLessThanOrEqual(362);
+    expect(result.hits[0].snippet.startsWith("…")).toBe(true);
+    expect(result.hits[0].snippet.endsWith("…")).toBe(true);
+  });
+
+  it("moves old messages to immutable R2 segments without changing pagination", async () => {
+    const stub = conversation("archive");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let index = 1; index <= 1_001; index += 1) {
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined });
+      }
+    });
+    await stub.compact();
+
+    const latest = await stub.history({ limit: 2 });
+    expect(latest.messages.map((item) => item.text)).toEqual(["message 1000", "message 1001"]);
+    expect(latest.hasMore).toBe(true);
+    const archived = await stub.history({ beforeSequence: 3, limit: 2 });
+    expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
+    expect(archived.messages[0]?.selectedTarget).toBe("macbook");
+    expect(archived.messages[1]?.selectedTarget).toBeUndefined();
+    const aroundArchiveBoundary = await stub.history({ afterSequence: 498, limit: 4 });
+    expect(aroundArchiveBoundary.messages.map((message) => message.sequence)).toEqual([499, 500, 501, 502]);
+    expect(aroundArchiveBoundary.hasMore).toBe(true);
+    expect((await stub.history({ afterSequence: 1_000, limit: 4 })).messages.map((message) => message.sequence)).toEqual([1_001]);
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook" })).toEqual({
+      message: archived.messages[0],
+      created: false,
+    });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([{
+      id: "msg:1", sequence: 1, author: archived.messages[0].author,
+      createdAt: archived.messages[0].createdAt, snippet: "message 1",
+    }]);
+
+    await runInDurableObject(stub, async (_instance: Conversation, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect(state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = 'message_search_content'").toArray()).toEqual([]);
+      const constrained = new ConversationStore(state.storage.sql, 0);
+      for (let sequence = 1_002; sequence <= 1_021; sequence++) {
+        state.storage.transactionSync(() => constrained.append({ ...message(sequence), payloadHash: "fixture" }));
+      }
+    });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
+    expect((await stub.history({ beforeSequence: 3, limit: 2 })).messages).toEqual(archived.messages);
+    expect(await stub.append({ ...message(1), selectedTarget: "macbook" }))
+      .toEqual({ message: archived.messages[0], created: false });
+    expect((await stub.search({ query: "message 1", beforeSequence: 2 })).hits).toEqual([]);
+  }, 30_000);
+
+  it("keeps legacy conversation-owned media readable", async () => {
+    const stub = conversation("legacy-media");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const appended = await stub.append(message(1));
+    const key = `conversations/${encodeURIComponent(appended.message.conversationId)}/media/legacy/0`;
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([1, 2, 3]), {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        purpose: "conversation-media",
+        conversationId: appended.message.conversationId,
+      },
+    });
+
+    const stored = await stub.readMedia({ key });
+    expect(stored.mimeType).toBe("image/png");
+    expect(stored.size).toBe(3);
+    expect([...new Uint8Array(await new Response(stored.stream).arrayBuffer())]).toEqual([1, 2, 3]);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(key);
+  });
+
+  it("stores one immutable resource reference without copying its bytes", async () => {
+    const stub = conversation("resource");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const suffix = crypto.randomUUID().replaceAll("-", "").repeat(2);
+    const key = `home/agent/.gsv/media/archived-media:${suffix}`;
+    await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([4, 5, 6]), {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        purpose: "resource",
+        uid: "1001",
+        gid: "1001",
+        mode: "400",
+        sourceEtag: "source-revision",
+        sourceContentType: "image/png",
+      },
+    });
+    const object = await createInstallationStorage(env.STORAGE, "inst_test").head(key);
+    if (!object) throw new Error("resource fixture was not stored");
+    const resource = {
+      type: "resource" as const,
+      ref: {
+        type: "file" as const,
+        target: "gsv",
+        path: `/${key}`,
+        revision: object.httpEtag,
+        contentType: "image/png",
+        size: 3,
+      },
+      mediaType: "image" as const,
+      filename: "proof.png",
+    };
+
+    const appended = await stub.append({
+      ...message(1),
+      media: [resource],
+      mediaOwner: { pid: "proc:test", uid: 1001, gid: 1001, home: "/home/agent" },
+    });
+
+    expect(appended.message.media).toEqual([resource]);
+    const copies = await createInstallationStorage(env.STORAGE, "inst_test").list({
+      prefix: `conversations/${encodeURIComponent(appended.message.conversationId)}/media/`,
+    });
+    expect(copies.objects).toHaveLength(0);
+    const retained = await createInstallationStorage(env.STORAGE, "inst_test").get(key);
+    expect(retained && [...new Uint8Array(await retained.arrayBuffer())]).toEqual([4, 5, 6]);
+    await createInstallationStorage(env.STORAGE, "inst_test").delete(key);
+  });
+
+  it("cannot read a different conversation's media", async () => {
+    const first = conversation("first-media");
+    const second = conversation("second-media");
+    await first.initialize({ ownerUid: 1000, kind: "ship" });
+    await second.initialize({ ownerUid: 1000, kind: "work" });
+    await expect(runInDurableObject(second, (instance: Conversation) => (
+      instance.readMedia({ key: "conversations/conv%3Aother/media/msg/0" })
+    ))).rejects.toThrow("Conversation media key is invalid");
+  });
+});

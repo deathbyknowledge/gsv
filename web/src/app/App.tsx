@@ -1,23 +1,26 @@
-import { AppProviders } from "./providers/AppProviders";
-import { DesktopShell } from "./features/desktop/DesktopShell";
-import { Catalog } from "../design-system/catalog";
-import { TemplatePreview } from "../design-system/previews";
+import { MemberRecoveryScreen } from "./features/session/MemberRecoveryScreen";
+import { AppProviders, type AppProviderDependencies } from "./providers/AppProviders";
+import { Instrument } from "./features/instrument/Instrument";
+import { AccountRecoveryScreen } from "./features/session/AccountRecoveryScreen";
+import { HumanInvitationScreen } from "./features/session/HumanInvitationScreen";
+import { AuthScene } from "./features/session/AuthLayout";
+import { useSessionLocation } from "./features/session/sessionNavigation";
+import { useSession } from "./services/session/SessionProvider";
 
-const DESIGN_SYSTEM_PATHS = new Set(["/design", "/design.html", "/design-system"]);
-const TEMPLATE_PREVIEW_PREFIX = "/design/preview/";
-
-export function App() {
-  const { pathname } = window.location;
-  if (pathname.startsWith(TEMPLATE_PREVIEW_PREFIX)) {
-    return <TemplatePreview id={pathname.slice(TEMPLATE_PREVIEW_PREFIX.length)} />;
+function AppRoutes() {
+  const { pathname, revision } = useSessionLocation();
+  const { snapshot } = useSession();
+  const recovery = pathname === "/recover-member" ? <MemberRecoveryScreen key={revision} />
+    : pathname === "/recover" ? <AccountRecoveryScreen key={revision} />
+    : pathname === "/join" ? <HumanInvitationScreen key={revision} /> : null;
+  if (recovery || snapshot.phase !== "ready") {
+    return <AuthScene setup={!recovery && (snapshot.phase === "setup" || pathname === "/onboarding")}>
+      {recovery ?? <Instrument initialPath={pathname} />}
+    </AuthScene>;
   }
-  if (DESIGN_SYSTEM_PATHS.has(pathname)) {
-    return <Catalog />;
-  }
+  return <Instrument initialPath={pathname} />;
+}
 
-  return (
-    <AppProviders>
-      <DesktopShell />
-    </AppProviders>
-  );
+export function App(dependencies: AppProviderDependencies = {}) {
+  return <AppProviders {...dependencies}><AppRoutes /></AppProviders>;
 }

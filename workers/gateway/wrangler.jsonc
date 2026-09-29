@@ -1,0 +1,89 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "gsv",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-30",
+	"compatibility_flags": ["nodejs_compat"],
+	"define": {
+		"__GSV_RELEASE__": "\"dev\""
+	},
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.md"],
+			"fallthrough": true
+		}
+	],
+	"migrations": [
+		{
+			"new_sqlite_classes": ["Kernel"],
+			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": ["Process"],
+			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["AppRunner"],
+			"tag": "v3"
+		},
+		{
+			"deleted_classes": ["AppRunner"],
+			"tag": "v4"
+		},
+		{
+			"new_sqlite_classes": ["Conversation"],
+			"tag": "v5"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "Kernel",
+				"name": "KERNEL"
+			},
+			{
+				"class_name": "Process",
+				"name": "PROCESS"
+			},
+			{
+				"class_name": "Conversation",
+				"name": "CONVERSATION"
+			}
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"r2_buckets": [
+		{
+			"binding": "STORAGE",
+			"bucket_name": "gsv-storage"
+		}
+	],
+	// Static Assets - serve UI from Gateway
+	"assets": {
+		"directory": "../../web/dist/",
+		"binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+		"run_worker_first": ["/*"]
+	},
+	// The common runtime resolves every request through Accounts.
+	"services": [
+		{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
+		{ "binding": "INSTALLATION_OWNERSHIP", "service": "gsv-installations", "entrypoint": "InstallationOwnershipEntrypoint", "props": { "authority": "kernel-owner-link" } },
+		{ "binding": "INFERENCE_EXECUTION", "service": "gsv-inference" },
+		{ "binding": "RIPGIT", "service": "ripgit" }
+	],
+	// CodeMode requires Workers Paid. The CLI omits this binding for Free or
+	// unverified plans; direct Wrangler deployments retain full capabilities.
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	]
+}

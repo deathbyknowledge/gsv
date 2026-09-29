@@ -1,0 +1,23 @@
+{
+  "name": "@gsv/channel-discord",
+  "version": "0.6.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.shared.jsonc",
+    "deploy": "wrangler deploy --config wrangler.shared.jsonc --minify",
+    "deploy:shared": "wrangler deploy --config wrangler.shared.jsonc --minify",
+    "test": "vitest run",
+    "test:run": "npm run test && npm run test:shared",
+    "test:shared": "vitest run --config vitest.shared.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260814.1",
+    "typescript": "^5.7.3",
+    "wrangler": "^4.123.0"
+  }
+}

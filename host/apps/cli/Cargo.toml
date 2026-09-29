@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
+url = "2"
 hostname = "0.4.2"
 chrono = "0.4"
 dirs = "5"
@@ -53,6 +54,11 @@ rustls = [
     "gateway-client/rustls",
     "rustls_crate",
 ]
+
+[dev-dependencies]
+futures-util = "0.3"
+tempfile = "3"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 
 [lints.clippy]
 # Prevent panic-prone patterns in non-test code.

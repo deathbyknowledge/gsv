@@ -21,24 +21,27 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Treat installation identity as the outer security boundary
 
-- Managed HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
+- HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
 - The Kernel Durable Object name is the immutable `installationId`; handles and canonical origins are routing metadata, not security identities.
 - Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
 - A platform-owned shared adapter may bind an external identity only through a direct, signed-in human confirmation. Its public webhook and pairing code never choose an installation or local uid; the adapter owns one generation-fenced peer route and rechecks that generation before delayed ingress or delivery.
-- Accounts owns managed installation state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
+- Accounts owns space lifecycle state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
+- Accounts owns global owner credentials and My spaces sessions separately from Kernel accounts and operator administration. Native email and external identity credentials never merge by matching email. Ownership linking requires current Kernel root authorization plus fresh owner verification; root recovery requires a fresh verification bound to the current owner and exact recovery attempt. An ordinary owner session cannot authorize a root reset. Accounts delivers verification mail independently of the space being recovered.
 - An operator reset never clears a Kernel in place or reuses its installation ID. Accounts atomically moves the handle to a fresh installation, retains the old identity behind inactive routing, and records its data as pending deletion until every owning service confirms cleanup.
-- Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
+- Process, R2, ripgit, and installation-owned adapter physical addresses must include installation scope. Shared application and peer objects retain adapter-owned identities and generation-fenced space links.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
-- Preserve the explicit `singleton` projection for supported standalone upgrades until a deliberate standalone migration replaces it end to end.
+- Every deployment uses the trusted directory and scoped resource addresses. There is no singleton projection or runtime deployment mode. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
 
 ### Treat syscalls and protocol frames as the primitive boundary
 
 - Fix shared semantics at the syscall, protocol, or owning runtime boundary rather than patching individual callers.
 - Model browsers, native clients, machines, and adapter services as protocol peers. Principal, callable syscalls, receivable signals, implemented syscalls, transport, and provenance are independent axes; transport or a claimed peer id never grants authority.
 - First-party adapter service bindings use one `AdapterGatewayEntrypoint`. Deployment-owned binding props supply the adapter identity and attenuated syscall grant; the adapter frame cannot choose either. Kernel-owned `CHANNEL_<ADAPTER>` binding lookup selects the outbound service without a source-level adapter registry.
+- User-state signals remain broadcast independently. An exact adapter destination receives one correlated `adapter.send` request; the Kernel owns durable retry and route cleanup, while the adapter owns provider presentation, idempotency, ambiguity classification, and body consumption.
 - A linked adapter actor may invoke an ordinary syscall only through a Kernel-derived, interaction-scoped human peer whose grant is intersected with the linked account's capabilities.
 - Shell, agent tools, CodeMode, apps, and SDK clients may present results differently, but they must share the same underlying primitive behavior.
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
+- Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
 
 ### Treat targets as Unix-shaped capability environments
@@ -52,7 +55,9 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Keep the agent interface small and composable
 
-The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, and CodeMode. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
+The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Send is the run control, message and yield, as a tool, and is the only tool that is not a capability. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
+
+Search exposes the provider-neutral, targetable `web.search` syscall. It defaults to `gsv`, whose implementation uses an optional operator-owned service binding; other accessible targets may advertise the same syscall. Filesystem search uses Shell commands or CodeMode `fs.search`. Provider credentials and metering belong to the provider implementation.
 
 GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction burden for models and humans. This is a design model, not a promise of POSIX compatibility.
 
@@ -62,9 +67,15 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
 
+Ship's default delegation uses an ordinary owned Crew account through `proc delegate --as`. Account homes separate conversation and execution instructions; the human owner's context and memory remain shared. Account identity selects prompt context, and children follow ordinary spawn rules.
+
 A Process context epoch freezes the exact rendered system prompt, its source manifest, and the initial responsibility baseline across normal runs. Later responsibility revisions enter as ordered GSV events rather than rewriting the prompt. Kernel-owned availability facts such as accessible targets, ready MCP servers, the current date and timezone, and the skill catalog follow the same rule: Process stores an initial and last-observed projection and atomically appends meaningful deltas before generation. Reset, compaction, Process replacement, or effective standing-context changes close and archive the epoch, including its exact prompt, Process activity, projection and responsibility transitions, and run boundaries.
 
-Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and run-control choices for inspection. `message send` commits a user-visible Message without finishing the active run, so a Process may update the user while continuing work. Every human-facing run must eventually call `yield`; a final send composes as `message send ... && yield`, while a bare `yield` completes silently. These Process-owned commands do not add model tools or require shell approval. A bounded IPC call instead returns ordinary assistant output as its durable Process result, independently of human delivery. Clients may opt into raw Process observation, while adapters consume only committed messages.
+Process history stores typed message, note, call, result, and event records. Runtime events retain registered payloads, severity, and audience; admission preserves queue provenance. An assistant turn can own several records under one compatibility message identity. During the typed-history transition, the existing prose and provider projection remain available alongside those records; archives, forks, and media cleanup preserve the entire group.
+
+Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and run-control choices for inspection. `message send` commits a user-visible Message without finishing the active run, so a Process may update the user while continuing work. Every human-facing run must eventually call `yield`; a final send composes as `message send ... && yield`, while a bare `yield` completes silently. These Process-owned commands do not add model tools or require shell approval. A bounded IPC call instead returns ordinary assistant output as its durable Process result, independently of human delivery. Clients may opt into raw Process observation, while adapters receive only exact routed `adapter.send` requests.
+
+Process history uses typed message, note, call, result, and event records. Storage owns legacy inference; model context, compaction, and client presentation each render those records at their owning boundary. Preserve the captured provider-context contract when changing rendering. Person-only events remain inspectable without entering provider context or summary input. Format-2 history synchronization replaces complete message groups, including late companions and media changes; reset and compaction invalidate earlier cursors. See `docs/architecture/process-history.md`.
 
 ### Prefer fewer mechanisms
 
@@ -78,23 +89,25 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 
 ## System ownership
 
-- `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
-- `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
-- `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
-- `gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
-- `gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
-- `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
-- `gateway/src/inference/`: provider integration and model transport.
+- `packages/gsv/src/services/`: public Worker RPC contracts for Accounts, inference execution, lifecycle, optional commercial services, mail, and adapters. Operators compose public implementations with their own optional services.
+- `workers/gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
+- `workers/installations/`: required public Accounts directory, ownership, onboarding, operator administration, recovery authorization, reset preparation and durable deletion coordination. Commercial policy and usage remain owned by the optional operator service.
+- `workers/gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
+- `workers/gateway/src/drivers/native/`: the in-process `gsv` target provider, including its filesystem, shell, and network-backed command environment.
+- `workers/gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
+- `workers/gateway/src/syscalls/` and `workers/gateway/src/protocol/`: public runtime contracts and frame transport.
+- `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
+- `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
-- `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
-- `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
+- `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
+- `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
-- `adapters/`: platform-specific messaging workers and identity normalization.
+- `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
-- `ripgit/`: git-backed repositories and filesystem storage operations.
+- `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
 
@@ -108,6 +121,8 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - A stale run must not mutate active state.
 - Cancellation must propagate to the component that owns the active operation.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
+- `shell.cancel` explicitly stops a durable device session and its process tree. The device owns termination independently of the caller connection; polling remains available for the terminal result. Device disconnects leave session identity available for a status check after reconnect.
+- Recoverable shell starts use `shell.exec` with `start: true` and a caller-persisted fresh `sessionId`. The Kernel persists its target before dispatch and the machine claims that exact identity before spawning. Recovery only polls or cancels; it must never replay a start or uncertain stdin.
 - `proc.abort` stops the active run, `proc.reset` resets history while preserving the process, and `proc.kill` tears the process down.
 - A successfully killed pid remains terminal across Durable Object eviction and must never be reused for a replacement process.
 - Archive and media cleanup must remain coherent across reset and kill.
@@ -125,7 +140,10 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 ### Data and security
 
 - Enforce authorization in the Kernel, not only in UI or callers.
+- Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
+- Accounts owns hashed, single-use space-creation invites. A verified owner claims an invite and resumes one durable creation operation; private policy prepares its allowance before setup authorization. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
+- A signed-in human issues device enrollment invitations scoped to the installation, account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
 - Canonical Messages store immutable resource references rather than duplicating bytes. A Process must retain an exact source revision before committing a reference whose source lifetime is not already durable.
@@ -135,10 +153,10 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 Durable Object SQLite and managed D1 schemas use versioned migrations in:
 
-- `gateway/src/kernel/schema/`
-- `gateway/src/process/schema/`
-- `gateway/src/schema/runner.ts`
-- `ripgit/src/schema.rs`
+- `workers/gateway/src/kernel/schema/`
+- `workers/gateway/src/process/schema/`
+- `workers/gateway/src/schema/runner.ts`
+- `workers/ripgit/src/schema.rs`
 
 Do not create tables, indexes, or ad hoc `ensureColumn` migrations from store constructors. Do not edit a migration that has shipped; add the next numbered migration. Collapse to a new baseline only for an explicit release/reset policy, and preserve supported upgrade paths with migration tests.
 
@@ -150,8 +168,9 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 
 ### Protected prompt and context content
 
-- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `gateway/src/prompts/**`.
-- Treat `gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
+- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `workers/gateway/src/prompts/**`.
+- Write active standing defaults and standalone task prompts as Markdown files imported by TypeScript. Use `npm run review:prompts` to edit and preview them; keep runtime selection and structured event formatting in code.
+- Treat `workers/gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
 - Do not edit prompt or seeded `context.d` content to work around runtime, protocol, tool-discovery, or UI behavior. Fix the owning implementation boundary.
 - If a task appears to require changing protected prompt or context content without explicit authorization, stop and ask first.
 
@@ -169,16 +188,17 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 
 ```text
 gsv/
-├── gateway/       # Kernel, Process, syscalls, inference, filesystem
+├── workers/
+│   ├── gateway/   # Kernel, Process, syscalls, inference, filesystem
+│   ├── adapters/  # External-platform Worker implementations and test channel
+│   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
-├── web/           # Desktop shell and embedded app host
+├── web/           # Instrument web UI and browser-side gateway integration
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
-├── adapters/      # External-platform Worker implementations and test channel
 ├── extension/     # Browser target
-├── ripgit/        # Git-backed repository worker
 ├── engineering/   # Detailed implementation and product guidance
 ├── docs/          # Architecture and user/reference documentation
 └── scripts/       # Development and release automation
@@ -201,26 +221,33 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
+Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts`.
+
 - Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
-- Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
+- Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
 - Gesture helper and protocol: `cd host && cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
-- ripgit: `cd ripgit && npm test`
+- ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
-- WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
-- Discord, Telegram, Slack, or test adapter: `cd adapters/<name> && npm run typecheck`
+- Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
+Documentation is an output of the change, not a follow-up. A change to product-facing behaviour updates `docs/` in the same pull request, and the GSV Manual (`deathbyknowledge/gsv-manual`, which every installation imports for its agents) in its own pull request when the operating model or a user workflow moved.
+
+- Docs: `npm run docs:check`
+
+That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without changing one of the pages that own it. `tools/docs/coverage-map.json` maps source paths to those pages; when a new page takes over a surface, add it there. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
+
 ## Deployment model
 
-- Gateway code: `cd gateway && npm run deploy`
-- Web code: build `web`, then deploy the gateway that serves the resulting assets.
-- Adapter code: deploy the affected adapter worker.
+- Operator stack: build and inspect `npm run deployment:plan`, then apply `npm run deployment:deploy` with the existing operator configuration and Alchemy state.
+- Web code: build `web`, then deploy the Gateway that serves those assets through the same operator composition.
+- Adapter code: update the affected adapter Worker through the operator composition, preserving its resource identities and application credentials.
 - ripgit code: deploy that worker separately.
 - CLI or extension code: build and publish through their release path; a gateway deploy does not update them.
 
@@ -243,6 +270,7 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 - Architecture: `docs/architecture/`
 - Rust CLI, daemon, Desktop, and local IPC: `docs/architecture/rust-host-applications.md`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
+- Public documentation and its currency rule: `docs/` and `tools/docs/coverage-map.json`
 - Web product and app design: `engineering/builtin-app-design.md`
 
 Read the relevant detailed guide before changing that subsystem; do not duplicate its full policy here.

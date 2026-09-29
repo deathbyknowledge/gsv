@@ -1,0 +1,848 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
+import { describe, expect, it, vi } from "vitest";
+import { testPeer } from "../test-support/peers";
+import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
+import type { KernelContext } from "./context";
+import type { RequestFrame } from "../protocol/frames";
+import { ShellSessionStore } from "./shell-sessions";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+
+function deviceRecord(targetId: string, online: boolean, implementsList = ["fs.*", "shell.*"]) {
+  return {
+    target_id: targetId,
+    owner_uid: 1000,
+    label: targetId,
+    description: "",
+    implements: implementsList,
+    platform: "browser",
+    version: "test",
+    online,
+    first_seen_at: 1,
+    last_seen_at: 2,
+    connected_at: online ? 2 : null,
+    disconnected_at: online ? null : 2,
+  };
+}
+
+function operationPeer(
+  id: string,
+  implementsList: string[],
+  kind: "human" | "machine" = "machine",
+) {
+  return {
+    id,
+    sessionId: `session:${id}`,
+    principal: {
+      kind,
+      account: {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000],
+        username: "sam",
+        home: "/home/sam",
+        cwd: "/home/sam",
+      },
+    },
+    grant: {
+      calls: kind === "human" ? ["*"] : [],
+      signals: kind === "human"
+        ? ["target.status", "peer.pong", "message.committed"]
+        : ["target.status", "peer.pong"],
+      implements: implementsList,
+    },
+  };
+}
+
+function makeContext(): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  return {
+    peer: testPeer({ kind: "human", account: {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000],
+        username: "sam",
+        home: "/home/sam",
+      } }),
+    targets: {
+      canAccess: vi.fn(() => true),
+      get: vi.fn(() => deviceRecord("macbook", false)),
+    },
+    auth: {
+      getPasswdByUid: vi.fn(() => null),
+    },
+    adapters: {
+      identityLinks: { list: vi.fn(() => []) },
+    },
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
+}
+
+describe("routed frame deadlines", () => {
+  it("leaves enough time for browser shell waits", () => {
+    expect(routedFrameTtlMs({
+      type: "req",
+      id: "shell-default",
+      call: "shell.exec",
+      args: { input: "page wait '#ready' --timeout 120000" },
+    })).toBe(11 * 60_000);
+    expect(routedFrameTtlMs({
+      type: "req",
+      id: "shell-explicit",
+      call: "shell.exec",
+      args: { input: "sleep 120", timeout: 120_000 },
+    })).toBe(130_000);
+  });
+});
+
+function sendFrame(connection: { send(message: string): void }, frame: KernelTestValue): void {
+  connection.send(JSON.stringify(frame));
+}
+
+describe("dispatch", () => {
+  it("routes web search to its selected provider without leaking routing metadata", async () => {
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", true, ["web.search"]));
+    const send = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    // SAFETY: this fixture supplies the dependencies used by connected target routing.
+    const deps = {
+      connections: new Map([["search-connection", {
+        id: "search-connection",
+        state: { step: "connected", peer: operationPeer("search-provider", ["web.search"]) },
+        send,
+      }]]),
+      sendFrame,
+      registerRoute,
+    } as DispatchDeps;
+
+    expect(await dispatch({ type: "req", id: "search", call: "web.search", args: {
+      query: " news ", target: "search-provider", includeDomains: ["EXAMPLE.COM"],
+    } }, { type: "connection", id: "caller" }, ctx, deps)).toEqual({ handled: false });
+    expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+      type: "req", id: "search", call: "web.search", args: { query: "news", includeDomains: ["example.com"] },
+    });
+    expect(registerRoute).toHaveBeenCalledWith(expect.objectContaining({
+      id: "search", call: "web.search", targetId: "search-provider", ttlMs: 20_000,
+    }));
+  });
+
+  it.each([
+    ["invalid", 400], ["forbidden", 403], ["offline", 503], ["unsupported", 400], ["cancelled", 499],
+  ] as const)("rejects %s search before dispatching provider work", async (reason, code) => {
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", reason !== "offline",
+      reason === "unsupported" ? ["fs.*"] : ["web.search"]));
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(reason !== "forbidden");
+    if (reason === "cancelled") ctx.requestSignal = AbortSignal.abort();
+    const registerRoute = vi.fn();
+    // SAFETY: these rejection paths return before looking up a live connection.
+    const deps = { registerRoute } as DispatchDeps;
+    expect(await dispatch({ type: "req", id: "search", call: "web.search", args: {
+      query: "news", target: "search-provider", limit: reason === "invalid" ? 11 : 5,
+    } }, { type: "connection", id: "caller" }, ctx, deps)).toMatchObject({
+      handled: true, response: { ok: false, error: { code } },
+    });
+    expect(registerRoute).not.toHaveBeenCalled();
+  });
+
+  it("persists a named session before forwarding and recovers it without the start response", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const sessionId = crypto.randomUUID();
+      const store = new ShellSessionStore(sql);
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const send = vi.fn(() => {
+        expect(new ShellSessionStore(sql).get(sessionId)?.targetId).toBe("macbook");
+      });
+      // SAFETY: fixture provides the target routing dependencies exercised by these requests.
+      const deps = {
+        connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute: vi.fn(async () => ({ cancel: vi.fn() })), shellSessions: store,
+      } as DispatchDeps;
+      const start = (): RequestFrame<"shell.exec"> => ({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { target: "macbook", sessionId, start: true, input: "run once" } });
+      const admissions = await Promise.all([dispatch(start(), { type: "app", id: "tab" }, ctx, deps), dispatch(start(), { type: "app", id: "tab" }, ctx, deps)]);
+      expect(admissions.filter((result) => !result.handled)).toHaveLength(1);
+      expect(admissions.find((result) => result.handled)).toMatchObject({ response: { ok: false, error: { code: 409 } } });
+      const duplicate = admissions.find((result) => result.handled);
+      if (duplicate?.handled && !duplicate.response.ok) expect(duplicate.response.error.details).toBeUndefined();
+      expect(send).toHaveBeenCalledTimes(1);
+
+      // Recreate the store without ever delivering a start response or exec.status signal.
+      deps.shellSessions = new ShellSessionStore(sql);
+      for (const call of ["shell.exec", "shell.cancel"] as const) {
+        const frame: RequestFrame = call === "shell.exec"
+          ? { type: "req", id: call, call, args: { sessionId, input: "" } }
+          : { type: "req", id: call, call, args: { sessionId } };
+        expect(await dispatch(frame, { type: "app", id: "reloaded-tab" }, ctx, deps)).toEqual({ handled: false });
+      }
+      expect(send).toHaveBeenCalledTimes(3);
+      vi.mocked(ctx.targets.canAccess).mockReturnValue(false);
+      expect(await dispatch(start(), { type: "app", id: "stranger" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 403 } } });
+      expect(send).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("rejects malformed named starts before allocating or routing work", async () => {
+    const registerRoute = vi.fn();
+    const get = vi.fn();
+    // SAFETY: validation returns before other dispatch dependencies are used.
+    const deps = { registerRoute, shellSessions: { get } } as DispatchDeps;
+    for (const args of [
+      { input: "run", start: true, target: "macbook" },
+      { input: "run", start: true, target: "macbook", sessionId: "bad" },
+      { input: "run", start: true, target: "gsv", sessionId: crypto.randomUUID() },
+      { input: "run", start: true, sessionId: crypto.randomUUID() },
+    ]) {
+      expect(await dispatch({ type: "req", id: "invalid", call: "shell.exec", args }, { type: "app", id: "tab" }, makeContext(), deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400, details: { shellStart: "rejected" } } } });
+    }
+    expect(registerRoute).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it.each(["offline", "unsupported", "disconnected", "forbidden", "cancelled", "registration failed"] as const)("marks named starts rejected before dispatch: %s", async (reason) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", reason !== "offline", reason === "unsupported" ? ["fs.*"] : ["shell.*"]));
+      vi.mocked(ctx.targets.canAccess).mockReturnValue(reason !== "forbidden");
+      if (reason === "cancelled") ctx.requestSignal = AbortSignal.abort();
+      const send = vi.fn();
+      const registerRoute = vi.fn(async () => {
+        if (reason === "registration failed") throw new Error("route unavailable");
+        return { cancel: vi.fn() };
+      });
+      // SAFETY: fixture provides the target routing dependencies exercised by this request.
+      const deps = {
+        connections: reason === "disconnected" ? new Map() : new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute, shellSessions: new ShellSessionStore(sql),
+      } as DispatchDeps;
+      const result = await dispatch({ type: "req", id: "start", call: "shell.exec", args: { target: "macbook", sessionId: crypto.randomUUID(), start: true, input: "must not run" } }, { type: "app", id: "tab" }, ctx, deps);
+      expect(result).toMatchObject({ handled: true, response: { ok: false, error: { details: { shellStart: "rejected" } } } });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not claim a start was rejected after outbound work began", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const cancel = vi.fn();
+      const send = vi.fn(() => { throw new Error("connection closed while sending"); });
+      // SAFETY: fixture provides the target routing dependencies exercised by this request.
+      const deps = {
+        connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+        sendFrame, registerRoute: vi.fn(async () => ({ cancel })), shellSessions: new ShellSessionStore(sql),
+      } as DispatchDeps;
+      const result = await dispatch({ type: "req", id: "start", call: "shell.exec", args: { target: "macbook", sessionId: crypto.randomUUID(), start: true, input: "run once" } }, { type: "app", id: "tab" }, ctx, deps);
+      expect(result).toMatchObject({ handled: true, response: { ok: false, error: { code: 500 } } });
+      if (result.handled && !result.response.ok) expect(result.response.error.details).toBeUndefined();
+      expect(send).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith("failed");
+    });
+  });
+
+  it("routes target syscalls to connected human endpoints", async () => {
+    const send = vi.fn();
+    const cancelRoute = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["conn_1", {
+          id: "conn_1",
+          state: {
+            step: "connected",
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"], "human"),
+          },
+          send,
+        }],
+      ]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser:conn_1", true)),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"fs.read">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({ handled: false });
+    expect(registerRoute).toHaveBeenCalledWith({
+      id: "req_1",
+      call: "fs.read",
+      origin: { type: "process", id: "proc_1" },
+      targetId: "browser:conn_1",
+      peerConnectionId: "conn_1",
+      ttlMs: 60_000,
+    });
+    expect(send).toHaveBeenCalledWith(JSON.stringify({
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { path: "/desktop/windows.json" },
+    }));
+    expect(registerRoute.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]);
+    expect(cancelRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not route work to a superseded driver connection", async () => {
+    const registerRoute = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["old-connection", {
+          id: "old-connection",
+          state: {
+            step: "superseded",
+            peer: operationPeer("browser", ["fs.*"]),
+          },
+          send: vi.fn(),
+        }],
+      ]),
+      registerRoute,
+      shellSessions: { get: vi.fn() },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser", true)),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const result = await dispatch(
+      {
+        type: "req",
+        id: "request-1",
+        call: "fs.read",
+        args: { target: "browser", path: "/tmp/file" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as RequestFrame<"fs.read">,
+      { type: "process", id: "process-1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "request-1",
+        ok: false,
+        error: { code: 503, message: "No active connection for device: browser" },
+      },
+    });
+    expect(registerRoute).not.toHaveBeenCalled();
+  });
+
+  it("uses the requested net.fetch timeout for routed device route ttl", async () => {
+    const send = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["conn_1", {
+          id: "conn_1",
+          state: {
+            step: "connected",
+            peer: operationPeer("linux-machine", ["net.fetch"]),
+          },
+          send,
+        }],
+      ]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("linux-machine", true, ["net.fetch"])),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_fetch",
+      call: "net.fetch",
+      args: {
+        target: "linux-machine",
+        url: "https://provider.example/v1/chat/completions",
+        method: "POST",
+        timeoutMs: 180_000,
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"net.fetch">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({ handled: false });
+    expect(registerRoute).toHaveBeenCalledWith({
+      id: "req_fetch",
+      call: "net.fetch",
+      origin: { type: "process", id: "proc_1" },
+      targetId: "linux-machine",
+      peerConnectionId: "conn_1",
+      ttlMs: 180_000,
+    });
+    expect(send).toHaveBeenCalledWith(JSON.stringify({
+      type: "req",
+      id: "req_fetch",
+      call: "net.fetch",
+      args: {
+        url: "https://provider.example/v1/chat/completions",
+        method: "POST",
+        timeoutMs: 180_000,
+      },
+    }));
+  });
+
+  it("fails routed syscalls before sending when route registration fails", async () => {
+    const send = vi.fn();
+    const registerRoute = vi.fn(async () => {
+      throw new Error("schedule unavailable");
+    });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["conn_1", {
+          id: "conn_1",
+          state: {
+            step: "connected",
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
+          },
+          send,
+        }],
+      ]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser:conn_1", true)),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"fs.read">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_1",
+        ok: false,
+        error: {
+          code: 500,
+          message: "Failed to register route for fs.read: schedule unavailable",
+        },
+      },
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("forwards request bodies to device targets", async () => {
+    const connection = {
+      id: "conn_1",
+      state: {
+        step: "connected",
+        peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
+      },
+      send: vi.fn(),
+    };
+    const outgoing = { cancel: vi.fn(async () => {}) };
+    const forwarded = vi.fn(() => outgoing);
+    const attachBody = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn(), attachBody }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame: forwarded,
+      connections: new Map([["conn_1", connection]]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser:conn_1", true)),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    const body = {
+      stream: new ReadableStream<Uint8Array>(),
+      length: 0,
+    };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "fs.transfer.receive",
+      args: {
+        target: "browser:conn_1",
+        path: "/tmp/file.txt",
+      },
+      body,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"fs.transfer.receive">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({ handled: false });
+    expect(registerRoute).toHaveBeenCalledOnce();
+    expect(forwarded).toHaveBeenCalledWith(connection, {
+      type: "req",
+      id: "req_1",
+      call: "fs.transfer.receive",
+      args: { path: "/tmp/file.txt" },
+      body,
+    });
+    expect(attachBody).toHaveBeenCalledWith(outgoing);
+  });
+
+  it("cancels registered routes when sending to the target fails", async () => {
+    const send = vi.fn(() => {
+      throw new Error("websocket closed");
+    });
+    const cancelRoute = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["conn_1", {
+          id: "conn_1",
+          state: {
+            step: "connected",
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
+          },
+          send,
+        }],
+      ]),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser:conn_1", true)),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"fs.read">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_1",
+        ok: false,
+        error: {
+          code: 500,
+          message: "Failed to send fs.read to device browser:conn_1: websocket closed",
+        },
+      },
+    });
+    expect(cancelRoute).toHaveBeenCalledOnce();
+  });
+
+  it("treats a disconnected shell target as unavailable instead of a command exit", async () => {
+    const registerRoute = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      connections: new Map(),
+      registerRoute,
+      shellSessions: {
+        get: vi.fn(() => ({
+          sessionId: "sh_1",
+          targetId: "macbook",
+          status: "failed",
+          exitCode: null,
+          error: "Device disconnected",
+          createdAt: 1_000,
+          updatedAt: 2_000,
+          expiresAt: null,
+        })),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "shell.exec",
+      args: { sessionId: "sh_1", input: "" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"shell.exec">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      makeContext(),
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_1",
+        ok: false,
+        error: { code: 503, message: "Target offline: macbook" },
+      },
+    });
+    expect(registerRoute).not.toHaveBeenCalled();
+  });
+
+  it.each(["shell.exec", "shell.cancel"] as const)("routes %s back to the owning session target after reconnect", async (call) => {
+    const send = vi.fn();
+    const ctx = makeContext();
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+    // SAFETY: this fixture implements the dispatch dependencies used for target routing.
+    const deps = {
+      connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+      sendFrame, registerRoute: vi.fn(async () => ({ cancel: vi.fn() })),
+      shellSessions: { get: () => ({ sessionId: "sh_1", targetId: "macbook", status: "failed", error: "Device disconnected" }) },
+    } as DispatchDeps;
+    const frame: RequestFrame = call === "shell.exec"
+      ? { type: "req", id: "resume", call, args: { sessionId: "sh_1", input: "" } }
+      : { type: "req", id: "resume", call, args: { sessionId: "sh_1" } };
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toEqual({ handled: false });
+    expect(send).toHaveBeenCalledWith(JSON.stringify(frame));
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(false);
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 403 } } });
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.mocked(ctx.targets.canAccess).mockReturnValue(true);
+    frame.args.target = "different-device";
+    expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400 } } });
+    expect(send).toHaveBeenCalledTimes(1);
+    delete frame.args.target;
+    if (call === "shell.cancel") {
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true, ["shell.exec"]));
+      expect(await dispatch(frame, { type: "process", id: "p" }, ctx, deps)).toMatchObject({ handled: true, response: { ok: false, error: { code: 400, message: "Target macbook does not implement shell.cancel" } } });
+    }
+  });
+
+  it("runs gsv target syscalls through the native target provider", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_gsv",
+      call: "shell.exec",
+      args: { target: "gsv", input: "" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"shell.exec">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      makeContext(),
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_gsv",
+        ok: true,
+        data: {
+          status: "failed",
+          output: "",
+          error: "input must not be empty",
+        },
+      },
+    });
+    expect(frame.args).toEqual({ input: "" });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+
+  it("preserves ai.text.generate target for native AI routing checks", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_ai",
+      call: "ai.text.generate",
+      args: { target: "local-gpu", messages: [] },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"ai.text.generate">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      makeContext(),
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_ai",
+        ok: false,
+        error: {
+          code: 500,
+          message: "AI text generation target is not available: local-gpu",
+        },
+      },
+    });
+    expect(frame.args).toEqual({ target: "local-gpu", messages: [] });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects obsolete adapter target ids", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: {
+        get: vi.fn(),
+      },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const frame = {
+      type: "req",
+      id: "req_adapter",
+      call: "shell.exec",
+      args: { target: "adapter:whatsapp:primary", input: "send +15551234567 hello" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as RequestFrame<"shell.exec">;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...makeContext(),
+      targets: {
+        canAccess: vi.fn(() => false),
+        get: vi.fn(() => null),
+      },
+      adapters: { identityLinks: { list: vi.fn(() => []) } },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    const result = await dispatch(
+      frame,
+      { type: "app", id: "app_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "req_adapter",
+        ok: false,
+        error: {
+          code: 403,
+          message: "Access denied to target: adapter:whatsapp:primary",
+        },
+      },
+    });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+});

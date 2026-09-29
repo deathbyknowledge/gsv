@@ -1,0 +1,532 @@
+import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+import { InstallationRetirement, durableResourceName, stateWithRetirementStorage, RESOURCE_IDENTITY_KEY, inspectResourceStorage, attachDurableResourceIdentity } from "../installation/retirement";
+import { DurableObject } from "cloudflare:workers";
+import type {
+  ConversationKind,
+  ConversationSearchArgs,
+  ConversationSearchResult,
+  ConversationMessage,
+  ResourceBlock,
+} from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
+import { createInstallationStorage } from "../installation/storage";
+import { parseConversationDurableObjectName } from "../installation/routing";
+import type { GatewayEnv } from "../runtime-env";
+import {
+  agentArchiveMediaPath,
+  isValidAgentArchiveMediaObject,
+} from "../shared/process-media-path";
+import { runConversationSqlMigrations } from "./schema/migrations";
+import {
+  ConversationStore,
+  type ConversationAppendInput,
+  type ConversationAppendResult,
+  type ConversationArchiveSegment,
+} from "./store";
+
+const HOT_MESSAGE_LIMIT = 1_000;
+const ARCHIVE_SEGMENT_SIZE = 500;
+const MAX_HISTORY_LIMIT = 200;
+
+export type ConversationInitializeInput = {
+  ownerUid: number;
+  kind: ConversationKind;
+};
+
+export type ConversationHistoryInput = {
+  beforeSequence?: number;
+  afterSequence?: number;
+  limit?: number;
+};
+
+export type ConversationMediaOwner = {
+  pid: string;
+  uid: number;
+  gid: number;
+  home: string;
+};
+
+export type ConversationAppendRequest = Omit<ConversationAppendInput, "payloadHash" | "media"> & {
+  media?: ResourceBlock[];
+  mediaOwner?: ConversationMediaOwner;
+  mediaAuthority?: { kind: "federation"; target: string };
+};
+
+export type ConversationMediaRead = {
+  conversationId: string;
+  key: string;
+  mimeType: string;
+  size: number;
+  stream: ReadableStream<Uint8Array>;
+};
+
+type ConversationInstallationRuntime = {
+  retirement: InstallationRetirement;
+  installationId: string;
+  conversationId: string;
+  store: ConversationStore;
+  storage: R2Bucket;
+};
+
+export class Conversation extends DurableObject<GatewayEnv> {
+  private readonly installationRuntime: ConversationInstallationRuntime | null;
+  get retirement(): InstallationRetirement { return this.namedRuntime().retirement; }
+  readonly ctx: DurableObjectState<{}>;
+  get installationId(): string { return this.namedRuntime().installationId; }
+  get conversationId(): string { return this.namedRuntime().conversationId; }
+  private get store(): ConversationStore { return this.namedRuntime().store; }
+  private get storage(): R2Bucket { return this.namedRuntime().storage; }
+  private archiveTransition: Promise<void> = Promise.resolve();
+  private appendTransition: Promise<void> = Promise.resolve();
+
+  constructor(state: DurableObjectState<{}>, env: GatewayEnv) {
+    super(state, env);
+    this.ctx = state;
+    if (!state.id.name && !state.storage.kv.get(RESOURCE_IDENTITY_KEY)) {
+      this.installationRuntime = null;
+      return;
+    }
+    const identity = parseConversationDurableObjectName(durableResourceName(state, env.CONVERSATION));
+    const retirement = new InstallationRetirement(state.storage, identity.installationId);
+    const ctx = stateWithRetirementStorage(state, retirement);
+    this.ctx = ctx;
+    if (!retirement.state) runConversationSqlMigrations(ctx.storage);
+    this.installationRuntime = {
+      ...identity, retirement,
+      storage: createInstallationStorage(env.STORAGE, identity.installationId, retirement),
+      store: new ConversationStore(ctx.storage.sql),
+    };
+  }
+
+  async attachInstallationResourceIdentity(name: string): Promise<void> {
+    parseConversationDurableObjectName(name);
+    await attachDurableResourceIdentity(this.ctx, this.env.CONVERSATION, name);
+  }
+
+  inspectInstallationResource() {
+    const storage = this.installationRuntime?.retirement.raw ?? this.ctx.storage;
+    const hasMeta = storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_meta'").toArray().length > 0;
+    const id = hasMeta ? storage.sql.exec<{ conversation_id: string }>("SELECT conversation_id FROM conversation_meta LIMIT 1").toArray()[0]?.conversation_id : undefined;
+    return inspectResourceStorage(storage, id);
+  }
+
+  private namedRuntime(): ConversationInstallationRuntime {
+    if (!this.installationRuntime) throw new Error("Historical resource identity requires operator discovery");
+    return this.installationRuntime;
+  }
+
+  async quiesceInstallationResource(input: InstallationDeletionRequest) {
+    const record = this.retirement.begin(input);
+    if (record.phase !== "quiescing") return record;
+    await Promise.allSettled([this.appendTransition, this.archiveTransition]);
+    await this.retirement.drain();
+    if (await this.retirement.abortMultipart(this.env.STORAGE)) return this.retirement.state!;
+    return this.retirement.quiesced();
+  }
+
+  async eraseInstallationResource(input: InstallationDeletionRequest) {
+    this.retirement.begin(input);
+    return this.retirement.erase();
+  }
+
+  initialize(input: ConversationInitializeInput): void {
+    this.retirement.assertActive();
+    requireOwnerUid(input.ownerUid);
+    requireConversationKind(input.kind);
+    this.store.initialize(this.conversationId, input.ownerUid, input.kind);
+  }
+
+  async append(input: ConversationAppendRequest): Promise<ConversationAppendResult> {
+    this.retirement.assertActive();
+    requireAppendInput(input);
+    return this.withAppendLock(async () => {
+      const media = await this.validateMessageMedia(input);
+      const {
+        mediaOwner: _mediaOwner,
+        mediaAuthority: _mediaAuthority,
+        ...messageInput
+      } = input;
+      const canonical = {
+        ...messageInput,
+        ...(media.length > 0 ? { media } : { media: undefined }),
+      };
+      const payloadHash = await hashAppendInput(canonical);
+      const normalized: ConversationAppendInput = { ...canonical, payloadHash };
+      this.retirement.assertActive();
+      const stored = this.ctx.storage.transactionSync(() => this.store.append(normalized));
+      if (stored) {
+        this.ctx.waitUntil(this.scheduleArchive());
+        return stored;
+      }
+      const receipt = this.store.receipt(input.idempotencyKey);
+      if (!receipt || receipt.messageId !== input.messageId || receipt.payloadHash !== payloadHash) {
+        throw new Error("Conversation message idempotency receipt is invalid");
+      }
+      const segment = this.store.archiveSegmentsBefore(receipt.sequence + 1)
+        .find((candidate) => (
+          candidate.fromSequence <= receipt.sequence
+          && candidate.toSequence >= receipt.sequence
+        ));
+      if (!segment) throw new Error("Archived conversation message is missing");
+      const message = (await this.readArchive(segment))
+        .find((candidate) => candidate.sequence === receipt.sequence);
+      if (!message || message.id !== input.messageId) {
+        throw new Error("Archived conversation receipt does not match its message");
+      }
+      return { message, created: false };
+    });
+  }
+
+  async readMedia(input: { key: string }): Promise<ConversationMediaRead> {
+    const key = normalizeConversationMediaKey(input?.key, this.conversationId);
+    const object = await this.storage.get(key);
+    if (!object || !isConversationMediaObject(object, this.conversationId)) {
+      await object?.body.cancel("Conversation media is invalid").catch(() => undefined);
+      throw new Error("Conversation media not found");
+    }
+    return {
+      conversationId: this.conversationId,
+      key,
+      mimeType: object.httpMetadata?.contentType ?? "application/octet-stream",
+      size: object.size,
+      stream: object.body,
+    };
+  }
+
+  async search(input: Omit<ConversationSearchArgs, "conversationId">): Promise<Omit<ConversationSearchResult, "conversation">> {
+    this.retirement.assertActive();
+    if (!input.query.trim() || input.query.length > 256) {
+      throw new Error("Search requires between 1 and 256 characters");
+    }
+    const terms = input.query.trim().split(/\s+/);
+    if (terms.length > 32) throw new Error("Search accepts at most 32 words");
+    const query = terms.map((term) => `"${term.replaceAll('"', '""')}"*`).join(" AND ");
+    const limit = input.limit ?? 20;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Search limit must be between 1 and 50");
+    const before = normalizeBeforeSequence(input.beforeSequence, this.store.latestSequence() + 1);
+    const sequences = this.store.search(query, before, limit + 1);
+    const hasMore = sequences.length > limit;
+    sequences.length = Math.min(sequences.length, limit);
+    const messages = new Map(sequences.map((sequence) => [sequence, this.store.messageAt(sequence)]));
+    const archived = sequences.filter((sequence) => !messages.get(sequence));
+    if (archived.length) {
+      const segments = this.store.archiveSegmentsBefore(before).filter((segment) => (
+        archived.some((sequence) => sequence >= segment.fromSequence && sequence <= segment.toSequence)
+      ));
+      for (const segment of segments) {
+        for (const message of await this.readArchive(segment)) {
+          if (messages.has(message.sequence)) messages.set(message.sequence, message);
+        }
+      }
+    }
+    const hits = sequences.map((sequence) => {
+      const message = messages.get(sequence);
+      if (!message) throw new Error("Search entry has no canonical message");
+      return { id: message.id, sequence, author: message.author, createdAt: message.createdAt,
+        snippet: searchSnippet(message.text, input.query) };
+    });
+    return { hits, nextBeforeSequence: hasMore ? sequences.at(-1)! : null };
+  }
+
+  async history(input: ConversationHistoryInput = {}): Promise<{
+    messages: ConversationMessage[];
+    hasMore: boolean;
+    latestSequence: number;
+  }> {
+    const limit = normalizeLimit(input.limit);
+    const latestSequence = this.store.latestSequence();
+    if (input.afterSequence !== undefined) {
+      if (input.beforeSequence !== undefined || !Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0) {
+        throw new Error("afterSequence must be a non-negative integer and cannot be combined with beforeSequence");
+      }
+      const hot = this.store.listHotAfter(input.afterSequence, limit);
+      const archived: ConversationMessage[] = [];
+      const segments = this.store.archiveSegmentsBefore(latestSequence + 1)
+        .filter((segment) => segment.toSequence > input.afterSequence!).reverse();
+      for (const segment of segments) {
+        archived.push(...(await this.readArchive(segment)).filter((message) => message.sequence > input.afterSequence!));
+        if (archived.length >= limit) break;
+      }
+      const messages = [...new Map([...archived, ...hot].map((message) => [message.sequence, message])).values()]
+        .sort((left, right) => left.sequence - right.sequence).slice(0, limit);
+      return { messages, hasMore: this.store.hasSequenceBefore(messages[0]?.sequence ?? input.afterSequence + 1), latestSequence };
+    }
+    const beforeSequence = normalizeBeforeSequence(input.beforeSequence, latestSequence + 1);
+    const selected = new Map<number, ConversationMessage>();
+    for (const message of this.store.listHot(beforeSequence, limit)) {
+      selected.set(message.sequence, message);
+    }
+    if (selected.size < limit) {
+      for (const segment of this.store.archiveSegmentsBefore(beforeSequence)) {
+        const messages = await this.readArchive(segment);
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const message = messages[index];
+          if (message.sequence < beforeSequence) {
+            selected.set(message.sequence, message);
+          }
+          if (selected.size >= limit) break;
+        }
+        if (selected.size >= limit) break;
+      }
+    }
+    const messages = [...selected.values()]
+      .sort((left, right) => right.sequence - left.sequence)
+      .slice(0, limit)
+      .sort((left, right) => left.sequence - right.sequence);
+    const firstSequence = messages[0]?.sequence ?? beforeSequence;
+    return {
+      messages,
+      hasMore: messages.length > 0 && this.store.hasSequenceBefore(firstSequence),
+      latestSequence,
+    };
+  }
+
+  async compact(): Promise<void> {
+    this.retirement.assertActive();
+    await this.scheduleArchive();
+  }
+
+  private scheduleArchive(): Promise<void> {
+    const next = this.archiveTransition.then(() => this.archiveIfNeeded());
+    this.archiveTransition = next.catch(() => undefined);
+    return next;
+  }
+
+  private async withAppendLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.appendTransition;
+    let release!: () => void;
+    this.appendTransition = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      this.retirement.assertActive();
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async archiveIfNeeded(): Promise<void> {
+    if (this.retirement.state) return;
+    while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
+      const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
+      if (messages.length === 0) return;
+      const bytes = new TextEncoder().encode(JSON.stringify(messages));
+      const checksum = await sha256(bytes);
+      const fromSequence = messages[0].sequence;
+      const toSequence = messages[messages.length - 1].sequence;
+      const segmentId = `${fromSequence}-${toSequence}-${checksum.slice(0, 16)}`;
+      const objectKey = `conversations/${encodeURIComponent(this.conversationId)}/segments/${segmentId}.json.gz`;
+      const compressed = await gzip(bytes);
+      await this.storage.put(objectKey, compressed, {
+        httpMetadata: { contentType: "application/json", contentEncoding: "gzip" },
+        customMetadata: { checksum },
+      });
+      const stored = await this.storage.head(objectKey);
+      if (!stored || stored.customMetadata?.checksum !== checksum) {
+        throw new Error("Conversation archive verification failed");
+      }
+      const segment: ConversationArchiveSegment = {
+        segmentId,
+        fromSequence,
+        toSequence,
+        messageCount: messages.length,
+        objectKey,
+        checksum,
+        createdAt: Date.now(),
+      };
+      this.ctx.storage.transactionSync(() => this.store.commitArchive(segment, messages));
+    }
+  }
+
+  private async validateMessageMedia(input: ConversationAppendRequest): Promise<ResourceBlock[]> {
+    const items = input.media ?? [];
+    if (items.length === 0) return [];
+    if (input.mediaAuthority?.kind === "federation") {
+      return items.map((item) => validateFederationResource(
+        item,
+        input.mediaAuthority!.target,
+      ));
+    }
+    const owner = input.mediaOwner;
+    if (!owner) throw new Error("Conversation media owner is required");
+    requireMediaOwner(owner, input.processId);
+    const persisted: ResourceBlock[] = [];
+    for (const item of items) {
+      persisted.push(await this.validateMessageResource(item, owner));
+    }
+    return persisted;
+  }
+
+  private async validateMessageResource(
+    input: ResourceBlock,
+    owner: ConversationMediaOwner,
+  ): Promise<ResourceBlock> {
+    const resource = resourceBlockSchema.parse(input);
+    const { ref } = resource;
+    const key = ref.path.replace(/^\/+/, "");
+    if (
+      ref.target !== "gsv"
+      || ref.expiresAt !== undefined
+      || agentArchiveMediaPath(owner.home, key) !== ref.path
+    ) {
+      throw new Error("Conversation resource is outside the handling process");
+    }
+    const object = await this.storage.head(key);
+    if (
+      !object
+      || object.httpEtag !== ref.revision
+      || object.size !== ref.size
+      || !isValidAgentArchiveMediaObject({
+        home: owner.home,
+        key,
+        uid: owner.uid,
+        gid: owner.gid,
+        object,
+        expectedContentType: ref.contentType,
+      })
+    ) {
+      throw new Error("Conversation resource does not match retained data");
+    }
+    return resource;
+  }
+
+  private async readArchive(segment: ConversationArchiveSegment): Promise<ConversationMessage[]> {
+    const object = await this.storage.get(segment.objectKey);
+    if (!object) throw new Error("Conversation archive is missing");
+    const bytes = new Uint8Array(await new Response(
+      object.body.pipeThrough(new DecompressionStream("gzip")),
+    ).arrayBuffer());
+    if (await sha256(bytes) !== segment.checksum) {
+      throw new Error("Conversation archive checksum does not match");
+    }
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(parsed) || parsed.length !== segment.messageCount) {
+      throw new Error("Conversation archive payload is invalid");
+    }
+    // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
+    return parsed as ConversationMessage[];
+  }
+}
+
+function validateFederationResource(input: ResourceBlock, target: string): ResourceBlock {
+  const resource = resourceBlockSchema.parse(input);
+  if (
+    resource.ref.target !== target
+    || !resource.ref.path.startsWith("/resources/resource%3A")
+  ) {
+    throw new Error("Federation resource is outside the delivering contact");
+  }
+  return resource;
+}
+
+function requireAppendInput(input: ConversationAppendRequest): void {
+  requireNonempty(input.messageId, "messageId");
+  requireNonempty(input.idempotencyKey, "idempotencyKey");
+  if (!input.text.trim() && !input.media?.length) {
+    throw new Error("Conversation message requires text or media");
+  }
+  if (!Number.isSafeInteger(input.createdAt) || input.createdAt <= 0) {
+    throw new Error("Conversation message timestamp is invalid");
+  }
+}
+
+async function hashAppendInput(
+  input: Omit<ConversationAppendInput, "payloadHash">,
+): Promise<string> {
+  return sha256(new TextEncoder().encode(JSON.stringify({
+    messageId: input.messageId,
+    author: input.author,
+    text: input.text,
+    selectedTarget: input.selectedTarget,
+    media: input.media ?? [],
+    origin: input.origin,
+    processId: input.processId ?? null,
+    runId: input.runId ?? null,
+  })));
+}
+
+function requireMediaOwner(owner: ConversationMediaOwner, processId: string | undefined): void {
+  requireNonempty(owner.pid, "mediaOwner.pid");
+  if (processId !== owner.pid) throw new Error("Conversation media owner does not match processId");
+  requireOwnerUid(owner.uid);
+  requireOwnerUid(owner.gid);
+  requireNonempty(owner.home, "mediaOwner.home");
+}
+
+function conversationMediaPrefix(conversationId: string): string {
+  return `conversations/${encodeURIComponent(conversationId)}/media/`;
+}
+
+function normalizeConversationMediaKey(value: string, conversationId: string): string {
+  if (!value.startsWith(conversationMediaPrefix(conversationId))) {
+    throw new Error("Conversation media key is invalid");
+  }
+  return value;
+}
+
+function isConversationMediaObject(
+  object: Pick<R2Object, "customMetadata">,
+  conversationId: string,
+): boolean {
+  return object.customMetadata?.purpose === "conversation-media"
+    && object.customMetadata.conversationId === conversationId;
+}
+
+function requireNonempty(value: string, label: string): void {
+  if (value.length === 0) throw new Error(`${label} is required`);
+}
+
+function requireOwnerUid(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("ownerUid is invalid");
+}
+
+function requireConversationKind(value: ConversationKind): void {
+  if (value !== "ship" && value !== "work" && value !== "group" && value !== "contact") {
+    throw new Error("Conversation kind is invalid");
+  }
+}
+
+function searchSnippet(text: string, query: string): string {
+  const points = [...text];
+  if (points.length <= 360) return text;
+  const fold = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const normalized = fold(text);
+  const offsets = (fold(query).match(/[\p{L}\p{N}]+/gu) ?? [])
+    .map((term) => normalized.indexOf(term)).filter((offset) => offset >= 0);
+  const match = offsets.length ? Math.min(...offsets) : 0;
+  let position = 0;
+  for (let offset = 0; offset < match && position < points.length; position++) {
+    offset += fold(points[position]).length;
+  }
+  const start = Math.max(0, position - 80);
+  const end = Math.min(points.length, start + 360);
+  return `${start ? "…" : ""}${points.slice(start, end).join("").replace(/\s+/g, " ").trim()}${end < points.length ? "…" : ""}`;
+}
+
+function normalizeLimit(value: number | undefined): number {
+  if (value === undefined) return 100;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_HISTORY_LIMIT) {
+    throw new Error(`Conversation history limit must be between 1 and ${MAX_HISTORY_LIMIT}`);
+  }
+  return value;
+}
+
+function normalizeBeforeSequence(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error("Conversation history cursor is invalid");
+  }
+  return value;
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}

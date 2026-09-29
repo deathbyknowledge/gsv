@@ -5,6 +5,7 @@ mod commands;
 mod desktop;
 mod device;
 mod local_config;
+mod pairing;
 mod version;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

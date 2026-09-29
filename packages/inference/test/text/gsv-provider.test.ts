@@ -1,0 +1,500 @@
+import { createModels, type Context } from "@earendil-works/pi-ai";
+import {
+  encodeManagedInferenceStreamEvent,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type ManagedInferenceResult,
+  type ManagedInferenceStreamEvent,
+} from "@humansandmachines/gsv/protocol";
+import type {
+  InferenceService as ManagedInferenceService,
+  InferenceTarget as ManagedInferenceTarget,
+} from "@humansandmachines/gsv/services/inference";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
+import {
+  createGsvInferenceProviderFactory,
+} from "../../src/text/gsv-provider";
+import { createGenerationService } from "../../src/text/service";
+import { createWorkersAiGeneration } from "../../src/workers-ai";
+
+const ATTRIBUTION = {
+  installationId: "inst_test",
+  logicalRequestId: "request_test",
+  actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+  workload: "ipc" as const,
+};
+
+const CONTEXT: Context = {
+  messages: [{ role: "user", content: "ping", timestamp: 1 }],
+};
+
+const RESULT: ManagedInferenceResult = {
+  role: "assistant",
+  content: [{ type: "text", text: "pong" }],
+  api: "gsv-inference",
+  provider: GSV_INFERENCE_PROVIDER,
+  model: GSV_INFERENCE_PRODUCT_MODEL,
+  usage: {
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 2,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason: "stop",
+  timestamp: 1,
+};
+
+describe("GSV inference provider", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("advertises the default 32k output budget", () => {
+    const service: ManagedInferenceService = {
+      getInstallation: vi.fn<ManagedInferenceService["getInstallation"]>(),
+    };
+    const provider = createGsvInferenceProviderFactory(service).create(ATTRIBUTION);
+    const models = createModels();
+    models.setProvider(provider);
+
+    expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
+      .toBe(32_768);
+  });
+
+  it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {
+    const generateStream = vi.fn(async () => eventStream({ type: "done", reason: "stop", message: RESULT }));
+    const { service } = managedService(generateStream);
+    const models = createModels();
+    models.setProvider(createGsvInferenceProviderFactory(service).create(ATTRIBUTION));
+    const tools = [{ name: "Read", description: "Read a fixture", parameters: Type.Object({ path: Type.String() }) }];
+    const context: Context = { ...CONTEXT, systemPrompt: "Synthetic system policy.", tools };
+
+    await models.completeSimple(models.getModel("gsv", GSV_INFERENCE_MODEL)!, context);
+
+    expect(generateStream).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      systemPrompt: context.systemPrompt,
+      tools: JSON.parse(JSON.stringify(tools)),
+      messages: CONTEXT.messages,
+    }));
+    expect(context.messages).toEqual(CONTEXT.messages);
+  });
+
+  it("disables DeepSeek thinking for a bounded compaction request through GSV Default", async () => {
+    const modelId = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+    const bindingFetch = vi.fn<typeof fetch>(async () => new Response([
+      `data: ${JSON.stringify({
+        id: "summary_test",
+        model: modelId,
+        choices: [{ index: 0, delta: { content: "Completed summary." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 },
+      })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join(""), { headers: { "content-type": "text/event-stream" } }));
+    const { service, target } = managedService(async (input) => {
+      const generation = createWorkersAiGeneration(input, { aiGatewayLogId: null, fetch: bindingFetch });
+      const message = await generation.result({
+        version: 2,
+        updatedAt: 1,
+        models: [{
+          modelId,
+          displayName: "DeepSeek V4 Flash",
+          contextWindow: 1_048_576,
+          maxOutputTokens: 32_768,
+          reasoning: true,
+          inputNanoUsdPerToken: 440,
+          outputNanoUsdPerToken: 1_320,
+          cacheReadNanoUsdPerToken: 14,
+          cacheWriteNanoUsdPerToken: 0,
+        }],
+      });
+      return eventStream({ type: "done", reason: "stop", message });
+    });
+    const result = await createGenerationService({
+      providers: [createGsvInferenceProviderFactory(service)],
+    }).generate({
+      config: {
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+        executor: { kind: "process", pid: ATTRIBUTION.actor.processId },
+        capabilities: [],
+        reasoning: "high",
+        maxTokens: 32_768,
+        contextWindowTokens: 1_048_576,
+        contextWindowSource: "model",
+        maxContextBytes: 32_768,
+        generationTimeoutMs: 1_000,
+      },
+      context: CONTEXT,
+      options: { reasoning: "off", maxTokens: 768 },
+      attribution: { ...ATTRIBUTION, workload: "compaction" },
+    });
+
+    expect(result).toMatchObject({
+      stopReason: "stop",
+      content: [{ type: "text", text: "Completed summary." }],
+    });
+    expect(bindingFetch).toHaveBeenCalledOnce();
+    const payload: unknown = await new Request(...bindingFetch.mock.calls[0]).json();
+    expect(payload).toMatchObject({
+      model: `workers-ai/${modelId}`,
+      max_tokens: 768,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(payload).not.toHaveProperty("thinking");
+    expect(target.generate).not.toHaveBeenCalled();
+  });
+
+  it("forwards deltas before the managed result completes", async () => {
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+      },
+    });
+    const { service, target, dispose } = managedService(vi.fn(async () => body));
+    const stream = providerStream(service, new AbortController().signal);
+    const events = stream[Symbol.asyncIterator]();
+
+    bodyController?.enqueue(encoded({
+      type: "start",
+      partial: { ...RESULT, content: [], stopReason: "pending" },
+    }));
+    bodyController?.enqueue(encoded({
+      type: "text_start",
+      contentIndex: 0,
+      content: { type: "text", text: "" },
+    }));
+    bodyController?.enqueue(encoded({
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "pong",
+    }));
+
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "start" },
+    });
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "text_start" },
+    });
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "text_delta", delta: "pong" },
+    });
+
+    bodyController?.enqueue(encoded({
+      type: "text_end",
+      contentIndex: 0,
+      content: { type: "text", text: "pong" },
+    }));
+    bodyController?.enqueue(encoded({ type: "done", reason: "stop", message: RESULT }));
+    bodyController?.close();
+    await expect(stream.result()).resolves.toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+      stopReason: "stop",
+    });
+    expect(service.getInstallation).toHaveBeenCalledWith(
+      ATTRIBUTION.installationId,
+    );
+    expect(target.generateStream).toHaveBeenCalledOnce();
+    expect(target.generate).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("aborts an active byte stream on request cancellation", async () => {
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
+      async () => new ReadableStream({
+        start() {
+          markStarted();
+        },
+      }),
+    );
+    const controller = new AbortController();
+    const abort = vi.fn(async () => {});
+    const { service, dispose } = managedService(generateStream, abort);
+    const stream = providerStream(service, controller.signal);
+    const completion = stream.result();
+
+    await started;
+    controller.abort(new Error("test cancellation"));
+
+    await expect(completion).resolves.toMatchObject({
+      stopReason: "aborted",
+      errorMessage: "test cancellation",
+    });
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(abort).toHaveBeenCalledWith(ATTRIBUTION.logicalRequestId);
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("settles cancellation while acquiring the inference target", async () => {
+    const disposeAcquisition = vi.fn();
+    const acquisition = new Promise<ManagedInferenceTarget>(() => {});
+    Object.defineProperty(acquisition, Symbol.dispose, {
+      value: disposeAcquisition,
+    });
+    const service = {
+      getInstallation: vi.fn(() => acquisition),
+    } satisfies ManagedInferenceService;
+    const controller = new AbortController();
+    const stream = providerStream(service, controller.signal);
+
+    await vi.waitFor(() => {
+      expect(service.getInstallation).toHaveBeenCalledOnce();
+    });
+    controller.abort(new Error("test cancellation"));
+
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "aborted",
+      errorMessage: "test cancellation",
+    });
+    expect(disposeAcquisition).toHaveBeenCalledOnce();
+  });
+
+  it("disposes a target that arrives after acquisition was cancelled", async () => {
+    let resolveTarget: (target: ManagedInferenceTarget) => void = () => {};
+    const acquisition = new Promise<ManagedInferenceTarget>((resolve) => {
+      resolveTarget = resolve;
+    });
+    const { target, dispose } = managedService(
+      vi.fn<ManagedInferenceTarget["generateStream"]>(),
+    );
+    const service = {
+      getInstallation: vi.fn(() => acquisition),
+    } satisfies ManagedInferenceService;
+    const controller = new AbortController();
+    const stream = providerStream(service, controller.signal);
+
+    await vi.waitFor(() => {
+      expect(service.getInstallation).toHaveBeenCalledOnce();
+    });
+    controller.abort(new Error("test cancellation"));
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "aborted",
+    });
+    resolveTarget(target);
+
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    expect(target.generateStream).not.toHaveBeenCalled();
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
+  it("bounds acquisition by the original factory deadline and disposes a late target", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = Date.now() + 1_000;
+    const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
+    const { target, dispose } = managedService(vi.fn());
+    const service = { getInstallation: vi.fn(() => acquisition.promise) };
+    const factory = createGsvInferenceProviderFactory(service);
+    await vi.advanceTimersByTimeAsync(400);
+    const stream = providerStreamFromFactory(factory, new AbortController().signal, deadlineAt);
+
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "error",
+      errorMessage: "Model generation timed out after 1000ms",
+    });
+    acquisition.resolve(target);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(target.generateStream).not.toHaveBeenCalled();
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled stream RPC after delayed acquisition and cancels its late body", async () => {
+    vi.useFakeTimers();
+    const deadlineAt = Date.now() + 1_000;
+    const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
+    const body = Promise.withResolvers<ReadableStream<Uint8Array>>();
+    const disposeBodyRpc = vi.fn();
+    Object.defineProperty(body.promise, Symbol.dispose, { value: disposeBodyRpc });
+    const abort = vi.fn(() => new Promise<void>(() => {}));
+    const { target, dispose } = managedService(vi.fn(() => body.promise), abort);
+    const service = { getInstallation: vi.fn(() => acquisition.promise) };
+    const stream = providerStream(service, new AbortController().signal);
+
+    await vi.advanceTimersByTimeAsync(400);
+    acquisition.resolve(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(target.generateStream).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: 1_000,
+      deadlineAt,
+    }));
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "error" });
+    expect(abort).toHaveBeenCalledExactlyOnceWith(ATTRIBUTION.logicalRequestId, "timeout");
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(disposeBodyRpc).toHaveBeenCalledOnce();
+
+    const cancel = vi.fn();
+    body.resolve(new ReadableStream({ cancel }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "error", content: [] });
+  });
+
+  it("times out an active stream without waiting for source cancellation", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const { service, target, dispose } = managedService(vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoded({
+          type: "start",
+          partial: { ...RESULT, content: [], stopReason: "pending" },
+        }));
+      },
+      cancel,
+    })));
+    const stream = providerStream(service, new AbortController().signal);
+    const events = stream[Symbol.asyncIterator]();
+    await expect(events.next()).resolves.toMatchObject({ value: { type: "start" } });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(events.next()).resolves.toMatchObject({ value: { type: "error", reason: "error" } });
+    await expect(events.next()).resolves.toMatchObject({ done: true });
+    expect(target.abort).toHaveBeenCalledExactlyOnceWith(ATTRIBUTION.logicalRequestId, "timeout");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("clears the generation deadline after success", async () => {
+    vi.useFakeTimers();
+    const { service, target } = managedService(vi.fn(async () => eventStream({
+      type: "done", reason: "stop", message: RESULT,
+    })));
+    const stream = providerStream(service, new AbortController().signal);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: "stop" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(target.abort).not.toHaveBeenCalled();
+  });
+
+  it("aborts when cancellation overtakes the stream RPC", async () => {
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const controller = new AbortController();
+    const reason = new Error("test cancellation");
+    let releaseStream: (value: ReadableStream<Uint8Array>) => void = () => {};
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
+      () => new Promise((resolve) => {
+        releaseStream = resolve;
+        markStarted();
+      }),
+    );
+    const abort = vi.fn(async () => {});
+
+    const { service, dispose } = managedService(generateStream, abort);
+    const stream = providerStream(service, controller.signal);
+    await started;
+    controller.abort(reason);
+
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "aborted",
+      errorMessage: "test cancellation",
+    });
+    const cancel = vi.fn();
+    releaseStream(new ReadableStream({ cancel }));
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+  it("logs only an allowlisted stage when stream validation fails", async () => {
+    const privatePayload = "private tool arguments";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const malformedEvent = new TextEncoder().encode(`${JSON.stringify({
+      type: "toolcall_start",
+      contentIndex: 0,
+      toolCall: {
+        type: "toolCall",
+        id: "call_test",
+        name: "Shell",
+        arguments: {},
+        privatePayload,
+      },
+    })}\n`);
+    const { service } = managedService(vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(malformedEvent);
+        controller.close();
+      },
+    })));
+
+    await expect(providerStream(service, new AbortController().signal).result())
+      .resolves.toMatchObject({
+        stopReason: "error",
+        errorMessage: "GSV inference is unavailable",
+      });
+
+    expect(errorLog).toHaveBeenCalledWith(JSON.stringify({
+      component: "gsv_inference",
+      event: "stream_consume_failed",
+    }));
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(privatePayload);
+    errorLog.mockRestore();
+  });
+});
+
+function providerStream(
+  service: ManagedInferenceService,
+  signal: AbortSignal,
+) {
+  return providerStreamFromFactory(
+    createGsvInferenceProviderFactory(service),
+    signal,
+  );
+}
+
+function providerStreamFromFactory(
+  factory: ReturnType<typeof createGsvInferenceProviderFactory>,
+  signal: AbortSignal,
+  deadlineAt?: number,
+) {
+  const provider = factory.create(ATTRIBUTION, deadlineAt === undefined ? undefined : { deadlineAt });
+  const models = createModels();
+  models.setProvider(provider);
+  const model = models.getModel("gsv", GSV_INFERENCE_MODEL)!;
+  return models.streamSimple(model, CONTEXT, {
+    maxTokens: 128,
+    timeoutMs: 1_000,
+    signal,
+  });
+}
+
+function managedService(
+  generateStream: ManagedInferenceTarget["generateStream"],
+  abort: ManagedInferenceTarget["abort"] = vi.fn(async () => {}),
+) {
+  const dispose = vi.fn();
+  const target = {
+    generate: vi.fn(),
+    generateStream,
+    abort,
+    [Symbol.dispose]: dispose,
+  } satisfies ManagedInferenceTarget & { [Symbol.dispose](): void };
+  const service = {
+    getInstallation: vi.fn(async () => target),
+  } satisfies ManagedInferenceService;
+  return { service, target, dispose };
+}
+
+function encoded(event: ManagedInferenceStreamEvent): Uint8Array {
+  return encodeManagedInferenceStreamEvent(event);
+}
+
+function eventStream(
+  ...events: ManagedInferenceStreamEvent[]
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(encoded(event));
+      controller.close();
+    },
+  });
+}

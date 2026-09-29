@@ -6,23 +6,17 @@ The installation route also scopes Ripgit. The Gateway overwrites Ripgit's
 internal installation metadata after resolving the request hostname and strips
 caller-provided values from public Git requests. Ripgit maps logical
 `{owner}/{repo}` slugs to installation-specific Repository Durable Objects.
-The standalone `singleton` route retains the historical `{owner}/{repo}` name.
+All deployments use scoped repository names.
 
-Managed adapter service-binding RPC carries the same trusted installation
-identity in both directions. Gateway-to-adapter calls derive it from the Kernel
-context; adapter-to-Gateway calls normally recover it from the owning account
-Durable Object's immutable name. Standalone calls retain their historical
-unscoped argument lists and are interpreted as `singleton`. Managed adapter
-account objects use a collision-free internal name derived from
-`{installationId, accountId}`. `singleton` retains the historical unscoped
-account object name for standalone upgrades. Public webhook payloads and adapter
-frame arguments cannot choose this identity. Standalone Telegram retains its
-historical per-installation account objects and webhook paths. The managed
-platform bot instead reaches a peer object chosen only from the authenticated
-Telegram private actor. That object owns the active installation, local uid,
-and route generation; public payloads cannot select any of them.
+Adapter service-binding RPC carries trusted installation identity in both
+directions. Gateway-to-adapter calls derive it from the Kernel context;
+adapter-to-Gateway calls recover it from the adapter-owned durable peer link.
+Public webhook payloads and adapter frame arguments cannot select a space or
+local account. The Telegram application, for example, addresses a peer from the
+authenticated private actor. That peer owns its active installation, local uid
+and route generation. Delayed ingress and delivery recheck the generation.
 
-Managed lifecycle routing uses two directory lookups with different trust
+Lifecycle routing uses two directory lookups with different trust
 inputs. Public HTTP resolves an accepted hostname, while durable adapter,
 Kernel, Process, and scheduler paths resolve their already-owned immutable
 `installationId`. Only `active` installations admit ordinary work.
@@ -58,10 +52,10 @@ If `target` names a registered external target and the syscall is routable, the
 Kernel forwards the unchanged syscall to that provider.
 
 The native provider is an in-process implementation, not a synthetic peer or
-device record. It owns only `fs.*`, `shell.exec`, and `net.fetch`; the Kernel
-continues to own control-plane dispatch.
+device record. It owns `fs.*`, `shell.exec`, `net.fetch`, and `web.search` when
+a search service is configured; the Kernel owns control-plane dispatch.
 
-The `fs.*`, `shell.*`, and `net.*` domains support target routing. Other domains
+The `fs.*`, `shell.*`, `net.*`, and `web.*` domains support target routing. Other domains
 such as `sys.*`, `proc.*`, `repo.*`, `adapter.*`, and `signal.*` are Kernel
 control-plane interfaces rather than target operations.
 
@@ -92,8 +86,9 @@ preventing long-running commands from depending on one in-flight route.
 Process DO executes it locally with the Worker Loader instead of routing it
 through the Kernel dispatcher. The manual `codemode.run` syscall is public and
 kernel-forwarded to a Process DO, which uses the same executor. CodeMode's
-in-block `shell(...)`, `fs.*(...)`, and `fetch(...)` helpers call back into the
-Process, which dispatches normal `shell.exec`, `fs.*`, and `net.fetch` request
+in-block `shell(...)`, `fs.*(...)`, `fetch(...)`, and `web.search(...)` helpers call
+back into the Process, which dispatches normal `shell.exec`, `fs.*`, `net.fetch`,
+and `web.search` request
 frames through the Kernel. Nested calls therefore use the same capabilities,
 target routing, async responses, shell sessions, and agent approval policy as
 direct tool calls.
@@ -104,15 +99,14 @@ Each durable agent task is a process identified by a PID. `proc.spawn` creates a
 new process, and `proc.fork` creates a new process initialized from committed
 history in another process. Each human owner has exactly one interactive,
 top-level process marked as the personal controller. That process is the
-default personal-intelligence destination across Web, CLI, Telegram, WhatsApp,
+default personal-intelligence destination across Web, CLI, Telegram, Slack,
 and other linked private surfaces. Explicit task and shared-surface processes
 remain ordinary, separate processes; there is no second process-local
 conversation identifier.
 
 PIDs are installation-local. Process Durable Object lookups combine the
-trusted installation ID with the PID in one canonical Durable Object name for
-managed installations. The standalone `singleton` installation retains the
-historical raw PID as its Durable Object name. Each Process derives both
+trusted installation ID with the PID in one canonical Durable Object name.
+Historical raw PIDs are not an admission fallback. Each Process derives both
 immutable identifiers from that name; routing identity is not persisted
 separately or repeated in delivered frames.
 
@@ -142,8 +136,9 @@ Process DOs emit lifecycle and output signals such as `proc.run.started`,
 `proc.run.stream`, `proc.run.output`, `proc.run.hil.requested`, and
 `proc.run.finished`. Every user-visible process signal is broadcast exactly
 once to every connected user client for the owning uid. `run_routes` separately
-owns exact adapter replies and terminal cleanup; `proc.changed` invalidates
-persisted process state.
+owns exact adapter delivery and terminal cleanup. It turns routed committed
+Messages and HIL requests into targeted `adapter.send` requests; `proc.changed`
+invalidates persisted process state.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, triggering message id, and managed peer-route generation. Delayed output and activity such as typing indicators are accepted only while that exact generation remains linked, so relinking the same external identity to the same user still fences work admitted before the relink. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
 
@@ -162,7 +157,7 @@ clients and process history without guessing a transport.
 Messaging adapters call `adapter.inbound` through a service identity. The Kernel normalizes the adapter id and account id, then resolves the external actor id through `identity_links`.
 
 An adapter's transport projection is not automatically a target. The bundled
-adapters are currently absent from `sys.device.*` and the generic target
+adapters are currently absent from `sys.target.*` and the generic target
 inventory because they do not implement the target contract. Explicit outbound
 delivery resolves an opaque authorized surface from `message destinations`;
 adapter account status and administration remain on the `adapter.*`
@@ -222,19 +217,24 @@ Independent Kernel ingress-receipt order completes the stale-handoff fence.
 Migration v032 adds the managed peer-route generation to exact adapter run
 routes so committed output cannot cross a later relink.
 
-Human-in-the-loop replies are routed specially. Each adapter DM prompt includes
-`hil[requestId]`. A tokened decision is correlated first against the owning
-human's processes whose runtime state is `waiting_hil`, including background
-children that inherited the spawning run's approval route, so `/ship` does not
-strand an approval from earlier work. Only one exact current token match resumes
-`proc.hil`; bare, stale, missing, and ambiguous matches fail closed. Provider
-reply threading does not authorize a decision.
+Human-in-the-loop delivery uses the same exact structured request as native
+clients. Clients receive `proc.run.hil.requested`; the exact adapter route
+receives a targeted `adapter.send` carrying its `ProcHilRequest` and renders
+native controls or, when secure controls are unavailable, a safe handoff to
+Chat. Opaque request identities never appear in user-facing text. A native callback retains
+the Process, run, request, linked actor, surface, route generation, and provider
+message correlation. It reaches the Kernel through `linkedPeerFrame`; the
+Kernel derives an interaction-scoped human peer, intersects the linked user's
+grant with `proc.hil`, rechecks destination authority and the pending request,
+and enters the ordinary dispatcher. Stale or relinked callbacks fail closed.
+Provider reply threading does not authorize a decision, and the adapter service
+principal never receives direct `proc.hil` authority.
 
 
 ## Registered Target Routing
 
 Registered external targets are currently persisted as device records in Kernel
-SQLite. A driver connection registers a device id, owner uid, owner gid,
+SQLite. A machine peer connection registers a target id, owner uid, owner gid,
 platform, version, and `implements` list. The access model is Linux-like:
 
 - Root can use every device.
@@ -266,7 +266,7 @@ initial call runs on `gsv` or a registered provider. For shell continuations,
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
 | `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
-| `run_routes` | Routes process run signals back to connections or adapter surfaces. |
+| `run_routes` | Retains the exact connection endpoint or adapter destination for a process run. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
 | `identity_links` | External adapter actor to local uid mapping. |

@@ -1,0 +1,215 @@
+# GSV Slack Adapter
+
+The Slack adapter uses one operator-owned app that can be installed in many
+workspaces. Each Slack author confirms a short-lived code from a signed-in GSV
+session before their messages can reach a space. The sole Worker entrypoint is
+`src/managed.ts`, configured by `wrangler.managed.jsonc`.
+
+Slack supports text and files in direct messages, channels, and threads.
+Files attached to a direct message or an explicit `@GSV` message are retained
+once as immutable GSV resources. GSV resource attachments are uploaded as
+native Slack files into the originating channel or thread.
+
+## Operator app setup
+
+Create a distributable Slack app for the managed environment. You can start
+from `slack-app.managed.example.yaml` (replace `SLACK_ORIGIN`), or configure it
+manually:
+
+1. Under **OAuth & Permissions**, add these bot token scopes:
+   `app_mentions:read`, `chat:write`, `chat:write.public`, `files:read`,
+   `files:write`, `im:history`, `im:write`, and `reactions:write`.
+2. Add these user token scopes: `channels:history`, `channels:read`,
+   `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`,
+   `mpim:read`, and `users:read`.
+3. Add this OAuth redirect URL, using the managed Slack Worker's public origin:
+   `https://SLACK_ORIGIN/slack/oauth/callback`.
+4. Under **Event Subscriptions**, set the Request URL to
+   `https://SLACK_ORIGIN/slack/events`.
+5. Under **Interactivity & Shortcuts**, enable Interactivity and set the Request
+   URL to `https://SLACK_ORIGIN/slack/interactions`.
+6. Under **App Home**, enable the Messages tab and allow users to send messages.
+7. Subscribe to `app_mention`, `message.im`, and `app_uninstalled` events.
+8. Enable app distribution for every workspace that should be able to install
+   the official GSV app.
+
+The managed deployment supplies these secrets:
+
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_SIGNING_SECRET`
+- `SLACK_OAUTH_STATE_SECRET` — a separate high-entropy secret used to sign the
+  short-lived OAuth state
+
+The deployment binds its externally reachable Worker origin as
+`SLACK_PUBLIC_BASE_URL`. Staging and production should use separate Slack apps
+and credentials.
+
+### Human pairing
+
+1. Open **GSV → Messengers → Slack** and authorize the official GSV app in the
+   intended Slack workspace. Slack reuses an existing workspace installation,
+   but each person who wants the Slack target must complete this authorization
+   once so GSV receives that person's scoped user token.
+2. Mention `@GSV` in a channel, or send the app a direct message.
+3. GSV sends a short-lived pairing code to that Slack author by direct message.
+4. Enter the code in the signed-in GSV console and inspect the Slack identity.
+5. Confirm the identity. Only this direct confirmation supplies the immutable
+   GSV installation and local user that Slack traffic will use.
+6. Mention `@GSV` again. The first message requested pairing and is not replayed
+   to the agent.
+
+Workspace installation and human pairing are different records. Installing the
+app admits signed Slack events for that workspace, but does not choose a GSV.
+Alice and Bob therefore receive different codes and can route to different GSV
+installations even when they share one Slack workspace. Making Alice and Bob
+GSV Contacts does not alter either default Slack route; any cross-GSV action
+must be explicit federation initiated by the linked GSV.
+
+In a public channel or thread, a response is prefixed with the Slack author it
+came through, for example `From <@U123>'s GSV:`. Direct-message responses are
+not prefixed. The adapter only delivers a public response to the exact channel
+or thread previously observed for that author.
+
+OAuth uses a signed state plus an `HttpOnly`, `Secure`, `SameSite=Lax` nonce
+cookie. Event requests are verified with Slack's signing secret and replay
+window before a workspace or peer Durable Object is addressed. Relinking an
+author rotates their route generation; delayed ingress and output recheck that
+generation and cannot cross to the old or new installation accidentally.
+
+### Slack target
+
+After personal OAuth authorization and pairing, GSV projects that Slack
+workspace as an online target. Discover its opaque target id with `targets list`,
+then select it with the ordinary Read, Search, or Shell `target` argument. The
+target exposes a read-only resource filesystem and an ephemeral just-bash
+environment containing a composable `slack` command:
+
+```bash
+slack whoami
+slack conversations list --json | jq -r '.items[] | [.id, .name] | @tsv'
+slack conversations history --channel C123 --json
+slack conversations replies --channel C123 --timestamp 1700000000.000100 --json
+printf '%s' 'hello from GSV' | slack messages send --channel C123
+slack reactions add --channel C123 --timestamp 1700000000.000100 --name eyes
+slack users list --json
+slack users info --user U123 --json
+cat /conversations/index.json | jq '.items[] | {id, name, path}'
+cat /conversations/C123/history/recent/transcript.txt
+cat /conversations/C123/threads/1700000000.000100/transcript.txt
+```
+
+Run `slack --help` inside the target for the exact inventory. Reads use the
+paired person's `xoxp-…` OAuth visibility, while messages and reactions use the
+installed GSV app's `xoxb-…` identity. Neither token is placed in the shell
+environment or output. Every target-originated message is prefixed with
+`From <@U123>'s GSV:` so its human owner remains visible on channels, threads,
+and direct messages. The app can post in public channels without joining;
+reactions and private-channel mutations require it to be explicitly invited.
+A route change, disconnect, reauthorization, timeout, or Process cancellation
+fences late output and cancels the owning provider request.
+
+### Slack filesystem
+
+Read `/README.txt` on the target for discovery. Files are live views of the paired
+user's Slack visibility. Read/Search and shell commands use the same namespace:
+
+| Path | Resource |
+| --- | --- |
+| `/workspace.json` | Workspace and reader identity |
+| `/conversations/index.json` | One inventory page, including channels and DMs, with canonical paths and `nextPath` |
+| `/conversations/<id>/meta.json` | Conversation name, topic, purpose, and visibility metadata |
+| `/conversations/<id>/history/recent/index.json` | One recent history page, messages, paths, and coverage |
+| `/conversations/<id>/history/recent/transcript.txt` | Readable transcript of that page |
+| `/conversations/<id>/messages/<timestamp>.json` | One exact channel message |
+| `/conversations/<id>/threads/<root-timestamp>/index.json` | First thread page, reply paths, and coverage |
+| `/conversations/<id>/threads/<root-timestamp>/transcript.txt` | Readable transcript of that thread page |
+| `/conversations/<id>/threads/<root-timestamp>/messages/<reply-timestamp>.json` | One exact reply |
+| `/users/index.json`, `/users/<id>.json` | User inventory pages and individual user metadata |
+
+History and thread pages request at most 15 messages. Their indexes and transcript
+headers state whether more messages exist and whether Slack limits the available
+history. Follow `nextPath` to another page directory containing `index.json` and
+`transcript.txt`. Inventory continuations point directly to JSON files. Slack
+cursors can expire; restart from the first page when that happens. History pages
+do not expand threads automatically; use each message's `threadPath` for replies.
+
+Directory listings for `/conversations` and `/users` enumerate up to eight inventory
+pages of 200 entries each. If enumeration cannot finish, they fail with directions
+to the paginated index instead of returning an incomplete listing. Message, thread,
+and continuation collections use their indexes for discovery. IDs and timestamps
+remain canonical even when human-readable names or message contents change.
+
+Search accepts a file or a finite history page directory, for example
+`/conversations/C123/history/recent`, with a literal query and optional `*`, `**`,
+or `?` include glob. To search a thread's first page, select its `transcript.txt`.
+Results contain readable file paths and line numbers, with an explicit truncation
+flag after 200 matches. Broader collection searches fail with scope guidance.
+
+Read supports line offsets, line limits, and byte limits. Resources are loaded
+on demand and cached only within the invocation; this is a live view, not an
+immutable export. File-reference reads and attachment downloads are unavailable.
+Each invocation permits at most 32 provider reads, files up to 4 MiB, and 16 MiB
+of rendered file content.
+
+The shell accepts resource directories as `cwd`. `/tmp` is writable scratch space
+for one execution, so `cat ... > /tmp/thread.txt` can feed ordinary shell tools.
+Posting and reacting remain explicit `slack` commands; writing or deleting a
+resource path fails without changing Slack. The target advertises `fs.read`,
+`fs.search`, and `shell.exec` only.
+
+The target is distinct from messaging. `message destinations` discovers
+authorized conversation delivery surfaces and `message send` commits a
+user-visible GSV Message. A `slack messages send` command is inspectable external
+tool activity performed by the GSV Slack app. Pairing alone never grants the linked space the bot’s workspace-wide visibility.
+
+## Files and attachments
+
+The adapter handles only files carried by an addressed `app_mention` or
+`message.im` event. It does not subscribe to workspace-wide `file_shared`
+events and does not download arbitrary link-unfurl URLs.
+
+Inbound private Slack URLs are refreshed with `files.info`, downloaded with the
+workspace bot token, and streamed through the adapter's single owned binary
+body. The Gateway retains the bytes under the run-as agent and commits only the
+immutable resource reference to conversation history. Private Slack URLs and
+bot credentials never become resource metadata.
+
+Outbound resources are hydrated only for delivery. The adapter uses
+`files.getUploadURLExternal`, uploads each file, and calls
+`files.completeUploadExternal` once for the batch with the authorized channel
+and parent thread. Text and shared-channel attribution become the file
+message's initial comment. The common GSV message-media limits apply: at most
+20 items and 48 MiB total. Unlike plain text sent with `chat:write.public`, file
+sharing requires the GSV app to be a member of the destination conversation.
+
+Existing managed workspace installations must use the install link again to
+approve the file and app-owned target scopes. Every managed user who wants the
+target must authorize its read scopes once.
+
+## Approval buttons
+
+Human-approval prompts in direct messages use **Approve once**, **Always
+approve**, and **Deny** buttons. A click becomes
+an exact `proc.hil` request through the linked human's interaction-scoped peer.
+The opaque callback identity remains adapter-owned and is never rendered to the
+human. Once resolved, the original message is replaced with the decision and
+the action it applied to.
+
+The adapter durably records an interaction before acknowledging it. Managed
+button values are also bound to the linked route generation, so a delayed click
+from before a relink cannot reach the previous or replacement installation.
+The Process remains authoritative for pending HIL state, while the adapter
+makes repeated provider callbacks idempotent and keeps the first selection.
+
+## Endpoints
+
+The Worker exposes:
+
+```text
+GET  /slack/install
+GET  /slack/oauth/callback
+POST /slack/events
+POST /slack/interactions
+GET  /health
+```

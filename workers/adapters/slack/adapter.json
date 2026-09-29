@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "id": "slack",
+  "displayName": "Slack",
+  "description": "Slack adapter worker",
+  "deployOrder": 4,
+  "wranglerConfig": "wrangler.managed.jsonc",
+  "devStateDirectories": [
+    "gsv-managed-slack-ManagedSlackWorkspace",
+    "gsv-managed-slack-ManagedSlackPeer",
+    "gsv-managed-slack-ManagedSlackPairing",
+    "gsv-managed-slack-SlackInstallation"
+  ],
+  "deployment": {
+    "main": "workers/adapters/slack/src/managed.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "ManagedSlackChannel",
+    "adapterEntrypoint": "ManagedSlackChannel",
+    "durableObjects": [
+      {
+        "binding": "MANAGED_SLACK_WORKSPACE",
+        "className": "ManagedSlackWorkspace"
+      },
+      {
+        "binding": "MANAGED_SLACK_PEER",
+        "className": "ManagedSlackPeer"
+      },
+      {
+        "binding": "MANAGED_SLACK_PAIRING",
+        "className": "ManagedSlackPairing"
+      },
+      {
+        "binding": "SLACK_INSTALLATIONS",
+        "className": "SlackInstallation"
+      }
+    ],
+    "requiredSecrets": [
+      "SLACK_CLIENT_ID",
+      "SLACK_CLIENT_SECRET",
+      "SLACK_SIGNING_SECRET",
+      "SLACK_OAUTH_STATE_SECRET"
+    ],
+    "lifecycle": {
+      "entrypoint": "SlackLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "kind": "adapter-account",
+          "className": "ManagedSlackWorkspace"
+        },
+        {
+          "kind": "adapter-peer",
+          "className": "ManagedSlackPeer"
+        },
+        {
+          "kind": "adapter-pairing",
+          "className": "ManagedSlackPairing"
+        },
+        {
+          "kind": "adapter-installation",
+          "className": "SlackInstallation"
+        }
+      ]
+    },
+    "requiredVariables": [
+      "SLACK_PUBLIC_BASE_URL"
+    ]
+  }
+}

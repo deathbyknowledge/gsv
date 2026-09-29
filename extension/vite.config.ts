@@ -18,8 +18,7 @@ export default defineConfig({
         "service-worker": resolve(__dirname, "src/background/service-worker.ts"),
         offscreen: resolve(__dirname, "offscreen.html"),
         options: resolve(__dirname, "options.html"),
-        popup: resolve(__dirname, "popup.html"),
-        sidepanel: resolve(__dirname, "sidepanel.html"),
+        panel: resolve(__dirname, "panel.html"),
         viewer: resolve(__dirname, "viewer.html"),
       },
       output: {

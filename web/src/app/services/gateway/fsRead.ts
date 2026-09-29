@@ -8,9 +8,11 @@ import {
 
 export type FsReadClient = Pick<GSVClient, "request">;
 
-type FsReadFileResult = Extract<FsReadResult, { kind: "text" | "image" }>;
+type FsReadFileResult = Exclude<Extract<FsReadResult, { ok: true }>, { files: string[] }>;
 const fsReadArgsSchema = z.object({
   path: z.string(),
+  // The target routes the read to a machine or a contact; without it every read lands on the cloud home.
+  target: z.string().optional(),
   offset: z.number().optional(),
   limit: z.number().optional(),
 });
@@ -22,7 +24,8 @@ type FsReadImageContent = [
 export type MaterializedFsReadResult =
   | Exclude<FsReadResult, FsReadFileResult>
   | (Omit<FsReadFileResult, "kind"> & { kind: "text"; content: string })
-  | (Omit<FsReadFileResult, "kind"> & { kind: "image"; content: FsReadImageContent });
+  | (Omit<FsReadFileResult, "kind"> & { kind: "image"; content: FsReadImageContent })
+  | (Omit<FsReadFileResult, "kind"> & { kind: "file" });
 
 export async function requestFsRead<T>(
   client: FsReadClient,
@@ -46,6 +49,11 @@ export async function materializeFsRead(
       throw new Error("fs.read returned a body without file metadata");
     }
     return data;
+  }
+  // a file that is neither text nor an image is only ever seen by reference, with nothing to read
+  if (data.kind === "file") {
+    if (body) await body.stream.cancel().catch(() => {});
+    return { ...data, kind: "file" };
   }
   if (!body) {
     throw new Error("fs.read file response did not include a body");

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-control-attach"
+description = "Enables the control_attach command without any pre-configured scope."
+commands.allow = ["control_attach"]
+
+[[permission]]
+identifier = "deny-control-attach"
+description = "Denies the control_attach command without any pre-configured scope."
+commands.deny = ["control_attach"]

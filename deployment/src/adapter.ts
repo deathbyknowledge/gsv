@@ -13,6 +13,8 @@ export type GsvAdapterWorkerProps = {
   workerName: string;
   adapter: AdapterDeploymentManifest;
   deployment: AdapterWorkerDeploymentManifest;
+  /** Only explicit disposable deployments may delete this Worker; omission retains it. */
+  allowResourceDeletion?: boolean;
   env?: Cloudflare.Workers.WorkerBindingProps;
   secrets?: Readonly<
     Record<string, { env: string; pattern?: RegExp }>
@@ -42,6 +44,9 @@ export const GsvAdapterWorker = (
 ) => {
   const env = props.env ?? {};
   const secrets = props.secrets ?? {};
+  for (const variable of props.deployment.requiredVariables ?? []) {
+    if (!(variable in env)) throw new Error(`${props.adapter.displayName} requires deployment value ${variable}`);
+  }
   for (const secret of props.deployment.requiredSecrets) {
     if (!(secret in secrets)) {
       throw new Error(
@@ -81,7 +86,8 @@ export const GsvAdapterWorker = (
     bundle: props.deployment.bundle,
     compatibility: props.compatibility ?? GSV_WORKER_COMPATIBILITY,
     workersDev: props.workersDev ?? false,
+    crons: props.deployment.crons,
     observability: props.observability ?? { enabled: true },
     env: workerEnv,
-  }).pipe(runtime.retain());
+  }).pipe(runtime.retain(props.allowResourceDeletion !== true));
 };

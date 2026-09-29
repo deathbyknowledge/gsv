@@ -2,8 +2,7 @@ use clap::Parser;
 use gsv::config::CliConfig;
 
 use crate::auth_flow::{
-    resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
-    run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
+    resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_with_login_retry,
 };
 use crate::cli::{
     AuthAction, Cli, Commands, ConfigAction, DaemonAction, DaemonServiceAction, LegacyDeviceAction,
@@ -36,8 +35,26 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .unwrap_or_else(|| cfg.gateway_url());
     match cli.command {
+        Commands::Pair {
+            code,
+            workspace,
+            no_install,
+            preserve_cli_login,
+            no_replace,
+        } => {
+            crate::pairing::run_pair(
+                code,
+                workspace,
+                crate::pairing::PairOptions {
+                    no_install,
+                    preserve_cli_login,
+                    no_replace,
+                },
+            )
+            .await
+        }
         Commands::Chat { message, pid } => {
-            run_with_auto_setup_and_login_retry(
+            run_with_login_retry(
                 &url,
                 &cfg,
                 cli_token_override.clone(),
@@ -51,7 +68,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .await
         }
         Commands::Shell => {
-            run_with_auto_setup_and_login_retry(
+            run_with_login_retry(
                 &url,
                 &cfg,
                 cli_token_override.clone(),
@@ -63,7 +80,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .await
         }
         Commands::Proc { action } => {
-            run_with_auto_setup_and_login_retry(
+            run_with_login_retry(
                 &url,
                 &cfg,
                 cli_token_override.clone(),
@@ -75,7 +92,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .await
         }
         Commands::Adapter { action } => {
-            run_with_auto_setup_and_login_retry(
+            run_with_login_retry(
                 &url,
                 &cfg,
                 cli_token_override.clone(),
@@ -92,57 +109,20 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 password,
                 ttl_hours,
             } => {
-                run_with_auto_setup_retry(
+                run_auth_login(
                     &url,
                     &cfg,
-                    username.clone().or_else(|| cli_user_override.clone()),
-                    password.clone().or_else(|| cli_password_override.clone()),
-                    || async {
-                        run_auth_login(
-                            &url,
-                            &cfg,
-                            username.clone().or_else(|| cli_user_override.clone()),
-                            password.clone().or_else(|| cli_password_override.clone()),
-                            ttl_hours,
-                        )
-                        .await
-                    },
+                    username.or_else(|| cli_user_override.clone()),
+                    password.or_else(|| cli_password_override.clone()),
+                    ttl_hours,
                 )
                 .await
             }
             AuthAction::Logout => run_auth_logout(),
-            AuthAction::Setup {
-                username,
-                new_password,
-                root_password,
-                ai_provider,
-                ai_model,
-                ai_api_key,
-                device_id,
-                device_label,
-                device_expires_at,
-            } => {
-                run_auth_setup(
-                    &url,
-                    &cfg,
-                    AuthSetupOptions {
-                        username,
-                        password: new_password,
-                        root_password,
-                        ai_provider,
-                        ai_model,
-                        ai_api_key,
-                        device_id,
-                        device_label,
-                        device_expires_at,
-                    },
-                )
-                .await
-            }
             link_action @ AuthAction::Link { .. }
             | link_action @ AuthAction::LinkList { .. }
             | link_action @ AuthAction::Unlink { .. } => {
-                run_with_auto_setup_and_login_retry(
+                run_with_login_retry(
                     &url,
                     &cfg,
                     cli_token_override.clone(),
@@ -154,7 +134,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             }
             token_action @ AuthAction::Token { .. } => {
-                run_with_auto_setup_and_login_retry(
+                run_with_login_retry(
                     &url,
                     &cfg,
                     cli_token_override.clone(),
@@ -171,6 +151,9 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
                 let attempt_cfg = CliConfig::load();
+                let url = cli_url_override
+                    .clone()
+                    .unwrap_or_else(|| attempt_cfg.device_gateway_url());
                 let auth = resolve_device_gateway_auth(
                     &attempt_cfg,
                     cli_token_override.clone(),
@@ -256,7 +239,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                run_with_auto_setup_and_login_retry(
+                run_with_login_retry(
                     &url,
                     &cfg,
                     cli_token_override.clone(),

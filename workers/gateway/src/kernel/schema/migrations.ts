@@ -1,0 +1,154 @@
+import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
+import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
+import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
+import { KERNEL_V003_REMOVE_PROCESS_MOUNTS } from "./v003_remove_process_mounts";
+import { KERNEL_V004_REMOVE_LEGACY_SIGNAL_WATCHES } from "./v004_remove_legacy_signal_watches";
+import { KERNEL_V005_ADD_ADAPTER_STATUS_OWNER } from "./v005_add_adapter_status_owner";
+import { KERNEL_V006_ADD_IPC_DELIVERY_STATE } from "./v006_add_ipc_delivery_state";
+import { KERNEL_V007_REMOVE_CLI_MIRROR } from "./v007_remove_cli_mirror";
+import {
+  KERNEL_V008_BIND_ROUTES_TO_DRIVER_CONNECTIONS,
+} from "./v008_bind_routes_to_driver_connections";
+import { KERNEL_V009_BIND_RUN_REPLY_ROUTES } from "./v009_bind_run_reply_routes";
+import {
+  KERNEL_V010_SCOPE_ADAPTER_DESTINATIONS,
+} from "./v010_scope_adapter_destinations";
+import {
+  KERNEL_V011_ADD_SCHEDULE_OCCURRENCE_ID,
+} from "./v011_add_schedule_occurrence_id";
+import {
+  KERNEL_V012_ADD_SCHEDULE_ATTEMPT_COUNT,
+} from "./v012_add_schedule_attempt_count";
+import {
+  KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
+} from "./v013_add_adapter_ingress_receipts";
+import {
+  KERNEL_V014_ADD_ADAPTER_INGRESS_DELIVERY_ID,
+} from "./v014_add_adapter_ingress_delivery_id";
+import {
+  KERNEL_V015_REMOVE_PACKAGE_RUNTIME,
+} from "./v015_remove_package_runtime";
+import { KERNEL_V016_REMOVE_PROCESS_CONTEXT } from "./v016_remove_process_context";
+import { KERNEL_V017_REORDER_SYSTEM_CONTEXT } from "./v017_reorder_system_context";
+import {
+  KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
+} from "./v018_remove_conversation_registry";
+import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
+import { KERNEL_V020_ADD_MAILBOXES } from "./v020_add_mailboxes";
+import {
+  KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
+} from "./v021_isolate_mail_notifications";
+import { KERNEL_V022_ADD_OUTBOUND_MAIL } from "./v022_add_outbound_mail";
+import {
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+} from "./v023_add_personal_controller_slot";
+import {
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+} from "./v024_add_surface_route_modes";
+import {
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+} from "./v025_add_private_adapter_destinations";
+import { KERNEL_V026_ADD_CONVERSATIONS } from "./v026_add_conversations";
+import { KERNEL_V027_OWN_DURABLE_TASKS } from "./v027_own_durable_tasks";
+import {
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
+} from "./v028_rename_home_conversation_to_ship";
+import { KERNEL_V029_ADD_RESPONSIBILITIES } from "./v029_add_responsibilities";
+import {
+  KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
+} from "./v030_link_ipc_responsibilities";
+import {
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+} from "./v031_add_responsibility_source_policies";
+import {
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
+} from "./v032_fence_adapter_run_routes";
+import { KERNEL_V033_ADD_FEDERATION } from "./v033_add_federation";
+import {
+  KERNEL_V034_ADD_PROCESS_APPROVAL_ROUTES,
+} from "./v034_add_process_approval_routes";
+import {
+  KERNEL_V035_ADD_ADAPTER_LIFECYCLE_IDS,
+} from "./v035_add_adapter_lifecycle_ids";
+import {
+  KERNEL_V036_SUPERVISE_DELEGATED_IPC_CALLS,
+} from "./v036_supervise_delegated_ipc_calls";
+import { KERNEL_V037_CUT_OVER_TO_PROTOCOL_4 } from "./v037_cut_over_to_protocol_4";
+import { KERNEL_V038_RENAME_DEVICES_TO_TARGETS } from "./v038_rename_devices_to_targets";
+import { KERNEL_V039_ADD_LEDGER } from "./v039_add_ledger";
+import { KERNEL_V040_ADD_TARGET_SIGNAL_WATCHES } from "./v040_add_target_signal_watches";
+import { KERNEL_V041_RETIRE_PROCESS_SIGNAL_WATCHES } from "./v041_retire_process_signal_watches";
+import { KERNEL_V042_ADD_LEDGER_ERROR } from "./v042_add_ledger_error";
+import { KERNEL_V043_ADD_DEVICE_PAIRINGS } from "./v043_add_device_pairings";
+import { KERNEL_V044_ADD_ACCOUNT_RECOVERY } from "./v044_add_account_recovery";
+import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./v045_add_human_invitations";
+import { KERNEL_V046_ADD_ACCOUNT_PASSKEYS } from "./v046_add_account_passkeys";
+import { KERNEL_V047_ADD_MEMBER_RECOVERY } from "./v047_add_member_recovery";
+
+import { KERNEL_V048_INSTALLATION_RESOURCES } from "./v048_installation_resources";
+import { KERNEL_V049_REMOVE_ACCOUNT_PASSKEYS } from "./v049_remove_account_passkeys";
+import { KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS } from "./v050_retain_revoked_identity_links";
+import { KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY } from "./v051_continue_outbound_mail_recovery";
+import { KERNEL_V052_ADD_LEDGER_PURPOSE } from "./v052_add_ledger_purpose";
+
+// Used by Kernel DO startup before the individual stores initialize.
+export const KERNEL_SCHEMA_COMPONENT = "kernel";
+
+export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
+  KERNEL_V001_INITIAL_SCHEMA,
+  KERNEL_V002_REMOVE_DEVICE_LIFECYCLE,
+  KERNEL_V003_REMOVE_PROCESS_MOUNTS,
+  KERNEL_V004_REMOVE_LEGACY_SIGNAL_WATCHES,
+  KERNEL_V005_ADD_ADAPTER_STATUS_OWNER,
+  KERNEL_V006_ADD_IPC_DELIVERY_STATE,
+  KERNEL_V007_REMOVE_CLI_MIRROR,
+  KERNEL_V008_BIND_ROUTES_TO_DRIVER_CONNECTIONS,
+  KERNEL_V009_BIND_RUN_REPLY_ROUTES,
+  KERNEL_V010_SCOPE_ADAPTER_DESTINATIONS,
+  KERNEL_V011_ADD_SCHEDULE_OCCURRENCE_ID,
+  KERNEL_V012_ADD_SCHEDULE_ATTEMPT_COUNT,
+  KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
+  KERNEL_V014_ADD_ADAPTER_INGRESS_DELIVERY_ID,
+  KERNEL_V015_REMOVE_PACKAGE_RUNTIME,
+  KERNEL_V016_REMOVE_PROCESS_CONTEXT,
+  KERNEL_V017_REORDER_SYSTEM_CONTEXT,
+  KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
+  KERNEL_V019_REMOVE_NOTIFICATIONS,
+  KERNEL_V020_ADD_MAILBOXES,
+  KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
+  KERNEL_V022_ADD_OUTBOUND_MAIL,
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+  KERNEL_V026_ADD_CONVERSATIONS,
+  KERNEL_V027_OWN_DURABLE_TASKS,
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
+  KERNEL_V029_ADD_RESPONSIBILITIES,
+  KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
+  KERNEL_V033_ADD_FEDERATION,
+  KERNEL_V034_ADD_PROCESS_APPROVAL_ROUTES,
+  KERNEL_V035_ADD_ADAPTER_LIFECYCLE_IDS,
+  KERNEL_V036_SUPERVISE_DELEGATED_IPC_CALLS,
+  KERNEL_V037_CUT_OVER_TO_PROTOCOL_4,
+  KERNEL_V038_RENAME_DEVICES_TO_TARGETS,
+  KERNEL_V039_ADD_LEDGER,
+  KERNEL_V040_ADD_TARGET_SIGNAL_WATCHES,
+  KERNEL_V041_RETIRE_PROCESS_SIGNAL_WATCHES,
+  KERNEL_V042_ADD_LEDGER_ERROR,
+  KERNEL_V043_ADD_DEVICE_PAIRINGS,
+  KERNEL_V044_ADD_ACCOUNT_RECOVERY,
+  KERNEL_V045_ADD_HUMAN_INVITATIONS,
+  KERNEL_V046_ADD_ACCOUNT_PASSKEYS,
+  KERNEL_V047_ADD_MEMBER_RECOVERY,
+  KERNEL_V048_INSTALLATION_RESOURCES,
+  KERNEL_V049_REMOVE_ACCOUNT_PASSKEYS,
+  KERNEL_V050_RETAIN_REVOKED_IDENTITY_LINKS,
+  KERNEL_V051_CONTINUE_OUTBOUND_MAIL_RECOVERY,
+  KERNEL_V052_ADD_LEDGER_PURPOSE,
+];
+
+export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
+  runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS);
+}

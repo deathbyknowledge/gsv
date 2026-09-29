@@ -1,0 +1,82 @@
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { defineConfig } from "vitest/config";
+import { slackApiWorkerScript } from "./test/fixture-workers.ts";
+
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.managed.test.jsonc" },
+      miniflare: {
+        workers: [
+          {
+            name: "managed-slack-gateway-test",
+            modules: true,
+            script: `
+              import { WorkerEntrypoint } from "cloudflare:workers";
+              const calls = [];
+              export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
+                async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
+                async serviceFrame(installation, frame) {
+                  const mediaBody = frame.body
+                    ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
+                    : undefined;
+                  calls.push({ installation, call: frame.call, args: frame.args, mediaBody });
+                  if (frame.call === "adapter.state.update") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+                  }
+                  if (frame.args.message?.text === "__identity_revoked__") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true, droppedReason: "revoked_identity" } };
+                  }
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      reply: {
+                        deliveryId: "gateway-reply:" + frame.args.deliveryId,
+                        text: "Reply for " + frame.args.message.actor.id,
+                        replyToId: frame.args.message.messageId,
+                      },
+                    },
+                  };
+                }
+                async linkedPeerFrame(installation, context, frame) {
+                  calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  return {
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    data: {
+                      ok: true,
+                      pid: frame.args.pid,
+                      requestId: frame.args.requestId,
+                      decision: frame.args.decision,
+                      resumed: true,
+                      remembered: frame.args.remember === true,
+                    },
+                  };
+                }
+                async unlinkAdapterIdentity(installation, input) {
+                  calls.push({ call: "unlinkAdapterIdentity", installation, input });
+                  return { removed: true };
+                }
+                async fetch() {
+                  return Response.json(calls);
+                }
+              }
+            `,
+          },
+          {
+            name: "managed-slack-api-test",
+            modules: true,
+            script: slackApiWorkerScript(),
+          },
+        ],
+      },
+    }),
+  ],
+  test: {
+    include: ["test/workspace-retirement.test.ts", "test/retirement.test.ts", "test/managed-flow.test.ts", "test/recovery.test.ts"],
+  },
+});

@@ -7,6 +7,7 @@ import type {
   AiTextTool,
   AiToolCall,
 } from "../protocol/syscalls/ai";
+import type { ManagedInferencePolicy, ManagedInferenceUsageEvent } from "../protocol/managed";
 
 export const GSV_INFERENCE_PROVIDER = "gsv";
 export const GSV_INFERENCE_MODEL = "default";
@@ -21,11 +22,21 @@ export type ManagedInferenceActor = {
 
 export type ManagedInferencePurpose = "agent" | "mail-intake";
 
+export type ManagedInferenceWorkload =
+  | "interactive"
+  | "background"
+  | "ipc"
+  | "compaction"
+  | "kernel"
+  | "mail-intake";
+
 export type ManagedInferenceRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
   actor: ManagedInferenceActor;
+  /** Additive for rolling deployments; omitted callers are reported as unknown. */
+  workload?: ManagedInferenceWorkload;
   model: typeof GSV_INFERENCE_PRODUCT_MODEL;
   systemPrompt?: string;
   messages: AiTextMessage[];
@@ -33,6 +44,8 @@ export type ManagedInferenceRequest = {
   maxOutputTokens: number;
   reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   timeoutMs: number;
+  /** Gateway deadline in epoch milliseconds; may only shorten the service timeout. */
+  deadlineAt?: number;
 };
 
 export type ManagedInferenceResult = Omit<
@@ -84,10 +97,13 @@ export type ManagedInferenceStreamEvent =
       error: ManagedInferenceResult;
     };
 
+export type ManagedInferenceAbortReason = "cancelled" | "timeout";
+
 export type ManagedInferenceAbortRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
+  reason?: ManagedInferenceAbortReason;
 };
 
 /** Installation-scoped inference capability returned to a Gateway deployment. */
@@ -96,7 +112,8 @@ export interface InferenceTarget {
   generateStream(
     input: ManagedInferenceRequest,
   ): Promise<ReadableStream<Uint8Array>>;
-  abort(logicalRequestId: string): Promise<void>;
+  /** Omitted reasons mean cancellation; the service retains the first terminal cause. */
+  abort(logicalRequestId: string, reason?: ManagedInferenceAbortReason): Promise<void>;
 }
 
 /** Platform inference contract consumed by a Gateway deployment. */
@@ -106,3 +123,19 @@ export interface InferenceService {
 
 /** @deprecated Import `InferenceService` from `@humansandmachines/gsv/services/inference`. */
 export type ManagedInferenceService = InferenceService;
+
+/** Funded-inference policy and accounting remain implemented by the deployment operator. */
+export interface InferencePolicyService {
+  getInferencePolicy(installationId: string): Promise<ManagedInferencePolicy>;
+}
+
+/** Live admission and routing; plan allowances are read through EntitlementsService. */
+export type InferenceAdmission = Omit<ManagedInferencePolicy, "monthlyLimitNanoUsd">;
+
+export interface InferenceAdmissionService {
+  getInferenceAdmission(installationId: string): Promise<InferenceAdmission>;
+}
+
+export interface InferenceUsageService {
+  recordInferenceUsage(events: ManagedInferenceUsageEvent[]): Promise<void>;
+}

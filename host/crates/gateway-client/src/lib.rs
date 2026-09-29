@@ -1,6 +1,7 @@
 pub mod body;
 pub mod client;
 pub mod connection;
+pub mod history;
 pub mod protocol;
 
 pub use body::{

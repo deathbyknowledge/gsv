@@ -60,6 +60,27 @@ test("cancels the owned stream when its consumer stops", async () => {
   assert.equal(cancelled, true);
 });
 
+test("settles stream cancellation without waiting for the source cleanup", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encodeManagedInferenceStreamEvent({
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "first",
+      }));
+    },
+    cancel() {
+      cancelled = true;
+      return new Promise(() => {});
+    },
+  });
+
+  for await (const _event of decodeManagedInferenceStream(body)) break;
+  assert.equal(cancelled, true);
+  assert.equal(body.locked, false);
+});
+
 function concatenate(...parts) {
   const output = new Uint8Array(
     parts.reduce((length, part) => length + part.byteLength, 0),

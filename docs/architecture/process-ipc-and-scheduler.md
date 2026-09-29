@@ -77,6 +77,18 @@ already running, the Process persists the event immediately and includes it in t
 context; if no provider request is in flight, the current loop can react without waiting for a
 separate queued run.
 
+If the active run finishes before its model context includes an admitted event, a durable
+continuation starts another run from the existing history. It uses the same FIFO queue as
+ordinary input but adds no message or synthetic event to history. Already-queued input can
+provide that next turn, so finishing does not add a redundant continuation behind it. A reply
+for a different source run queues its continuation without changing the active run.
+If the last historical input named another reply destination, model context ends
+with the continuation's current destination annotation. This runtime metadata is
+not a stored history event and does not change the frozen system prompt.
+
+Queued wake messages from older versions are accepted as these silent continuations.
+Wake events already retained in history remain inspectable with their original records.
+
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 
@@ -95,6 +107,14 @@ Other processes may run as the same personal agent account, but they are work
 with independent histories and never become the personal process by recency or
 label. `proc.list` reports the distinction explicitly.
 
+`proc.spawn.ai` optionally selects the new process's first-choice model and
+reasoning effort. The Kernel validates the model against the owning human's
+catalog before registering the process, then Process stores these preferences
+with its identity in one transaction before admitting the initial task. Omitted
+fields inherit agent/account settings; process-local settings are not copied
+from a parent. Later `proc.ai.config.set` changes apply to the next run. Choosing
+a model retains the owner's normal fallback stack.
+
 The personal agent's account home contains its role, voice, and durable memory.
 Unresolved work lives in the Kernel responsibility ledger and is projected into
 one immutable Process context epoch as a baseline plus ordered transitions. Each
@@ -102,22 +122,32 @@ process retains its own history and lifecycle. The personal process is the norma
 user-facing place where delegated results and actionable system events return;
 real child processes still use ordinary parent pids for lifecycle and IPC.
 
-For bounded work, `proc delegate` creates a non-interactive child and a bounded
-`proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
-selects a specialized owned agent. The delegated-task envelope places an
-inherited child in worker mode. With `--responsibility ID`, the Kernel assigns
+For durable delegated work, `proc delegate` creates a non-interactive child and a
+supervised `proc.ipc.call`. Ship's seeded instructions select its owned Crew account
+with `--as ACCOUNT`, separating conversation guidance from execution guidance through
+ordinary account context. Explicit delegation can select another owned account;
+without `--as`, children retain normal parent identity inheritance. The delegated-task
+envelope supplies the return-to-caller contract. With `--responsibility ID`, the Kernel assigns
 that record to the child and persists the id on the IPC call. Completion, failure,
-timeout, or kill returns a still-active assignment to Ship once, with the IPC call
-and child run ids recorded as evidence. The result itself still re-enters the
+or explicit termination returns a still-active assignment to Ship once, with the
+IPC call and child run ids recorded as evidence. The default 10-minute interval is
+a supervision checkpoint, not a work deadline. At each checkpoint the Kernel renews
+the pending result route, records a responsibility check-in, and tells the caller
+that the child is still running without cancelling it. The result itself still re-enters the
 caller as a Process event while that caller still exists; it is not copied into
 the responsibility record. If the personal Process is replaced before delivery,
 the Kernel returns the assignment to Ship and discards the obsolete Process
 signal. The durable responsibility remains the recovery path.
+Managed deployments defer supervision checkpoints while the installation is inactive;
+reactivation resumes the same pending result route without admitting Process work during
+the restriction.
 
-During an adapter turn, `message current --json` exposes the current surface as
-an opaque GSV destination id. The personal intelligence can store that id with
-a commitment and use `message send --to DESTINATION --also` if a result merits a later
-update. Provider account, actor, and surface identifiers remain hidden.
+`message current --json` describes the transport-neutral current-conversation
+reply path without exposing ephemeral client identifiers. During an adapter
+turn it additionally exposes the current surface as an opaque GSV destination
+id. The personal intelligence can store that id with a commitment and use
+`message send --to DESTINATION --also` if a result merits a later update.
+Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching
 
@@ -157,6 +187,20 @@ model today; cross-user process access requires an explicit ACL design.
 Forking preserves the source run-as identity and does not broaden its
 capabilities. The new process receives its own lifecycle and can diverge safely
 after import.
+
+Pending human approvals remain in the executing Process, including syscalls
+invoked inside CodeMode. The Kernel publishes the child's `waiting_hil` registry
+state to the owning human. A pending approval does not append an event to the
+parent's model context or start a parent run. Originating messengers receive
+actionable approval controls through the child's inherited adapter route, with
+the original destination, request identity, and authorization checks.
+
+Ship presents pending approvals for its owning human, including surviving work
+from an earlier Ship process. Helper conversations present their descendants.
+Clients recover each request with a status-only history read and submit `proc.hil`
+to the original child and request id. Only a credential-authenticated human or a
+Kernel-derived linked adapter interaction may decide an approval; a process
+cannot approve itself or its children.
 
 ## Scheduler
 

@@ -1,9 +1,8 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local Desktop application, device
-daemon, process tree, adapters, and Cloudflare infrastructure. Most commands
-talk to the Kernel syscall surface over WebSocket; `desktop` uses a same-user
-local endpoint and `infra` talks directly to Cloudflare.
+The `gsv` binary controls a GSV gateway, the local Desktop application, the
+machine daemon, the process tree, and adapters. Most commands talk to the Kernel
+syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
 ## Global Options
 
@@ -54,8 +53,8 @@ commands inspect and control the Kernel schedule records:
 ```bash
 proc self
 proc list
-proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
-proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] [--responsibility ID] <task>
+proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--] [prompt]
+proc delegate [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--check-after 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--metadata-json json] <message>
@@ -68,10 +67,11 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -119,13 +119,25 @@ another owned agent account. Its prompt is fire-and-forget, and any answer
 remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
-bounded child whose ordinary final assistant output returns to its caller as a process event; it
+durable child whose ordinary final assistant output returns to its caller as a process event; it
 requires a process-backed caller and must not be placed in a crontab. Passing
 `--responsibility ID` assigns that existing Kernel record to the child before
 IPC admission and restores its prior Ship state if admission fails. Completion,
-failure, timeout, or kill returns a still-active assignment to Ship exactly once;
-the IPC event carries the child result and the responsibility retains stable call
-and run references.
+failure, or explicit termination returns a still-active assignment to Ship exactly
+once; the IPC event carries the child result and the responsibility retains stable
+call and run references. `--check-after` sets a 10-minute supervision cadence by
+default. Each check-in reports that work is still running and renews the result
+route without cancelling the child. The legacy `--timeout` spelling is accepted as
+an alias for `--check-after`; it is not a delegation deadline.
+
+Both commands accept `--model MODEL_ID` and `--effort LEVEL` (`--reasoning` is an
+alias). These are process-local preferences stored before the first task starts.
+The model ID names an entry in the owning human's stack and puts it first without
+disabling fallbacks. Effort is `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
+Omitted preferences inherit agent/account defaults; a child's process-local
+preferences are independent of its parent's. JSON spawn accepts the equivalent
+`"ai": { "modelId": "quick", "reasoning": "high" }` object.
+
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
@@ -138,7 +150,7 @@ same personal-agent account.
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
-new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
+new durable worker; the lower-level `r12y delegate ID PID --until ISO` command
 assigns an already-existing owned process with an explicit recovery deadline.
 `r12y sources` lists required runtime contracts as `always-on` and configurable
 producers as `configurable`. Only configurable producers can be changed. Use
@@ -147,14 +159,26 @@ Ship responsibility for each message; enabling it affects future completions.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
-`message current` reports the current run's directed endpoint. For an adapter
-run, both text and JSON output include an opaque
-destination id suitable for a later `message send --to`; raw provider ids stay
-hidden. `message attach` adds one or more GSV filesystem files to the run's
-next current-conversation message; it does not create an extra message. Existing files
-in the current process's `/var/media` directory
-are reused, while other readable files are staged there. A direct Shell call using a literal block
-sends a message and leaves the run active:
+`message search "words"` searches retained conversation messages saved after search was
+enabled, including those later archived, and defaults to Ship. Older search entries
+are removed as the conversation database approaches its storage budget; their original
+messages remain readable through history. Pre-feature messages are not indexed retroactively.
+Search returns newest matches first, with literal word prefixes combined with AND.
+`--before` accepts the returned `nextBeforeSequence` to page older matches.
+A signed-in user or their Ship may search;
+delegated work does not inherit conversation access. Use `message history` with
+the match's sequence plus one as `--before` and `--limit 1` to read it in full.
+
+`message current` reports the current run's directed endpoint and exact reply
+commands. For an adapter run, text and JSON also include an opaque destination
+id suitable for a later or additional `message send --to`; raw provider ids
+stay hidden. `message attach` adds one or more GSV filesystem files to the run's
+next current-conversation message; it does not create an extra message. The
+Process retains each exact source revision in its immutable media archive before
+committing the message. `--mime` can classify a single attachment for
+presentation while its reference retains the source's authoritative stored
+content type. A direct Shell call using a literal block sends a message and
+leaves the run active:
 
 ```bash
 message send <<'GSV_MESSAGE'
@@ -164,7 +188,8 @@ GSV_MESSAGE
 
 Run `yield` when the work is complete. A final message can commit and yield without another model
 turn by placing `&& yield` after the block declaration. The Process recognizes these message and
-run-control commands without shell approval. During an active run,
+run-control commands without shell approval; the model usually reaches the same three actions
+through its `Send` tool, whose `text` and `yield` map onto them exactly. During an active run,
 `message send --to ... --also` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
@@ -187,6 +212,14 @@ the change keeps its direct messages routed to the conversation that started it.
 Repeated `route set` calls from the same current run to the same work process
 are idempotent. Newer private activity or a newer selection fences a late call.
 
+`txt2img` infers `png`, `jpeg`, or `webp` output format from a known output
+extension when `--format` is omitted. `tts` similarly infers its encoding and,
+where needed, container from `.mp3`, `.wav`, `.ogg`, `.opus`, `.flac`, or
+`.aac`. Both commands verify the returned MIME type before writing. A provider
+that cannot honor the requested representation fails without writing
+mislabeled bytes; `--json` reports the authoritative MIME type and size on
+success.
+
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no
 system query prompt. `ocr` has an extraction-specific default and accepts an
@@ -208,17 +241,20 @@ reasoning, or structured output. The underlying `ai.image.read` response body
 streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
 final `shell.exec` stdout.
 
-`--to here` selects the current adapter endpoint. Any explicit destination send during an active
-run requires `--also`, acknowledging that it is intentionally sent to an explicit destination.
-`--attach` streams one GSV filesystem
-file; `--mime` overrides the inferred MIME type. Copy a file from a connected
-target to GSV before attaching it:
+The current-conversation form is transport-neutral: issue `message attach`
+and `message send` as separate direct Shell tool calls without `--to` or
+`--also`. It works whether the run came from a WebSocket client, Desktop, or an
+adapter. An explicit destination send during an active run requires `--also`,
+acknowledging that it is an additional delivery. Repeat its `--attach` option
+to stream multiple GSV filesystem files in one delivery. `--mime` supplies the
+delivery type only when exactly one attachment is present. Copy a file from a
+connected target to GSV before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
 message attach /tmp/report.pdf
 message send --message "Here is the report." && yield
-message send --to here --message "Here is the report." --attach /tmp/report.pdf --also
+message send --to DESTINATION --message "Here is the report elsewhere." --attach /tmp/report.pdf --also
 ```
 
 `message send` allocates a stable delivery id before contacting an adapter and
@@ -295,17 +331,21 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 
 ```bash
 gsv proc list [--uid UID]
-gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
+gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE --pid PID
-gsv proc history --pid PID [--limit N] [--offset N]
+gsv proc history --pid PID [--tail] [--limit N] [--offset N]
 gsv proc reset --pid PID
 gsv proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
-`send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
-lists and requires root when viewing another user.
+`send`, `history`, `reset`, and `kill` require a PID. `history --tail` reads
+the newest messages instead of the oldest page. `--uid` filters process lists
+and requires root when viewing another user.
+
+Spawn's `--model` and `--effort` flags have the same semantics as the native
+commands above; the settings apply before the optional initial prompt starts.
 
 ## Desktop Commands
 
@@ -350,7 +390,7 @@ window state, and the selected PID; `--json` prints those same redacted fields
 for scripts. The command returns an error when Desktop is not running.
 
 The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
 an explicit executable when testing a nonstandard installation.
 
 These commands use the versioned same-user IPC contract in
@@ -362,6 +402,25 @@ remains the owner of gateway authentication, process selection, microphone
 preference, and process-switch fencing.
 
 ## Daemon Commands
+
+Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
+After installing GSV, paste the provided command:
+
+```bash
+gsv pair CODE [--workspace PATH] [--no-install]
+gsv pair  # resume an interrupted exchange
+```
+
+Use `gsv pair -` to read the invitation from stdin instead of exposing it in
+process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+credentials unchanged; `--no-replace` refuses to overwrite an existing machine
+credential. Desktop uses these together for integrated machine setup.
+
+The invitation supplies the gateway, account and target identity. It expires in
+ten minutes and can enroll one device. The CLI saves its credential before the
+exchange and installs the per-user daemon by default. `--no-install` saves the
+pairing without changing operating-system services. Closing the web panel or
+cancelling an already-used invitation does not revoke the resulting connection.
 
 ```bash
 gsv daemon install [--id ID] [--workspace PATH]
@@ -394,7 +453,10 @@ defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
 
 `reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
-current settings. `diagnostics` reports bounded, redacted runtime notices.
+current settings. `diagnostics` reports bounded, redacted runtime notices,
+including the daemon's latest automatic-update decision; the installer it
+starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
+turns automatic updates off.
 `status` combines the operating-system service state with the live daemon's
 version, PID, machine id, connection phase, uptime, and reconnect count. These
 live operations use a versioned same-user Unix socket on macOS/Linux and a
@@ -405,12 +467,12 @@ Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
 `device.workspace`, then the current directory. A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
-`gsv auth setup --device-id ...` or
-`gsv auth token create --kind device --device ...` followed by
+the device invitation flow, or
+`gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed before starting `gsvd`; use `gsv auth setup` when connecting
-to a new deployment.
+must be completed through the space's browser setup invitation before starting
+`gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
 crates but remain separate applications. The CLI owns operator commands and OS
@@ -425,9 +487,6 @@ checksum verification, and rollback contract.
 ## Auth Commands
 
 ```bash
-gsv auth setup [--username USER] [--new-password PASS] [--root-password PASS] \
-  [--ai-provider ID] [--ai-model MODEL] [--ai-api-key KEY] \
-  [--device-id ID] [--device-label LABEL] [--device-expires-at UNIX_MS]
 gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
 gsv auth logout
 gsv auth link [CODE]
@@ -436,43 +495,32 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-`setup` initializes a gateway in setup mode, optionally configures AI provider
-settings, and can issue a device token with `--device-id`, `--device-label`, and
-`--device-expires-at` (Unix milliseconds). Interactive setup prompts for missing
-values and saves `gateway.username`, `device.id`, and `device.token` when issued.
+Initialize a new space through its Accounts-issued browser setup invitation.
+The old `gsv auth setup` wizard and automatic setup probes are removed. Login
+and commands operate on a space whose authorized setup has completed.
 
 `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
 token.
 
-Link commands bind adapter identities, such as WhatsApp or Discord actors, to
-GSV users. Use a one-time `CODE` from an adapter flow or provide the adapter,
-account, and actor identifiers manually.
-
-WhatsApp setup has two separate links: QR pairing authenticates the adapter as
-a linked device, then a direct message identifies its sender. After the adapter
-reports authenticated, send a new direct message from the personal WhatsApp
-account to the number paired with GSV. Enter the one-time reply while logged in
-as the intended GSV user:
-
-```bash
-gsv auth link CODE
-```
-
-The code expires after ten minutes. The message that generated it is not sent
-to an agent, so send another message after the command succeeds.
+Generic link commands bind identities for adapters that support `sys.link`.
+The bundled Telegram, Slack and Discord adapters require their own signed-in
+pairing confirmation; `gsv auth link` does not replace that flow. Use
+**Settings → Messengers**, inspect the external identity and confirm it there.
+See [messenger setup](../how-to/messengers.md).
 
 ### Auth Tokens
 
 ```bash
-gsv auth token create [--kind device|service|user] [--uid UID] [--label LABEL] \
-  [--role driver|service|user] [--device DEVICE] [--expires-at UNIX_MS]
+gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
+  [--peer PEER_ID] [--expires-at UNIX_MS]
 gsv auth token list [--uid UID]
 gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
-`device` is the default token kind. Use `--device` to bind a driver token to one
-device ID. `--uid` is for root-managed token operations.
+`machine` is the default token kind. `--peer` (alias `--device`) binds a machine
+token to the one peer id that may connect with it, and is required for machine
+tokens. `--uid` is for root-managed token operations.
 
 ## Config Commands
 
@@ -487,8 +535,8 @@ Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
 Keys use ConfigStore paths, for example:
 
 ```bash
-gsv config get config/ai/provider
-gsv config set users/1000/ai/model gpt-4.1-mini
+gsv config get config/ai/models
+gsv config set users/1000/ai/preferred_model primary
 ```
 
 Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are
@@ -499,10 +547,12 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
 `gateway.session_token_id`, `gateway.session_expires_at`,
 `gateway.session_expires_at_ms`, `release.channel`,
-`session.default_key`, `device.id`, `device.token`, and `device.workspace`.
-`release.channel` must be `stable` or `dev`; token values are masked
+`session.default_key`, `device.id`, `device.token`, `device.workspace`, and
+`device.auto_update`.
+`release.channel` must be `stable` or `dev`; `device.auto_update` must be
+`true` or `false`; token values are masked
 on local `get`. Adapter workers use Cloudflare service bindings rather than
-locally configured WhatsApp URLs or tokens.
+locally configured provider URLs or tokens.
 
 ## Adapter Commands
 
@@ -512,34 +562,14 @@ gsv adapter disconnect --adapter ID [--account-id ACCOUNT]
 gsv adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
-Adapters are long-lived external account bridges. `--account-id` defaults to
-`default` for connect/disconnect. A normal WhatsApp connect displays a private
-Linked Devices QR challenge in a supported terminal:
+These generic lifecycle commands apply only when an adapter advertises the
+corresponding operation. `--account-id` defaults to `default` for
+connect/disconnect; `--config-json` passes an object to the adapter.
 
-```bash
-gsv adapter connect --adapter whatsapp --account-id personal
-gsv adapter status --adapter whatsapp --account-id personal
-```
-
-Treat that QR like a password. If terminal rendering fails, the CLI hides the
-underlying payload. `--config-json` must be a JSON object and is passed to the
-adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
-recovery: it clears the existing linked-device authentication and starts a new
-QR pairing. Routine transport recovery does not use it.
-
-Cloudflare lets an active outbound connection prevent Durable Object eviction
-for at most 15 minutes. The account schedules an alarm every 30 seconds so an
-incoming event reaches the Durable Object before Cloudflare's minimum idle
-eviction window. Routine residency maintenance therefore keeps the same
-WhatsApp provider session; only an unhealthy transport reconnects.
-
-If the account is paired but a direct message gets no link-code reply, first
-confirm `gsv adapter status` reports connected and authenticated. Send a fresh
-DM from the sender account to the paired GSV number, not from the paired account
-itself or from a group. If it still gets no reply, verify that the Gateway and
-`channel-whatsapp` workers are deployed with both service bindings and inspect
-both workers' live logs. For an expired or already-used code, send a new DM and
-run `gsv auth link` with the new code.
+The bundled messenger applications are configured by the operator at deploy
+time. People link and unlink their own identities through the adapter pairing
+flow in **Settings → Messengers**. Per-person bot tokens, Slack Socket Mode
+and WhatsApp QR setup are not supported by the current deployment.
 
 ## Version
 
@@ -557,7 +587,8 @@ Prints build metadata for the installed CLI.
 | `gsv client` | `gsv chat` |
 | `gsv session` | `gsv proc` |
 | `gsv local-config` | `gsv config --local` |
-| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or Managed GSV. |
+| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or a hosting operator. |
+| `gsv auth setup` | Removed; use the Accounts-issued browser setup invitation. |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also

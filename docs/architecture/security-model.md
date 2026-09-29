@@ -31,7 +31,7 @@ program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:
 
 - passwords and user tokens produce human principals;
-- node tokens produce machine principals and are bound to one peer id; and
+- machine tokens produce machine principals and are bound to one peer id; and
 - service tokens produce service principals.
 
 The resulting grant independently lists syscalls the peer may call, signals it
@@ -76,10 +76,10 @@ links, and Accounts records have each been removed by a separate resumable
 deletion operation.
 
 The accounts directory and onboarding methods are available only through a
-service binding. Cloudflare Access protects its public operator page at
-`https://gsv.space/admin`; it is not a customer login system. The registry
-principal and pending membership are control-plane bookkeeping and are not
-mapped to a Kernel uid during onboarding.
+service binding. Cloudflare Access, or an equivalent identity proxy, protects
+the operator page at `<admin-origin>/admin`; it is not a customer login system.
+The registry principal and pending membership are control-plane bookkeeping and
+are not mapped to a Kernel uid during onboarding.
 
 The CLI stores local credentials in `~/.config/gsv/config.toml`. On Unix it
 writes the file as `0600` and ignores cached session tokens if the file is
@@ -98,6 +98,14 @@ refresh tokens, and PKCE verifiers are not returned by `sys.oauth.*`. MCP server
 tokens are managed by the Kernel's composed MCP client manager; GSV keeps separate
 user ownership metadata so MCP listing and tool calls are scoped before
 CodeMode or shell can use them.
+
+Codex model definitions select a saved connection with `oauthAccountKey` within
+their existing credential ownership scope. An omitted reference keeps the
+default connection used by older definitions. An explicit missing connection
+fails authentication rather than borrowing the default connection or a stored
+API key. Distinct references keep multiple ChatGPT sign-ins independent; token
+refresh updates only the selected connection. OAuth summaries may include the
+account email for identification, subject to the same owner authorization.
 
 Agent processes receive the AI runtime configuration they need to call the
 selected model provider, including the resolved provider key. That key is used
@@ -149,8 +157,11 @@ Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
-deny, or ask for matching syscalls. The default policy asks for `shell.exec`,
-`fs.delete`, `sys.mcp.call`, and `mail.send`. A background process can pause
+deny, or ask for matching syscalls. The default policy automatically permits
+native `gsv` work and reading/searching connected targets. It asks before file
+changes, shell commands, or network requests on connected targets, and before
+`sys.mcp.call` or `mail.send`. Explicit account and process policies remain
+authoritative; capability and resource checks always apply. A background process can pause
 durably for the owner's decision without gaining a direct human conversation.
 
 ## Targets and Devices
@@ -218,10 +229,17 @@ mail domain before using the provider binding.
 
 CodeMode exposes `mail.send` as a nested syscall, not as a fixed direct tool, and
 the default interactive policy asks for approval on each call. The native
-`mail send` and `mail reply` commands execute beneath `shell.exec`; the outer
-shell approval is their authority and they do not generate a second nested
-approval. Policies that auto-approve `shell.exec` therefore also authorize
-those shell forms, just as they authorize other shell side effects.
+`mail send` and `mail reply` commands execute beneath `shell.exec` and retain
+the owning Process run's mail approval policy. The same ownership follows MCP
+calls, CodeMode, and file/network operations sent to another target. Approval
+is requested before dispatch; cancellation or a stale run prevents dispatch.
+Nested approvals expire with the enclosing execution or after 55 seconds.
+An interrupted command is never replayed when its approval is restored.
+
+Agent-created scheduled shell commands require approval by default when added
+or enabled, because their future execution has no active run in which to ask.
+An explicit scheduling policy can override this default. Ordinary reminder and
+Process schedules are unaffected.
 
 Outbound replay protection spans both trust boundaries. Kernel SQLite binds a
 human owner's required, caller-retained `deliveryId` to the exact draft while R2 holds the canonical body.
@@ -229,9 +247,9 @@ The installation-scoped email Durable Object durably reserves quotas and marks
 the provider attempt before sending. Local lifecycle, quota, and validation
 rejections before that attempt are `failed`; a successful provider acceptance
 is `accepted`; any binding throw or other ambiguous outcome after the attempt
-is `unknown` and is never replayed. Production deployment
-keeps outbound sending disabled and its daily message and byte allowances at
-zero until the operator completes the Email Sending release gates.
+is `unknown` and is never replayed. Outbound sending is off by default, with
+daily message and byte allowances at zero; an operator enables it once their
+mail provider is configured and verified.
 
 ## Git
 

@@ -5,6 +5,18 @@ export const BINARY_FRAME_END = 1 << 1;
 export const BINARY_FRAME_ERROR = 1 << 2;
 /** The receiver no longer wants the peer's outgoing stream. */
 export const BINARY_FRAME_CANCEL = 1 << 3;
+/**
+ * Flow-control credit from a receiver to a sender. The payload is a little-endian
+ * u32 counting the additional body bytes the sender may put on the wire.
+ */
+export const BINARY_FRAME_WINDOW = 1 << 4;
+
+/**
+ * Credit every sender starts with before its receiver has granted anything.
+ * Shared by every implementation so the first chunks can race the descriptor.
+ */
+export const BINARY_INITIAL_WINDOW_BYTES = 4 * 1024 * 1024;
+export const BINARY_WINDOW_PAYLOAD_BYTES = 4;
 
 export type BinaryFrame = {
   streamId: number;
@@ -50,6 +62,24 @@ export function parseBinaryFrame(data: ArrayBuffer | ArrayBufferView): BinaryFra
     flags: view.getUint8(4),
     payload: bytes.subarray(BINARY_FRAME_HEADER_BYTES),
   };
+}
+
+export function buildWindowFrame(streamId: number, creditBytes: number): ArrayBuffer {
+  if (!Number.isSafeInteger(creditBytes) || creditBytes <= 0 || creditBytes > 0xffffffff) {
+    throw new Error(`Invalid binary window credit: ${creditBytes}`);
+  }
+  const payload = new Uint8Array(BINARY_WINDOW_PAYLOAD_BYTES);
+  new DataView(payload.buffer).setUint32(0, creditBytes, true);
+  return buildBinaryFrame(streamId, BINARY_FRAME_WINDOW, payload);
+}
+
+/** Returns the credit carried by a WINDOW payload, or null when it is malformed. */
+export function parseWindowCredit(payload: Uint8Array): number | null {
+  if (payload.byteLength !== BINARY_WINDOW_PAYLOAD_BYTES) {
+    return null;
+  }
+  const credit = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint32(0, true);
+  return credit > 0 ? credit : null;
 }
 
 export function assertStreamId(streamId: number): void {

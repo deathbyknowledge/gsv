@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "id": "telegram",
+  "displayName": "Telegram",
+  "description": "Telegram adapter worker",
+  "deployOrder": 3,
+  "wranglerConfig": "wrangler.managed.jsonc",
+  "devStateDirectories": [
+    "gsv-managed-telegram-ManagedTelegramPeer",
+    "gsv-managed-telegram-ManagedTelegramPairing",
+    "gsv-managed-telegram-TelegramInstallation"
+  ],
+  "deployment": {
+    "main": "workers/adapters/telegram/src/managed.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "ManagedTelegramChannel",
+    "adapterEntrypoint": "ManagedTelegramChannel",
+    "durableObjects": [
+      {
+        "binding": "MANAGED_TELEGRAM_PEER",
+        "className": "ManagedTelegramPeer"
+      },
+      {
+        "binding": "MANAGED_TELEGRAM_PAIRING",
+        "className": "ManagedTelegramPairing"
+      },
+      {
+        "binding": "TELEGRAM_INSTALLATIONS",
+        "className": "TelegramInstallation"
+      }
+    ],
+    "requiredSecrets": [
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET"
+    ],
+    "lifecycle": {
+      "entrypoint": "TelegramLifecycleEntrypoint",
+      "namespaces": [
+        {
+          "kind": "adapter-peer",
+          "className": "ManagedTelegramPeer"
+        },
+        {
+          "kind": "adapter-pairing",
+          "className": "ManagedTelegramPairing"
+        },
+        {
+          "kind": "adapter-installation",
+          "className": "TelegramInstallation"
+        }
+      ]
+    },
+    "requiredVariables": [
+      "TELEGRAM_BOT_USERNAME",
+      "TELEGRAM_WEBHOOK_BASE_URL"
+    ]
+  }
+}

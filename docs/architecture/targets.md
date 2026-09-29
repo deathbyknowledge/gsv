@@ -49,6 +49,8 @@ Target routing is useful only while the same primitive keeps the same meaning:
   directory behavior, output, exit status, timeout, and cancellation semantics.
 - `net.fetch` performs the same HTTP operation from the selected environment's
   network position.
+- `web.search` searches an index of web pages and returns titles, URLs, and
+  excerpts using the same bounded query and domain filters on every target.
 
 A target may implement only the primitives it can honor. Provider-specific
 commands can live inside a real target shell, just as the browser target offers
@@ -63,17 +65,22 @@ GSV currently projects these environments:
 
 - `gsv` is the native cloud target. Its provider owns `fs.*`, `shell.exec`, and
   `net.fetch` through `GsvFs`, the just-bash command environment, and the
-  Worker's network position. Kernel control-plane syscalls remain outside that
-  provider.
+  Worker's network position. It also implements `web.search` when the operator
+  supplies a search service binding. Kernel control-plane syscalls remain outside
+  that provider.
 - `gsvd` registers physical computers and implements filesystem, shell, network,
   and host operations using that computer's local environment.
 - The browser extension registers a browser profile as a pseudo-computer. It
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system
   machine.
-- Managed Slack projects a personally authorized workspace as a service-backed
-  `shell.exec` target. Its ephemeral just-bash environment exposes a composable
-  `slack` CLI for conversations, threads, messages, reactions, and users. The
+- Slack projects a personally authorized workspace as a service-backed
+  target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
+  filesystem exposes conversations, exact messages, bounded history and thread
+  pages, and users. The same resources back its ephemeral just-bash environment,
+  with execution-local `/tmp` scratch space and a composable `slack` CLI for
+  provider actions. Search matches literal content in an explicitly selected
+  file or finite history page; indexes expose pagination and coverage. The
   paired user's OAuth token supplies read visibility; mutations use the
   installed GSV app identity, and the adapter retains both credentials and
   provider policy.
@@ -87,9 +94,8 @@ device-registry record. The Kernel selects it through the same `target`
 boundary, while external providers additionally require routing, liveness, and
 transport ownership.
 
-Telegram, WhatsApp, Discord, standalone Slack, and other adapter deployments
-remain transport-only until each has truthful account authority and coherent
-environment semantics. Adapter target support is optional and advertised by the
+Telegram and Discord currently remain transport-only. A future adapter target
+needs truthful account authority and coherent environment semantics. Adapter target support is optional and advertised by the
 service descriptor; transport support alone never creates one.
 
 ## Adapter-backed targets
@@ -112,7 +118,7 @@ The Kernel owns the caller's GSV capability check, target visibility, generic
 routing, cancellation, and body ownership. Provider identifiers must not become
 bearer capabilities merely because the provider also offers a target.
 
-Managed shared credentials require special care. Pairing a human proves the
+Operator-owned shared credentials require special care. Pairing a human proves the
 right to enter GSV from the paired identity and observed surfaces; it does not
 automatically grant that person's GSV every workspace resource visible to a
 shared bot token. A rich service target needs authority that actually matches
@@ -127,6 +133,16 @@ Target-originated messages must visibly attribute the paired person's GSV even
 though the provider records the installed app as their technical author.
 
 ## Target discovery and lifecycle
+
+Adapter discovery distinguishes an authoritative empty list from a failed,
+timed-out, or malformed response. If any adapter refresh is incomplete, the
+Kernel omits `targets` from `ai.context` and Process retains the entire last
+observed target catalog until a complete snapshot is available. This prevents
+transient discovery failures from producing removal and addition events.
+Ordinary target listing and syscall routing continue to use freshly discovered
+targets and current authorization; the retained Process projection grants no
+access. Adapters return an empty list for confirmed absence or revoked access
+and propagate infrastructure failures.
 
 Targets should describe their environment and effective implementations so a
 process can discover where work belongs without loading provider-specific tools

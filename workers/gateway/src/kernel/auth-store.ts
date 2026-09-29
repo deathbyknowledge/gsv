@@ -1,0 +1,695 @@
+/**
+ * AuthStore — kernel SQLite-backed storage for /etc/passwd, /etc/shadow, /etc/group.
+ *
+ * Replaces R2 storage for auth files. Benefits:
+ * - No R2 round-trips during sys.connect
+ * - No credentials stored in an object store
+ * - Files still accessible at /etc/passwd etc. via GsvFs virtual path routing
+ * - Atomic read/write with SQLite transactions
+ *
+ * The three tables mirror the classic flat-file formats. The parsers/serializers
+ * in auth/ are reused: writes parse the flat format into rows, reads serialize
+ * rows back into flat format strings.
+ */
+
+import type { PasswdEntry } from "../auth/passwd";
+import { parsePasswd, serializePasswd } from "../auth/passwd";
+import type { ShadowEntry } from "../auth/shadow";
+import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
+import type { GroupEntry } from "../auth/group";
+import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
+
+export type AuthIdentity = {
+  uid: number;
+  gid: number;
+  gids: number[];
+  username: string;
+  home: string;
+};
+
+export type AuthResult =
+  | { ok: true; identity: AuthIdentity }
+  | { ok: false; error: string };
+
+/** A token authenticates as exactly the principal kind it was issued for. */
+export type AuthTokenKind = "human" | "machine" | "service";
+
+export type PeerTokenAuthResult =
+  | {
+      ok: true;
+      identity: AuthIdentity;
+      kind: AuthTokenKind;
+      peerId: string | null;
+      label?: string;
+    }
+  | { ok: false; error: string };
+
+export type AuthTokenIssueInput = {
+  uid: number;
+  kind: AuthTokenKind;
+  label?: string;
+  /** Required for machine tokens: the only peer id the token may connect as. */
+  peerId?: string;
+  expiresAt?: number;
+};
+
+export type IssuedAuthToken = {
+  tokenId: string;
+  token: string;
+  tokenPrefix: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  peerId: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+};
+
+export type AuthTokenRecord = {
+  tokenId: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  tokenPrefix: string;
+  peerId: string | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  revokedAt: number | null;
+  revokedReason: string | null;
+};
+
+export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string; credentialEpoch: number };
+
+type TokenAuthOptions = {
+  kind?: AuthTokenKind;
+  peerId?: string;
+};
+
+export class AuthStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  credentialEpoch(uid: number): number {
+    return this.sql.exec<{ credential_epoch: number }>("SELECT credential_epoch FROM account_access WHERE uid = ?", uid).toArray()[0]?.credential_epoch ?? 0;
+  }
+
+  isAccountDisabled(uid: number): boolean {
+    return this.sql.exec<{ disabled_at: number | null }>("SELECT disabled_at FROM account_access WHERE uid = ?", uid).toArray()[0]?.disabled_at != null;
+  }
+
+  /** Called inside the credential owner's transaction; live sessions compare this epoch before admission. */
+  invalidateCredentials(uid: number, reason: string): void {
+    this.sql.exec(`INSERT INTO account_access (uid, credential_epoch) VALUES (?, 1)
+      ON CONFLICT(uid) DO UPDATE SET credential_epoch = credential_epoch + 1`, uid);
+    this.sql.exec("UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE uid = ? AND revoked_at IS NULL", Date.now(), reason, uid);
+    this.sql.exec("UPDATE device_pairings SET cancelled_at = ? WHERE owner_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
+    this.sql.exec("UPDATE human_invitations SET cancelled_at = ? WHERE issuer_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
+  }
+
+  /** The caller commits its reset receipt in the same transaction as these credential changes. */
+  replaceHumanPassword(uid: number, passwordHash: string, reason: string): void {
+    const user = this.getPasswdByUid(uid);
+    const shadow = user && this.getShadowByUsername(user.username);
+    if (!user || !shadow || (uid !== 0 && (uid < 1000 || isLocked(shadow))) || this.isAccountDisabled(uid)) throw new Error("Local human account is unavailable");
+    // A verified owner may recover locked root; locked member identities include agents.
+    this.setShadow(makeShadowEntry(user.username, passwordHash));
+    this.invalidateCredentials(uid, reason);
+    this.sql.exec("UPDATE identity_links SET revoked_at = COALESCE(revoked_at, ?) WHERE uid = ?", Date.now(), uid);
+  }
+
+  getPersonalAgentUid(ownerUid: number): number | null {
+    const rows = this.sql.exec<{ agent_uid: number }>(
+      "SELECT agent_uid FROM personal_agents WHERE owner_uid = ?",
+      ownerUid,
+    ).toArray();
+    return rows[0]?.agent_uid ?? null;
+  }
+
+  setPersonalAgent(ownerUid: number, agentUid: number): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO personal_agents (owner_uid, agent_uid) VALUES (?, ?)",
+      ownerUid,
+      agentUid,
+    );
+  }
+
+  /** Whether the given uid is itself a personal agent account (not a human owner). */
+  isPersonalAgentUid(uid: number): boolean {
+    const rows = this.sql.exec<{ c: number }>(
+      "SELECT COUNT(*) as c FROM personal_agents WHERE agent_uid = ?",
+      uid,
+    ).toArray();
+    return (rows[0]?.c ?? 0) > 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bootstrap — seed default entries if tables are empty
+  // ---------------------------------------------------------------------------
+
+  isBootstrapped(): boolean {
+    const rows = this.sql.exec<{ c: number }>("SELECT COUNT(*) as c FROM passwd").toArray();
+    return rows[0].c > 0;
+  }
+
+  async bootstrap(rootToken?: string): Promise<boolean> {
+    if (this.isBootstrapped()) return false;
+
+    this.addUser({
+      username: "root", uid: 0, gid: 0,
+      gecos: "root", home: "/root", shell: "/bin/init",
+    });
+
+    const hash = rootToken ? await hashToken(rootToken) : "!";
+    this.setShadow(makeShadowEntry("root", hash));
+
+    this.addGroup({ name: "root", gid: 0, members: ["root"] });
+    this.addGroup({ name: "users", gid: 100, members: [] });
+    this.addGroup({ name: "drivers", gid: 101, members: [] });
+    this.addGroup({ name: "services", gid: 102, members: [] });
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // passwd
+  // ---------------------------------------------------------------------------
+
+  getPasswdEntries(): PasswdEntry[] {
+    return this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd ORDER BY uid",
+    ).toArray();
+  }
+
+  getPasswdByUsername(username: string): PasswdEntry | null {
+    const rows = this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE username = ?",
+      username,
+    ).toArray();
+    return rows[0] ?? null;
+  }
+
+  getPasswdByUid(uid: number): PasswdEntry | null {
+    const rows = this.sql.exec<PasswdEntry>(
+      "SELECT username, uid, gid, gecos, home, shell FROM passwd WHERE uid = ?",
+      uid,
+    ).toArray();
+    return rows[0] ?? null;
+  }
+
+  addUser(entry: PasswdEntry): void {
+    this.sql.exec(
+      "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
+      entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
+    );
+  }
+
+  updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
+    const existing = this.getPasswdByUsername(username);
+    if (!existing) return false;
+
+    this.sql.exec(
+      "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
+      fields.uid ?? existing.uid,
+      fields.gid ?? existing.gid,
+      fields.gecos ?? existing.gecos,
+      fields.home ?? existing.home,
+      fields.shell ?? existing.shell,
+      username,
+    );
+    return true;
+  }
+
+  removeUser(username: string): boolean {
+    const existing = this.getPasswdByUsername(username);
+    if (!existing) return false;
+    this.sql.exec("DELETE FROM passwd WHERE username = ?", username);
+    this.sql.exec("DELETE FROM shadow WHERE username = ?", username);
+    return true;
+  }
+
+  nextUid(): number {
+    // Allocate above both uids and group gids: User Private Groups use gid = uid,
+    // and standalone groups take ids from the same space, so a fresh id must
+    // clear both tables to avoid later reuse.
+    const max = this.maxAllocatedId();
+    return max < 1000 ? 1000 : max + 1;
+  }
+
+  // ---------------------------------------------------------------------------
+  // shadow
+  // ---------------------------------------------------------------------------
+
+  getShadowEntries(): ShadowEntry[] {
+    return this.sql.exec<ShadowEntry>(
+      "SELECT username, hash, lastchanged, min, max, warn, inactive, expire, reserved FROM shadow ORDER BY username",
+    ).toArray();
+  }
+
+  getShadowByUsername(username: string): ShadowEntry | null {
+    const rows = this.sql.exec<ShadowEntry>(
+      "SELECT username, hash, lastchanged, min, max, warn, inactive, expire, reserved FROM shadow WHERE username = ?",
+      username,
+    ).toArray();
+    return rows[0] ?? null;
+  }
+
+  setShadow(entry: ShadowEntry): void {
+    this.sql.exec(
+      `INSERT OR REPLACE INTO shadow
+        (username, hash, lastchanged, min, max, warn, inactive, expire, reserved)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      entry.username, entry.hash, entry.lastchanged,
+      entry.min, entry.max, entry.warn,
+      entry.inactive, entry.expire, entry.reserved,
+    );
+  }
+
+  async setPassword(username: string, hash: string): Promise<boolean> {
+    const existing = this.getShadowByUsername(username);
+    if (!existing) return false;
+
+    const daysSinceEpoch = Math.floor(Date.now() / 86_400_000).toString();
+    this.sql.exec(
+      "UPDATE shadow SET hash = ?, lastchanged = ? WHERE username = ?",
+      hash, daysSinceEpoch, username,
+    );
+    return true;
+  }
+
+  isSetupMode(): boolean {
+    const root = this.getShadowByUsername("root");
+    if (!root) return true;
+    if (!isLocked(root)) return false;
+
+    // Setup mode ends once at least one non-root user exists.
+    const passwd = this.getPasswdEntries();
+    return !passwd.some((entry) => entry.uid >= 1000);
+  }
+
+  // ---------------------------------------------------------------------------
+  // groups
+  // ---------------------------------------------------------------------------
+
+  getGroupEntries(): GroupEntry[] {
+    return this.sql.exec<{ name: string; gid: number; members: string }>(
+      "SELECT name, gid, members FROM groups ORDER BY gid",
+    ).toArray().map(r => ({
+      name: r.name,
+      gid: r.gid,
+      members: r.members ? r.members.split(",") : [],
+    }));
+  }
+
+  getGroupByName(name: string): GroupEntry | null {
+    const rows = this.sql.exec<{ name: string; gid: number; members: string }>(
+      "SELECT name, gid, members FROM groups WHERE name = ?",
+      name,
+    ).toArray();
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return { name: r.name, gid: r.gid, members: r.members ? r.members.split(",") : [] };
+  }
+
+  getGroupByGid(gid: number): GroupEntry | null {
+    const rows = this.sql.exec<{ name: string; gid: number; members: string }>(
+      "SELECT name, gid, members FROM groups WHERE gid = ?",
+      gid,
+    ).toArray();
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return { name: r.name, gid: r.gid, members: r.members ? r.members.split(",") : [] };
+  }
+
+  addGroup(entry: GroupEntry): void {
+    this.sql.exec(
+      "INSERT INTO groups (name, gid, members) VALUES (?, ?, ?)",
+      entry.name, entry.gid, entry.members.join(","),
+    );
+  }
+
+  updateGroupMembers(name: string, members: string[]): boolean {
+    const existing = this.getGroupByName(name);
+    if (!existing) return false;
+    this.sql.exec(
+      "UPDATE groups SET members = ? WHERE name = ?",
+      members.join(","), name,
+    );
+    return true;
+  }
+
+  removeGroup(name: string): boolean {
+    const existing = this.getGroupByName(name);
+    if (!existing) return false;
+    this.sql.exec("DELETE FROM groups WHERE name = ?", name);
+    return true;
+  }
+
+  nextGid(): number {
+    const max = this.maxAllocatedId();
+    return max < 100 ? 100 : max + 1;
+  }
+
+  /** Highest id in use across passwd uids and group gids. */
+  private maxAllocatedId(): number {
+    const rows = this.sql.exec<{ m: number | null }>(
+      "SELECT MAX(m) as m FROM (SELECT MAX(uid) as m FROM passwd UNION ALL SELECT MAX(gid) as m FROM groups)",
+    ).toArray();
+    return rows[0]?.m ?? 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Resolve all gids for a user (primary + supplementary from group membership)
+  // ---------------------------------------------------------------------------
+
+  resolveGids(username: string, primaryGid: number): number[] {
+    const groups = this.getGroupEntries();
+    return resolveGids(groups, username, primaryGid);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Authentication
+  // ---------------------------------------------------------------------------
+
+  async authenticate(username: string, credential: string): Promise<AuthResult> {
+    const user = this.getPasswdByUsername(username);
+    if (!user) return { ok: false, error: "Unknown user" };
+    if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
+    const epoch = this.credentialEpoch(user.uid);
+
+    const shadow = this.getShadowByUsername(username);
+    if (!shadow) return { ok: false, error: "No credentials found" };
+
+    const valid = await verify(credential, shadow.hash);
+    if (!valid || this.credentialEpoch(user.uid) !== epoch || this.isAccountDisabled(user.uid)
+      || this.getShadowByUsername(username)?.hash !== shadow.hash) return { ok: false, error: "Authentication failed" };
+
+    const gids = this.resolveGids(username, user.gid);
+
+    return {
+      ok: true,
+      identity: {
+        uid: user.uid, gid: user.gid, gids,
+        username: user.username, home: user.home,
+      },
+    };
+  }
+
+  /**
+   * Verify an opaque token issued by this kernel. Optional kind and peer
+   * constraints are enforced against the token's bindings.
+   */
+  async authenticateToken(
+    username: string,
+    token: string,
+    options: TokenAuthOptions = {},
+  ): Promise<AuthResult> {
+    const result = await this.authenticatePeerToken(username, token);
+    if (!result.ok) return result;
+    if (options.kind && result.kind !== options.kind) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (result.peerId !== null && result.peerId !== options.peerId) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    return { ok: true, identity: result.identity };
+  }
+
+  /** Verify a token and return the peer category stored with that credential. */
+  async authenticatePeerToken(
+    username: string,
+    token: string,
+  ): Promise<PeerTokenAuthResult> {
+    const user = this.getPasswdByUsername(username);
+    if (!user) return { ok: false, error: "Unknown user" };
+    if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
+
+    const tokenHash = await hashToken(token);
+    const rows = this.sql.exec<{
+      token_id: string;
+      kind: AuthTokenKind;
+      peer_id: string | null;
+      label: string | null;
+      expires_at: number | null;
+      revoked_at: number | null;
+    }>(
+      `SELECT token_id, kind, peer_id, label, expires_at, revoked_at
+       FROM auth_tokens
+       WHERE uid = ? AND token_hash = ?
+       LIMIT 1`,
+      user.uid,
+      tokenHash,
+    ).toArray();
+
+    if (rows.length === 0) {
+      return { ok: false, error: "Authentication failed" };
+    }
+
+    const tokenRow = rows[0];
+    const now = Date.now();
+    if (tokenRow.revoked_at !== null) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    this.sql.exec(
+      "UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?",
+      now,
+      tokenRow.token_id,
+    );
+
+    const gids = this.resolveGids(username, user.gid);
+    const result: PeerTokenAuthResult = {
+      ok: true,
+      identity: {
+        uid: user.uid,
+        gid: user.gid,
+        gids,
+        username: user.username,
+        home: user.home,
+      },
+      kind: tokenRow.kind,
+      peerId: tokenRow.peer_id,
+    };
+    if (tokenRow.kind === "machine" && tokenRow.label) result.label = tokenRow.label;
+    return result;
+  }
+
+  async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
+    return this.storePreparedToken(await this.prepareToken(input));
+  }
+
+  /** Prepare hashing before an owning transaction commits a credential and its enrollment together. */
+  async prepareToken(input: AuthTokenIssueInput, credential?: string): Promise<PreparedAuthToken> {
+    const user = this.getPasswdByUid(input.uid);
+    if (!user) {
+      throw new Error(`Unknown uid: ${input.uid}`);
+    }
+
+    const now = Date.now();
+    const tokenId = crypto.randomUUID();
+    const credentialEpoch = this.credentialEpoch(input.uid);
+    const rawToken = credential ?? this.generateTokenValue(input.kind);
+    const tokenPrefix = rawToken.slice(0, 16);
+    const tokenHash = await hashToken(rawToken);
+    if (input.kind === "machine" && !input.peerId) {
+      throw new Error("peerId is required for machine tokens");
+    }
+    if (input.kind !== "machine" && input.peerId) {
+      throw new Error("peerId is only valid for machine tokens");
+    }
+
+    return { hash: tokenHash, credentialEpoch, issued: {
+      tokenId, token: rawToken, tokenPrefix, uid: input.uid, kind: input.kind,
+      label: input.label ?? null, peerId: input.peerId ?? null, createdAt: now,
+      expiresAt: input.expiresAt ?? null,
+    } };
+  }
+
+  storePreparedToken({ issued, hash, credentialEpoch }: PreparedAuthToken): IssuedAuthToken {
+    if (this.credentialEpoch(issued.uid) !== credentialEpoch || this.isAccountDisabled(issued.uid)) throw new Error("Credential issuance was revoked");
+    this.sql.exec(
+      `INSERT INTO auth_tokens
+        (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      issued.tokenId,
+      issued.uid,
+      issued.kind,
+      issued.label,
+      hash,
+      issued.tokenPrefix,
+      issued.peerId,
+      issued.createdAt,
+      issued.expiresAt,
+    );
+
+    return issued;
+  }
+
+  listTokens(uid?: number): AuthTokenRecord[] {
+    if (uid !== undefined) {
+      return this.sql.exec<{
+        token_id: string;
+        uid: number;
+        kind: AuthTokenKind;
+        label: string | null;
+        token_prefix: string;
+        peer_id: string | null;
+        created_at: number;
+        last_used_at: number | null;
+        expires_at: number | null;
+        revoked_at: number | null;
+        revoked_reason: string | null;
+      }>(
+        `SELECT token_id, uid, kind, label, token_prefix, peer_id,
+                created_at, last_used_at, expires_at, revoked_at, revoked_reason
+         FROM auth_tokens
+         WHERE uid = ?
+         ORDER BY created_at DESC`,
+        uid,
+      ).toArray().map(mapTokenRow);
+    }
+
+    return this.sql.exec<{
+      token_id: string;
+      uid: number;
+      kind: AuthTokenKind;
+      label: string | null;
+      token_prefix: string;
+      peer_id: string | null;
+      created_at: number;
+      last_used_at: number | null;
+      expires_at: number | null;
+      revoked_at: number | null;
+      revoked_reason: string | null;
+    }>(
+      `SELECT token_id, uid, kind, label, token_prefix, peer_id,
+              created_at, last_used_at, expires_at, revoked_at, revoked_reason
+       FROM auth_tokens
+       ORDER BY created_at DESC`,
+    ).toArray().map(mapTokenRow);
+  }
+
+  revokeToken(tokenId: string, reason?: string, uid?: number): boolean {
+    const rows = uid !== undefined
+      ? this.sql.exec<{ token_id: string }>(
+          "SELECT token_id FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
+          tokenId,
+          uid,
+        ).toArray()
+      : this.sql.exec<{ token_id: string }>(
+          "SELECT token_id FROM auth_tokens WHERE token_id = ? LIMIT 1",
+          tokenId,
+        ).toArray();
+
+    if (rows.length === 0) return false;
+
+    const now = Date.now();
+    if (uid !== undefined) {
+      this.sql.exec(
+        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ? AND uid = ?",
+        now,
+        reason ?? null,
+        tokenId,
+        uid,
+      );
+    } else {
+      this.sql.exec(
+        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ?",
+        now,
+        reason ?? null,
+        tokenId,
+      );
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Serialization — produce classic flat-file format for virtual FS reads
+  // ---------------------------------------------------------------------------
+
+  serializePasswd(): string {
+    return serializePasswd(this.getPasswdEntries());
+  }
+
+  serializeShadow(): string {
+    return serializeShadow(this.getShadowEntries());
+  }
+
+  serializeGroup(): string {
+    return serializeGroup(this.getGroupEntries());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Deserialization — parse flat-file format from virtual FS writes
+  // ---------------------------------------------------------------------------
+
+  importPasswd(raw: string): void {
+    const entries = parsePasswd(raw);
+    this.sql.exec("DELETE FROM passwd");
+    for (const e of entries) this.addUser(e);
+  }
+
+  importShadow(raw: string): void {
+    const entries = parseShadow(raw);
+    this.sql.exec("DELETE FROM shadow");
+    for (const e of entries) this.setShadow(e);
+  }
+
+  importGroup(raw: string): void {
+    const entries = parseGroup(raw);
+    this.sql.exec("DELETE FROM groups");
+    for (const e of entries) this.addGroup(e);
+  }
+
+  // ---------------------------------------------------------------------------
+  // UID/GID name resolution — used by ls, stat, etc.
+  // ---------------------------------------------------------------------------
+
+  uidToName(uid: number): string {
+    const entry = this.getPasswdByUid(uid);
+    return entry?.username ?? String(uid);
+  }
+
+  gidToName(gid: number): string {
+    const entry = this.getGroupByGid(gid);
+    return entry?.name ?? String(gid);
+  }
+
+  private generateTokenValue(kind: AuthTokenKind): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const base64 = btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    return `gsv_${kind}_${base64}`;
+  }
+}
+
+function mapTokenRow(row: {
+  token_id: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  token_prefix: string;
+  peer_id: string | null;
+  created_at: number;
+  last_used_at: number | null;
+  expires_at: number | null;
+  revoked_at: number | null;
+  revoked_reason: string | null;
+}): AuthTokenRecord {
+  return {
+    tokenId: row.token_id,
+    uid: row.uid,
+    kind: row.kind,
+    label: row.label,
+    tokenPrefix: row.token_prefix,
+    peerId: row.peer_id,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+    revokedReason: row.revoked_reason,
+  };
+}

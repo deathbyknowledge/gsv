@@ -99,6 +99,16 @@ impl GatewayRpcError {
         }
     }
 
+    /// The gateway and this binary speak different protocol versions; reconnecting cannot help.
+    pub fn is_protocol_unsupported(&self) -> bool {
+        self.code == 102
+            || self
+                .details
+                .as_ref()
+                .and_then(|d| d.get("supportedProtocol"))
+                .is_some()
+    }
+
     pub fn is_setup_required(&self) -> bool {
         if self.code == 425 {
             return true;
@@ -345,7 +355,7 @@ impl Connection {
                         }
                     }
                     Message::Binary(data) => {
-                        let _ = body_channel_clone.handle_frame(&data);
+                        let _ = body_channel_clone.handle_frame(&data).await;
                     }
                     Message::Ping(payload) => {
                         tokio::select! {
@@ -975,10 +985,10 @@ mod tests {
     }
 
     #[test]
-    fn connect_result_requires_protocol_3() {
+    fn connect_result_requires_protocol_4() {
         let data = serde_json::json!({
             "protocol": 1,
-            "server": { "version": "test", "connectionId": "conn-1" },
+            "server": { "version": "test", "release": "dev", "connectionId": "conn-1" },
             "peer": {
                 "id": "test-peer",
                 "sessionId": "conn-1",
@@ -998,6 +1008,6 @@ mod tests {
         });
 
         let error = parse_connect_result(Some(data)).expect_err("protocol 1 must be rejected");
-        assert_eq!(error, "Gateway selected protocol 1, expected 3");
+        assert_eq!(error, "Gateway selected protocol 1, expected 4");
     }
 }

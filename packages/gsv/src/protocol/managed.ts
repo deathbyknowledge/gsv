@@ -1,5 +1,6 @@
 import type { AiStopReason } from "./syscalls/ai";
 import type { AdapterInstallationContext } from "./adapters";
+import type { UnlinkAdapterIdentityInput, UnlinkAdapterIdentityResult } from "../services/adapters";
 import type {
   ManagedInferenceActor,
   ManagedInferencePurpose,
@@ -14,6 +15,7 @@ export {
 } from "../services/inference";
 export type {
   InferenceService as ManagedInferenceService,
+  ManagedInferenceAbortReason,
   ManagedInferenceAbortRequest,
   ManagedInferenceActor,
   ManagedInferencePartial,
@@ -21,6 +23,7 @@ export type {
   ManagedInferenceRequest,
   ManagedInferenceResult,
   ManagedInferenceStreamEvent,
+  ManagedInferenceWorkload,
 } from "../services/inference";
 
 export type ManagedMailSummaryRequest = {
@@ -96,8 +99,7 @@ export interface ManagedInferenceUsageService {
   ): Promise<void>;
 }
 
-export type ManagedInferenceRouting = {
-  version: 1;
+export type ManagedInferenceModelRouting = {
   modelId: string;
   displayName: string;
   contextWindow: number;
@@ -107,6 +109,11 @@ export type ManagedInferenceRouting = {
   outputNanoUsdPerToken: number;
   cacheReadNanoUsdPerToken: number;
   cacheWriteNanoUsdPerToken: number;
+};
+
+export type ManagedInferenceRouting = {
+  version: 2;
+  models: ManagedInferenceModelRouting[];
   updatedAt: number;
 };
 
@@ -138,18 +145,10 @@ export type {
   InstallationOnboardingService,
 } from "../services/onboarding";
 
-export type UnlinkManagedAdapterIdentityInput = {
-  operationId: string;
-  accountId: string;
-  actorId: string;
-  surfaceId: string;
-  expectedLocalUid: number;
-  expectedGeneration: string;
-};
-
-export type UnlinkManagedAdapterIdentityResult = {
-  removed: boolean;
-};
+/** @deprecated Use UnlinkAdapterIdentityInput from services/adapters. */
+export type UnlinkManagedAdapterIdentityInput = UnlinkAdapterIdentityInput;
+/** @deprecated Use UnlinkAdapterIdentityResult from services/adapters. */
+export type UnlinkManagedAdapterIdentityResult = UnlinkAdapterIdentityResult;
 
 /** Attenuated cleanup RPC exposed only on a deployment-owned adapter binding. */
 export interface ManagedAdapterGatewayService {

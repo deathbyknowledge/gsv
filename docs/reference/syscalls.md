@@ -4,8 +4,8 @@ Syscalls are GSV's stable operation surface. They are invoked over WebSocket req
 
 Source of truth:
 
-- `gateway/src/syscalls/index.ts`
-- `gateway/src/kernel/dispatch.ts`
+- `workers/gateway/src/syscalls/index.ts`
+- `workers/gateway/src/kernel/dispatch.ts`
 - `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
@@ -31,6 +31,17 @@ Generated namespace methods and `client.call()` are data-only.
 `fs.*`, `shell.exec`, and `net.fetch` are target-routable. Their wire args may
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
+
+### Tool purpose
+
+When a Process calls a syscall through one of its capability tools, the tool
+accepts one extra argument, `purpose`: a single sentence written for the person,
+saying why the call is being made. It is a tool argument, not a syscall
+argument. It never appears in a wire `args` object and is not part of any
+signature below: the runtime lifts it off the arguments before dispatch,
+collapses whitespace, and caps it at 400 characters. The person sees it in an
+approval prompt and in the corresponding [ledger](../architecture/ledger.md)
+line. It is optional; a call without one is admitted the same way.
 
 ## Shared Records
 
@@ -106,9 +117,9 @@ Device routing errors are frame-level errors: `403` for access denied, `503` for
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
-    args: { target?: string; path: string; offset?: number; limit?: number; maxBytes?: number; representation?: "content" | "resource" };
+    args: { target?: string; path: string; offset?: number; limit?: number; maxBytes?: number; representation?: "content" | "resource" | "reference" };
     result:
-      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number; truncated?: boolean; nextOffset?: number; resource?: FileResourceReference }
+      | { ok: true; path: string; kind: "text" | "image" | "file"; contentType: string; lines?: number; size: number; truncated?: boolean; nextOffset?: number; resource?: FileResourceReference }
       | { ok: true; path: string; files: string[]; directories: string[] }
       | OperationError;
   };
@@ -134,8 +145,35 @@ type FilesystemSyscalls = {
       | { ok: true; matches: Array<{ path: string; line: number; content: string }>; count: number; truncated?: boolean }
       | OperationError;
   };
+
+  "fs.copy": {
+    args: { source: { target?: string; path: string }; destination: { target?: string; path: string } };
+    result: { ok: true; source: { target: string; path: string }; destination: { target: string; path: string }; size: number; contentType?: string } | OperationError;
+  };
+
+  "fs.transfer.send": {
+    args: { target?: string; path: string; revision?: string };
+    result: { ok: true; path: string; size: number; contentType?: string; revision?: string } | OperationError;
+  };
+
+  "fs.transfer.receive": {
+    args: { target?: string; path: string; contentType?: string };
+    result: { ok: true; path: string; bytesWritten: number; contentType?: string } | OperationError;
+  };
+
+  "fs.transfer.stat": {
+    args: { target?: string; path: string };
+    result: { ok: true; path: string; size: number; isFile: boolean; isDirectory: boolean; contentType?: string; revision?: string } | OperationError;
+  };
 };
 ```
+
+`fs.copy` copies one file between two endpoints, each on `gsv` or on a target
+machine, so a machine-to-`gsv` copy needs no client in the middle. The
+`fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
+answers with the bytes as a response body, `fs.transfer.receive` takes them as
+a request body, and `fs.transfer.stat` reports size and revision without a
+body. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
@@ -205,16 +243,22 @@ as a transport timeout.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `cp`, `dd`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.cancel` | Owning device | Stop the session's process tree. The gateway resolves its target from the retained session and enforces ordinary target and syscall grants. Cancellation survives a disconnected caller; output remains available through `shell.exec`. Older machines must be updated to expose this operation. |
 
 ```ts
 type ShellSyscalls = {
+  "shell.cancel": {
+    args: { sessionId: string; target?: string };
+    result: { sessionId: string; cancelled: boolean };
+  };
   "shell.exec": {
     args: {
       target?: string;
       cwd?: string;
       input: string;
       sessionId?: string;
+      start?: boolean;
       timeout?: number;
     };
     result:
@@ -232,6 +276,26 @@ Start a command:
 { "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
 ```
 
+Clients that must recover across a lost start response first persist a fresh
+lowercase UUID v4, then send `start: true` with that `sessionId` and an explicit
+remote `target`. The Kernel records its target before forwarding the command and
+rejects reuse of an existing ID. Machines start under that exact ID and detach
+immediately. The start acknowledgement consumes no output; the first poll owns it.
+Recovery polls or cancels the saved ID and never replays the start or stdin.
+Older machines reject the unknown session before executing the command and must
+be updated. Browser targets can accept a named start but remain foreground-only;
+disconnecting their request cancels the operation. The native `gsv` shell also
+remains foreground-only and does not accept named sessions.
+
+When the Kernel rejects a named start before forwarding it, the error includes
+`details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+An unmarked transport error is uncertain: retain the saved session ID and recover
+by polling. A reused ID is also unmarked because its existing command may be live.
+
+```json
+{ "target": "macbook", "sessionId": "73c8fcce-fd24-4ebe-8c85-42f2c2befcf9", "start": true, "input": "npm test" }
+```
+
 Poll a running command:
 
 ```json
@@ -244,10 +308,17 @@ Write stdin to a running command:
 { "sessionId": "sh_01JZTEST", "input": "y\n" }
 ```
 
+`shell.cancel` returns `cancelled: true` after stopping a running command, or
+`false` if it had already ended. It does not consume output. Poll with
+`shell.exec` afterwards to read the terminal result. Session output is incremental;
+the optional final `stdout`/`stderr` fields are cumulative summaries. Disconnecting
+or cancelling a poll does not stop a durable session. A reconnect can resume polling
+the same session; completed device sessions remain available for ten minutes.
+
 CodeMode wrappers expose the same result shape:
 
 ```ts
-let res = await shell("npm run test", { cwd: "/workspace/gsv/gateway" });
+let res = await shell("npm run test", { cwd: "/workspace/gsv/workers/gateway" });
 let output = res.output;
 
 while (res.status === "running") {
@@ -284,8 +355,8 @@ caller's mailbox, derives its recipient and threading headers, and derives a
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
-caller cannot choose it. Standalone deployments do not bind the managed email
-queue, so this syscall returns an unavailable operation result there.
+caller cannot choose it. Operators may omit the mail service; this syscall
+returns an unavailable operation result when its outbound queue is not bound.
 
 `deliveryId` is the caller's required durable idempotency key. A direct protocol
 or SDK caller must retain it before sending so a timeout or disconnect can be
@@ -365,6 +436,24 @@ managed Queue is unavailable, and returns the same `null` result for missing
 and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
+
+## Web search: `web.search`
+
+Indexed web search uses the targetable `web.search` syscall, exposed as the
+model's `Search` tool, native `web search` command, and CodeMode `web.search(args)`.
+It requires the `web.search` capability. The default `gsv` target uses the optional
+`WEB_SEARCH` service; other accessible targets can advertise `web.search` directly.
+See [Web search](web-search.md) for arguments and the operator contract. Filesystem
+`fs.search` remains available through CodeMode.
+
+```ts
+interface WebSearchSyscalls {
+  "web.search": {
+    args: { query: string; target?: string; limit?: number; includeDomains?: string[]; excludeDomains?: string[] };
+    result: { provider: string; results: { title: string; url: string; snippet: string; publishedAt?: string }[] };
+  };
+}
+```
 
 ## CodeMode: `codemode.exec`, `codemode.run`
 
@@ -496,15 +585,18 @@ return { exitCode: res.exitCode, output };
 ## Conversations: `conversation.*`
 
 `conversation.*` is the direct-client interface for canonical user-visible messages. It is
-separate from raw `proc.history` activity. These operations require an authenticated direct user
-client; Process and adapter service callers use private Kernel-owned admission paths.
+separate from raw `proc.history` activity. Mutations require an authenticated direct user client;
+Process and adapter service callers use private Kernel-owned admission paths. History and search
+also admit the caller's canonical Ship, with their respective syscall capabilities and the same
+conversation ownership checks. Delegated processes do not inherit this read authority.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -529,6 +621,7 @@ type ConversationMessage = {
     | { kind: "process"; pid: string; uid: number }
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
+  selectedTarget?: string;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -549,11 +642,19 @@ type ConversationSyscalls = {
     result: { conversations: ConversationSummary[] };
   };
   "conversation.history": {
-    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    args: { conversationId: string; beforeSequence?: number; afterSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
+  "conversation.search": {
+    args: { conversationId?: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversation: ConversationSummary;
+      hits: { id: string; sequence: number; author: ConversationMessage["author"]; createdAt: number; snippet: string }[];
+      nextBeforeSequence: number | null;
+    };
+  };
   "conversation.send": {
-    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
@@ -563,10 +664,17 @@ type ConversationSyscalls = {
 };
 ```
 
+`conversation.send` and `proc.send` accept optional `selectedTarget` message context.
+The Kernel checks the caller's target visibility, including offline targets. The
+selection is stored with that message and rendered as `[Selected target: ID]` for
+the model. It does not change the message origin, reply endpoint, process defaults,
+or syscall permissions. Omission does not inherit an earlier message's selection.
+Changing the selection changes the conversation message's idempotency payload.
+
 ## Contacts And Cross-GSV Requests: `contact.*`
 
 `contact.*` connects an owner on one GSV installation to an owner on another.
-The relationship works between standalone and managed installations without a
+The relationship works between spaces served by the same or different operators without a
 shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
@@ -768,16 +876,16 @@ Runtime behavior:
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
 | `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
-| `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC. Ordinary calls are bounded: they create a call id and deadline, then later send either `ipc.reply` or `ipc.timeout` to the source process. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends `ipc.overdue` without cancelling the worker. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
-| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
+| `proc.history` | Process DO | Returns paged Process activity, message count, pending HIL, and context pressure. `format: 2` adds typed records and durable revision/reset metadata; `since` returns complete changed groups from an opaque cursor. Offset paging reads from the beginning; `tail`, `beforeMessageId`, and `afterMessageId` select bounded pages. `includeMessages: false` returns status only. Historical/status pages never advance a synchronization cursor. The original `messages` projection remains available for older clients. See [Process History](../architecture/process-history.md). |
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
-| `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
+| `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
-| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
-| `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
+| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. |
+| `proc.history.segment.read` | Process DO | Reads a compacted segment without restoring active history. `format: 2` adds typed records with stable segment ordinals and explicit unknown historical timestamps/linkage. Pages do not have a live synchronization cursor. |
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
@@ -787,6 +895,7 @@ Runtime behavior:
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
 
 ```ts
+type ProcAiConfig = { version: 2; modelId?: string; reasoning?: string; updatedAt: number };
 type ProcHilRequest = {
   pid: string;
   requestId: string;
@@ -798,6 +907,8 @@ type ProcHilRequest = {
   // Process-resolved approval scope (for example `gsv` or a connected target).
   target: string;
   args: Record<string, unknown>;
+  // The model's one-sentence purpose for the person: what this call does for them.
+  purpose?: string;
   createdAt: number;
 };
 
@@ -854,7 +965,7 @@ type ProcContextEpoch = {
 type ProcHistoryContextPolicy = {
   overflow: "auto-compact" | "fail";
   compactAtPressure: number;
-  keepLast: number;
+  compactToPressure: number;
   updatedAt: number;
 };
 
@@ -896,7 +1007,7 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string; ai?: { modelId?: string; reasoning?: string } };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
@@ -911,7 +1022,7 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; message: string; media?: ResourceBlock[] };
+    args: { pid?: string; message: string; selectedTarget?: string; media?: ResourceBlock[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
@@ -946,8 +1057,8 @@ type ProcessSyscalls = {
   };
 
   "proc.history": {
-    args: { pid?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
-    result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+    args: { pid?: string; format?: 2; since?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
+    result: ProcHistoryResult; // format 2 adds ProcHistoryRecord[], cursor, historyRevision, historyGeneration, historyResetRevision, reset, hasMore
   };
 
   "proc.trace": {
@@ -961,18 +1072,18 @@ type ProcessSyscalls = {
   };
 
   "proc.history.policy.set": {
-    args: { pid?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    args: { pid?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; compactToPressure?: number };
     result: { ok: true; pid: string; policy: ProcHistoryContextPolicy } | OperationError;
   };
 
   "proc.history.compact": {
-    args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number };
+    args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number; targetPressure?: number };
     result: { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
   };
 
   "proc.history.segment.read": {
-    args: { pid?: string; segmentId: string; limit?: number; offset?: number };
-    result: { ok: true; pid: string; segment: ProcHistorySegment; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean } | OperationError;
+    args: { pid?: string; segmentId: string; format?: 2; limit?: number; offset?: number };
+    result: ProcHistorySegmentReadResult; // format 2 adds ProcHistoryArchivedRecord[]
   };
 
   "proc.history.segments": {
@@ -1004,8 +1115,30 @@ type ProcessSyscalls = {
     args: { pid: string; identity: ProcessIdentity; interactive?: boolean; title?: string; autoTitle?: boolean };
     result: { ok: true };
   };
+
+  "proc.ai.config.get": {
+    args: { pid?: string };
+    result: { ok: true; pid: string; config: ProcAiConfig | null } | OperationError;
+  };
+
+  "proc.ai.config.set": {
+    args: { pid?: string; clear: true } | { pid?: string; modelId?: string | null; reasoning?: string | null };
+    result: { ok: true; pid: string; config: ProcAiConfig | null } | OperationError;
+  };
 };
 ```
+
+`proc.ai.config.get` and `proc.ai.config.set` read and update process-local model
+and reasoning preferences for the next run. `modelId` names an entry in the owning
+human's layered model stack and puts it first; ordinary fallbacks still apply.
+If that model is later removed, the next Process configuration resolution
+clears the missing model preference and inherits the owner's remaining stack.
+Reasoning preferences and conversation history are retained. Explicitly setting
+an unknown model is still rejected.
+`clear: true` returns both preferences to the agent/account defaults. The optional
+`proc.spawn.ai` object uses the same preferences, validated by the Kernel and
+stored with the Process identity before an initial prompt can start. Omitting
+`ai` inherits account defaults and does not copy a parent's process-local choices.
 
 `proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden
@@ -1028,6 +1161,13 @@ and their ancestor records, and may update only its own assignment.
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
 | `r12y.source.list` | Lists Kernel-defined required contracts and configurable responsibility sources for the caller owner. |
 | `r12y.source.update` | Enables or disables one configurable source for the caller owner. Required contracts are immutable, and source payload storage remains owned by its subsystem. |
+
+Setting a Ship-assigned responsibility to `waiting` defaults `nextCheckAtMs` to
+24 hours later, or an earlier future deadline, when no future check exists. The
+same applies when explicitly returning a waiting assignment to Ship. An explicit
+`patch.nextCheckAtMs` is respected; `null` clears the check. Other metadata edits
+do not renew it. At the check, Ship must review the work before yielding, even if
+its blocker is unchanged. Reasserting `waiting` renews an elapsed default check.
 
 ```ts
 type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
@@ -1223,6 +1363,11 @@ type RepoSyscalls = {
     args: { repo: string };
     result: { deleted: boolean; repo: string };
   };
+
+  "repo.visibility.set": {
+    args: { repo: string; public: boolean };
+    result: { changed: boolean; repo: string; public: boolean };
+  };
 };
 ```
 
@@ -1236,15 +1381,15 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
-| `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
-| `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
-| `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
-| `sys.device.delete` | `handleSysDeviceDelete` | Forgets an owned physical device, disconnects any live device socket, and revokes active node tokens bound to that device. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
-| `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
+| `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
+| `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
+| `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
+| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
+| `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Failed responses retain their reported `error` message, capped at 4,096 characters; older entries may omit it. Provider metadata and response bodies are not copied into that field. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
@@ -1253,15 +1398,26 @@ Runtime behavior:
 | `sys.mcp.remove` | `handleSysMcpRemove` | Removes a caller-owned MCP server from GSV ownership metadata and the underlying MCP client manager. Missing or inaccessible servers return `removed: false`. |
 | `sys.mcp.refresh` | `handleSysMcpRefresh` | Reconnects and rediscovers a caller-owned MCP server when possible. Returns the latest summary or `server: null` when inaccessible. |
 | `sys.mcp.call` | `handleSysMcpCall` | Calls a tool on a caller-owned MCP server. Generated CodeMode MCP functions and the native shell `mcp call` command use this path. Native `mcp status/tools/describe/search/codemode` provide discovery around the same summaries returned by `sys.mcp.list`. |
-| `sys.token.create` | `handleSysTokenCreate` | Creates a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
+| `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
+| `sys.pair.create` | `handleSysPairCreate` | A signed-in human creates an idempotent, ten-minute device invitation for a free target ID. The Kernel retains its secret hashed and creates no device credential yet. |
+| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
+| `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
+| `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
-`sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
+`sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
+
+Pairing creation uses a client-persisted UUID and 32 random bytes encoded as 64
+lowercase hex characters. The receiving client persists a separate random
+`gsv_machine_` credential with a 64-character hex suffix before redemption.
+Its durable machine token has no automatic expiry; explicit device removal or
+token revocation disconnects it. Creation and redemption secrets are excluded
+from ledger arguments. The device-pairing design notes in the repository describe the invitation flow.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client
@@ -1275,14 +1431,31 @@ metadata document advertises the same URL as its `client_id`.
 
 ```ts
 type SystemSyscalls = {
+  "sys.pair.create": {
+    args: { id: string; secret: string; targetId: string; label: string; replace?: boolean };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.list": {
+    args: {};
+    result: { pairings: DevicePairing[] };
+  };
+  "sys.pair.cancel": {
+    args: { id: string };
+    result: { pairing: DevicePairing };
+  };
+  "sys.pair.redeem": {
+    args: { id: string; secret: string; credential: string };
+    result: { pairing: DevicePairing; tokenId: string };
+  };
+
   "sys.connect": {
     args: {
-      protocol: 3;
+      protocol: 4;
       peer: { id: string; version: string; platform: string; implements?: string[] };
       auth?: { username: string; password?: string; token?: string };
     };
     result: {
-      protocol: 3;
+      protocol: 4;
       server: { version: string; release: string; features?: string[]; connectionId: string };
       peer: {
         id: string;
@@ -1299,8 +1472,8 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -1318,29 +1491,29 @@ type SystemSyscalls = {
     result: { ok: true };
   };
 
-  "sys.device.list": {
+  "sys.target.list": {
     args: { includeOffline?: boolean };
-    result: { devices: Array<{ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number }> };
+    result: { targets: Array<{ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number }> };
   };
 
-  "sys.device.get": {
-    args: { deviceId: string };
-    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  "sys.target.get": {
+    args: { targetId: string };
+    result: { target: ({ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
   };
 
-  "sys.device.update": {
-    args: { deviceId: string; description: string };
-    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  "sys.target.update": {
+    args: { targetId: string; description: string };
+    result: { target: ({ targetId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
   };
 
-  "sys.device.delete": {
-    args: { deviceId: string };
-    result: { deleted: boolean; deviceId: string; revokedTokens: number };
+  "sys.target.delete": {
+    args: { targetId: string };
+    result: { deleted: boolean; targetId: string; revokedTokens: number };
   };
 
-  "sys.workspace.list": {
-    args: { uid?: number; kind?: "thread" | "app" | "shared"; state?: "active" | "archived"; limit?: number };
-    result: { workspaces: Array<{ workspaceId: string; ownerUid: number; label: string | null; kind: "thread" | "app" | "shared"; state: "active" | "archived"; createdAt: number; updatedAt: number; defaultBranch: string; headCommit: string | null; activeProcess: { pid: string; label: string | null; cwd: string; createdAt: number } | null; processCount: number }> };
+  "sys.ledger.list": {
+    args: { pid?: string; target?: string; callPrefix?: string; since?: number; until?: number; limit?: number; cursor?: string };
+    result: { lines: Array<{ seq: number; timestamp: number; principalKind: string; uid: number; pid: string | null; runId: string | null; target: string; call: string; args: string; purpose?: string | null; outcome: ("ok" | "failed" | "denied" | "cancelled") | null; durationMs: number | null; tokens?: number | null; costNanoUsd?: number | null }>; nextCursor: string | null };
   };
 
   "sys.oauth.start": {
@@ -1356,6 +1529,18 @@ type SystemSyscalls = {
   "sys.oauth.forget": {
     args: { accountId: string; uid?: number };
     result: { forgotten: boolean };
+  };
+
+  "sys.oauth.device.start": {
+    args: { uid?: number; kind: "ai-provider"; provider: "openai-codex"; accountKey?: string; label?: string };
+    result: { flow: OAuthFlowSummary; provider: string; userCode: string; verificationUrl: string; intervalSeconds: number; expiresAt: number };
+  };
+
+  "sys.oauth.device.poll": {
+    args: { uid?: number; flowId: string };
+    result:
+      | { status: "pending"; flow: OAuthFlowSummary; intervalSeconds: number; expiresAt: number }
+      | { status: "complete"; account: OAuthAccountSummary };
   };
 
   "sys.mcp.add": {
@@ -1384,13 +1569,13 @@ type SystemSyscalls = {
   };
 
   "sys.token.create": {
-    args: { uid?: number; kind: "node" | "service" | "user"; label?: string; allowedRole?: "driver" | "service" | "user"; allowedDeviceId?: string; expiresAt?: number };
-    result: { token: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node" | "service" | "user"; label: string | null; allowedRole: "driver" | "service" | "user" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    args: { uid?: number; kind: "human" | "machine" | "service"; label?: string; peerId?: string; expiresAt?: number };
+    result: { token: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "human" | "machine" | "service"; label: string | null; peerId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.token.list": {
     args: { uid?: number };
-    result: { tokens: Array<{ tokenId: string; uid: number; kind: "node" | "service" | "user"; label: string | null; tokenPrefix: string; allowedRole: "driver" | "service" | "user" | null; allowedDeviceId: string | null; createdAt: number; lastUsedAt: number | null; expiresAt: number | null; revokedAt: number | null; revokedReason: string | null }> };
+    result: { tokens: Array<{ tokenId: string; uid: number; kind: "human" | "machine" | "service"; label: string | null; tokenPrefix: string; peerId: string | null; createdAt: number; lastUsedAt: number | null; expiresAt: number | null; revokedAt: number | null; revokedReason: string | null }> };
   };
 
   "sys.token.revoke": {
@@ -1417,13 +1602,95 @@ type SystemSyscalls = {
     args: { code: string };
     result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
   };
+
+  "account.create": {
+    args: { kind: "human" | "agent"; username: string; password?: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
+    result: { account: ProcessIdentity; kind: "human" | "agent"; personalAgent?: ProcessIdentity };
+  };
+
+  "account.list": {
+    args: { uid?: number };
+    result: { accounts: Array<{ uid: number; username: string; displayName: string; relation: "self" | "personal-agent" | "agent" | "human"; runnable: boolean; capabilities?: string[]; gecos?: string }> };
+  };
+  "account.owner.link": {
+    args: { id: string; secret: string };
+    result: { url: string; expiresAt: number };
+  };
+  "account.recovery.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { username: "root" };
+  };
+  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
+  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
+  "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
+  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
+  "account.invite.redeem": {
+    args: { id: string; secret: string; proof: string; password: string };
+    result: { uid: number; username: string };
+  };
+  "account.people.list": { args: {}; result: { people: LocalPerson[] } };
+  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
+  "account.remove": { args: { uid: number }; result: { removed: true } };
 };
 ```
 
+`sys.oauth.device.start` and `sys.oauth.device.poll` run the device
+authorization flow for providers that sign in with a code shown to the person,
+currently the OpenAI Codex account. `account.create` and `account.list` manage
+the accounts a human owns: a `human` account gets a personal agent and a separate
+Crew execution account, and an
+`agent` account is a non-login identity the owner can run processes as.
+
+`account.owner.link` requires a signed-in root human and attests the Kernel's
+immutable installation identity to Accounts. The browser then verifies the
+external owner through the configured identity provider. `account.recovery.redeem`
+is available before connection authentication, behind the ordinary installation
+work gate. Accounts authorizes only a short-lived root-reset claim through its
+deployment-granted recovery binding; redemption atomically consumes the claim,
+updates root's password, and revokes earlier root credentials and sessions.
+The receiving browser persists its random proof before redemption. Identical
+retries recover the receipt without rewriting the password; another proof or
+password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+
+Member recovery is available before authentication through `account.recovery.code.start`
+and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
+before requesting a code. The Kernel resolves a previously direct-human-confirmed
+private messenger link for that member; callers cannot select the recipient, uid,
+or space. Manual and legacy links without that confirmation are ineligible. Root
+uses verified owner recovery instead. The start response does not disclose whether
+an account or eligible link exists. At most one code is sent per member per minute;
+the eight hexadecimal digits expire after five minutes and permit five incorrect
+attempts with the matching browser proof. Delivery is a direct adapter request and
+never creates a Process event or wakes a model. A lost response retains the browser
+proof; lost delivery requires a new code after the cooldown or a root password reset.
+Redemption rechecks the exact link generation and account credential epoch, then
+atomically replaces the member password, revokes existing credentials and messenger
+links, and commits the receipt. Identical retries cannot overwrite later credentials.
+
+Human invitations use a separate fixed `human-account` purpose; a device pairing
+cannot create a human. A signed-in root human fixes the username and supplies a
+UUID and 32-byte hexadecimal secret, which the Kernel stores hashed. Invitations
+expire after ten minutes; cancellation or root credential revocation prevents
+consumption. `/join` on the space's own hostname reads the invitation from its
+fragment and stores a recipient-generated proof before clearing the fragment.
+`account.invite.redeem` runs before authentication behind the installation work
+gate. It atomically creates the local account and stores the proof-and-password
+receipt; an identical retry completes home setup without changing credentials.
+The account gets its personal agent on first sign-in.
+
+`account.people.list`, invitation administration, `account.password.set` and
+`account.remove` require a root human session with credential provenance; a
+Process acting as root cannot invoke them. Password reset and removal apply to
+ordinary human accounts. Both revoke earlier credentials and linked messengers;
+removal also disables future sign-in and credential issuance. The uid, groups,
+data and already-admitted Processes remain. A removed uid cannot be linked to a
+messenger again. Enrollment secrets and new passwords never enter the ledger.
+
 ## AI: `ai.*`
 
-`ai.tools` and `ai.config` are internal Process bootstrap calls. The media
-syscalls below are public, capability-gated operations. Their binary media uses
+`ai.tools` and `ai.config` are internal Process bootstrap calls. `ai.models`
+and the media syscalls below are public, capability-gated operations. Their binary media uses
 top-level frame bodies rather than JSON/base64 fields.
 
 Runtime behavior:
@@ -1431,8 +1698,9 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. |
-| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` resolves model configuration for an accessible process. On failure or empty text, an explicitly configured transcription stack in the fallback profile is tried once. Returns transcription text and model metadata in JSON. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves one ordered owner model stack, optionally moves one stable model ID to the front, and hydrates each entry's own credential. A request-local validation model is a complete replacement rather than a field overlay. Reasoning and runtime limits remain orthogonal settings. |
+| `ai.models` | `handleAiModels` | Lists the caller's effective text-model stack in layered order: the owner's own entries, then the system list, then the deployment base, each in its stored order. `preferredModelId` names the entry generation runs first; the listing keeps the stored order so clients can edit a layer without baking the preference into it. Each entry carries its `source` layer and `hasCredential`; credentials are never returned. |
+| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` selects an accessible Process account for capability configuration and authorization. Transcription uses that account's complete provider/model/credential configuration or the complete system configuration; it does not borrow text-model fields. Returns transcription text and model metadata in JSON. |
 | `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Uses Moondream 3.1 exclusively for caption, query, OCR, point, and detect modes. Query reasoning may include normalized grounding coordinates. Query and OCR can request prompt-driven JSON, XML, Markdown, or CSV; JSON is parsed and optionally checked against the supplied schema. Caption, query, and OCR may stream decoded UTF-8 output in the response body. The shell `img2txt` command may acquire that body from a target-qualified filesystem path, but the AI syscall remains byte-oriented and does not route or resolve paths. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
 | `ai.speech.create` | `handleAiSpeechCreate` | Accepts text and voice options. Synthesized audio uses a response body with MIME type and size in `data.audio`; skipped or empty results have no body. |
@@ -1441,12 +1709,17 @@ Runtime behavior:
 type AiSyscalls = {
   "ai.tools": {
     args: Empty;
-    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }> };
+    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; targets: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string; }> };
+  };
+
+  "ai.models": {
+    args: Empty;
+    result: { models: Array<{ id: string; name: string; provider: string; model: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number; source: "personal" | "system" | "base"; hasCredential: boolean }>; preferredModelId: string | null };
   };
 
   "ai.config": {
-    args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; maxContextBytes: number };
+    args: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string };
+    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; maxContextBytes: number };
   };
 
   "ai.transcription.create": {
@@ -1477,8 +1750,27 @@ type AiSyscalls = {
     args: { text: string; textFormat?: "markdown" | "plain"; model?: string; voice?: string; language?: string; encoding?: string; container?: string; sampleRate?: number; bitRate?: number };
     result: { audio: { mimeType: string; size: number }; provider: string; model: string; voice?: string; encoding?: string; container?: string; skipped?: boolean };
   };
+
+  "ai.context": {
+    args: Empty;
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+  };
+
+  "ai.text.generate": {
+    args: { target?: string; systemPrompt?: string; messages: AiTextMessage[]; tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>; config?: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string }; options?: { maxTokens?: number; reasoning?: AiTextGenerationReasoning; timeoutMs?: number }; sessionAffinityKey?: string };
+    result: { message: AiAssistantMessage; provider: string; model: string; text?: string };
+  };
 };
 ```
+
+`ai.context` is the process-facing projection of everything a run needs
+besides the model: reachable targets, ready MCP servers, system context files,
+and the skill index. An omitted `targets` or `skillIndex` means that catalog
+could not be refreshed; Process retains its last observed projection. An empty
+array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
+gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
+`AiTextGenerationReasoning` are the message and reasoning records in
+`packages/gsv/src/protocol/syscalls/ai.ts`.
 
 ## Adapters: `adapter.*`
 
@@ -1486,11 +1778,15 @@ type AiSyscalls = {
 Gateway-to-adapter service bindings implement `AdapterService` from
 `@humansandmachines/gsv/services/adapters`. Its descriptor makes discovery
 independent of any fixed messenger list; optional operations include
-`adapterConnect`, `adapterDisconnect`, `adapterSend`,
-`adapterSetActivity`, and `adapterStatus`. Adapters call the Gateway's single
+`adapterFrame`, `adapterConnect`, `adapterDisconnect`, `adapterSetActivity`,
+and `adapterStatus`. Adapters call the Gateway's single
 `serviceFrame` entrypoint for `adapter.inbound` and
-`adapter.state.update`; old channel-specific interfaces and direct channel RPC
-names are not part of this contract.
+`adapter.state.update`. The Gateway calls `adapterFrame` with canonical frames:
+every explicit or routed delivery is a correlated `adapter.send` request sent
+only to the exact adapter destination. User-state signals remain broadcast to
+clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
+Old channel-specific interfaces and direct channel RPC names are not part of
+this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its
@@ -1535,17 +1831,24 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, and caller-visible account status. Older bindings without a descriptor temporarily fall back to method discovery. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and the current human’s linking authority (`canLink`). Shared pairing requires the same advertised capability, configured application, and direct human authority at its Kernel boundary. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
+
+For explicit sends, the Kernel resolves the authorized linked actor for the
+requested surface and supplies its current route generation to the adapter.
+Neither value is a public `adapter.send` argument. Multiple matching actors,
+disabled owners, and missing generations on shared routes are rejected before
+provider dispatch. The adapter rechecks that generation before sending to the
+provider, rejecting a delayed send if the link has since moved.
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
 Every private adapter-worker RPC result is validated before the gateway persists
@@ -1558,7 +1861,7 @@ ignored with payload-free diagnostics.
 type AdapterSyscalls = {
   "adapter.list": {
     args: Record<string, never>;
-    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
+    result: { adapters: Array<{ adapter: string; available: boolean; enabled: boolean; canLink: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
   };
 
   "adapter.connect": {
@@ -1633,18 +1936,22 @@ last-active linked private DM. An exact connection or adapter route always wins,
 the live identity link is rechecked before delivery, and no other process uses
 this fallback.
 
-An adapter HIL prompt includes the exact pending request identity as
-`hil[requestId]`. An adapter approval or denial is accepted only when it carries
-that current token; a bare or stale decision fails closed. `replyToId` is useful
-for provider threading but is not an authorization mechanism. Native clients
-continue to call `proc.hil` with the exact `requestId`.
+Web, Desktop, and CLI receive `proc.run.hil.requested`; an exact routed adapter
+receives the same structured request in `adapter.send`. Adapters use native
+controls when they can securely correlate callbacks; otherwise they show the
+action and direct the user to Chat. Opaque request identities are never rendered
+or parsed from free-form adapter messages. A native callback invokes ordinary
+`proc.hil` with the exact `requestId` through a Kernel-derived linked-human peer;
+actor, surface, route generation, provider-message correlation, human capability,
+and pending state are all rechecked. `replyToId` remains provider threading
+metadata and is not authorization.
 
-Retry-safe adapter notifications and final replies are retained as Kernel
-scheduled work under the same stable delivery id. Typing is stopped after each
-attempt. Final routes are removed on success, permanent failure, ambiguous
-provider outcome, or bounded retry exhaustion, and non-success terminal
-outcomes are appended to process history. HIL state does not depend on adapter
-notification delivery.
+Routed adapter notifications and final replies are retained as Kernel-scheduled
+work under the stable delivery id. The exact adapter receives one correlated
+`adapter.send` request and classifies its provider outcome. The Kernel retries
+only safe failures, removes final routes on success or after a non-success
+terminal notice is accepted by the Process, and leaves HIL state independent of
+adapter notification delivery.
 
 Observed adapter surface routes are keyed by adapter, account, actor, surface
 kind, surface id, and thread id. They record the owner uid and selected process.
@@ -1690,15 +1997,17 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
-| `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint or target process by `watchId` or `key`. Returns number removed. |
+| `signal.watch` | `handleSignalWatch` | Process-originated only. Creates or upserts a durable watch for an accessible `targetId` with the registered `target.status` signal. Events default to audience `person`; `model` or `both` may be selected explicitly. TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. |
+| `signal.unwatch` | `handleSignalUnwatch` | Process-originated only. Removes watches owned by the calling process using `watchId` or `key`. Returns number removed. |
 
-Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
+Target watch delivery is handled by the Kernel when the target connects or disconnects. Once-watches are deleted after a matching acknowledgment that the event was accepted; stale events ignored after reset do not consume them. Temporary lifecycle conflicts, service errors, and RPC failures leave the watch active for later transitions without replaying the missed event. Authorization failures, a gone Process, and invalid acknowledgments mark it failed. Generic process signal watches are retired: `processId` registrations are rejected and existing registrations are removed during upgrade. Historical `signal.watched` records remain readable, but delayed watched-signal envelopes do not admit new Process work.
+
+Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
 ```ts
 type SignalSyscalls = {
   "signal.watch": {
-    args: { signal: string; processId?: string; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
+    args: { signal: "target.status"; targetId: string; audience?: "model" | "person" | "both"; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };
   };
 

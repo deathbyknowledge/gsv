@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-input-attach"
+description = "Enables the input_attach command without any pre-configured scope."
+commands.allow = ["input_attach"]
+
+[[permission]]
+identifier = "deny-input-attach"
+description = "Denies the input_attach command without any pre-configured scope."
+commands.deny = ["input_attach"]

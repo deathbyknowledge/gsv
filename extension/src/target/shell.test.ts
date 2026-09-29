@@ -51,6 +51,26 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
+  it("rejects session starts and polls before executing browser side effects", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
+      name: "side-effect",
+      summary: "Record a browser side effect.",
+      run,
+    }]);
+    const sessionId = crypto.randomUUID();
+    for (const args of [{ sessionId, start: true }, { start: true }, { sessionId }]) {
+      await expect(shell.exec({ input: "side-effect", ...args })).resolves.toMatchObject({
+        status: "failed",
+        error: "Browser shell sessions are not supported yet",
+      });
+    }
+    expect(run).not.toHaveBeenCalled();
+
+    await expect(shell.exec({ input: "side-effect" })).resolves.toMatchObject({ status: "completed" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a cancelled queued command without bypassing the active command", async () => {
     const running = deferred<void>();
     const started = deferred<void>();

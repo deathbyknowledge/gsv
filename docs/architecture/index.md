@@ -32,6 +32,7 @@ A good order is:
 8. [Targets and Capability Environments](./targets.md)
 9. [Unified Protocol Peers](./unified-protocol-peers.md)
 10. [Security Model](./security-model.md)
+11. [Telemetry](./telemetry.md)
 
 ## The Current Pillars
 
@@ -70,7 +71,7 @@ user-level events converge. The Kernel records that role explicitly; it is not
 inferred from recency, labels, or account name. Its pid remains replaceable and
 ordinary. Custom agent accounts provide specialized identities when explicitly
 selected. A delegated child inherits its parent's account by default and acts
-in a bounded worker role; other processes remain visible work rather than
+in a worker role; other processes remain visible work rather than
 alternative personal intelligences.
 
 Process state lives in a Process Durable Object with its own SQLite database.
@@ -81,8 +82,8 @@ the process metadata needed for routing and permissions.
 The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits raw
 `proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
-may send user-visible updates through Shell with `message send` and finishes each human-facing run with `yield`;
-a bounded IPC worker returns its ordinary final output directly to its caller.
+may send user-visible updates through its `Send` tool, or `message send` in Shell, and finishes each human-facing run by yielding;
+an IPC worker returns its ordinary final output directly to its caller.
 
 ### Conversations
 
@@ -130,7 +131,7 @@ compatibility. A registered endpoint connects over WebSocket with a descriptor
 containing its id, platform, version, owner, and `implements` list such as:
 
 ```json
-{ "deviceId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
+{ "targetId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
 ```
 
 Agents always see the same tool names: `Read`, `Write`, `Edit`, `Delete`,
@@ -164,8 +165,8 @@ imports.
 Repository slugs are installation-local. The Gateway binds internal Ripgit
 requests to the resolved installation, and Ripgit includes that identity in
 the physical Repository Durable Object name. Public Git paths remain
-`/git/{owner}/{repo}.git`; standalone deployments retain the historical
-`{owner}/{repo}` object names.
+`/git/{owner}/{repo}.git`. Every repository object is scoped to the immutable
+installation identity; historical unscoped names are not a runtime fallback.
 
 GSV uses repositories for more than source control:
 
@@ -260,6 +261,8 @@ of chat integrations.
 - [Resource References and Lazy Binary Resolution](./resource-references.md)
   documents the implemented common file-reference and lazy byte-streaming
   contract used by Messages, Processes, adapters, Web, and Desktop.
+- [Telemetry](./telemetry.md) defines the optional provider-neutral event seam
+  and its privacy boundary.
 
 ## Deferred design proposals
 

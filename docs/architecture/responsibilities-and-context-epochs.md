@@ -91,9 +91,12 @@ responsibility happens before its wake is scheduled.
 When work becomes actionable, the Kernel creates a batch containing the relevant
 responsibility ids and admits a typed `r12y.ready` control event to the existing
 personal Process. An idle Ship starts a run; a busy Ship attaches the batch to its
-current run. The control event contributes no separate model-visible prose. The
-responsibility baseline or revisioned ledger transition is the sole model-visible
-projection of the obligation.
+current run. Admission atomically records a model-visible `responsibility.ready`
+history event with the batch identity, affected ids, and receipt time. This explains
+why Ship has been woken even when a deadline or recovery retry leaves the ledger
+revision unchanged. Replayed admission does not append another event. The baseline
+and revisioned transitions continue to supply the responsibility state without
+duplicating it in the wake event or changing the frozen system prompt.
 
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
@@ -106,6 +109,24 @@ After successful admission, actionable work gets a five-minute recovery wake. An
 real state change clears that retry and installs the record's new deadline, lease, or
 check condition. This prevents a provider or terminal-action failure from silently
 stranding an otherwise open responsibility without polling deferred or delegated work.
+
+When a human or Process explicitly puts a Ship assignment into `waiting`, the ledger
+sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
+deadline brings that default forward. An explicit check time is preserved, and
+`nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
+it. System producers keep their own wake conditions, including initial onboarding,
+which must wait for the first user interaction.
+
+A due Ship check is actionable even while a blocker remains. The review event directs
+Ship to read the current conversation and responsibility. If the human's answer is
+still needed, Ship should send a specific reminder instead of silently renewing the
+check merely because no answer has arrived. An answer already received, obsolete
+work, or a request for no reminders should instead update or close the item. A
+deferral needs a concrete recorded reason and an appropriate next check; an explicit
+null clears a check when no follow-up is wanted. The Kernel does not send reminders
+automatically. Ship still resolves, cancels, delegates, or explicitly defers actionable
+items before yielding, and reasserting `waiting` still supplies the default check
+when no explicit time is provided.
 
 ## Context epochs
 
@@ -219,9 +240,12 @@ System-owned producers use the same ledger contract:
   Schedules explicitly bound to an adapter reply route retain that transport event so
   the eventual Message can use the exact authorized destination.
 - `proc delegate --responsibility ID ...` stores the responsibility id on the durable
-  IPC call. Completion, failure, timeout, or kill returns a still-active assignment to
-  Ship exactly once, records the call and child run ids as evidence, and wakes Ship.
-  The child result itself remains an IPC event in Process Activity.
+  IPC call. Completion, failure, or explicit termination returns a still-active
+  assignment to Ship exactly once, records the call and child run ids as evidence,
+  and wakes Ship. A supervision checkpoint instead leaves the assignment with the
+  child, renews the IPC result route, records the next check time, and wakes Ship
+  without terminating the work. The child result itself remains an IPC event in
+  Process Activity.
 
 ## Epoch archives
 

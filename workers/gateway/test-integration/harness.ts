@@ -1,0 +1,381 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  createTestHarness,
+  type TestHarness,
+  type Unstable_RawConfig,
+  unstable_readConfig,
+} from "wrangler";
+
+const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const DEPENDENCY_WORKER = "gsv-test-dependencies";
+const ACCOUNTS_WORKER = "gsv-accounts-test";
+const INFERENCE_WORKER = "gsv-inference-test";
+const EXECUTION_WORKER = "gsv-execution-test";
+const EMAIL_WORKER = "gsv-managed-email-test";
+const DEPENDENCY_CONFIG_PATH = resolve(
+  GATEWAY_ROOT,
+  "test-integration/fixtures/wrangler.jsonc",
+);
+const EMAIL_CONFIG_PATH = resolve(
+  GATEWAY_ROOT,
+  "../adapters/email/wrangler.test.jsonc",
+);
+type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
+
+export function integrationGatewayConfig(options: {
+  name?: string;
+  workersAi?: boolean;
+  managed?: boolean;
+  managedServices?: {
+    accounts: string;
+    inference: string;
+  };
+  managedMailQueue?: string;
+} = {}): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
+    { hideWarnings: true },
+  );
+  const lifecycleConfig = options.managed
+    ? unstable_readConfig(
+        { config: resolve(GATEWAY_ROOT, "wrangler.managed.dev.jsonc") },
+        { hideWarnings: true },
+      )
+    : config;
+  const executionBinding: ServiceBinding = {
+    binding: "INFERENCE_EXECUTION", service: options.managedServices?.inference ?? EXECUTION_WORKER,
+  };
+  if (options.managedServices) executionBinding.entrypoint = "InferenceService";
+
+  return {
+    name: options.name ?? config.name,
+    main: config.main,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    define: config.define,
+    rules: config.rules,
+    migrations: lifecycleConfig.migrations,
+    durable_objects: {
+      bindings: [
+        ...(lifecycleConfig.durable_objects?.bindings ?? []).filter(
+          (binding: { name: string }) =>
+            binding.name !== "MANAGED_INFERENCE_INSTALLATIONS",
+        ),
+        ...(options.managedServices
+          ? [{
+              name: "MANAGED_INFERENCE_INSTALLATIONS",
+              class_name: "InferenceInstallation",
+              script_name: options.managedServices.inference,
+            }]
+          : []),
+      ],
+    },
+    observability: config.observability,
+    r2_buckets: config.r2_buckets,
+    queues: options.managedMailQueue
+      ? {
+          producers: [{
+            binding: "MANAGED_MAIL_OUTBOUND",
+            queue: options.managedMailQueue,
+          }],
+        }
+      : undefined,
+    assets: config.assets,
+    // CodeMode is an optional paid capability in production. Keep its loader
+    // test-only while exercising that runtime boundary in integration tests.
+    worker_loaders: [{ binding: "LOADER" }],
+    ai: undefined,
+    services: [
+      executionBinding,
+      {
+        binding: "CHANNEL_DISCORD",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "IntegrationDiscordAdapter",
+      },
+      {
+        binding: "CHANNEL_TELEGRAM",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "IntegrationTelegramAdapter",
+      },
+      { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
+      { binding: "RIPGIT", service: DEPENDENCY_WORKER },
+      { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
+    ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
+  };
+}
+
+export function integrationExecutionConfig(workersAi = true): Unstable_RawConfig {
+  return {
+    name: EXECUTION_WORKER,
+    main: resolve(GATEWAY_ROOT, "test-integration/fixtures/inference-execution.ts"),
+    compatibility_date: "2026-09-01",
+    compatibility_flags: ["nodejs_compat", "enable_nodejs_os_module"],
+    vars: { INFERENCE_MONTHLY_REQUESTS: 0, INFERENCE_MONTHLY_OUTPUT_TOKENS: 0,
+      INFERENCE_MAX_OUTPUT_TOKENS: 1_048_576, INFERENCE_MAX_DURATION_MS: 2_147_483_647 },
+    durable_objects: { bindings: [{ name: "INFERENCE_EXECUTORS", class_name: "InferenceExecutor" }] },
+    migrations: [{ tag: "v1", new_sqlite_classes: ["InferenceExecutor"] }],
+    services: [
+      { binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER },
+      // Error journeys disable the operator-funded fallback alongside native AI.
+      ...(workersAi ? [
+        { binding: "FUNDED_INFERENCE", service: DEPENDENCY_WORKER, entrypoint: "ManagedInferenceFixture" },
+        { binding: "AI", service: DEPENDENCY_WORKER },
+      ] : []),
+    ],
+  };
+}
+
+function integrationEmailConfig(
+  gatewayService: string,
+  queue: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: EMAIL_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: EMAIL_WORKER,
+    main: resolve(GATEWAY_ROOT, "../adapters/email/src/index.ts"),
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    vars: config.vars,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    send_email: config.send_email,
+    services: [
+      { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
+      {
+        binding: "GATEWAY",
+        service: gatewayService,
+        entrypoint: "GatewayEntrypoint",
+      },
+      {
+        binding: "INFERENCE",
+        service: INFERENCE_WORKER,
+        entrypoint: "InferenceService",
+      },
+    ],
+    queues: {
+      consumers: [{
+        queue,
+        max_batch_size: 10,
+        max_batch_timeout: 1,
+        max_retries: 5,
+      }],
+    },
+  };
+}
+
+export function integrationDependencyConfig(
+  gatewayService: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: DEPENDENCY_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: config.name,
+    main: config.main,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: [
+      ...(config.compatibility_flags ?? []),
+      "enable_abortsignal_rpc",
+    ],
+    observability: config.observability,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [
+      {
+        binding: "TELEGRAM_GATEWAY",
+        service: gatewayService,
+        entrypoint: "AdapterGatewayEntrypoint",
+        props: {
+          id: "telegram",
+          calls: ["adapter.inbound", "adapter.state.update"],
+        },
+      },
+      {
+        binding: "DISCORD_GATEWAY",
+        service: gatewayService,
+        entrypoint: "AdapterGatewayEntrypoint",
+        props: {
+          id: "discord",
+          calls: ["adapter.inbound", "adapter.state.update"],
+        },
+      },
+    ],
+  };
+}
+
+function integrationManagedInferenceConfig(
+  configPath: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: configPath },
+    { hideWarnings: true },
+  );
+  return {
+    name: config.name,
+    main: config.main,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: [
+      ...(config.compatibility_flags ?? []),
+      "enable_abortsignal_rpc",
+    ],
+    rules: config.rules,
+    observability: config.observability,
+    vars: config.vars,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [
+      { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
+      { binding: "INSTALLATION_DIRECTORY", service: ACCOUNTS_WORKER },
+      { binding: "AI", service: DEPENDENCY_WORKER },
+    ],
+  };
+}
+
+function managedInferenceProbeConfig(): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: DEPENDENCY_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: "gsv-managed-inference-probe",
+    main: resolve(
+      GATEWAY_ROOT,
+      "test-integration/fixtures/managed-inference-probe.ts",
+    ),
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    services: [{
+      binding: "MANAGED_INFERENCE",
+      service: DEPENDENCY_WORKER,
+      entrypoint: "ManagedInferenceFixture",
+    }],
+  };
+}
+
+export function createGatewayTestHarness(options: {
+  workersAi?: boolean;
+} = {}): TestHarness {
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig(options),
+      },
+      {
+        config: integrationDependencyConfig("gsv"),
+      },
+      { config: integrationExecutionConfig(options.workersAi) },
+    ],
+  });
+}
+
+export function createManagedGatewayTestHarness(): TestHarness {
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig(),
+      },
+      {
+        config: integrationGatewayConfig({ name: "gsv-managed", managed: true }),
+      },
+      {
+        config: integrationDependencyConfig("gsv-managed"),
+      },
+      {
+        config: managedInferenceProbeConfig(),
+      },
+      { config: integrationExecutionConfig() },
+    ],
+  });
+}
+
+export function createManagedInferenceServiceStackTestHarness(
+  serviceConfigs: { accounts: string; inference: string },
+): TestHarness {
+  const gatewayService = "gsv-managed-inference-stack";
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig({
+          name: gatewayService,
+          managed: true,
+          managedServices: {
+            accounts: ACCOUNTS_WORKER,
+            inference: INFERENCE_WORKER,
+          },
+        }),
+      },
+      {
+        config: integrationDependencyConfig(gatewayService),
+      },
+      {
+        configPath: serviceConfigs.accounts,
+        vars: {
+          ENVIRONMENT: "development",
+          GSV_ACCOUNT_ORIGIN: "http://localhost",
+          GSV_BASE_DOMAIN: "gsv.space",
+        },
+      },
+      {
+        config: integrationManagedInferenceConfig(serviceConfigs.inference),
+      },
+    ],
+  });
+}
+
+export function createManagedMailServiceStackTestHarness(
+  serviceConfigs: { accounts: string; inference: string },
+): TestHarness {
+  const gatewayService = "gsv-managed-mail-stack";
+  const queue = "gsv-managed-mail-outbound-stack";
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig({
+          name: gatewayService,
+          managed: true,
+          managedServices: {
+            accounts: ACCOUNTS_WORKER,
+            inference: INFERENCE_WORKER,
+          },
+          managedMailQueue: queue,
+        }),
+      },
+      {
+        config: integrationDependencyConfig(gatewayService),
+      },
+      {
+        configPath: serviceConfigs.accounts,
+        vars: {
+          ENVIRONMENT: "development",
+          GSV_ACCOUNT_ORIGIN: "http://localhost",
+          GSV_BASE_DOMAIN: "gsv.space",
+        },
+      },
+      {
+        config: integrationManagedInferenceConfig(serviceConfigs.inference),
+      },
+      {
+        config: integrationEmailConfig(gatewayService, queue),
+      },
+    ],
+  });
+}
+
+export function webSocketUrl(baseUrl: URL): string {
+  const url = new URL("/ws", baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}

@@ -1,0 +1,66 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-slack",
+  "main": "src/managed.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MANAGED_SLACK_WORKSPACE",
+        "class_name": "ManagedSlackWorkspace"
+      },
+      {
+        "name": "MANAGED_SLACK_PEER",
+        "class_name": "ManagedSlackPeer"
+      },
+      {
+        "name": "MANAGED_SLACK_PAIRING",
+        "class_name": "ManagedSlackPairing"
+      },
+      {
+        "name": "SLACK_INSTALLATIONS",
+        "class_name": "SlackInstallation"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ManagedSlackWorkspace",
+        "ManagedSlackPeer",
+        "ManagedSlackPairing"
+      ]
+    },
+    {
+      "tag": "v2-installation-retirement",
+      "new_sqlite_classes": [
+        "SlackInstallation"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv-managed-gateway",
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "slack",
+        "calls": [
+          "adapter.inbound",
+          "adapter.state.update"
+        ]
+      }
+    },
+    {
+      "binding": "ACCOUNTS",
+      "service": "gsv-installations"
+    }
+  ]
+}

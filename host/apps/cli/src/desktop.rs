@@ -177,9 +177,9 @@ fn resolve_desktop_executable() -> Result<PathBuf, DynError> {
     }
 
     let executable_names: &[&str] = if cfg!(windows) {
-        &["gsv-desktop.exe", "gsv-native.exe"]
+        &["gsv-desktop.exe"]
     } else {
-        &["gsv-desktop", "gsv-native"]
+        &["gsv-desktop"]
     };
     let current = std::env::current_exe()?;
     if let Some(parent) = current.parent() {
@@ -211,7 +211,7 @@ fn resolve_desktop_executable() -> Result<PathBuf, DynError> {
 #[cfg(target_os = "macos")]
 fn macos_bundle_executable(cli_parent: &Path) -> Option<PathBuf> {
     let app_bundle = cli_parent.parent()?.join("GSV.app");
-    ["gsv-desktop", "gsv-native"]
+    ["gsv-desktop"]
         .into_iter()
         .map(|name| app_bundle.join("Contents").join("MacOS").join(name))
         .find(|candidate| candidate.is_file())

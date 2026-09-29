@@ -22,30 +22,32 @@ import {
 } from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
+import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
 const client = new GSVClient();
 const endpoint = client.endpoint({
   platform: "browser-extension",
-  version: "0.4.1",
+  version: "0.6.2",
   keepalive: {
     intervalMs: 25_000,
     acknowledgement: { timeoutMs: 10_000 },
   },
 });
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
+const browserPairing = new BrowserPairing();
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
 }).catch((error) => {
-  console.warn("GSV browser target diagnostics unavailable", error);
+  console.warn("Your GSV: diagnostics unavailable", error);
 });
 let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 const runtimeStateReady = loadRuntimeState().then((state) => {
   connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
 }).catch((error) => {
-  console.warn("GSV browser target runtime state unavailable", error);
+  console.warn("Your GSV: runtime state unavailable", error);
 });
 
 const browserTarget = createBrowserTargetDriver(addActivity);
@@ -82,6 +84,12 @@ client.onStatus((status) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   void maybeConnect().catch(() => {});
+  // The toolbar icon opens the side panel, the extension's one surface. The onClicked fallback
+  // covers browsers without setPanelBehavior; it runs inside the user gesture, as open() requires.
+  void chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
+});
+chrome.action.onClicked.addListener((tab) => {
+  void openSidePanel(tab.windowId).catch((error) => console.warn("Could not open the panel", error));
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -112,6 +120,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
   try {
     switch (message.type) {
       case "status":
+        // The panel polls while it is open, so a pending ask has been seen: clear the badge.
+        void clearAttentionBadge();
         return await stateResponse();
       case "refresh":
         await maybeConnect();
@@ -121,15 +131,18 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         await connectNow();
         return await stateResponse();
       case "disconnect":
+        browserPairing.stop();
         await setManualReconnectSuppressed(true);
         return await stateResponse();
       case "stop-all":
+        browserPairing.stop();
         return await stopAll();
       case "grant-media-capture":
         return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
         return await clearDiagnosticsState();
       case "save-config": {
+        if (browserPairing.isPairing) throw new Error("Finish or stop pairing before changing connection settings");
         const config = await saveConfig(message.config);
         addActivity({
           kind: "connection",
@@ -137,6 +150,15 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
+        await setManualReconnectSuppressed(false);
+        await connectionSupervisor.reconcile(config);
+        return await stateResponse();
+      }
+      case "pair": {
+        const epoch = browserPairing.epoch;
+        const config = await browserPairing.pair(message.code);
+        await runtimeStateReady;
+        if (browserPairing.epoch !== epoch) return await stateResponse();
         await setManualReconnectSuppressed(false);
         await connectionSupervisor.reconcile(config);
         return await stateResponse();
@@ -211,7 +233,30 @@ async function stopAll(): Promise<RuntimeResponse> {
   return await stateResponse();
 }
 
+// Chrome will not open the side panel without a person's gesture, so an ask from your GSV cannot
+// pop it. The toolbar icon carries the ask instead: a dot in the accent colour until the panel is
+// opened or the recording is allowed. Badges need no extra permission.
+async function showAttentionBadge(): Promise<void> {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#b3aeff" });
+    await chrome.action.setBadgeTextColor?.({ color: "#07061a" });
+    await chrome.action.setBadgeText({ text: "•" });
+    await chrome.action.setTitle({ title: "Your GSV wants to record this tab" });
+  } catch (error) {
+    console.warn("Your GSV: could not badge the toolbar icon", error);
+  }
+}
+async function clearAttentionBadge(): Promise<void> {
+  try {
+    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setTitle({ title: "Your GSV" });
+  } catch {
+    // no badge to clear
+  }
+}
+
 async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
+  void clearAttentionBadge();
   const grant = await grantMediaCapture(tabId);
   addActivity({
     kind: "sensitive",
@@ -327,6 +372,7 @@ function addActivity(input: BrowserTargetActivity): void {
     at: new Date().toISOString(),
     ...input,
   };
+  if (entry.status === "error" && /tab media capture/i.test(entry.detail)) void showAttentionBadge();
   diagnostics = recordDiagnosticActivity(diagnostics, entry);
   diagnostics = recordDiagnosticArtifactPaths(diagnostics, artifactPathsFromDetail(entry.detail));
   queueDiagnosticsSave();

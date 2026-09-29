@@ -1,4 +1,4 @@
-export type ManagedInstallationState =
+export type InstallationState =
   | "reserved"
   | "provisioning"
   | "trialing"
@@ -10,14 +10,14 @@ export type ManagedInstallationState =
   | "deleting"
   | "deleted";
 
-export type ManagedInstallationIdentity = {
+export type InstallationIdentity = {
   installationId: string;
   handle: string;
   canonicalOrigin: string;
 };
 
 export type InstallationDirectoryResult =
-  | ({ found: true; state: ManagedInstallationState } & ManagedInstallationIdentity)
+  | ({ found: true; state: InstallationState } & InstallationIdentity)
   | { found: false };
 
 /** Resolves public routing metadata to an immutable installation identity. */
@@ -27,3 +27,8 @@ export interface InstallationDirectoryService {
     installationId: string,
   ): Promise<InstallationDirectoryResult>;
 }
+
+/** @deprecated Use InstallationState; retained for independently pinned consumers. */
+export type ManagedInstallationState = InstallationState;
+/** @deprecated Use InstallationIdentity; retained for independently pinned consumers. */
+export type ManagedInstallationIdentity = InstallationIdentity;
