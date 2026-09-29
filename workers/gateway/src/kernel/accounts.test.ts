@@ -16,6 +16,8 @@ import {
   CREW_CONTEXT,
 } from "../prompts/personal-intelligence";
 import { PERSONAL_INTELLIGENCE_ONBOARDING_CONTEXT } from "../prompts/onboarding";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ResponsibilityStore } from "./responsibility-store";
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
@@ -531,6 +533,46 @@ describe("handleAccountCreate", () => {
     for (const path of existingPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
+  });
+
+  it("reconciles onboarding after an earlier release has already retired the boot context", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const state = createCtx();
+      provisionExistingPersonalAgent(state);
+      const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+      ctx.responsibilities = new ResponsibilityStore(storage);
+      const previous = ctx.responsibilities.create({
+        ownerUid: 1000,
+        title: "Get to know the user and finish initial GSV setup",
+        details: {
+          responsibilityType: "onboarding.initial",
+          summary: "Learn how to be useful to the user and help them connect and configure the parts of GSV they want.",
+          outcomes: [
+            "Learn enough about the user to be useful.",
+            "Help connect useful computers, services, or messengers.",
+            "Help configure models, permissions, and approvals where needed.",
+          ],
+          completionCondition: "The user confirms that onboarding or setup is complete.",
+        },
+        source: { kind: "system", component: "onboarding" },
+        assignee: { kind: "ship" },
+        state: "waiting",
+        priority: "high",
+        blocker: "Waiting for the user to begin or continue setup.",
+        dedupeKey: "onboarding.initial",
+        actor: { kind: "system", component: "onboarding" },
+        observedByShip: true,
+        now: 1_000,
+      }).record;
+
+      await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+
+      expect(ctx.responsibilities.get(1000, previous.id)).toMatchObject({
+        title: "Welcome to GSV", state: "waiting", blocker: "Waiting for the user's first messages.",
+      });
+      expect(state.ripgitApplyBodies.flatMap((body) => body.ops))
+        .toContainEqual(expect.objectContaining({ type: "put", path: "context.d/07-onboarding.md" }));
+    });
   });
 
   it("migrates the exact generated boot context into an onboarding responsibility", async () => {

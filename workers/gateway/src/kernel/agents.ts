@@ -186,12 +186,10 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
+      ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
-        beforeRetiringGeneratedBootContext: () => {
-          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
-        },
       });
       await ensureCrewAccount(ctx, human, identity);
       return { identity, created: false };

@@ -51,6 +51,10 @@ personal agent's generated `07-onboarding.md` holds the behaviour that applies
 while that responsibility is unresolved, and the built-in `gsv-concepts` skill
 covers new concepts afterwards.
 
+Personal-agent provisioning also reconciles unchanged, unresolved onboarding
+records from earlier releases. This does not depend on the retired boot file
+still being present; completed records and owner-edited instructions are retained.
+
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work
 (`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
