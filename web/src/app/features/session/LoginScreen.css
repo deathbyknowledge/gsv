@@ -139,6 +139,11 @@
   overflow-wrap: anywhere;
 }
 .gsv-recovery-body .gsv-auth-link { align-self: flex-start; }
+.gsv-legal-acknowledgment { display: flex; align-items: flex-start; gap: 10px; color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+.gsv-legal-acknowledgment input { flex: none; margin: 3px 0 0; accent-color: var(--accent); }
+.gsv-legal-acknowledgment a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.gsv-legal-acknowledgment a:hover { color: var(--accent-bright); }
+.gsv-legal-acknowledgment a:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 
 .gsv-login-panel .gsv-section-header { padding: 0 4px 20px; background: transparent; }
 .gsv-login-panel .gsv-section-header-title { color: var(--text); font-size: 18px; font-weight: 400; letter-spacing: 0; }

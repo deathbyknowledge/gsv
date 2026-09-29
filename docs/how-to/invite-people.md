@@ -6,9 +6,9 @@ A space can hold more than one person. The root account invites people, sets or 
 
 1. Sign in as **root** and open **Settings → people.**
 2. Under **Invite a person**, enter the username they will use: lowercase, starting with a letter or `_`, up to 32 characters.
-3. Click **create invitation.** GSV shows a private link; **copy link** and send it over a channel you trust.
+3. Click **create invitation.** GSV shows a private link. Use **copy invitation message** and send the message over a channel you trust. It includes the [Privacy Policy](https://humansandmachin.es/privacy/) and [Terms of Service](https://gsv.space/terms/).
 
-The link expires after ten minutes. The person opens it, chooses their password, and is signed in to their own account in your space. Pending invitations are listed under **Invitations**, each with **cancel invitation**.
+The link expires after ten minutes. The person opens it, reviews the Terms and Privacy Policy, acknowledges them, and chooses a password. They can then sign in to their own account in your space. Pending invitations are listed under **Invitations**, each with **cancel invitation**.
 
 ## Manage accounts
 

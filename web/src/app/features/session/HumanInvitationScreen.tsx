@@ -14,11 +14,12 @@ export function HumanInvitationScreen() {
   const [attempt] = useState(() => { try { return readHumanInvitationAttempt(); } catch { return null; } });
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const submit = async (event: Event) => {
     event.preventDefault();
-    if (!attempt || busy) return;
+    if (!attempt || busy || !acknowledged) return;
     setBusy(true); setError(null);
     try {
       const result = await redeemHumanInvitation(service.client, snapshot.url, attempt, password);
@@ -35,8 +36,12 @@ export function HumanInvitationScreen() {
           <p>Choose a password for your local account in this space. The invitation fixes your username.</p>
           <TextInput label="YOUR PASSWORD" placeholder="••••••••••••" type="password" value={password} onChange={setPassword} clearable={false}
             inputProps={{ autoComplete: "new-password", minLength: 8, maxLength: 1024 }} />
+          <div class="gsv-legal-acknowledgment">
+            <input id="join-legal-acknowledgment" type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.currentTarget.checked)} required />
+            <label for="join-legal-acknowledgment">I agree to the <a href="https://gsv.space/terms/" target="_blank" rel="noopener noreferrer">Terms of Service</a> and acknowledge the <a href="https://humansandmachin.es/privacy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</label>
+          </div>
           <SessionError message={error} />
-          <Button variant="primary" block type="submit" label={busy ? "JOINING…" : "JOIN THIS SPACE"} disabled={busy || password.length < 8} />
+          <Button variant="primary" block type="submit" label={busy ? "JOINING…" : "JOIN THIS SPACE"} disabled={busy || password.length < 8 || !acknowledged} />
         </form>}
       {!username && <SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink>}
     </div>

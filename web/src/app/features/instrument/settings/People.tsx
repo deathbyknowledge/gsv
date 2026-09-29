@@ -7,6 +7,7 @@ import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./se
 
 const peopleKey = ["settings", "people"];
 const invitesKey = ["settings", "human-invitations"];
+const invitationMessage = (link: string) => `You've been invited to a GSV Space. Join within 10 minutes: ${link}\nPrivacy Policy: https://humansandmachin.es/privacy/\nTerms of Service: https://gsv.space/terms/`;
 
 export function People({ account, active, onDirty }: SettingsSectionProps) {
   const { client, connected } = useGateway();
@@ -42,9 +43,9 @@ export function People({ account, active, onDirty }: SettingsSectionProps) {
       <label>Username<input value={username} required pattern="[a-z_][a-z0-9_-]{0,31}" maxLength={32} disabled={!editable}
         onInput={(event) => { setUsername(event.currentTarget.value); setLink(null); }} /></label>
       <button class="ibtn" type="submit" disabled={!editable || !username}>create invitation</button>
-      {link && <div><p>Share this private link with the person. It expires after ten minutes.</p>
+      {link && <div><p>Share the invitation message with the person over a trusted channel. It includes the Privacy Policy and Terms of Service. The private link expires after ten minutes.</p>
         <input aria-label="Private invitation link" readOnly value={link} onFocus={(event) => event.currentTarget.select()} />
-        <button class="settings-text-action" type="button" onClick={() => void run(async () => { await navigator.clipboard.writeText(link); setNotice("Invitation copied."); })}>copy link</button>
+        <button class="settings-text-action" type="button" onClick={() => void run(async () => { await navigator.clipboard.writeText(invitationMessage(link)); setNotice("Invitation message copied."); })}>copy invitation message</button>
       </div>}
     </form>
     <h2>Accounts</h2>
