@@ -315,7 +315,7 @@ starts an agent process, use `proc spawn --non-interactive` and do not expect it
 answer to appear in a chat:
 
 ```cron
-0 9 * * * proc spawn --non-interactive --label refresh-index "Refresh the search index."
+0 9 * * * proc spawn --non-interactive --label 'Refresh search index' "Refresh the search index."
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the
