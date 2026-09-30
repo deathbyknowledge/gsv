@@ -60,6 +60,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.config.get",
     "sys.config.set",
     "sys.bootstrap",
+    "sys.feedback",
     "sys.target.get",
     "sys.target.list",
     "sys.target.update",

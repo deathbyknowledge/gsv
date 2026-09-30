@@ -2,6 +2,7 @@ import type { RefObject } from "preact";
 import type { Distance } from "../Instrument";
 import { Wordmark } from "./Wordmark";
 import { PlatformIdentity } from "../../../services/platform/PlatformIdentity";
+import { Feedback } from "./Feedback";
 
 type InstrumentHeaderProps = {
   distance: Distance;
@@ -22,6 +23,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
         <button type="button" aria-label="GSV · Open Zen" onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
+        <Feedback view={distance} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>

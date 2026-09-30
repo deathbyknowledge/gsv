@@ -548,6 +548,7 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
+| `sys.feedback` | Required UTF-8 JSON report (message and optional activity), at most 512 KiB | No |
 | `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |
 | `fs.transfer.send` | No | Successful file bytes |

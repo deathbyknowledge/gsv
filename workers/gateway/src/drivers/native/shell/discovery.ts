@@ -38,6 +38,7 @@ function defineNativeCommandDescriptors<T extends NativeCommandDescriptorMap>(va
 }
 
 const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
+  feedback: command("Send feedback to the space operator.", "Read a report from a file when the user asks you to share it. Keep report text out of the logged shell command.", ["feedback", "bug", "report", "suggestion", "support"], [], ["feedback [--id UUID] < report.txt"], ["sys.feedback"]),
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -178,6 +179,7 @@ export class ShellDiscoveryCatalog {
       const missing = requirements.filter((capability) =>
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
+      if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,
@@ -225,7 +227,7 @@ export class ShellDiscoveryCatalog {
       "SYNOPSIS",
       ...synopsis.map((line) => `  ${line}`),
       ...(entry.requirements?.length
-        ? ["", "CURRENT AVAILABILITY", `  Missing capabilities: ${entry.requirements.join(", ")}`]
+        ? ["", "CURRENT AVAILABILITY", `  Missing requirements: ${entry.requirements.join(", ")}`]
         : []),
       "",
       "DISCOVERY",

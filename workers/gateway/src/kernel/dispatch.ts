@@ -52,6 +52,7 @@ import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleS
 import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
+import { handleSysFeedback } from "./sys/feedback";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
 import { DevicePairingCreateError } from "./device-pairings";
@@ -575,6 +576,9 @@ async function dispatchKernel(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
+        break;
+      case "sys.feedback":
+        data = await handleSysFeedback(frame.args, ctx, frame.body);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

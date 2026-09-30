@@ -16,7 +16,7 @@ type GatewayProviderProps = {
   children: ComponentChildren;
 };
 
-const WEB_PEER: GsvPeerInfo = {
+export const WEB_PEER: GsvPeerInfo = {
   id: "gsv-ui",
   version: "0.6.2",
   platform: "browser",
