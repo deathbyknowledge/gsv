@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as transport from "../../shared/utils";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
-import { bodyFromText, type BinaryBody } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, type BinaryBody, type SysFeedbackArgs } from "@humansandmachines/gsv/protocol";
 import { FEEDBACK_MAX_BODY_BYTES, type FeedbackReport } from "@humansandmachines/gsv/services/feedback";
 import { handleSysFeedback as handle } from "./feedback";
 
 function handleSysFeedback(report: FeedbackReport, ctx: KernelContext) {
   const { id, context, ...content } = report;
-  return handle({ ...(id !== undefined ? { id } : {}), ...(context ? { context } : {}) }, ctx, bodyFromText(JSON.stringify(content)));
+  const args: SysFeedbackArgs = {};
+  if (id !== undefined) args.id = id;
+  if (context) args.context = context;
+  return handle(args, ctx, bodyFromText(JSON.stringify(content)));
 }
 
 function fixture() {
@@ -43,7 +46,8 @@ describe("operator feedback", () => {
     const cancel = vi.fn();
     const body: BinaryBody = { stream: new ReadableStream({
       start(controller) { controller.enqueue(new Uint8Array(FEEDBACK_MAX_BODY_BYTES + 1)); }, cancel,
-    }), ...(declared ? { length: FEEDBACK_MAX_BODY_BYTES + 1 } : {}) };
+    }) };
+    if (declared) body.length = FEEDBACK_MAX_BODY_BYTES + 1;
     await expect(handle({}, ctx, body)).rejects.toThrow("Body exceeds limit");
     expect(cancel).toHaveBeenCalledOnce();
     expect(submitFeedback).not.toHaveBeenCalled();
