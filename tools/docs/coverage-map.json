@@ -185,7 +185,8 @@
       ],
       "docs": [
         "docs/architecture/conversations.md",
-        "docs/architecture/agent-loop.md"
+        "docs/architecture/agent-loop.md",
+        "docs/how-to/connect-devices.md"
       ],
       "manual": [
         "pages/agents-assistants/"

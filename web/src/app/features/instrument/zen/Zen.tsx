@@ -25,6 +25,8 @@ import { useTerminalSessions } from "../../../services/terminal/TerminalProvider
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
+import { ConnectPlace } from "../fleet/ConnectPlace";
+import { FleetDialog } from "../fleet/FleetDialog";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -315,7 +317,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* message times follow the owner's zone; `today` moves once at that zone's midnight so a clock label gains its date */
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
-  const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
+  const viewer = accounts.data?.find((account) => account.relation === "self");
+  const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
     if (!active) return;
@@ -358,6 +361,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const firstGoKey = useRef<number | null>(null);
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
+  /* connecting a place from the selector, when the cloud is the only place; the dialog outlives a trip to Fleet and back */
+  const [connectingPlace, setConnectingPlace] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
@@ -726,6 +731,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (!active) { firstGoKey.current = null; return; }
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      if (event.target instanceof Element && event.target.closest(".fleet-dialog")) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
       if (!event.altKey && (event.key === "f" && (event.ctrlKey || event.metaKey) || event.key === "/" && !typing && !event.ctrlKey && !event.metaKey)) {
@@ -916,6 +922,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
+  const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
   const activeRun = connected ? runtime.activeRunId : null;
   const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
@@ -1078,7 +1086,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
-              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen}
+              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace}
               send={onSubmit} scroll={scrolling.move} />
           </div>
           <div class="zen-place-section">
@@ -1092,7 +1100,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
                 return (
                   <li key={target.id}>
-                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                    <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
                       aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
                       aria-pressed={target.id === currentPlace.id}
                       disabled={!target.online}
@@ -1100,6 +1108,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
                     </button>
+                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => setConnectingPlace(true)}>+ connect place</button>}
                   </li>
                 );
               })}
@@ -1108,6 +1117,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
+      <FleetDialog open={active && connectingPlace} title="Connect a place" onClose={() => setConnectingPlace(false)}>
+        <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError}
+          onClose={() => setConnectingPlace(false)}
+          onConnected={(id) => { setConnectingPlace(false); setWhere(id); setPickerQuery(null); }} />
+      </FleetDialog>
       {active && searchOpen && conversation.conversation && <ConversationSearch key={conversation.conversation.id}
         conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>
