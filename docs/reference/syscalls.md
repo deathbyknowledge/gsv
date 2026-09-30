@@ -1332,7 +1332,7 @@ and their ancestor records, and may update only its own assignment.
 | Syscall | Behavior |
 |---|---|
 | `r12y.list` | Lists current records, optionally filtered by exact ids, state, assignee, or parent. Terminal records are hidden unless requested. |
-| `r12y.get` | Reads one visible record and the owner's current ledger revision. |
+| `r12y.get` | Reads one visible record and the owner's current ledger revision. Ids are `r12y:<uuid>`; every `r12y.*` id argument also accepts the bare UUID and restores the prefix. |
 | `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
 | `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |

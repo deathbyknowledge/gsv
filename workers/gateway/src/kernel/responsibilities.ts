@@ -30,6 +30,7 @@ const MAX_DETAILS_BYTES = 32 * 1_024;
 const MAX_AUDIENCE_CONVERSATIONS = 16;
 const MAX_LIST_IDS = 500;
 const RESPONSIBILITY_ID_PATTERN = /^r12y:[0-9a-f-]{36}$/;
+const BARE_RESPONSIBILITY_UUID_PATTERN = /^[0-9a-f-]{36}$/;
 const STATES: readonly ResponsibilityState[] = [
   "open",
   "active",
@@ -435,7 +436,9 @@ function normalizePriority(
 }
 
 function normalizeResponsibilityId(value: string): string {
-  const id = normalizeText(value, "responsibility id", 64);
+  const text = normalizeText(value, "responsibility id", 64);
+  // Records are shown as `r12y:<uuid>`; a caller that drops the prefix still names exactly one record.
+  const id = BARE_RESPONSIBILITY_UUID_PATTERN.test(text) ? `r12y:${text}` : text;
   if (!RESPONSIBILITY_ID_PATTERN.test(id)) {
     throw new Error(`Invalid responsibility id: ${id}`);
   }

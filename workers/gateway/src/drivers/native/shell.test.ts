@@ -2096,8 +2096,10 @@ describe("proc native command", () => {
     );
   });
 
-  it("schedules supervision before assigning and admitting delegated work", async () => {
+  it("schedules supervision before assigning and admitting delegated work, keyed by the record's canonical id", async () => {
     const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
+    // The command is given the bare uuid; everything persisted or printed must carry the `r12y:` form.
+    const bareResponsibilityId = responsibilityId.slice("r12y:".length);
     const parent = makeProcess({
       processId: "task:shell",
       isPersonalController: true,
@@ -2189,7 +2191,7 @@ describe("proc native command", () => {
     });
 
     const result = await handleShellExec({
-      input: `proc delegate --responsibility ${responsibilityId} --label planning analyze schema`,
+      input: `proc delegate --responsibility ${bareResponsibilityId} --label planning analyze schema`,
     }, ctx);
 
     expect(result.ok).toBe(true);
