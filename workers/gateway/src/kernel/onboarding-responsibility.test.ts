@@ -35,7 +35,7 @@ function seedPreviousContract(responsibilities: ResponsibilityStore, ownerUid: n
 }
 
 describe("initial onboarding responsibility", () => {
-  it("creates one non-waking Ship responsibility for the owner", async () => {
+  it("creates one non-waking Ship responsibility carrying the welcome brief", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const first = ensureInitialOnboardingResponsibility(1000, responsibilities, 1_000);
@@ -50,21 +50,17 @@ describe("initial onboarding responsibility", () => {
         state: "waiting",
         priority: "high",
         blocker: "Waiting for the user's first message. Read this responsibility with `r12y show ID` and follow its instructions before replying.",
-        details: {
-          responsibilityType: "onboarding.initial",
-          goal: "The user should experience what GSV can do during their first usage through a SMALL, SIMPLE, CONTAINED TASK.",
-          outcomeRule: "At least one of the outcomes is required.",
-        },
+        details: { responsibilityType: "onboarding.initial" },
       });
-      expect(first.record.details?.acceptanceCriteria).toHaveLength(3);
-      expect(first.record.details?.outcomes).toHaveLength(3);
-      const instructions = first.record.details?.instructions;
-      expect(Array.isArray(instructions) && instructions.length).toBe(6);
-      expect(instructions).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^0 - The user is greeted by the UI with `Welcome to the ship\./),
-        expect.stringMatching(/^1 - Introduce your purpose in less than 10 words.*name or email/s),
-        expect.stringMatching(/^5 - Once the task is completed/),
-      ]));
+      const brief = first.record.details?.instructions;
+      expect(brief).toEqual(expect.any(String));
+      const text = String(brief);
+      expect(text.startsWith("# Welcome to gsv")).toBe(true);
+      for (const heading of ["## Goal", "## Acceptance criteria", "## Outcome", "## Instructions", "## Support"]) {
+        expect(text).toContain(heading);
+      }
+      expect(text).toContain("0 - The user is greeted by the UI");
+      expect(text).toContain("5 - Once the task is completed");
       expect(replay).toEqual({
         record: first.record,
         created: false,
@@ -74,7 +70,7 @@ describe("initial onboarding responsibility", () => {
     });
   });
 
-  it("rewrites an unresolved record from the previous release onto the current contract", async () => {
+  it("rewrites an untouched record from the previous release onto the current contract", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const seeded = seedPreviousContract(responsibilities, 1000, 1_000);
@@ -85,7 +81,7 @@ describe("initial onboarding responsibility", () => {
       expect(migrated.created).toBe(false);
       expect(migrated.record.id).toBe(seeded.record.id);
       expect(migrated.record.title).toBe("Welcome to gsv");
-      expect(migrated.record.details?.instructions).toHaveLength(6);
+      expect(String(migrated.record.details?.instructions)).toContain("## Instructions");
       expect(migrated.record.details).not.toHaveProperty("summary");
       expect(migrated.record.state).toBe("waiting");
       expect(migrated.revision).toBeGreaterThan(seeded.revision);
@@ -96,26 +92,34 @@ describe("initial onboarding responsibility", () => {
     });
   });
 
-  it("leaves resolved and owner-edited records alone", async () => {
+  it("leaves resolved and edited records alone, whichever field was edited", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
-      const actor = { kind: "account", uid: 1000 } as const;
 
       const resolved = seedPreviousContract(responsibilities, 1000, 1_000);
       responsibilities.update({
-        ownerUid: 1000, id: resolved.record.id, patch: { state: "resolved" }, actor, observedByShip: true, now: 1_500,
+        ownerUid: 1000, id: resolved.record.id, patch: { state: "resolved" }, actor: { kind: "account", uid: 1000 }, observedByShip: true, now: 1_500,
       });
       const afterResolved = ensureInitialOnboardingResponsibility(1000, responsibilities, 2_000);
       expect(afterResolved.record.title).toBe(PREVIOUS_CONTRACT.title);
       expect(afterResolved.record.state).toBe("resolved");
 
-      const edited = seedPreviousContract(responsibilities, 1001, 1_000);
-      responsibilities.update({
-        ownerUid: 1001, id: edited.record.id, patch: { title: "Setup, my way" }, actor: { kind: "account", uid: 1001 }, observedByShip: true, now: 1_500,
+      const edits = [
+        { title: "Setup, my way" },
+        { priority: "normal" },
+        { nextCheckAtMs: 9_000 },
+        { state: "open", blocker: null },
+      ] as const;
+      edits.forEach((patch, index) => {
+        const ownerUid = 2000 + index;
+        const seeded = seedPreviousContract(responsibilities, ownerUid, 1_000);
+        responsibilities.update({
+          ownerUid, id: seeded.record.id, patch: { ...patch }, actor: { kind: "account", uid: ownerUid }, observedByShip: true, now: 1_500,
+        });
+        const after = ensureInitialOnboardingResponsibility(ownerUid, responsibilities, 2_000);
+        expect(after.record.details, JSON.stringify(patch)).toEqual(PREVIOUS_CONTRACT.details);
+        expect(after.record.revision, JSON.stringify(patch)).toBe(seeded.record.revision + 1);
       });
-      const afterEdit = ensureInitialOnboardingResponsibility(1001, responsibilities, 2_000);
-      expect(afterEdit.record.title).toBe("Setup, my way");
-      expect(afterEdit.record.details).toEqual(PREVIOUS_CONTRACT.details);
     });
   });
 });
