@@ -34,10 +34,7 @@ export class GatewayDeletion {
       }
     }
     await Promise.allSettled([...this.host.transport.routedBodies.values()].map((body) => body.cancel("Installation retired")));
-    for (const row of this.resources("live")) {
-      const result = await this.resource(row).quiesceInstallationResource(input);
-      this.accept(input, row, result, "quiesced");
-    }
+    await this.quiesceChildren(input);
     if (this.count("live")) return this.receipt(input, "quiescing", "progress");
     await this.host.retirement.drain();
     if (await this.host.retirement.abortMultipart(this.host.env.STORAGE)) return this.receipt(input, "quiescing", "progress");
@@ -51,8 +48,10 @@ export class GatewayDeletion {
   async erase(input: InstallationDeletionRequest): Promise<InstallationDeletionReceipt> {
     const state = this.host.retirement.begin(input);
     if (state.phase === "live-erased") return this.status(input);
-    if (state.phase !== "quiesced" || this.count("live")) return this.receipt(input, "quiescing", "progress");
-    if (!this.inventoryComplete()) return this.receipt(input, "quiescing", "missing-inventory");
+    if (state.phase !== "quiesced") return this.receipt(input, "quiescing", "progress");
+    await this.quiesceChildren(input);
+    if (this.count("live")) return this.receipt(input, "erasing", "progress");
+    if (!this.inventoryComplete()) return this.receipt(input, "erasing", "missing-inventory");
     for (const row of this.resources("quiesced")) {
       const result = await this.resource(row).eraseInstallationResource(input);
       this.accept(input, row, result, "live-erased");
@@ -87,6 +86,16 @@ export class GatewayDeletion {
       };
     }
     return this.receipt(input, this.inventoryComplete() ? state.phase : "quiescing", this.inventoryComplete() ? "progress" : "missing-inventory");
+  }
+
+  private async quiesceChildren(input: InstallationDeletionRequest): Promise<void> {
+    // Retiring Kernels skip schema migrations; retain registry addresses before trusting their inventory.
+    this.host.retirement.raw.sql.exec(`INSERT OR IGNORE INTO installation_resources(kind, resource_id)
+      SELECT 'conversation', conversation_id FROM conversations`);
+    for (const row of this.resources("live")) {
+      const result = await this.resource(row).quiesceInstallationResource(input);
+      this.accept(input, row, result, "quiesced");
+    }
   }
 
   private resources(state: Resource["state"]): Resource[] {

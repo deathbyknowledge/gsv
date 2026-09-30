@@ -104,6 +104,10 @@ R2, ripgit, adapters, mail and inference report their own cleanup receipts.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 
+Gateway reconciles registered Conversation addresses with its retained inventory
+before child cleanup. Missing children are quiesced before erasure, including
+when a retiring Kernel skips ordinary schema migrations after a restart.
+
 Live erasure and retained copies are separate states. Backups, queues, telemetry
 and provider logs require operator-specific retention or deletion evidence;
 routing retirement alone proves neither. See the
