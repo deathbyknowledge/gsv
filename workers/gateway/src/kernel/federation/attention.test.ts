@@ -69,6 +69,43 @@ describe("contact attention admission", () => {
     });
   });
 
+  it("creates a fresh handoff when handling is enabled again", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { shipHandlesMessages: false } }, ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 3, patch: { shipHandlesMessages: true } }, ctx);
+      const active = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records;
+      expect(active).toHaveLength(1);
+      expect(active[0]!.id).not.toBe(first.id);
+      expect(ctx.responsibilities.get(OWNER.uid, first.id)?.state).toBe("cancelled");
+      const incoming = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(true);
+      expect(ctx.responsibilities.list({ ownerUid: OWNER.uid }).records.map((work) => work.id)).toEqual([active[0]!.id]);
+      expect(endContactHandling(contact, ctx)).toBe(true);
+      expect(ctx.responsibilities.get(OWNER.uid, active[0]!.id)?.state).toBe("cancelled");
+    });
+  });
+
+  it("keeps completed handoffs terminal when another message arrives", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: first.id, patch: { state: "resolved" }, actor: HUMAN, observedByShip: true, now: Date.now() });
+      const incoming = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(true);
+      expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
+      const active = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records;
+      expect(active).toHaveLength(1);
+      expect(active[0]!.id).not.toBe(first.id);
+      expect(ctx.responsibilities.get(OWNER.uid, first.id)?.state).toBe("resolved");
+    });
+  });
+
   it("requires an exact reply reference when several tasks await the same contact", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const ctx = context(storage);

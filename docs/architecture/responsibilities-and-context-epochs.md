@@ -218,8 +218,10 @@ System-owned producers use the same ledger contract:
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
 - Pairing a contact and accepting a first message create no agent responsibility.
-  An explicit standing handoff reuses one `contact.handoff` responsibility for that
-  contact generation. Task-specific sends can instead bind replies to existing Ship
+  An explicit standing handoff reuses one active `contact.handoff` responsibility for
+  that contact generation. Enabling handling again or receiving a message after Ship
+  completes that work creates a fresh responsibility; terminal records stay terminal.
+  Task-specific sends can instead bind replies to existing Ship
   work. A relevant reply reopens that responsibility regardless of human or Process
   authorship. Duplicates and acknowledgements create no work. Revocation cancels the
   standing handoff and returns unfinished tasks to Ship with the disconnection recorded.

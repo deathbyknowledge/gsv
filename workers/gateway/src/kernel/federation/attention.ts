@@ -5,7 +5,7 @@ import { handleResponsibilityGet } from "../responsibilities";
 import { requireContactCaller } from "./authority";
 
 const actor = { kind: "system", component: "contact-conversation" } as const;
-const handoffKey = (contact: FederationContactRecord) => `contact.handoff:${contact.id}:${contact.generation}`;
+const handoffPrefix = (contact: FederationContactRecord) => `contact.handoff:${contact.id}:${contact.generation}:`;
 const terminal = (work: ResponsibilityRecord) => work.state === "resolved" || work.state === "cancelled";
 
 export function bindContactReply(contact: FederationContactRecord, message: FederationOutboxLocalMessage, responsibilityId: string, ctx: KernelContext): void {
@@ -16,7 +16,7 @@ export function bindContactReply(contact: FederationContactRecord, message: Fede
 }
 
 export function changeContactHandling(contact: FederationContactRecord, ctx: KernelContext, messageDetails: JsonObject = {}): void {
-  const existing = ctx.responsibilities.getByDedupeKey(contact.ownerUid, handoffKey(contact));
+  const existing = ctx.responsibilities.listActiveByDedupeKeyPrefix(contact.ownerUid, handoffPrefix(contact))[0];
   if (contact.preferences.shipHandlesMessages) {
     if (contact.state !== "active" || contact.blocked) throw new Error("Only an active contact can be handed to Ship");
     const details = { contactId: contact.id, conversationId: contact.conversationId, contactGeneration: contact.generation, ...messageDetails };
@@ -24,9 +24,9 @@ export function changeContactHandling(contact: FederationContactRecord, ctx: Ker
     else ctx.responsibilities.create({
       ownerUid: contact.ownerUid, title: "Handle this contact conversation", details, source: actor,
       audience: { conversationIds: [contact.conversationId] }, assignee: { kind: "ship" },
-      state: "open", priority: "normal", dedupeKey: handoffKey(contact), actor, observedByShip: false, now: Date.now(),
+      state: "open", priority: "normal", dedupeKey: `${handoffPrefix(contact)}${crypto.randomUUID()}`, actor, observedByShip: false, now: Date.now(),
     });
-  } else if (existing && !terminal(existing)) {
+  } else if (existing) {
     ctx.responsibilities.update({ ownerUid: contact.ownerUid, id: existing.id,
       patch: { state: "cancelled", blocker: null, resolution: { reason: "Person is handling new messages" } },
       actor, observedByShip: false, now: Date.now() });
@@ -59,13 +59,13 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
 export function endContactHandling(contact: FederationContactRecord, ctx: KernelContext): boolean {
   const tasks = ctx.federation.replyResponsibilities(contact);
   ctx.federation.clearReplyWaits(contact);
-  const handling = ctx.responsibilities.getByDedupeKey(contact.ownerUid, handoffKey(contact));
-  if (handling && !terminal(handling)) changeContactHandling({ ...contact, preferences: { ...contact.preferences, shipHandlesMessages: false } }, ctx);
+  const handling = ctx.responsibilities.listActiveByDedupeKeyPrefix(contact.ownerUid, handoffPrefix(contact))[0];
+  if (handling) changeContactHandling({ ...contact, preferences: { ...contact.preferences, shipHandlesMessages: false } }, ctx);
   for (const id of tasks) {
     const work = ctx.responsibilities.get(contact.ownerUid, id);
     if (work && !terminal(work)) reopen(work, { contactDisconnected: { contactId: contact.id, conversationId: contact.conversationId } }, ctx);
   }
-  return tasks.length > 0 || !!handling && !terminal(handling);
+  return tasks.length > 0 || !!handling;
 }
 
 function reopen(work: ResponsibilityRecord, details: JsonObject, ctx: KernelContext): void {
