@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as transport from "../../shared/utils";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
-import { handleSysFeedback } from "./feedback";
+import { bodyFromText, type BinaryBody } from "@humansandmachines/gsv/protocol";
+import { FEEDBACK_MAX_BODY_BYTES, type FeedbackReport } from "@humansandmachines/gsv/services/feedback";
+import { handleSysFeedback as handle } from "./feedback";
+
+function handleSysFeedback(report: FeedbackReport, ctx: KernelContext) {
+  const { id, context, ...content } = report;
+  return handle({ ...(id !== undefined ? { id } : {}), ...(context ? { context } : {}) }, ctx, bodyFromText(JSON.stringify(content)));
+}
 
 function fixture() {
   const submitFeedback = vi.fn(async ({ id }: { id: string }) => ({ id }));
@@ -20,6 +27,47 @@ function fixture() {
 
 describe("operator feedback", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it("rejects a missing body and cancels bodies rejected before reading", async () => {
+    const { ctx, submitFeedback } = fixture();
+    await expect(handle({}, ctx)).rejects.toThrow("report body");
+    const cancel = vi.fn();
+    delete ctx.env.FEEDBACK;
+    await expect(handle({}, ctx, { stream: new ReadableStream({ cancel }) })).rejects.toThrow("not available");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(submitFeedback).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("cancels an oversized body (declared length: %s)", async (declared) => {
+    const { ctx, submitFeedback } = fixture();
+    const cancel = vi.fn();
+    const body: BinaryBody = { stream: new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(FEEDBACK_MAX_BODY_BYTES + 1)); }, cancel,
+    }), ...(declared ? { length: FEEDBACK_MAX_BODY_BYTES + 1 } : {}) };
+    await expect(handle({}, ctx, body)).rejects.toThrow("Body exceeds limit");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(submitFeedback).not.toHaveBeenCalled();
+  });
+
+  it("ends a stalled upload at the delivery deadline and releases its reader", async () => {
+    vi.useFakeTimers();
+    const { ctx, submitFeedback } = fixture();
+    const cancel = vi.fn();
+    const body = { stream: new ReadableStream<Uint8Array>({ cancel }) };
+    const rejected = expect(handle({}, ctx, body)).rejects.toThrow("Feedback delivery timed out");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(body.stream.locked).toBe(false);
+    expect(submitFeedback).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not expose malformed JSON content in errors", async () => {
+    const { ctx, submitFeedback } = fixture();
+    await expect(handle({}, ctx, bodyFromText("private invalid report"))).rejects.toThrow(/^Invalid feedback report$/);
+    expect(submitFeedback).not.toHaveBeenCalled();
+  });
 
   it("bounds a stalled inbox, disposes the remote call and allows a retry", async () => {
     vi.useFakeTimers();
@@ -65,7 +113,7 @@ describe("operator feedback", () => {
     const rejected = expect(pending).rejects.toThrow("not approved");
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
     expect(send).toHaveBeenCalledWith("inst_feedback", "proc:ship", expect.objectContaining({
-      call: "proc.tool.authorize", args: expect.objectContaining({ syscall: "sys.feedback", args: { message: "Report" } }),
+      call: "proc.tool.authorize", args: expect.objectContaining({ syscall: "sys.feedback", args: {} }),
     }));
     expect(submitFeedback).not.toHaveBeenCalled();
     approve(false);

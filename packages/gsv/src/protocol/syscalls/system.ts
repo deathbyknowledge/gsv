@@ -64,11 +64,8 @@ export type FeedbackActivity = {
 };
 
 export type SysFeedbackArgs = {
-  message: string;
   /** Reuse the same id when retrying a submission. */
   id?: string;
-  /** An explicitly selected, bounded snapshot; never collected by the inbox. */
-  activity?: FeedbackActivity;
   context?: {
     view?: "zen" | "fleet" | "memory" | "people" | "settings";
     platform?: "web" | "desktop";

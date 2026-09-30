@@ -104,9 +104,12 @@ adapter. See [Web search](../reference/web-search.md).
 
 Operators can supply `GsvRuntime.services.feedback`, exposed to the Gateway as
 `FEEDBACK`, implementing `FeedbackService.submitFeedback`. The authenticated
-`sys.feedback` syscall accepts only a bounded report and optional UI context;
-Kernel derives the installation and human owner. The service owns the inbox and
-delivery acknowledgement. No report content enters the telemetry tail contract.
+`sys.feedback` syscall keeps retry identity and UI context in its arguments,
+with the bounded report and optional selected Ship activity in a JSON frame body.
+Kernel consumes or cancels that body and derives the installation and human owner.
+The syscall ledger retains only arguments, without the report or attachment.
+The service owns the inbox and delivery acknowledgement. No report content enters
+the telemetry tail contract.
 
 The Instrument offers feedback when the binding exists and the caller has
 `sys.feedback`. The native `feedback` shell command uses the same syscall, so

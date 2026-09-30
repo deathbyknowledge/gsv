@@ -7,6 +7,11 @@ import { createSessionService } from "../../../services/session/sessionService";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { Feedback } from "./Feedback";
+import { bodyToText } from "@humansandmachines/gsv/protocol";
+
+async function reportContent(index: number) {
+  return JSON.parse(await bodyToText(fixture.request.mock.calls[index][2]!.body!));
+}
 
 const fixture = { available: true, request: vi.fn<GSVClient["request"]>() };
 const listeners = new Set<(status: GsvClientStatus) => void>();
@@ -83,10 +88,13 @@ describe("feedback", () => {
     expect(element("textarea").props.value).toBe("  The file will not open.  ");
     const first = fixture.request.mock.calls[0];
     expect(first[0]).toBe("sys.feedback");
-    expect(first[1]).toMatchObject({ message: "The file will not open.", context: { view: "zen", platform: "web", version: WEB_PEER.version } });
-    expect(first[1]).not.toHaveProperty("activity");
+    expect(first[1]).toMatchObject({ context: { view: "zen", platform: "web", version: WEB_PEER.version } });
+    expect(first[1]).not.toHaveProperty("message");
+    const content = await reportContent(0);
+    expect(content).toEqual({ message: "The file will not open." });
     await send();
     expect(fixture.request.mock.calls[1][1]).toEqual(first[1]);
+    expect(await reportContent(1)).toEqual(content);
     expect(collectText(tree)).toContain("Thanks for the feedback.");
     await act(() => element("button").props.onClick!());
     expect(element("textarea").props.value).toBe("");
@@ -105,9 +113,11 @@ describe("feedback", () => {
     expect(collectText(tree)).toContain("The file did not open.");
     fixture.request.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ data: { id: "receipt" } });
     await type("Please fix it"); await send(); await send();
-    const report = fixture.request.mock.calls[2][1];
+    const report = await reportContent(2);
+    expect(fixture.request.mock.calls[2][1]).not.toHaveProperty("activity");
     expect(report).toMatchObject({ activity: { pid: "proc:ship", messageCount: 1, text: expect.stringContaining("The file did not open.") } });
-    expect(fixture.request.mock.calls[3][1]).toEqual(report);
+    expect(await reportContent(3)).toEqual(report);
+    expect(fixture.request.mock.calls[3][1]).toEqual(fixture.request.mock.calls[2][1]);
     expect(fixture.request).toHaveBeenCalledTimes(4);
   });
 
@@ -117,7 +127,7 @@ describe("feedback", () => {
     await includeActivity(false);
     fixture.request.mockResolvedValueOnce({ data: { id: "receipt" } });
     await type("A report"); await send();
-    expect(fixture.request.mock.calls[2][1]).not.toHaveProperty("activity");
+    expect(await reportContent(2)).not.toHaveProperty("activity");
   });
 
   it("does not silently send without an attachment if the selected history fails to load", async () => {

@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { GSVClient } from "@humansandmachines/gsv";
+import { bodyFromText } from "@humansandmachines/gsv/protocol";
+import type { FeedbackReport } from "@humansandmachines/gsv/services/feedback";
 import type { TestHarness } from "wrangler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, integrationGatewayConfig, webSocketUrl } from "./harness";
@@ -8,6 +10,10 @@ describe("clean-space operator feedback", () => {
   let harness: TestHarness;
   let client: GSVClient;
   let url: string;
+  async function submit(report: FeedbackReport, caller = client) {
+    const { id, context, ...content } = report;
+    return (await caller.request("sys.feedback", { id, context }, { body: bodyFromText(JSON.stringify(content)) })).data;
+  }
   beforeAll(async () => {
     harness = createGatewayTestHarness();
     await harness.update((options) => ({ ...options, workers: [
@@ -30,33 +36,46 @@ describe("clean-space operator feedback", () => {
     const connection = await client.connect();
     expect(connection.server.features).toContain("operator-feedback");
     const id = crypto.randomUUID();
-    expect(await client.sys.feedback({ id, message: "A synthetic UI report", context: { platform: "web", view: "zen" } })).toEqual({ id });
-    expect(await client.sys.feedback({ id, message: "A report with activity", activity: {
+    expect(await submit({ id, message: "A synthetic UI report", context: { platform: "web", view: "zen" } })).toEqual({ id });
+    expect(await submit({ id, message: "A report with activity", activity: {
       pid: "proc:ship", messageCount: 1, text: "Synthetic user-authorized snapshot", truncated: false,
     } })).toEqual({ id });
     const shellId = crypto.randomUUID();
     const shell = await client.shell.exec({ input: `feedback --id ${shellId} 'A synthetic shell report'` });
     expect(shell).toMatchObject({ status: "completed", exitCode: 0, output: `${JSON.stringify({ id: shellId })}\n` });
-    await expect(client.sys.feedback({ message: " " })).rejects.toThrow("Invalid feedback report");
-    await expect(new GSVClient().requestOnce(url, "sys.feedback", { message: "Anonymous report" })).rejects.toThrow();
+    await expect(submit({ message: " " })).rejects.toThrow("Invalid feedback report");
+    await expect(new GSVClient().requestOnce(url, "sys.feedback", {})).rejects.toThrow();
     const machineToken = await client.sys.token.create({ kind: "machine", peerId: "feedback-machine" });
     const machine = new GSVClient({ url, username: "person", token: machineToken.token.token, peer: { id: "feedback-machine", implements: ["fs.read"] } });
     try {
       const machineConnection = await machine.connect();
       expect(machineConnection.server.features ?? []).not.toContain("operator-feedback");
-      await expect(machine.sys.feedback({ message: "Machine report" })).rejects.toThrow();
+      await expect(submit({ message: "Machine report" }, machine)).rejects.toThrow();
     } finally { machine.close(); }
   });
 
   it("ends a stalled inbox call and accepts the same report on retry", async () => {
     const input = { id: crypto.randomUUID(), message: "Stall the first attempt" };
-    await expect(client.sys.feedback(input)).rejects.toThrow("Feedback delivery timed out");
-    expect(await client.sys.feedback(input)).toEqual({ id: input.id });
+    await expect(submit(input)).rejects.toThrow("Feedback delivery timed out");
+    expect(await submit(input)).toEqual({ id: input.id });
+  });
+
+  it("keeps report and activity content out of the syscall ledger", async () => {
+    const id = crypto.randomUUID();
+    const message = "PRIVATE_REPORT_CONTENT";
+    const text = `PRIVATE_ACTIVITY_CONTENT ${"🛰️".repeat(10_000)}`;
+    expect(await submit({ id, message, activity: { pid: "proc:ship", messageCount: 20, text, truncated: false } })).toEqual({ id });
+    const { lines } = await client.sys.ledger.list({ callPrefix: "sys.feedback", limit: 20 });
+    const line = lines.find(line => JSON.parse(line.args).id === id);
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!.args)).toEqual({ id });
+    expect(JSON.stringify(lines)).not.toContain("PRIVATE_REPORT_CONTENT");
+    expect(JSON.stringify(lines)).not.toContain("PRIVATE_ACTIVITY_CONTENT");
   });
 
   it("rejects another report's receipt and accepts a matching receipt on retry", async () => {
     const input = { id: crypto.randomUUID(), message: "Misreport the first receipt" };
-    await expect(client.sys.feedback(input)).rejects.toThrow("Invalid feedback receipt");
-    expect(await client.sys.feedback(input)).toEqual({ id: input.id });
+    await expect(submit(input)).rejects.toThrow("Invalid feedback receipt");
+    expect(await submit(input)).toEqual({ id: input.id });
   });
 });

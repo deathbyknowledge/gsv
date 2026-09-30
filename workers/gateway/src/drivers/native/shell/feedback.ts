@@ -1,5 +1,5 @@
 import { defineCommand, type ExecResult } from "just-bash";
-import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
 import type { NativeShellCommandOptions } from "./commands";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
@@ -17,7 +17,7 @@ export function buildFeedbackCommand(ctx: KernelContext, request?: NativeShellCo
       if (args[0] === "--") args = args.slice(1);
       const message = args.length ? args.join(" ") : decodeShellStdin(shell.stdin);
       if (!request) throw new Error("direct syscall transport is unavailable");
-      const response = await request({ type: "req", id: crypto.randomUUID(), call: "sys.feedback", args: { id, message } }, shell.signal);
+      const response = await request({ type: "req", id: crypto.randomUUID(), call: "sys.feedback", args: { id }, body: bodyFromText(JSON.stringify({ message })) }, shell.signal);
       if (!response.ok) throw new Error(response.error.message);
       await cancelBinaryBody(response.body, "Feedback returns a receipt");
       return { stdout: `${JSON.stringify(response.data)}\n`, stderr: "", exitCode: 0 };

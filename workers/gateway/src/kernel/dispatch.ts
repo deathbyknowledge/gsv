@@ -564,7 +564,7 @@ async function dispatchKernel(
         data = await handleSysBootstrap(frame.args, ctx);
         break;
       case "sys.feedback":
-        data = await handleSysFeedback(frame.args, ctx);
+        data = await handleSysFeedback(frame.args, ctx, frame.body);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

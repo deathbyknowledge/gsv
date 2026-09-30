@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { FEEDBACK_ACTIVITY_MESSAGES, FEEDBACK_FEATURE, FEEDBACK_MAX_LENGTH } from "@humansandmachines/gsv/services/feedback";
-import type { FeedbackActivity, SysFeedbackArgs } from "@humansandmachines/gsv/protocol";
+import { FEEDBACK_ACTIVITY_MESSAGES, FEEDBACK_FEATURE, FEEDBACK_MAX_LENGTH, type FeedbackReport } from "@humansandmachines/gsv/services/feedback";
+import { bodyFromText, type FeedbackActivity } from "@humansandmachines/gsv/protocol";
 import { useGateway, WEB_PEER } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { useNativeInput } from "../../../services/platform/PlatformProvider";
@@ -21,7 +21,7 @@ export function Feedback({ view }: { view: Distance }) {
   const [activity, setActivity] = useState<FeedbackActivity | null>(null);
   const activityRequest = useRef<AbortController | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
-  const submission = useRef<SysFeedbackArgs | null>(null);
+  const submission = useRef<FeedbackReport | null>(null);
   const sending = useRef(false);
   const lifetime = useRef(new AbortController());
   const titleId = useId();
@@ -68,7 +68,10 @@ export function Feedback({ view }: { view: Distance }) {
       if (activityState === "ready" && activity) submission.current.activity = activity;
     }
     try {
-      await client.request("sys.feedback", submission.current, { signal: lifetime.current.signal });
+      const { id, context, ...content } = submission.current;
+      await client.request("sys.feedback", { id, context }, {
+        body: bodyFromText(JSON.stringify(content)), signal: lifetime.current.signal,
+      });
       if (lifetime.current.signal.aborted) return;
       setMessage("");
       submission.current = null;
