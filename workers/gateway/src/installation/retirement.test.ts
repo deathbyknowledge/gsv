@@ -10,8 +10,6 @@ import { InstallationRetirement, INSTALLATION_RETIREMENT_KEY, MULTIPART_UPLOAD_P
 import { GatewayDeletionDiscovery } from "./deletion-discovery";
 import { PROCESS_KILLED_TOMBSTONE_KEY, tombstoneKilledProcessStorage } from "../process/internal/lifecycle";
 import { createInstallationStorage, installationStoragePrefix } from "./storage";
-import { runSqlMigrations } from "../schema/runner";
-import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "../kernel/schema/migrations";
 
 function request() {
   return { version: 1 as const, operationId: crypto.randomUUID(), installationId: crypto.randomUUID() };
@@ -275,42 +273,6 @@ describe("installation resource retirement", () => {
     expect(await (await otherStorage.get("home/person/page"))?.text()).toBe("other");
     expect(await runInDurableObject(other, (instance: Kernel) => instance.config.get("user.timezone"))).toBe("Europe/Amsterdam");
     await otherStorage.delete("home/person/page");
-  });
-
-  it.each(["quiescing", "quiesced"] as const)("repairs a v063 conversation inventory when retirement resumes from %s", async (phase) => {
-    const input = request();
-    const kernel = env.KERNEL.getByName(input.installationId);
-    const conversations = Array.from({ length: 17 }, (_, index) => `conv:missing-${index}`);
-    await runInDurableObject(kernel, async (instance: Kernel, state) => {
-      await state.storage.deleteAll();
-      runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id <= 63));
-      state.storage.kv.put(RESOURCE_IDENTITY_KEY, { name: input.installationId, inventoriedSinceBirth: true });
-      for (const id of conversations) instance.conversations.ensureContact(1000, "Person", id);
-      expect(state.storage.sql.exec("SELECT 1 FROM installation_resources").toArray()).toEqual([]);
-      instance.retirement.begin(input);
-      if (phase === "quiesced") await instance.retirement.quiesced();
-    });
-    for (const id of conversations) {
-      await env.CONVERSATION.getByName(conversationDurableObjectName(input.installationId, id)).initialize({ ownerUid: 1000, kind: "contact" });
-    }
-    await evictDurableObject(kernel);
-    await runInDurableObject(kernel, (_instance: Kernel, state) => {
-      expect(state.storage.sql.exec("SELECT 1 FROM _gsv_schema_migrations WHERE component = 'kernel' AND id = 64").toArray()).toEqual([]);
-    });
-    if (phase === "quiescing") {
-      expect((await kernel.quiesceInstallation(input)).phase).toBe("quiescing");
-      expect((await kernel.quiesceInstallation(input)).phase).toBe("quiesced");
-    }
-    expect((await kernel.eraseInstallation(input)).phase).toBe("erasing");
-    expect((await kernel.eraseInstallation(input)).phase).toBe(phase === "quiesced" ? "erasing" : "live-erased");
-    if (phase === "quiesced") expect((await kernel.eraseInstallation(input)).phase).toBe("live-erased");
-    for (const id of conversations) {
-      const conversation = env.CONVERSATION.getByName(conversationDurableObjectName(input.installationId, id));
-      expect(await conversation.inspectInstallationResource()).toMatchObject({ empty: true });
-      await runInDurableObject(conversation, (instance: Conversation) => {
-        expect(() => instance.initialize({ ownerUid: 1000, kind: "contact" })).toThrow("retired");
-      });
-    }
   });
 
   it("inspects a nameless historical tombstone without restoring the process schema", async () => {

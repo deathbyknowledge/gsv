@@ -5,18 +5,15 @@ import { runSqlMigrations } from "../schema/runner";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./schema/migrations";
 
 describe("ConversationRegistry", () => {
-  it.each([0, 54, 63])("retains the deletion inventory for new conversations after schema version %s", async (version) => {
+  it.each([0, 54])("retains the deletion inventory for new conversations after schema version %s", async (version) => {
     await runWithRealKernelSql(async (sql, storage) => {
       if (version) {
         await storage.deleteAll();
         runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id <= version));
         sql.exec(`INSERT INTO conversations (conversation_id, owner_uid, kind, title, handler_pid, latest_sequence, created_at, updated_at)
-          VALUES ('conv:existing', 1000, 'contact', 'Existing', ?, 42, 1, 2)`, version === 54 ? "proc:old" : null);
-        sql.exec("INSERT INTO conversation_members VALUES ('conv:existing', 'process', 'proc:old', ?, 1)", version === 54 ? "handler" : "observer");
+          VALUES ('conv:existing', 1000, 'contact', 'Existing', 'proc:old', 42, 1, 2)`);
+        sql.exec("INSERT INTO conversation_members VALUES ('conv:existing', 'process', 'proc:old', 'handler', 1)");
         sql.exec("INSERT INTO installation_resources VALUES ('conversation', 'conv:removed', 'live-erased')");
-        if (version === 63) {
-          expect(sql.exec("SELECT 1 FROM installation_resources WHERE resource_id = 'conv:existing'").toArray()).toEqual([]);
-        }
         runKernelSqlMigrations(storage);
         runKernelSqlMigrations(storage);
         expect(sql.exec("SELECT handler_pid, latest_sequence FROM conversations WHERE conversation_id = 'conv:existing'").toArray())

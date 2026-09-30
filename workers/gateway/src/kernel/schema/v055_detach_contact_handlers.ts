@@ -26,5 +26,8 @@ export const KERNEL_V055_DETACH_CONTACT_HANDLERS: SqlMigration = {
     "ALTER TABLE conversations_v055 RENAME TO conversations",
     "CREATE UNIQUE INDEX conversations_ship_owner_idx ON conversations (owner_uid) WHERE kind = 'ship'",
     "CREATE UNIQUE INDEX conversations_handler_work_idx ON conversations (handler_pid) WHERE kind = 'work'",
+    `CREATE TRIGGER retain_conversation_resource AFTER INSERT ON conversations BEGIN
+      INSERT OR IGNORE INTO installation_resources(kind, resource_id) VALUES ('conversation', NEW.conversation_id);
+    END`,
   ],
 };
