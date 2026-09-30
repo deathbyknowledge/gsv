@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FeedbackSubmission } from "@humansandmachines/gsv/services/feedback";
 
 const stalledReports = new Set<string>();
+const misreportedReceipts = new Set<string>();
 
 export default class FeedbackFixture extends WorkerEntrypoint {
   async submitFeedback(input: FeedbackSubmission) {
@@ -12,6 +13,10 @@ export default class FeedbackFixture extends WorkerEntrypoint {
     if (input.message === "Stall the first attempt" && !stalledReports.has(input.id)) {
       stalledReports.add(input.id);
       await new Promise(resolve => setTimeout(resolve, 60_000));
+    }
+    if (input.message === "Misreport the first receipt" && !misreportedReceipts.has(input.id)) {
+      misreportedReceipts.add(input.id);
+      return { id: crypto.randomUUID() };
     }
     return { id: input.id };
   }

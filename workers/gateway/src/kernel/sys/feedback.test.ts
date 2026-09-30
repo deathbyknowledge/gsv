@@ -90,6 +90,15 @@ describe("operator feedback", () => {
     expect(submitFeedback).toHaveBeenCalledWith(expect.objectContaining({ ownerUid: 1000, source: "agent" }));
   });
 
+  it.each([undefined, null, {}, { id: "wrong-report" }, { id: 17 }, "invalid"])("rejects an invalid inbox receipt and permits a retry: %j", async (receipt) => {
+    const { ctx, submitFeedback } = fixture();
+    // SAFETY: intentionally malformed RPC results exercise the service trust boundary.
+    submitFeedback.mockResolvedValueOnce(receipt as { id: string });
+    const input = { id: crypto.randomUUID(), message: "Report" };
+    await expect(handleSysFeedback(input, ctx)).rejects.toThrow("Invalid feedback receipt");
+    expect(await handleSysFeedback(input, ctx)).toEqual({ id: input.id });
+  });
+
   it.each([
     { message: " " }, { message: "x".repeat(8001) }, { message: "ok", id: "invalid" },
     { message: "ok", installationId: "other" }, { message: "ok", ownerUid: 0 },

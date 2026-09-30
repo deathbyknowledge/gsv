@@ -50,4 +50,10 @@ describe("clean-space operator feedback", () => {
     await expect(client.sys.feedback(input)).rejects.toThrow("Feedback delivery timed out");
     expect(await client.sys.feedback(input)).toEqual({ id: input.id });
   });
+
+  it("rejects another report's receipt and accepts a matching receipt on retry", async () => {
+    const input = { id: crypto.randomUUID(), message: "Misreport the first receipt" };
+    await expect(client.sys.feedback(input)).rejects.toThrow("Invalid feedback receipt");
+    expect(await client.sys.feedback(input)).toEqual({ id: input.id });
+  });
 });
