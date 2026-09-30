@@ -14,6 +14,7 @@ export default defineConfig({
               import { WorkerEntrypoint } from "cloudflare:workers";
               const calls = [];
               let approvalReleased = false;
+              let recoveryReleased = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
@@ -22,6 +23,12 @@ export default defineConfig({
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, bodyBytes });
                   if (frame.args.message?.text === "__gateway_unavailable__") return null;
+                  if (frame.args.message?.text === "__identity_revoked_delayed__") {
+                    while (!recoveryReleased) await new Promise((resolve) => setTimeout(resolve, 10));
+                  }
+                  if (frame.args.message?.text?.startsWith("__identity_revoked")) {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true, droppedReason: "revoked_identity" } };
+                  }
                   return {
                     type: "res",
                     id: frame.id,
@@ -62,6 +69,7 @@ export default defineConfig({
                 }
                 async fetch(request) {
                   if (new URL(request.url).pathname === "/release-approval") approvalReleased = true;
+                  if (new URL(request.url).pathname === "/release-recovery") recoveryReleased = true;
                   return Response.json(calls);
                 }
               }
@@ -226,7 +234,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/retirement.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts"],
     // The window scenario holds, releases and approves several messages in one flow.
     testTimeout: 30_000,
   },

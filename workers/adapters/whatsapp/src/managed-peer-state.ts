@@ -64,7 +64,8 @@ export function bindManagedWhatsAppPeerIdentity(
     throw new Error("Managed WhatsApp peer identity mismatch");
   }
   const receivedAt = Math.min(inbound.timestamp ?? now, now);
-  const latest = receivedAt >= (state?.lastInboundAt ?? 0);
+  const latest = inbound.messageId !== state?.lastInboundMessageId
+    && receivedAt >= (state?.lastInboundAt ?? 0);
   const next: ManagedWhatsAppPeerState = {
     version: 1,
     actorId: inbound.actorId,

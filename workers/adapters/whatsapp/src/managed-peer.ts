@@ -15,6 +15,7 @@ import {
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
 import {
+  adapterInboundRequiresPairing,
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
@@ -215,6 +216,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
   async handleWebhook(event: ManagedWhatsAppPeerEvent): Promise<{ ok: true }> {
+    const deliveryId = event.kind === "message"
+      ? event.inbound.deliveryId
+      : event.kind === "approval"
+        ? `interactive:${whatsAppDeliveryToken(event.reply.interactionId)}`
+        : `release:${whatsAppDeliveryToken(event.tap.interactionId)}`;
     const identity = event.kind === "message"
       ? event.inbound
       : event.kind === "approval"
@@ -224,22 +230,21 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const state = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
       // A stray button from a number that never messaged has nothing to resolve.
       if (!state && event.kind !== "message") return { skip: true as const };
+      if (state && await this.inboundDeliveries.isRecorded(deliveryId, txn)) {
+        return { skip: false as const, route: state.activeRoute };
+      }
       const next = bindManagedWhatsAppPeerIdentity(state, identity, Date.now());
       await txn.put(STATE_KEY, next);
       return { skip: false as const, route: next.activeRoute };
     });
     if (route.skip || this.retirement.retired(route.route)) return { ok: true };
     const routeGeneration = route.route?.generation;
-    let deliveryId: string;
     let payload: InboundPayload;
     if (event.kind === "message") {
-      deliveryId = event.inbound.deliveryId;
       payload = { kind: "message", inbound: event.inbound, routeGeneration };
     } else if (event.kind === "approval") {
-      deliveryId = `interactive:${whatsAppDeliveryToken(event.reply.interactionId)}`;
       payload = { kind: "approval", reply: event.reply, routeGeneration };
     } else {
-      deliveryId = `release:${whatsAppDeliveryToken(event.tap.interactionId)}`;
       payload = { kind: "release", tap: event.tap, routeGeneration };
     }
     await this.inboundDeliveries.enqueueAndArm(
@@ -639,7 +644,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       transfer.body,
     );
     if (this.retirement.retired(route)) return { terminal: true };
-    if (result.challenge) return await this.pairingResponse(inbound);
+    if (adapterInboundRequiresPairing(result)) {
+      if ((await this.requireState()).activeRoute?.generation !== route.generation) return { terminal: true };
+      return await this.pairingResponse(inbound);
+    }
     const disposition = adapterInboundResultDisposition(result, {
       surface: { kind: "dm", id: inbound.surfaceId },
       providerMessageId: inbound.messageId,

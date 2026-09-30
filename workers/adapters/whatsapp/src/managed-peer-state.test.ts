@@ -88,6 +88,10 @@ describe("managed WhatsApp peer state", () => {
 
     const replay = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.zero", timestamp: now - 60_000 }, now);
     expect(replay.pendingTemplate).toEqual(pending.pendingTemplate);
+    const duplicate = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.one", timestamp: now - 5_000 }, now);
+    expect(duplicate.pendingTemplate).toEqual(pending.pendingTemplate);
+    const distinctSameTime = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.other", timestamp: now - 5_000 }, now);
+    expect(distinctSameTime.pendingTemplate).toBeUndefined();
     const answered = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.two", timestamp: now + 1_000 }, now + 1_000);
     expect(answered.pendingTemplate).toBeUndefined();
     expect(answered).toMatchObject({ lastInboundAt: now + 1_000, lastInboundMessageId: "wamid.two" });

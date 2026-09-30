@@ -75,6 +75,14 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
     }
   }
 
+  /** Read through the caller's transaction before changing state for an incoming receipt. */
+  async isRecorded(deliveryId: string, storage: Pick<DurableObjectStorage, "get"> = this.storage): Promise<boolean> {
+    const record = await storage.get<PendingInboundDelivery<Payload, ResponseContext>>(
+      this.recordKey(requireDeliveryId(deliveryId)),
+    );
+    return record !== undefined && (record.state !== "completed" || record.expiresAt > Date.now());
+  }
+
   async enqueueAndArm(
     deliveryId: string,
     payload: Payload,
