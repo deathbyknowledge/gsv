@@ -7,7 +7,14 @@ import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY } from "../wire/queryKeys";
 import { ConversationViewControls } from "./ConversationViewControls";
 
-export function RelationshipPreferences({ contact, account }: { contact: ContactSummary; account: ConsoleAccount | undefined }) {
+export type ContactPreferenceControls = {
+  update: (patch: ContactPreferencesUpdateArgs["patch"]) => void;
+  pending: boolean;
+  canEdit: boolean;
+  error: Error | null;
+};
+
+export function RelationshipPreferences({ contact, account, controls }: { contact: ContactSummary; account: ConsoleAccount | undefined; controls: ContactPreferenceControls }) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [confirm, setConfirm] = useState<"block" | "end" | null>(null);
@@ -16,13 +23,6 @@ export function RelationshipPreferences({ contact, account }: { contact: Contact
     && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.revoke");
   const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY });
   const preferences = contact.preferences;
-  const update = useMutation({
-    mutationFn: (patch: ContactPreferencesUpdateArgs["patch"]) => {
-      if (!preferences) throw new Error("Refresh this contact before changing its preferences");
-      return client.contact.preferences.update({ contactId: contact.id, expectedRevision: preferences.revision, patch });
-    },
-    onSuccess: refresh,
-  });
   const block = useMutation({
     mutationFn: () => client.contact.block.set({ actor: { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, blocked: !contact.blocked }),
     onSuccess: async () => { setConfirm(null); await refresh(); },
@@ -31,17 +31,16 @@ export function RelationshipPreferences({ contact, account }: { contact: Contact
     mutationFn: () => client.contact.revoke({ contactId: contact.id }),
     onSuccess: async () => { setConfirm(null); await refresh(); },
   });
-  const pending = update.isPending || block.isPending || revoke.isPending;
-  const disabled = pending || !allowed("contact.preferences.update");
-  const error = update.error ?? block.error ?? revoke.error;
+  const pending = controls.pending || block.isPending || revoke.isPending;
+  const disabled = pending || !controls.canEdit;
+  const error = controls.error ?? block.error ?? revoke.error;
 
   return <section class="people-relationship" aria-label="Conversation preferences">
     {preferences && <div class="people-settings">
-      <label class="people-setting"><span>Let Ship handle this<small>Ship can read and reply using its usual permissions.</small></span><input type="checkbox" role="switch" checked={preferences.shipHandlesMessages} disabled={disabled || contact.state !== "active" || contact.blocked} onChange={(event) => update.mutate({ shipHandlesMessages: event.currentTarget.checked })} /></label>
-      <label class="people-setting"><span>Mute conversation<small>New messages won’t bring an archived conversation back.</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => update.mutate({ muted: event.currentTarget.checked })} /></label>
+      <label class="people-setting"><span>Mute conversation<small>New messages won’t bring an archived conversation back.</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => controls.update({ muted: event.currentTarget.checked })} /></label>
     </div>}
     <div class="people-contact-actions">
-      {preferences && <button class="people-action" disabled={disabled} onClick={() => update.mutate({ saved: !preferences.saved })}>{preferences.saved ? "remove from contacts" : "save contact"}</button>}
+      {preferences && <button class="people-action" disabled={disabled} onClick={() => controls.update({ saved: !preferences.saved })}>{preferences.saved ? "remove from contacts" : "save contact"}</button>}
       <ConversationViewControls conversationId={contact.conversationId} account={account} />
     </div>
     <details class="people-details-fold">

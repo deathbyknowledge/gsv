@@ -4,7 +4,6 @@ import { useQueries } from "@tanstack/preact-query";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { IconButton } from "../../../components/ui/IconButton";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -142,7 +141,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={disabled} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
       <div class="people-composer-actions">
-        <IconButton glyph="attach" variant="floating" size={32} title="Attach a file" disabled={disabled} onClick={() => fileInput.current?.click()} />
+        <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
         {draft.status && <span class="note" role="status">{draft.status}</span>}
         <button class="fleet-text-action" type="submit" disabled={disabled || sendingFull || tooLong || (!draft.text.trim() && !draft.media.length)}>send</button>
       </div>

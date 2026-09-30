@@ -84,7 +84,7 @@ Do not introduce a second helper runtime, Process role system or per-contact san
 
 People owns conversations with other people, their message requests and the private address book. At a glance it answers who wrote, what is unread, and whether the user or Ship is handling a conversation. Primary actions are read/reply, accept/decline a request, and hand a conversation to Ship or take it back.
 
-Use a conversation list and a spacious message pane, with Inbox, Requests and Contacts as filters. Keep search within the selected conversation and reuse main's search endpoint. Put infrequent relationship actions in its details rather than beside every message. A new-conversation dialog supports a public profile address and private invitations. Public profile editing remains in Settings. Fleet keeps processes, targets and responsibilities and links to People where needed.
+Use a conversation list and a spacious message pane. Requests opens the first-message decision queue; Contacts opens the private address book. Keep search within the selected conversation and reuse main's search endpoint. Put infrequent relationship actions in its details rather than beside every message. A new-conversation dialog supports saved people, a public profile address and private invitations. Public profile editing remains in Settings. Fleet keeps processes, targets and responsibilities and links to People where needed.
 
 Ship handoff uses ordinary capabilities and an ordinary responsibility. Per-task reply continuation is separate from the standing contact preference. No assistant persona, scoped helper runtime, shared social graph or digest is part of this screen.
 
@@ -101,3 +101,12 @@ dialog; saved contacts and archive are secondary actions, and connection managem
 and structured work open on demand. Saving is address-book membership, independent
 of conversation access or delegation. Memory and People share a full-height shell
 divider, with content kept below the header.
+
+Conversations are the default People view. A counted Requests entry opens the
+incoming decision queue; sent and past requests are secondary there. Contacts is
+an address-book selector reached from the heading or New conversation, rather
+than an equal conversation tab. Both views offer a direct return to conversations,
+retaining the previous conversation and draft. New conversation filters saved
+people locally and can open a public profile address. The conversation header owns
+Hand to Ship / Ship handling · take back; Details keeps infrequent preferences.
+The composer uses the same attach text action as Zen.

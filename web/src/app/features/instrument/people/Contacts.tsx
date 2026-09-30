@@ -4,11 +4,11 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useState } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
-import { contactDisplayName, type ContactInviteCreateResult, type ContactSummary } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ContactInviteCreateResult, type ContactPreferencesUpdateArgs, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
-import { RelationshipPreferences } from "./RelationshipPreferences";
+import { RelationshipPreferences, type ContactPreferenceControls } from "./RelationshipPreferences";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { canConfigure } from "../settings/settingsModel";
@@ -109,7 +109,7 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
     onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }),
   });
   return <aside class="people-note" aria-label="Contact handling changed">
-    <p>Accepting a contact no longer starts Ship. Choose “Let Ship handle this” in a conversation to hand it over.</p>
+    <p>Accepting a contact no longer starts Ship. Choose “hand to Ship” in a conversation to hand it over.</p>
     <button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>dismiss</button>
     {dismiss.error && <p class="people-error" role="alert">{dismiss.error.message}</p>}
   </aside>;
@@ -118,6 +118,7 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
 export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
   const active = useViewActive();
   const { client, connected } = useGateway();
+  const cache = useQueryClient();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
@@ -128,6 +129,18 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
   const maySearch = !!account && canConfigure(account, "conversation.history") && canConfigure(account, "conversation.search");
   const mayRename = connected && contact.state === "active" && !!account
     && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.alias.set");
+  const preferences = contact.preferences;
+  const updatePreferences = useMutation({
+    mutationFn: (patch: ContactPreferencesUpdateArgs["patch"]) => {
+      if (!preferences) throw new Error("Refresh this contact before changing its preferences");
+      return client.contact.preferences.update({ contactId: contact.id, expectedRevision: preferences.revision, patch });
+    },
+    onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }),
+  });
+  const controls: ContactPreferenceControls = {
+    update: (patch) => updatePreferences.mutate(patch), pending: updatePreferences.isPending, error: updatePreferences.error,
+    canEdit: connected && !!account && account.uid >= 1000 && account.uid === contact.ownerUid && canConfigure(account, "contact.preferences.update"),
+  };
   const save = useMutation({
     mutationFn: (value: string) => client.contact.alias.set({ contactId: contact.id, alias: value || null }),
     onSuccess: () => { setAliasDraft(null); },
@@ -148,7 +161,13 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <header class="people-conversation-header">
       <div><h1>{name}</h1>
         {contact.state !== "active" ? <p class="people-conversation-state">Connection ended</p>
-          : contact.preferences?.shipHandlesMessages && <p class="people-conversation-state is-handled">Ship is handling</p>}
+          : preferences && <div class="people-handling">
+            {preferences.shipHandlesMessages && <span class="people-handling-state" role="status">Ship handling</span>}
+            <button class="people-action" disabled={!controls.canEdit || controls.pending || contact.blocked} title={preferences.shipHandlesMessages ? "Stop ongoing Ship handling" : "Let Ship follow and reply to this conversation"} onClick={() => controls.update({ shipHandlesMessages: !preferences.shipHandlesMessages })}>
+              {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined ? <LoadingState>{updatePreferences.variables.shipHandlesMessages ? "handing over…" : "taking back…"}</LoadingState> : preferences.shipHandlesMessages ? "take back" : "hand to Ship"}
+            </button>
+          </div>}
+        {!detailsOpen && controls.error && <p class="people-error" role="alert">{controls.error.message}</p>}
       </div>
       <div class="people-header-actions">
         {maySearch && <button class="people-action" disabled={!connected} onClick={() => setSearchOpen(true)}>search</button>}
@@ -165,7 +184,7 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
           {nameChanged && <button type="submit" class="people-action" disabled={!mayRename || save.isPending}>{save.isPending ? "saving…" : "save"}</button>}
         </form>
         {save.error && <p class="people-error" role="alert">{save.error.message}</p>}
-        <RelationshipPreferences contact={contact} account={account} />
+        <RelationshipPreferences contact={contact} account={account} controls={controls} />
         <details class="people-details-fold" onToggle={(event) => setRequestsOpen(event.currentTarget.open)}>
           <summary>Work requests</summary>
           {requestsOpen && <ContactRequests contact={contact} account={account} />}

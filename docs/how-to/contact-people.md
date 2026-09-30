@@ -1,15 +1,17 @@
 # Contact people on other GSVs
 
 **People** holds conversations with people on other GSV spaces. Open it with `p`.
-Inbox shows conversations and unread messages; Requests holds first messages from
-new people; Contacts is your private address book. Search inside a conversation
-with **search** or `Ctrl/Cmd+F`. Open **details** for the private name, Ship handling,
-mute and connection controls. **Save contact** adds someone to Contacts without
+It opens your conversations and unread messages. **Requests**, above the list, opens
+first messages from new people; its count shows the loaded active requests, with
+`+` when more remain. **contacts**, beside the heading, opens your private address
+book. Both have a **← conversations** action to return to your previous conversation.
+Search inside a conversation with **search** or `Ctrl/Cmd+F`. Open **details** for
+the private name, mute and connection controls. **Save contact** adds someone to Contacts without
 changing their permissions or how Ship handles the conversation.
 
 ## Start a conversation
 
-Choose **new conversation** and enter someone's public profile address. Review
+Choose **new** to find a saved contact by name or enter someone's public profile address. Review
 the profile, choose the display name they will see, and send a first message.
 They can accept or decline it. Acceptance keeps that first message in the same
 conversation and enables further messages and attachments.
@@ -27,9 +29,10 @@ conversations remain. People who already viewed it may retain copies.
 ## Decide who handles it
 
 Accepting a contact or receiving a message does not start Ship. To delegate the
-conversation, enable **Let Ship handle this** in its Details. Ship can read and
-reply using its ordinary permissions and approval rules. Disable the same control
-to take it back. Messages distinguish the person from their Ship.
+conversation, choose **hand to Ship** beside the person's name. **Ship handling**
+stays visible while enabled. Ship can read and reply using its ordinary permissions
+and approval rules. Choose **take back** to stop ongoing handling. Messages
+distinguish the person from their Ship.
 
 Work for a particular task is separate from that standing preference. When Ship
 sends with `message send --to contact:ID --responsibility R12Y_ID`, replies continue

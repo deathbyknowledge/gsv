@@ -1,4 +1,4 @@
-import type { ApproachCreateArgs, ApproachSummary, ContactSummary } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ApproachCreateArgs, type ApproachSummary, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { useMutation } from "@tanstack/preact-query";
 import { useEffect, useRef } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -20,6 +20,10 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
 }) {
   const { client, connected } = useGateway();
   const active = useViewActive();
+  const profileAddress = /^https?:\/\//i.test(draft.url.trim());
+  const saved = contacts.filter((contact) => contact.state === "active" && contact.preferences?.saved !== false
+    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(draft.url.trim().toLocaleLowerCase()))
+    .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
   const resolve = useMutation({
     mutationFn: (url: string) => client.profile.resolve({ url }),
     onSuccess: ({ profile }) => onChange({ ...draft, profile, url: profile.url }),
@@ -32,7 +36,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   useEffect(() => {
     if (initial.current || !active || !connected || !account) return;
     initial.current = true;
-    if (draft.url && !draft.profile && canConfigure(account, "profile.resolve")) resolve.mutate(draft.url);
+    if (profileAddress && !draft.profile && canConfigure(account, "profile.resolve")) resolve.mutate(draft.url.trim());
   }, [active, connected, account]);
   const busy = resolve.isPending || send.isPending;
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
@@ -47,13 +51,18 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   return <section class="people-compose" aria-label="New conversation">
     <form class="people-form" onSubmit={(event) => {
       event.preventDefault();
-      if (canResolve && draft.url.trim() && !busy) resolve.mutate(draft.url.trim());
+      if (canResolve && profileAddress && !busy) resolve.mutate(draft.url.trim());
     }}>
-      <label>Profile address<input type="url" value={draft.url} placeholder="https://their-space.gsv.space/@name" spellcheck={false} autoComplete="url" disabled={!canResolve || busy} onInput={(event) => {
+      <label>To<input value={draft.url} placeholder="Name or profile address" spellcheck={false} autoComplete="off" disabled={busy} onInput={(event) => {
         resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null });
       }} /></label>
-      <button class="people-action" type="submit" disabled={!canResolve || busy || !draft.url.trim()}>{resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}</button>
+      {profileAddress && <button class="people-action" type="submit" disabled={!canResolve || busy}>{resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}</button>}
     </form>
+    {!profile && !profileAddress && <>
+      {saved.length > 0 ? <ul class="people-recipient-list" aria-label="Saved contacts">{saved.map((contact) => <li key={contact.id}>
+        <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span><small>{new URL(contact.remoteOrigin).host}</small></button>
+      </li>)}</ul> : draft.url.trim() && <p class="people-note">No saved contact matches. Paste their profile address to reach someone new.</p>}
+    </>}
     {profile && <>
       <div class="people-profile-preview">
         <span class="people-kicker">@{profile.alias} · {new URL(profile.origin).host}</span>
