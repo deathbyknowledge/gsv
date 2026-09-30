@@ -110,6 +110,8 @@ export class ProcessContextEpochRepository {
         for (const field of ["title", "state", "priority", "assignee", "dueAtMs", "nextCheckAtMs", "leaseExpiresAtMs", "blocker"] as const) {
           if (baseline[field] !== undefined && (field !== "blocker" || baseline.blocker)) knownFields.add(field);
         }
+        const detailIds = epoch.sourceManifest.r12yBaselineDetailIds;
+        if (Array.isArray(detailIds) && detailIds.includes(baseline.id)) knownFields.add("details");
       }
     }
     const priorEvents = this.store.sql.exec<{ payload_json: string }>(

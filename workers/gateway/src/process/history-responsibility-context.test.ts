@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProcHistoryEventPayloadMap, ResponsibilityRecord, ResponsibilityTransition } from "@humansandmachines/gsv/protocol";
+import type { JsonObject, ProcHistoryEventPayloadMap, ResponsibilityRecord, ResponsibilityTransition } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { ProcessStore } from "./store";
@@ -31,11 +31,14 @@ function transition(record: ResponsibilityRecord, revision: number, changedField
   };
 }
 
-function createEpoch(store: ProcessStore, id: string, baseline: ResponsibilityRecord[] = [], rendered?: boolean) {
+function createEpoch(store: ProcessStore, id: string, baseline: ResponsibilityRecord[] = [], rendered?: boolean, detailIds?: string[]) {
+  const sourceManifest: JsonObject = {};
+  if (rendered !== undefined) sourceManifest.r12yBaselineRendered = rendered;
+  if (detailIds !== undefined) sourceManifest.r12yBaselineDetailIds = detailIds;
   return store.epochs.createContextEpoch({
     id, generation: 0, systemPrompt: "Synthetic context fixture", r12yRevision: baseline[0]?.revision ?? 0,
     r12yCount: baseline.length, r12yBaseline: baseline,
-    sourceManifest: rendered === undefined ? {} : { r12yBaselineRendered: rendered },
+    sourceManifest,
     observedProjection: {}, now: 100,
   });
 }
@@ -67,6 +70,22 @@ function appendAndAssert(
 }
 
 describe("durable responsibility context projections", () => {
+  it.each([true, false])("remembers whether the baseline actually included details after reload: %s", async (included) => {
+    const stub = await initProcess(`responsibility-context-details-${included}`, ROOT_IDENTITY);
+    await runInProcess(stub, (process: Process) => {
+      const record = responsibility();
+      const epoch = createEpoch(process.store, "epoch:details", [record], true, included ? [record.id] : []);
+      const reloaded = new ProcessStore(process.store.sql);
+      const changed = transition({ ...record, state: "waiting" }, 2, ["state"]);
+      const fields = ["state", ...(included ? [] : ["details"]), "parentId", "audience", "source", "resolution"];
+      const text = appendAndAssert(reloaded, epoch.id, changed, fields);
+      if (included) expect(text).not.toContain("New details:");
+      else expect(text).toContain("Check the fixture");
+      const updated = transition({ ...changed.record, details: { task: "Inspect the changed fixture" } }, 3, ["details"]);
+      expect(appendAndAssert(reloaded, epoch.id, updated, ["details"])).toContain("Inspect the changed fixture");
+    });
+  });
+
   it("introduces an unknown assigned record, remembers exact fields after reload, and renders cleared details", async () => {
     const stub = await initProcess("responsibility-context-unknown", ROOT_IDENTITY);
     await runInProcess(stub, (process: Process) => {

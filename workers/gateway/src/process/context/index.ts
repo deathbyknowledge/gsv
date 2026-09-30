@@ -1,4 +1,5 @@
 export { assembleSystemPromptSnapshot } from "./assembly";
+export { countResponsibilityTemplates } from "./providers/system";
 export {
   contextProjectionFromManifest,
   contextProjectionsEqual,
