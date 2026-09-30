@@ -206,6 +206,7 @@ function context(storage: DurableObjectStorage): KernelContext {
     callerOwnerUid: OWNER.uid, connection: {},
     auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
     procs: { get: (id: string) => ({ ownerUid: OWNER.uid, isPersonalController: id === "proc:ship" }) },
+    coordinateFederationContact: async <T>(_id: string, operation: () => T | Promise<T>) => operation(),
     reconcileResponsibilityWake: vi.fn(async () => {}), broadcastToUserUid: vi.fn(),
   };
   // SAFETY: the handlers use these real stores and the explicit caller, account and scheduling callbacks.

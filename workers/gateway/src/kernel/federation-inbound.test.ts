@@ -33,6 +33,8 @@ import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { syncFederationRequestResponsibility } from "./federation/requests";
+import { handleContactPreferencesUpdate } from "./federation/preferences";
+import type { KernelContext } from "./context";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -942,6 +944,53 @@ describe("federation inbound boundary", () => {
     expect(messages).toHaveLength(1);
   });
 
+  it("finishes an earlier inbound message before enabling Ship replies", async () => {
+    const enteredAppend = Promise.withResolvers<void>();
+    const releaseAppend = Promise.withResolvers<void>();
+    getConversationById.mockImplementation((_installationId, conversationId) => fakeConversation(conversationId, messages, async () => {
+      enteredAppend.resolve();
+      await releaseAppend.promise;
+    }));
+    vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake").mockResolvedValue();
+    const earlier = await signedEnvelope({
+      kind: "message", messageId: "message:earlier", threadId: contact.threadId, text: "Already arriving",
+    }, "delivery:earlier");
+    await runInDurableObject(kernel, async (instance: Kernel) => {
+      instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
+      const ctx = instance.buildKernelContext({ peer: testPeer({ account: OWNER, calls: ["contact.*"] }) });
+      // SAFETY: this handler only checks that a direct human connection exists.
+      ctx.connection = {} as KernelContext["connection"];
+      const pending = instance.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", {
+        method: "POST", body: JSON.stringify(earlier),
+      }));
+      await enteredAppend.promise;
+      const enabling = handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      try {
+        expect(instance.federation.get(contact.id)?.preferences.shipHandlesMessages).toBe(false);
+      } finally { releaseAppend.resolve(); }
+      const response = await pending;
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+      await enabling;
+      expect(instance.federation.get(contact.id)?.preferences.shipHandlesMessages).toBe(true);
+      expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
+    });
+    const later = await deliver(await signedEnvelope({
+      kind: "message", messageId: "message:later", threadId: contact.threadId, text: "Arriving after enabling",
+    }, "delivery:later"));
+    expect(later.status).toBe(200);
+    await later.arrayBuffer();
+    const replay = await deliver(earlier);
+    expect(replay.status).toBe(200);
+    await replay.arrayBuffer();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const records = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ details: { contactReply: { messageId: messages[1]?.id } } });
+    });
+    expect(messages).toHaveLength(2);
+  });
+
   it.each([false, true])("cancels the request responsibility on revocation after removal=%s", async (removed) => {
     await seedOutgoingRequest("request:revoked-responsibility", true);
     if (removed) await runInDurableObject(kernel, removeOwner);
@@ -1224,12 +1273,12 @@ function resourceResponse(stream: ReadableStream<Uint8Array>) {
 function fakeConversation(
   conversationId: string,
   messages: ConversationMessage[],
-  beforeAppend?: () => void,
+  beforeAppend?: () => void | Promise<void>,
 ): DurableObjectStub<Conversation> {
   const stub = {
     initialize: () => {},
     append: async (input: ConversationAppendRequest) => {
-      beforeAppend?.();
+      await beforeAppend?.();
       const existing = messages.find((message) => message.id === input.messageId);
       if (existing) return { message: existing, created: false };
       const message: ConversationMessage = {

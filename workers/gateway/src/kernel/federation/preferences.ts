@@ -14,7 +14,7 @@ export async function handleContactPreferencesUpdate(args: ContactPreferencesUpd
   if (!Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 1) throw new Error("Contact policy revision is invalid");
   const patch = contactPreferencesPatchSchema.parse(args.patch);
   let handlingChanged = false;
-  const contact = ctx.federation.transaction(() => {
+  const contact = await ctx.coordinateFederationContact(args.contactId, () => ctx.federation.transaction(() => {
     const previous = ctx.federation.get(args.contactId);
     const current = ctx.federation.updatePreferences(ownerUid, { ...args, patch });
     handlingChanged = previous?.preferences.shipHandlesMessages !== current.preferences.shipHandlesMessages;
@@ -23,7 +23,7 @@ export async function handleContactPreferencesUpdate(args: ContactPreferencesUpd
     }
     if (handlingChanged && !current.preferences.shipHandlesMessages) changeContactHandling(current, ctx);
     return current;
-  });
+  }));
   if (handlingChanged && !contact.preferences.shipHandlesMessages) await ctx.reconcileResponsibilityWake(ownerUid);
   if (contact.preferences.revision !== args.expectedRevision) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return { contact: contactSummary(contact) };
