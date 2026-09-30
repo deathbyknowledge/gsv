@@ -179,6 +179,7 @@ export class ShellDiscoveryCatalog {
       const missing = requirements.filter((capability) =>
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
+      if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,
@@ -226,7 +227,7 @@ export class ShellDiscoveryCatalog {
       "SYNOPSIS",
       ...synopsis.map((line) => `  ${line}`),
       ...(entry.requirements?.length
-        ? ["", "CURRENT AVAILABILITY", `  Missing capabilities: ${entry.requirements.join(", ")}`]
+        ? ["", "CURRENT AVAILABILITY", `  Missing requirements: ${entry.requirements.join(", ")}`]
         : []),
       "",
       "DISCOVERY",
