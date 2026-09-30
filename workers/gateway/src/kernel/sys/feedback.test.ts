@@ -19,7 +19,39 @@ function fixture() {
 }
 
 describe("operator feedback", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it("bounds a stalled inbox, disposes the remote call and allows a retry", async () => {
+    vi.useFakeTimers();
+    const { ctx, submitFeedback } = fixture();
+    const dispose = vi.fn();
+    const stalled = Object.assign(new Promise<{ id: string }>(() => {}), { [Symbol.dispose]: dispose });
+    submitFeedback.mockReturnValueOnce(stalled);
+    const input = { id: crypto.randomUUID(), message: "Report" };
+    const rejected = expect(handleSysFeedback(input, ctx)).rejects.toThrow("Feedback delivery timed out");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(await handleSysFeedback(input, ctx)).toEqual({ id: input.id });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels an in-flight RPC on caller abort and ignores a late receipt", async () => {
+    vi.useFakeTimers();
+    const { ctx, submitFeedback } = fixture();
+    const controller = new AbortController();
+    ctx.requestSignal = controller.signal;
+    let resolve!: (result: { id: string }) => void;
+    const dispose = vi.fn();
+    submitFeedback.mockReturnValueOnce(Object.assign(new Promise<{ id: string }>(done => { resolve = done; }), { [Symbol.dispose]: dispose }));
+    const rejected = expect(handleSysFeedback({ message: "Report" }, ctx)).rejects.toThrow("Caller cancelled");
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort(new Error("Caller cancelled"));
+    await rejected;
+    resolve({ id: "late" });
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it("waits for the owning Process and does not deliver a denied report", async () => {
     const { ctx, submitFeedback } = fixture();

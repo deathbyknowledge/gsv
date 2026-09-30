@@ -44,4 +44,10 @@ describe("clean-space operator feedback", () => {
       await expect(machine.sys.feedback({ message: "Machine report" })).rejects.toThrow();
     } finally { machine.close(); }
   });
+
+  it("ends a stalled inbox call and accepts the same report on retry", async () => {
+    const input = { id: crypto.randomUUID(), message: "Stall the first attempt" };
+    await expect(client.sys.feedback(input)).rejects.toThrow("Feedback delivery timed out");
+    expect(await client.sys.feedback(input)).toEqual({ id: input.id });
+  });
 });

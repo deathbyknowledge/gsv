@@ -16,7 +16,8 @@
   text-transform: none;
   white-space: normal;
   text-align: left;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .feedback-dialog[open] { display: flex; flex-direction: column; }
 .feedback-dialog form { display: flex; flex-direction: column; min-height: 0; }
