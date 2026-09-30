@@ -52,7 +52,7 @@ import {
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import {
   assembleSystemPromptSnapshot, contextProjectionFromManifest, contextProjectionsEqual, createContextProjection,
-  parseContextProjection, type ContextProjection,
+  countResponsibilityTemplates, parseContextProjection, type ContextProjection,
 } from "../context";
 import type { RunState } from "../run/state";
 import { contextSnapshotFromRun } from "../run/helpers";
@@ -2013,7 +2013,10 @@ export class ProcessHistory {
     } else {
       delete promptConfig.systemContextFiles;
     }
-    const baseline = renderResponsibilityBaseline(ledger, this.host.pid);
+    const baselineCopies = promptConfig.systemContextFiles?.reduce(
+      (count, file) => count + countResponsibilityTemplates(file.text), 0,
+    ) ?? 0;
+    const baseline = renderResponsibilityBaseline(ledger, this.host.pid, Math.max(1, baselineCopies));
     const snapshot = promptOverride
       ? { prompt: promptOverride, sources: [] }
       : await assembleSystemPromptSnapshot({

@@ -139,11 +139,13 @@ At epoch creation, Process renders current responsibility names, ids, and initia
 states through the `{{ r12y }}` system context template. It also includes structured
 `details` for Ship assignments and assignments to the current Process. Assignments
 to other Processes remain compact summaries. Kernel visibility still limits a child
-to its assignments and their ancestors.
+to its assignments and their ancestors. Record text, including contact-supplied
+details, is explicitly labeled as data rather than authority or instructions.
 
-The snapshot includes up to 32 KiB of rendered detail bodies in ledger order. A body
-that does not fit is omitted whole, with a `r12y show ID` reference; smaller later
-bodies may still fit. The existing 500-record limit also reports omitted records.
+The snapshot includes up to 32 KiB of rendered detail bodies in ledger order,
+counting every copy when custom system context repeats the `{{ r12y }}` template.
+A body that does not fit is omitted whole, with a `r12y show ID` reference; smaller
+later bodies may still fit. The existing 500-record limit also reports omitted records.
 The source manifest records exactly which bodies were rendered, so later updates
 do not repeat unchanged details or assume omitted details were seen. Older epochs
 without that manifest field retain their original rendering and delta behavior.

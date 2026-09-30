@@ -93,4 +93,26 @@ describe("responsibility baseline lifecycle", () => {
       process.runs.active = null;
     });
   });
+
+  it("shares the detail budget across repeated templates in all system context files", async () => {
+    const stub = await initProcess("responsibility-baseline-repeated", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const large = { ...initial, details: { task: "漢".repeat(6_000) } };
+      const small = { ...initial, id: "r12y:small", details: { task: "🧭".repeat(1_000) } };
+      vi.spyOn(process.kernel, "kernelRpc").mockResolvedValueOnce({ responsibilities: [large, small], count: 2, revision: 1 });
+      const run = runFixture(process.pid, "baseline-run");
+      run.config!.systemContextFiles = [
+        { name: "first.md", text: "{{r12y}}\n{{ r12y }}" },
+        { name: "second.md", text: "{{\n\tr12y\t\n}}\n{{r12y.details}} {{r12y-extra}}" },
+      ];
+      process.runs.active = run;
+      const epoch = await process.history.ensureContextEpoch(run.runId, run, run.config!);
+      expect(epoch?.sourceManifest.r12yBaselineDetailIds).toEqual([small.id]);
+      expect(epoch?.systemPrompt).not.toContain("漢");
+      expect(epoch?.systemPrompt.match(/🧭/gu)).toHaveLength(3_000);
+      expect(epoch?.systemPrompt.match(/Details omitted for space/gu)).toHaveLength(3);
+      expect(new TextEncoder().encode(epoch!.systemPrompt).byteLength).toBeLessThan(32 * 1_024);
+      process.runs.active = null;
+    });
+  });
 });
