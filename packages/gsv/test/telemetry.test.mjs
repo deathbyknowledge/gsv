@@ -87,6 +87,11 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    for (const provider of ["modal", "gsv"]) {
+      assert.equal(telemetryRecordSchema.safeParse({
+        ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
+      }).success, true);
+    }
     assert.equal(telemetryRecordSchema.safeParse({
       ...failure,
       event: {
@@ -122,6 +127,9 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider: "modal" } },
+    }).success, true);
     assert.equal(telemetryRecordSchema.safeParse({
       ...failure,
       event: {

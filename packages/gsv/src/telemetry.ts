@@ -167,7 +167,7 @@ const inferenceRequestFinishedSchema = z.strictObject({
     purpose: z.enum(["agent", "mail-intake"]),
     // Optional only for compatibility with producers during rolling upgrades.
     workload: z.optional(inferenceWorkloadSchema),
-    provider: z.literal("workers-ai"),
+    provider: z.enum(["workers-ai", "modal", "gsv"]),
     model: z.optional(modelNameSchema),
     stopReason: z.optional(z.enum([
       "stop",
@@ -198,7 +198,7 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
   properties: z.strictObject({
     purpose: z.enum(["agent", "mail-intake"]),
     workload: inferenceWorkloadSchema,
-    provider: z.literal("workers-ai"),
+    provider: z.enum(["workers-ai", "modal", "gsv"]),
     model: modelNameSchema,
     attempt: positiveIntegerSchema,
     durationMs: nonNegativeIntegerSchema,
