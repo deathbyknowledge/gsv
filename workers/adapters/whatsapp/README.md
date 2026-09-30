@@ -10,9 +10,9 @@ stay on the adapter Worker; individual spaces never accept or store them.
 
 The Worker is `src/managed.ts` with `wrangler.managed.jsonc`. It keeps one
 peer Durable Object per WhatsApp number that writes to the platform number and
-a separate short-lived pairing object per code. A Meta application accepts one
-webhook callback URL, so staging and production require different Meta apps or
-different phone numbers.
+a separate short-lived pairing object per code. Use separate Meta apps and
+phone numbers when staging and production run concurrently, so each stage has
+its own webhook configuration and credentials.
 
 ## Availability
 
