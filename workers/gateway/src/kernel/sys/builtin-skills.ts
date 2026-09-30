@@ -63,10 +63,18 @@ export const BUILTIN_SKILL_FILES = [
   {
     path: "browser-target/SKILL.md",
     content: browserTargetSkill,
+    previousSha256s: [
+      // Exact untouched browser-target skill shipped before signed-in reach guidance.
+      "14a49e723679cbb145170c6888f117dfd53dc25a37ed7c38683ad5a0d2933f56",
+    ],
   },
   {
     path: "gsv-manual/SKILL.md",
     content: gsvManualSkill,
+    previousSha256s: [
+      // Exact untouched manual skill shipped before the consult-before-refusing guidance.
+      "030dbc4de9d9672f08ea0a54bf02d175906a8594eba6fe65329a71c28141315d",
+    ],
   },
   {
     path: "image-reading/SKILL.md",
