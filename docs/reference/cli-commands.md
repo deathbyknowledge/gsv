@@ -24,6 +24,22 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
+When the operator enables feedback, the Instrument header has a **feedback** action.
+Reports include the text you submit, your space, account, and app/server versions;
+conversation history and logs are not attached. A failed submission keeps your draft.
+The same report can be sent from the `gsv` target shell:
+
+```bash
+feedback 'The attachment download did not open.'
+feedback < report.txt
+```
+
+Ship can use this command when asked to report an issue. Send only the details the
+user wants shared. `feedback --id UUID ...` keeps the same report identity on a retry.
+Reports go to the operator's configured inbox; the public runtime has no default
+destination. The header action appears only when `sys.connect` advertises
+`operator-feedback` for the caller.
+
 ```bash
 gsv chat [MESSAGE] [--pid PID]
 gsv shell

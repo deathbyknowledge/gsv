@@ -337,6 +337,7 @@ const SYSCALL_NAMES = [
   "sys.setup.assist",
   "sys.setup",
   "sys.bootstrap",
+  "sys.feedback",
   "sys.config.get",
   "sys.config.set",
   "sys.target.list",

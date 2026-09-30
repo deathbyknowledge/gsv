@@ -116,6 +116,8 @@ import type {
   ConnectResult,
   SysBootstrapArgs,
   SysBootstrapResult,
+  SysFeedbackArgs,
+  SysFeedbackResult,
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
@@ -396,6 +398,7 @@ export type SyscallDomains = {
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
+  "sys.feedback": { args: SysFeedbackArgs; result: SysFeedbackResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };

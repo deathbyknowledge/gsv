@@ -2,6 +2,7 @@ import type { RefObject } from "preact";
 import type { Distance } from "../Instrument";
 import { Wordmark } from "./Wordmark";
 import { PlatformIdentity } from "../../../services/platform/PlatformIdentity";
+import { Feedback } from "./Feedback";
 
 type InstrumentHeaderProps = {
   distance: Distance;
@@ -36,6 +37,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
           <kbd>,</kbd>{distance === "settings" ? "zen" : "settings"}
         </button>
         <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>keys</button>
+        <Feedback view={distance} />
       </nav>
     </header>
   );

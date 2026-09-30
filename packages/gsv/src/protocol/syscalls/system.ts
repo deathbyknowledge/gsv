@@ -56,6 +56,19 @@ export type ServerBuild = {
   features?: string[];
 };
 
+export type SysFeedbackArgs = {
+  message: string;
+  /** Reuse the same id when retrying a submission. */
+  id?: string;
+  context?: {
+    view?: "zen" | "fleet" | "memory" | "people" | "settings";
+    platform?: "web" | "desktop";
+    version?: string;
+  };
+};
+
+export type SysFeedbackResult = { id: string };
+
 export type ConnectResult = {
   protocol: number;
   server: ServerBuild & {

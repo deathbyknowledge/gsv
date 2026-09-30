@@ -100,6 +100,19 @@ disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
 
+## Feedback
+
+Operators can supply `GsvRuntime.services.feedback`, exposed to the Gateway as
+`FEEDBACK`, implementing `FeedbackService.submitFeedback`. The authenticated
+`sys.feedback` syscall accepts only a bounded report and optional UI context;
+Kernel derives the installation and human owner. The service owns the inbox and
+delivery acknowledgement. No report content enters the telemetry tail contract.
+
+The Instrument offers feedback when the binding exists and the caller has
+`sys.feedback`. The native `feedback` shell command uses the same syscall, so
+Ship can report an issue when asked. An unconfigured deployment sends nothing
+to an external inbox and does not show the header action.
+
 ## Adapters
 
 Adapters are an extension system, not a closed list of messenger brands. An

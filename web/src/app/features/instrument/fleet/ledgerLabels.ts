@@ -83,6 +83,7 @@ const labels = {
   "sys.setup": "set up an installation",
   "sys.bootstrap": "prepared the cloud home",
   "sys.config.get": "read settings",
+  "sys.feedback": "sent feedback",
   "sys.config.set": "changed a setting",
   "sys.target.list": "listed places",
   "sys.target.get": "checked a place",
