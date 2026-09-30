@@ -4,10 +4,10 @@ import type { ConversationHistoryArgs, ConversationSearchHit } from "@humansandm
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { Spinner } from "../../../components/ui/Spinner";
-import { ZenText } from "./ZenText";
-import { ZenMedia } from "./ZenMedia";
+import { ZenText } from "../zen/ZenText";
+import { ZenMedia } from "../zen/ZenMedia";
 
-export const ZenSearch = memo(function ZenSearch({ conversationId, timeZone, onClose }: {
+export const ConversationSearch = memo(function ConversationSearch({ conversationId, timeZone, onClose }: {
   conversationId: string;
   timeZone: string;
   onClose(): void;

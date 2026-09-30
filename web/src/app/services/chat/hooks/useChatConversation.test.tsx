@@ -20,7 +20,7 @@ import {
 type HookResult = ReturnType<typeof useChatConversationRuntime>;
 type ObservedHook = { current?: HookResult };
 
-function conversation(id: string, handlerPid: string): ConversationSummary {
+function conversation(id: string, handlerPid: string): ConversationSummary & { kind: "work" } {
   return {
     id,
     kind: "work",

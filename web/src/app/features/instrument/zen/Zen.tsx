@@ -1,5 +1,5 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
-import { ZenSearch } from "./ZenSearch";
+import { ConversationSearch } from "../shared/ConversationSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
@@ -1122,7 +1122,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           onClose={() => setConnectingPlace(false)}
           onConnected={(id) => { setConnectingPlace(false); setWhere(id); setPickerQuery(null); }} />
       </FleetDialog>
-      {active && searchOpen && conversation.conversation && <ZenSearch key={conversation.conversation.id}
+      {active && searchOpen && conversation.conversation && <ConversationSearch key={conversation.conversation.id}
         conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>
   );

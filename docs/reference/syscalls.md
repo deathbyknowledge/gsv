@@ -697,9 +697,15 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
+| `contact.preferences.update` | Human-only, revision-checked changes to saved, muted and standing Ship handling preferences. |
+| `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
+| `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
+| `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
+| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. |
+| `contact.delivery.retry` | Resumes the original recoverable delivery without appending a second message. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
 | `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
@@ -764,6 +770,8 @@ type ContactSummary = {
   remoteSubject: FederationSubject;
   remoteOrigin: string;
   localAlias?: string;
+  preferences?: { revision: number; saved: boolean; muted: boolean; shipHandlesMessages: boolean };
+  blocked?: boolean;
   conversationId: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -830,6 +838,8 @@ type ContactSyscalls = {
       text: string;
       media?: ResourceBlock[];
       idempotencyKey?: string;
+      replyTo?: { actor: { shipId: string; subjectId: string }; messageId: string };
+      responsibilityId?: string;
     };
     result: {
       deliveryId: string;
@@ -873,6 +883,26 @@ type ContactSyscalls = {
     };
     result: { request: ContactRequestRecord; deliveryId: string };
   };
+  "contact.preferences.update": {
+    args: {
+      contactId: string;
+      expectedRevision: number;
+      patch: { saved?: boolean; muted?: boolean; shipHandlesMessages?: boolean };
+    };
+    result: { contact: ContactSummary };
+  };
+  "contact.block.set": {
+    args: { actor: ActorRef; blocked: boolean };
+    result: { block: ContactBlock | null };
+  };
+  "contact.block.list": {
+    args: { actor?: ActorRef; cursor?: ActorRef; limit?: number };
+    result: { blocks: ContactBlock[]; nextCursor?: ActorRef };
+  };
+  "contact.notice.dismiss": {
+    args: Record<string, never>;
+    result: Record<string, never>;
+  };
 };
 ```
 
@@ -886,6 +916,128 @@ message, idempotency key and contact generation. `expectedUpdatedAtMs` prevents
 retrying an outdated status; a retry epoch fences outcomes from earlier attempts.
 The original seven-day delivery window, backlog limits and rate limits still
 apply. Permanent refusal, revocation and expired delivery cannot be bypassed.
+
+Setting `patch.shipHandlesMessages` to `true` through `contact.preferences.update` allows Ship to handle new incoming
+messages. The preference change itself creates no responsibility, wakes no Process and does
+not replay existing history. Disabling it cancels ongoing standing handling.
+
+`contact.send.responsibilityId` binds replies to an existing, nonterminal Ship responsibility
+owned by the caller. Only the signed-in human or canonical Ship can bind that work. It does not
+enable standing `shipHandlesMessages`. An exact `replyTo` selects its existing association;
+without one, a reply may continue only one unambiguous active responsibility for that contact.
+Completed responsibilities, old contact generations, duplicates and delivery receipts never
+admit fresh agent work. New conversation messages alone do not create commitments.
+
+Federation v2 messages preserve human/Process authorship and immutable origin/reply references.
+Private pairing also supports v1 peers; old messages have no fabricated authorship or reply
+metadata. Each queued delivery retains the wire version chosen when it was created.
+
+### Public profiles and first messages
+
+Profiles are opt-in, owner-authenticated snapshots at `https://SPACE/@alias`. Reading the same
+address with `Accept: application/json` returns its signed document. Publication is atomic;
+draft changes stay private until the next explicit publish. Aliases remain reserved to their
+owner after unpublishing. All profile mutations and first-contact decisions require the direct
+signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
+
+```ts
+type ProfileAndApproachSyscalls = {
+  "profile.get": {
+    args: Record<string, never>;
+    result: { profile: ProfileState };
+  };
+  "profile.update": {
+    args: { expectedRevision: number; draft: ProfileFields };
+    result: { profile: ProfileState };
+  };
+  "profile.publish": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.unpublish": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.resolve": {
+    args: { url: string };
+    result: { profile: PublicProfile };
+  };
+  "approach.create": {
+    args: {
+      profileUrl: string;
+      recipient: ActorRef;
+      profileRevision: number;
+      displayName: string;
+      text: string;
+      idempotencyKey: string;
+    };
+    result: { approach: ApproachSummary };
+  };
+  "approach.list": {
+    args: {
+      direction: "incoming" | "outgoing";
+      status?: "active" | "history";
+      before?: { createdAtMs: number; id: string };
+      limit?: number;
+    };
+    result: { approaches: ApproachSummary[]; next?: { createdAtMs: number; id: string } };
+  };
+  "approach.get": {
+    args: { approachId: string };
+    result: { approach: ApproachSummary };
+  };
+  "approach.decide": {
+    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw" };
+    result: { approach: ApproachSummary };
+  };
+  "approach.retry": {
+    args: { approachId: string; expectedRevision: number };
+    result: { approach: ApproachSummary };
+  };
+};
+```
+
+`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+(`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
+`ProfileState` returns those fields as `draft`, a revision and optional published URL/revision.
+`profile.resolve` verifies the signed identity and checks existing contact pins.
+Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
+
+First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
+the same conversation and first message through a durable, peer-bound pairing operation. Neither
+arrival nor acceptance starts Ship. Declining is private. Blocking denies future requests from that
+actor independently of whether a contact was ever accepted. Unblocking does not revive an old request.
+
+### Private conversation inbox
+
+```ts
+type ConversationInboxSyscalls = {
+  "conversation.inbox": {
+    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
+  };
+  "conversation.view.get": {
+    args: { conversationId: string };
+    result: { entry: ConversationInboxEntry };
+  };
+  "conversation.view.update": {
+    args: { conversationId: string; readThroughSequence?: number; archived?: boolean; expectedRevision?: number };
+    result: { entry: ConversationInboxEntry };
+  };
+};
+```
+
+`conversation.inbox` lists accepted contact conversations, optionally filtered by `archived`, with
+`before` and `limit` paging. Entries contain the contact ID, conversation, latest preview, unread
+state and private view state. `conversation.view.get` reads one entry; `conversation.view.update`
+advances `readThroughSequence` monotonically or sets `archived`. Both use `conversationId`.
+Changing `archived` requires `expectedRevision` from the current view to avoid overwriting a newer change.
+The read sequence cannot pass the latest committed message. New incoming messages unarchive a
+conversation unless muted. These states and preview changes never send a read receipt to the peer.
+
+People reuses `conversation.history` and `conversation.search`; no separate social search index
+or archive backfill exists. Contact conversations have no `handlerPid`. Other conversation kinds
+retain their ordinary handler requirement.
 
 ## Processes: `proc.*`
 
@@ -1212,8 +1364,6 @@ type ResponsibilitySourcePolicy =
   | {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1282,8 +1432,6 @@ type ResponsibilitySyscalls = {
     args: {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";

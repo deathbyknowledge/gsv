@@ -32,6 +32,9 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
         <button type="button" onClick={() => onNavigate(distance === "memory" ? "zen" : "memory")}>
           <kbd>m</kbd>{distance === "memory" ? "zen" : "memory"}
         </button>
+        <button type="button" onClick={() => onNavigate(distance === "people" ? "zen" : "people")}>
+          <kbd>p</kbd>{distance === "people" ? "zen" : "people"}
+        </button>
         <button type="button" onClick={() => onNavigate(distance === "settings" ? "zen" : "settings")}>
           <kbd>,</kbd>{distance === "settings" ? "zen" : "settings"}
         </button>
