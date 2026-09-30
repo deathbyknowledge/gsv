@@ -212,7 +212,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | `/approve` / `/approve-old` | The same shell approval with or without a purpose. |
 | `/approve-mail` / `/approve-file` | Email and file approvals. |
 
-Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
+The first approval in a fresh tab opens the Ship's walkthrough before the approval card; its choices and the card's always allow write through `sys.config.set` into this tab's settings, which Settings → permissions then shows, and show it again there brings the walkthrough back at the next approval. Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
 
 ## Buttons
 

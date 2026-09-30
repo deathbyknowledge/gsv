@@ -1,9 +1,9 @@
-import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
+import { accountApprovalKey, approvalSetupKey, markApprovalSetup, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
@@ -18,7 +18,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   const config = useQuery({ queryKey: SETTINGS_CONFIG_KEY, queryFn: () => loadConsoleConfig(client), enabled: connected && active });
   const targetQuery = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected && active });
   const targets = (targetQuery.data ?? []).map((target) => ({ id: target.deviceId, label: target.label }));
-  const key = `users/${account.uid}/ai/tools/approval`;
+  const key = accountApprovalKey(account.uid);
   const original = config.data?.find((entry) => entry.key === key)?.value ?? "";
   const inherited = defaultApprovalPolicyForConfig(config.data ?? []);
   const [draft, setDraft] = useState<{ inherited: boolean; policy: SettingsPolicy; base: string } | null>(null);
@@ -31,15 +31,26 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   useSettingsDirty(dirty, onDirty);
   const editable = connected && !!config.data && !config.isError && canConfigure(account, "sys.config.set") && policy !== null;
   const save = useMutation({
-    mutationFn: (value: string) => saveApprovalPolicy(client, account.uid, draft?.base ?? original, value),
+    mutationFn: (value: string) => saveAccountApprovalPolicy(client, account.uid, draft?.base ?? original, value),
     onError: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
+  const walkthroughDone = (config.data?.find((entry) => entry.key === approvalSetupKey(account.uid))?.value ?? "") !== "";
+  const replay = useMutation({
+    mutationFn: () => markApprovalSetup(client, account.uid, ""),
+    onSuccess: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
+  });
   return <section aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">Permissions</h1>
     <p class="settings-intro">Choose when your agents ask before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.</p>
     <p class="settings-muted">Mail needs an explicit Allow rule to send without asking, even when the default is Allow.</p>
+    <p class="settings-muted">Your Ship offers a short walkthrough of these choices at your first approval.{" "}
+      {walkthroughDone
+        ? <button class="settings-text-action" type="button" disabled={!connected || !canConfigure(account, "sys.config.set") || replay.isPending} onClick={() => replay.mutate()}>show it again</button>
+        : <span role="status">it will come up at your next approval</span>}
+      {replay.error && <span class="settings-error" role="alert"> {replay.error.message}</span>}
+    </p>
     <SettingsError error={config.error ?? error ?? save.error} />
     {config.isPending && connected && <LoadingState variant="panel">Loading permissions…</LoadingState>}
     {targetQuery.error && <p class="settings-muted" role="status">Target names could not be loaded. Stored target IDs remain available.</p>}

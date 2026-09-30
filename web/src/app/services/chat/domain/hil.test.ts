@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { hilAlwaysAllowSentence, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
@@ -95,5 +95,23 @@ describe("HIL request wording", () => {
       hilRequestLine({ ...shell, syscall: "net.fetch", args: { url: "u" } }),
     ];
     for (const line of lines) expect(line?.text).not.toMatch(/\b(shell|fs|net)\.[a-z]+\b/);
+  });
+});
+
+describe("always-allow wording", () => {
+  const shell = { ...BASE_REQUEST, target: "my-mac", args: { input: "pgrep -fl Granola" } };
+
+  it("names the capability and the place in plain words, never the syscall id", () => {
+    expect(hilAlwaysAllowSentence(shell, "my mac")).toBe("run commands on my mac");
+    expect(hilAlwaysAllowSentence({ ...shell, target: "gsv" }, "your cloud home")).toBe("run commands in your cloud home");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "fs.delete", args: { path: "/tmp/a" } }, "my mac")).toBe("delete files on my mac");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "net.fetch", args: { url: "u" } }, "my mac")).toBe("fetch web addresses on my mac");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "mail.send", target: "gsv", args: {} }, "your cloud home")).toBe("send email");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: { serverId: "linear", name: "create_issue" } }, "your cloud home")).toBe("use any connected tool");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "sys.mcp.call", target: "gsv", args: {} }, "your cloud home")).toBe("use any connected tool");
+    expect(hilAlwaysAllowSentence({ ...shell, syscall: "codemode.exec", toolName: "CodeMode", target: "gsv", args: {} }, "your cloud home")).toBe("use CodeMode in your cloud home");
+    for (const syscall of ["shell.exec", "fs.delete", "net.fetch", "sys.mcp.call"]) {
+      expect(hilAlwaysAllowSentence({ ...shell, syscall, args: {} }, "my mac")).not.toContain(syscall);
+    }
   });
 });

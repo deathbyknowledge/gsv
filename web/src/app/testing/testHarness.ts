@@ -7,6 +7,7 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/con
 
 export type TestNodeProps = {
   "aria-label"?: string;
+  "aria-pressed"?: boolean;
   boxed?: boolean;
   children?: ComponentChildren;
   disabled?: boolean;

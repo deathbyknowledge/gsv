@@ -52,4 +52,30 @@ describe("approval card", () => {
     expect(text).not.toContain("private");
     expect(text).not.toContain("$");
   });
+
+  it("offers always allow with its consequence only when the account can write its policy", () => {
+    const withAlways = ApprovalCard({ ...props, request, onAlwaysAllow: () => {} });
+    const text = collectText(withAlways);
+    expect(text).toContain("always allow this");
+    expect(text).toContain("always: run commands on my mac, without asking");
+    expect(text).not.toContain("shell.exec");
+    const plain = collectText(ApprovalCard({ ...props, request }));
+    expect(plain).not.toContain("always allow this");
+    expect(plain).not.toContain("without asking");
+  });
+
+  it("keeps run and deny live when the rule failed to save, and holds them while it saves", () => {
+    const failed = ApprovalCard({ ...props, request, onAlwaysAllow: () => {}, alwaysAllowError: "offline" });
+    const text = collectText(failed);
+    expect(text).toContain("the rule was not saved: offline");
+    expect(text).toContain("run it once");
+    const buttons = collectNodes(failed).filter((node) => node.type === "button" && node.props.disabled !== undefined);
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) expect(button.props.disabled).toBe(false);
+    const saving = ApprovalCard({ ...props, request, onAlwaysAllow: () => {}, alwaysAllowSaving: true });
+    const held = collectNodes(saving).filter((node) => node.type === "button" && node.props.disabled !== undefined);
+    expect(held).toHaveLength(3);
+    for (const button of held) expect(button.props.disabled).toBe(true);
+    expect(collectText(saving)).toContain("saving the rule");
+  });
 });

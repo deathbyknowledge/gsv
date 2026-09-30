@@ -22,6 +22,10 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   anything else is committed as your message and answered briefly a second later
+ *
+ * Settings written through sys.config.set live in this tab until reload: the first approval opens the
+ * walkthrough, its choices and the card's always allow show up in Settings → permissions, and show it
+ * again there brings the walkthrough back at the next approval.
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
@@ -124,7 +128,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["*"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -241,8 +245,10 @@ type World = {
   /** The last context the Process announced and its monotonic revision; history reads return it, as the gateway's do. */
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
+  /** Settings written through sys.config.set, as the gateway would hold them; empty until something is saved. */
+  config: Map<string, string>;
 };
-const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set(), config: new Map() };
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -653,6 +659,7 @@ const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
+const configSetArgs = z.object({ key: z.string(), value: z.string() });
 const abortArgs = z.object({ pid: z.string().optional() });
 
 function respond<T>(id: string, data: T): string {
@@ -674,7 +681,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "sys.token.revoke": return respond(id, { revoked: true });
     case "sys.token.list": return respond(id, { tokens: [] });
-    case "sys.config.get": return respond(id, { entries: [] });
+    case "sys.config.get": return respond(id, { entries: [...world.config].map(([key, value]) => ({ key, value })) });
+    case "sys.config.set": {
+      const { key, value } = configSetArgs.parse(args);
+      if (value.trim()) world.config.set(key, value);
+      else world.config.delete(key);
+      return respond(id, { ok: true });
+    }
     case "account.list": return respond(id, { accounts });
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });

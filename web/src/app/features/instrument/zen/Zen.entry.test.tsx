@@ -12,8 +12,11 @@ import { createSessionService } from "../../../services/session/sessionService";
 import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
 import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChatConversation";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
+import { consoleConfigQueryKey } from "../../../services/system/useConsoleData";
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
+import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalSetup } from "./ApprovalSetup";
 import { Zen } from "./Zen";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
@@ -23,10 +26,18 @@ let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
 let hasMore: boolean;
 let ownerUid: number;
+let selfUid: number;
+let shipUid: number;
 let gateway: string;
 let shipPid: string;
 let activeRunId: string | null;
 let runContext: ProcContextState | null;
+let configEntries: Array<{ key: string; value: string }>;
+let selfCapabilities: string[] | null;
+let configReads: Promise<never> | null;
+let rejectWriteOf: string | null;
+const configWrites: Array<{ key: string; value: string }> = [];
+const hilDecisions: Array<{ requestId: string; decision: string }> = [];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
@@ -51,10 +62,18 @@ beforeEach(() => {
   targets = [];
   hasMore = false;
   ownerUid = 1000;
+  selfUid = 1000;
+  shipUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
   activeRunId = null;
   runContext = null;
+  configEntries = [];
+  selfCapabilities = ["*"];
+  configReads = null;
+  rejectWriteOf = null;
+  configWrites.length = 0;
+  hilDecisions.length = 0;
   signals.clear();
   statuses.clear();
   send.mockReset();
@@ -75,8 +94,23 @@ beforeEach(() => {
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets } };
-    if (call === "sys.config.get") return { data: { entries: [] } };
-    if (call === "account.list") return { data: { accounts: [] } };
+    if (call === "sys.config.get") { if (configReads) await configReads; return { data: { entries: configEntries } }; }
+    if (call === "sys.config.set") {
+      const write = z.object({ key: z.string(), value: z.string() }).parse(args);
+      if (write.key === rejectWriteOf) throw new Error("offline");
+      configWrites.push(write);
+      configEntries = [...configEntries.filter((entry) => entry.key !== write.key), ...(write.value ? [write] : [])];
+      return { data: { ok: true } };
+    }
+    if (call === "account.list") return { data: { accounts: selfCapabilities ? [
+      { uid: selfUid, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: selfCapabilities },
+      { uid: shipUid, username: "algo", displayName: "Algo", relation: "personal-agent", runnable: true, capabilities: [] },
+    ] : [] } };
+    if (call === "proc.hil") {
+      const decision = z.object({ requestId: z.string(), decision: z.string() }).parse(args);
+      hilDecisions.push(decision);
+      return { data: { ok: true, pid: shipPid, requestId: decision.requestId, decision: decision.decision, resumed: true, pendingHil: null } };
+    }
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
     if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
@@ -116,6 +150,7 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
+    async refreshConfig() { await act(async () => { await cache.invalidateQueries({ queryKey: consoleConfigQueryKey }); }); },
   };
 }
 
@@ -357,5 +392,306 @@ describe("Zen conversation entry", () => {
       expect(zen.text()).not.toContain("What would you like to do?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
+  });
+
+  describe("first approval walkthrough", () => {
+    const request = {
+      pid: "ship", requestId: "hil-1", runId: "run-1", callId: "call-1", toolName: "Shell", syscall: "shell.exec",
+      target: "laptop", args: { input: "brew upgrade", target: "laptop" }, purpose: "upgrade your packages", createdAt: 1,
+    };
+    type Mounted = Awaited<ReturnType<typeof mountedZen>>;
+    const setupCard = (zen: Mounted) => zen.nodes().find((entry) => entry.type === ApprovalSetup) ?? null;
+    const approvalCard = (zen: Mounted) => zen.nodes().find((entry) => entry.type === ApprovalCard) ?? null;
+    const setup = (zen: Mounted) => zen.props<ComponentProps<typeof ApprovalSetup>>(ApprovalSetup);
+    const card = (zen: Mounted) => zen.props<ComponentProps<typeof ApprovalCard>>(ApprovalCard);
+    const askApproval = () => act(() => { for (const listener of signals) listener("proc.run.hil.requested", request); });
+    const expectSetup = (zen: Mounted) => vi.waitFor(() => { expect(setupCard(zen)).not.toBeNull(); expect(approvalCard(zen)).toBeNull(); });
+    const expectCard = (zen: Mounted) => vi.waitFor(() => { expect(approvalCard(zen)).not.toBeNull(); expect(setupCard(zen)).toBeNull(); });
+
+    beforeEach(() => { messages = [message("user", "Upgrade my packages")]; });
+
+    it("opens the walkthrough instead of the approval card and holds the decision until it is done", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).step).toBe(1);
+        expect(setup(zen).editable).toBe(true);
+        await act(() => { setup(zen).onContinue(); });
+        expect(setup(zen).step).toBe(2);
+        expect(setup(zen).current).toMatchObject({ shell: "ask", delete: "ask", tools: "ask" });
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "done" }]);
+        expect(card(zen).onAlwaysAllow).toBeDefined();
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes the policy for the rows that changed, then the mark, in that order", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("shell", "auto"); });
+        expect(setup(zen).choices).toEqual({ shell: "auto" });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(configWrites).toHaveLength(2));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval", "users/1000/ui/approval-setup"]);
+        const policy = z.object({ default: z.string(), rules: z.array(z.object({ match: z.string(), target: z.string().optional(), action: z.string() })) }).parse(JSON.parse(configWrites[0].value));
+        expect(policy.rules).toContainEqual({ match: "shell.exec", target: "targets/*", action: "auto" });
+        expect(policy.rules).toContainEqual({ match: "sys.mcp.call", action: "ask" });
+        await expectCard(zen);
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes only the mark when every pick matches what the policy already does", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onChoose("mail", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "done" }]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("leaves mixed machine scopes intact when their displayed choice is selected again", async () => {
+      configEntries = [{ key: "users/1000/ai/tools/approval", value: JSON.stringify({
+        default: "auto", rules: [{ match: "shell.exec", target: "laptop", action: "ask" }],
+      }) }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        expect(setup(zen).current.shell).toBe("ask");
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("shell", "auto"); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "done" }]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("saves revised picks after the policy was written but the mark was not", async () => {
+      rejectWriteOf = "users/1000/ui/approval-setup";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        await vi.waitFor(() => expect(setup(zen).current.mail).toBe("auto"));
+        await act(() => { setup(zen).onChoose("mail", "ask"); });
+        rejectWriteOf = null;
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites.map((write) => write.key)).toEqual([
+          "users/1000/ai/tools/approval", "users/1000/ai/tools/approval", "users/1000/ui/approval-setup",
+        ]);
+        expect(JSON.parse(configWrites[1].value).rules).toContainEqual({ match: "mail.send", target: "gsv", action: "ask" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("refuses always allow when the inherited policy changed after the snapshot loaded", async () => {
+      configEntries = [{ key: "users/1000/ui/approval-setup", value: "done" }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        configEntries = [...configEntries, { key: "config/ai/tools/approval", value: '{"default":"deny","rules":[]}' }];
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(card(zen).alwaysAllowError).toContain("inherited policy changed"));
+        expect(configWrites).toEqual([]);
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("keeps the walkthrough open with the error when the policy does not save", async () => {
+      rejectWriteOf = "users/1000/ai/tools/approval";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        expect(setup(zen).step).toBe(2);
+        expect(setup(zen).saving).toBe(false);
+        expect(configWrites).toEqual([]);
+        expect(approvalCard(zen)).toBeNull();
+      } finally { await zen.unmount(); }
+    });
+
+    it("retries only the mark after the policy saved and the mark did not", async () => {
+      rejectWriteOf = "users/1000/ui/approval-setup";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onContinue(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onContinue(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+        rejectWriteOf = null;
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval", "users/1000/ui/approval-setup"]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("comes back at the next approval once the mark is cleared again", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onSkip(); });
+        await expectCard(zen);
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await vi.waitFor(() => expect(approvalCard(zen)).toBeNull());
+        await askApproval();
+        await expectCard(zen);
+        configEntries = [];
+        await zen.refreshConfig();
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await askApproval();
+        await expectSetup(zen);
+      } finally { await zen.unmount(); }
+    });
+
+    it("records a skip and shows the approval card", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        await act(() => { setup(zen).onSkip(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([{ key: "users/1000/ui/approval-setup", value: "skipped" }]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("goes straight to the approval card once the walkthrough is marked, and always allow writes the rule before approving", async () => {
+      configEntries = [{ key: "users/1000/ui/approval-setup", value: "done" }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        expect(collectText(ApprovalCard(card(zen)))).toContain("always: run commands on laptop, without asking");
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites).toHaveLength(1);
+        expect(configWrites[0].key).toBe("users/1000/ai/tools/approval");
+        expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("explains only, and offers no always allow, when the account cannot write settings", async () => {
+      selfCapabilities = ["proc.*"];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).editable).toBe(false);
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+        await vi.waitFor(() => expect(approvalCard(zen)).toBeNull());
+        await askApproval();
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("explains only, and offers no always allow, when the saved policy cannot be edited losslessly", async () => {
+      configEntries = [{ key: "users/1000/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).editable).toBe(false);
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes to the process owner's policy when root reviews its approval", async () => {
+      selfUid = 0;
+      shipUid = 1001;
+      configEntries = [{ key: "users/0/ui/approval-setup", value: "done" }];
+      const zen = await mountedZen("ship");
+      try {
+        await zen.refreshHistory();
+        await askApproval();
+        await expectCard(zen);
+        await act(async () => { await card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites).toHaveLength(1);
+        expect(configWrites[0]!.key).toBe("users/1000/ai/tools/approval");
+        expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes always allow to the agent's own override when the pending process resolves that one", async () => {
+      shipUid = 1001;
+      configEntries = [
+        { key: "users/1000/ui/approval-setup", value: "done" },
+        { key: "users/1001/ai/tools/approval", value: '{"default":"auto","rules":[{"match":"shell.exec","target":"targets/*","action":"ask"}]}' },
+      ];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1001/ai/tools/approval"]);
+        expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("explains only when the inherited policy cannot be edited losslessly", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectSetup(zen);
+        expect(setup(zen).editable).toBe(false);
+        await act(() => { setup(zen).onContinue(); });
+        await expectCard(zen);
+        expect(configWrites).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+      } finally { await zen.unmount(); }
+    });
+
+    it("never holds a decision behind an unread settings read, and offers nothing persistent until it is read", async () => {
+      configReads = new Promise(() => {});
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { card(zen).onDecide("approve"); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "approve" }]));
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
   });
 });

@@ -116,6 +116,13 @@ first, or is refused. Two keys hold it:
 
 Policy shape:
 
+Zen's first-approval walkthrough applies category choices to matching
+machine-specific rules too. Selecting the displayed choice again preserves any
+mixed machine-specific settings. Existing denials stay blocked. File-change choices
+preserve separate read, transfer and explicit deletion rules. **Always allow
+this** saves the exact capability and target to the policy used by that process,
+including when root is inspecting another person's work.
+
 ```json
 {
   "default": "auto",
@@ -150,6 +157,15 @@ A stored policy may leave either field out. An omitted `default` is `auto`, and 
 Mail is guarded separately. When `default` is `auto` and no rule covers `mail.send` at the `gsv` scope, an `ask` rule for `mail.send` is added to the policy on read, and an unmatched `mail.send` resolves to `ask` regardless. Sending mail without asking requires an explicit `auto` rule for `mail.send`, as the permissions page says.
 
 Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
+
+### The first-approval walkthrough and always allow
+
+The web console writes the account override in two more places, both as ordinary rules of the shape above:
+
+- The first time an approval reaches a person in Zen, the Ship explains what it does on its own and offers one choice, **allow** or **ask**, for each kind of action it asks about: running commands on your machines (`shell.exec` on `targets/*`), changing files on your machines (`fs.*` on `targets/*`; reads and searches keep their own rules), deleting files (`fs.delete` on `gsv` and on `targets/*`), fetching web pages through your machines (`net.fetch` on `targets/*`), connected tools (`sys.mcp.call`) and sending email (`mail.send` on `gsv`). Each row starts on what the account's policy does today. Saving writes rules only for the rows the person changed, starting from the current override, or the inherited policy when there is none; `default` is never changed. Skipping writes nothing.
+- The approval card's **always allow this** control writes `{ "match": "<syscall>", "target": "<resolved target>", "action": "auto" }` for exactly the call being asked about, then approves it. A rule for one machine wins over `targets/*`.
+
+Whether the walkthrough has run is held at `users/{uid}/ui/approval-setup` as `done` or `skipped`; **Settings → permissions** can clear it with *show it again*, which changes no rule. Because the override replaces the installation default rather than layering over it, an account that has saved either way keeps the rules it composed even if the installation default changes later.
 
 ## Runtime Config Keys
 

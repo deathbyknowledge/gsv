@@ -35,7 +35,7 @@
       "paths": [
         "web/src/app/features/instrument/settings/Permissions.tsx",
         "web/src/app/features/instrument/settings/permissionModel.ts",
-        "web/src/app/features/instrument/settings/permissionService.ts"
+        "web/src/app/services/system/approvalPolicyService.ts"
       ],
       "docs": [
         "docs/reference/configuration.md"
