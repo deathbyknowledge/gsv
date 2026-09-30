@@ -66,6 +66,8 @@ with the operator; the loop owns deadlines, first-output fallback, cancellation,
 response-body cleanup and usage projection. Workers AI remains a transport
 adapter over this loop. Changing a funded provider does not change the
 `gsv/default` identity or the Gateway/client contract.
+Managed inference telemetry identifies the executing provider; failures before
+a provider is selected use `gsv` rather than naming a provider that was not called.
 
 ## Inference deadlines
 
