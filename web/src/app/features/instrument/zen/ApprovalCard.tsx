@@ -1,5 +1,6 @@
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { hilDetailLabel, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
+import { commandLine } from "./commandLine";
 
 export type ApprovalCardProps = {
   request: ProcHilRequest;
@@ -24,11 +25,10 @@ export function ApprovalCard({ request, who, place, onInspect, onDecide }: Appro
         <details class="fold">
           <summary>{hilDetailLabel(request)}</summary>
           <div class="machine-rail">
-            <span class="cmd">
-              {line.lead === "prompt" ? <><span class="who">{who}</span>@<span class="where">{request.target}</span> $ </> : null}
+            {line.lead === "prompt" ? commandLine(who, request.target, line.text) : <span class="cmd">
               {line.lead === "place" ? <><span class="where">{request.target}</span> · </> : null}
               {line.text}
-            </span>
+            </span>}
           </div>
         </details>
       ) : null}

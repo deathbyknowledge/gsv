@@ -1,5 +1,6 @@
 import {
   createProvider,
+  normalizeContext,
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
@@ -21,6 +22,7 @@ import {
 } from "./failure";
 import type { InferenceModelRouting, InferenceRequest, InferencePartial, InferenceResult, InferenceRouting, InferenceStreamEvent, InferenceAbortReason } from "./types";
 import { createAttributedAiBindingFetch } from "./ai-gateway-fetch";
+import { getWorkersAiModels } from "./workers-ai-models";
 
 const GSV_INFERENCE_API = "gsv-inference";
 const AI_GATEWAY_ID = "default";
@@ -28,6 +30,7 @@ const AI_GATEWAY_BASE_URL =
   `https://workers-binding.ai/ai-gateway/gateways/${AI_GATEWAY_ID}`;
 const AI_GATEWAY_COMPAT_URL = `${AI_GATEWAY_BASE_URL}/compat`;
 const WORKERS_AI_MODEL_PREFIX = "workers-ai/";
+const workersAiCatalog = getWorkersAiModels();
 
 export type WorkersAiGeneration = {
   stream: (routing: InferenceRouting) => AsyncIterable<AssistantMessageEvent>;
@@ -227,7 +230,7 @@ async function* streamWorkersAiGeneration(
     });
     const source = workersAi.streamSimple(
       workersAiModel(modelRouting),
-      context,
+      normalizeContext(context),
       {
         fetch: bindingFetch,
         signal: attemptSignal,
@@ -498,6 +501,7 @@ async function resultFromEvents(
 function workersAiModel(
   routing: InferenceModelRouting,
 ): Model<"openai-completions"> {
+  const catalogModel = workersAiCatalog.find((model) => model.id === routing.modelId);
   return {
     id: `${WORKERS_AI_MODEL_PREFIX}${routing.modelId}`,
     name: routing.displayName,
@@ -505,7 +509,8 @@ function workersAiModel(
     provider: "cloudflare-ai-gateway",
     baseUrl: AI_GATEWAY_COMPAT_URL,
     reasoning: routing.reasoning,
-    input: ["text", "image"],
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    input: catalogModel?.input ?? ["text"],
     cost: {
       input: routing.inputNanoUsdPerToken / 1_000,
       output: routing.outputNanoUsdPerToken / 1_000,
@@ -515,6 +520,9 @@ function workersAiModel(
     contextWindow: routing.contextWindow,
     maxTokens: routing.maxOutputTokens,
     compat: {
+      // Model-specific controls translate reasoning off into a provider request.
+      // Routing still owns the limits, prices and binding transport above.
+      ...catalogModel?.compat,
       supportsStore: false,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
@@ -708,7 +716,10 @@ function cloneToolCall(
     type: "toolCall",
     id: toolCall.id,
     name: toolCall.name,
-    arguments: structuredClone(toolCall.arguments),
+    // SAFETY: structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
+    arguments: structuredClone(toolCall.arguments) as Extract<
+      InferenceResult["content"][number], { type: "toolCall" }
+    >["arguments"],
   };
   if (toolCall.thoughtSignature !== undefined) {
     clone.thoughtSignature = toolCall.thoughtSignature;

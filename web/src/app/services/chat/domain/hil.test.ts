@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeHilRequest, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
   pid: "pid-1",
@@ -63,11 +64,11 @@ describe("HIL request wording", () => {
 
   it("builds a sentence from the request shape otherwise", () => {
     expect(hilRequestSentence(shell, "my mac")).toBe("Run a command on my mac");
-    expect(describeHilRequest({ ...shell, target: "gsv" }, "your cloud home")).toBe("run a command in your cloud home");
-    expect(describeHilRequest({ ...shell, syscall: "fs.write", args: { path: "/tmp/a" } }, "my mac")).toBe("write a file on my mac");
-    expect(describeHilRequest({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", subject: "Contract follow-up" } }, "gsv"))
+    expect(describeCall({ ...shell, target: "gsv" }, "your cloud home")).toBe("run a command in your cloud home");
+    expect(describeCall({ ...shell, syscall: "fs.write", args: { path: "/tmp/a" } }, "my mac")).toBe("write a file on my mac");
+    expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", subject: "Contract follow-up" } }, "gsv"))
       .toBe("send an email to mike@example.com about Contract follow-up");
-    expect(describeHilRequest({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
+    expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
   it("folds the request as a terminal line, a plain verb, or the tool's name, never the syscall id", () => {

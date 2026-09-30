@@ -32,6 +32,17 @@ Generated namespace methods and `client.call()` are data-only.
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
 
+### Tool purpose
+
+When a Process calls a syscall through one of its capability tools, the tool
+accepts one extra argument, `purpose`: a single sentence written for the person,
+saying why the call is being made. It is a tool argument, not a syscall
+argument. It never appears in a wire `args` object and is not part of any
+signature below: the runtime lifts it off the arguments before dispatch,
+collapses whitespace, and caps it at 400 characters. The person sees it in an
+approval prompt and in the corresponding [ledger](../architecture/ledger.md)
+line. It is optional; a call without one is admitted the same way.
+
 ## Shared Records
 
 These aliases are used below to keep each syscall signature readable.
@@ -426,6 +437,24 @@ and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
 
+## Web search: `web.search`
+
+Indexed web search uses the targetable `web.search` syscall, exposed as the
+model's `Search` tool, native `web search` command, and CodeMode `web.search(args)`.
+It requires the `web.search` capability. The default `gsv` target uses the optional
+`WEB_SEARCH` service; other accessible targets can advertise `web.search` directly.
+See [Web search](web-search.md) for arguments and the operator contract. Filesystem
+`fs.search` remains available through CodeMode.
+
+```ts
+interface WebSearchSyscalls {
+  "web.search": {
+    args: { query: string; target?: string; limit?: number; includeDomains?: string[]; excludeDomains?: string[] };
+    result: { provider: string; results: { title: string; url: string; snippet: string; publishedAt?: string }[] };
+  };
+}
+```
+
 ## CodeMode: `codemode.exec`, `codemode.run`
 
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO
@@ -556,15 +585,18 @@ return { exitCode: res.exitCode, output };
 ## Conversations: `conversation.*`
 
 `conversation.*` is the direct-client interface for canonical user-visible messages. It is
-separate from raw `proc.history` activity. These operations require an authenticated direct user
-client; Process and adapter service callers use private Kernel-owned admission paths.
+separate from raw `proc.history` activity. Mutations require an authenticated direct user client;
+Process and adapter service callers use private Kernel-owned admission paths. History and search
+also admit the caller's canonical Ship, with their respective syscall capabilities and the same
+conversation ownership checks. Delegated processes do not inherit this read authority.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
@@ -610,8 +642,16 @@ type ConversationSyscalls = {
     result: { conversations: ConversationSummary[] };
   };
   "conversation.history": {
-    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    args: { conversationId: string; beforeSequence?: number; afterSequence?: number; limit?: number };
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.search": {
+    args: { conversationId?: string; query: string; beforeSequence?: number; limit?: number };
+    result: {
+      conversation: ConversationSummary;
+      hits: { id: string; sequence: number; author: ConversationMessage["author"]; createdAt: number; snippet: string }[];
+      nextBeforeSequence: number | null;
+    };
   };
   "conversation.send": {
     args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
@@ -662,7 +702,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
-| `contact.request.update` | Applies a valid state transition using an optional expected revision for optimistic concurrency. |
+| `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
 
 `contact.send` reports `queued` when the sender has durably accepted the work
 and `delivered` only after the receiving Kernel has durably committed it. A
@@ -742,6 +782,12 @@ type ContactRequestRecord = {
   details?: JsonObject;
   state: "offered" | "accepted" | "rejected" | "active" | "completed" | "cancelled";
   revision: number;
+  exchange?: {
+    state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+    source?: "local" | "remote";
+    deliveryId?: string;
+    lastError?: string;
+  };
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -791,6 +837,14 @@ type ContactSyscalls = {
       state: "queued" | "delivered" | "failed";
     };
   };
+  "contact.delivery.list": {
+    args: { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+    result: { deliveries: ContactDeliveryStatus[] };
+  };
+  "contact.delivery.retry": {
+    args: { deliveryId: string; expectedUpdatedAtMs: number };
+    result: { deliveryId: string; conversationId: string; state: "queued" | "delivered" | "failed" };
+  };
   "contact.delivery.get": {
     args: { deliveryId: string };
     result: { delivery: ContactDeliveryStatus | null };
@@ -821,6 +875,17 @@ type ContactSyscalls = {
   };
 };
 ```
+
+`contact.delivery.list` reads up to 100 selected delivery IDs or local message
+sequences for one owned contact. Status includes `messageId`, `messageSequence`
+and `retryable` when available. A missing retained receipt does not prove delivery.
+
+`contact.delivery.retry` lets the signed-in human or their canonical Ship resume
+the same stored message after a recoverable failure. It preserves the original
+message, idempotency key and contact generation. `expectedUpdatedAtMs` prevents
+retrying an outdated status; a retry epoch fences outcomes from earlier attempts.
+The original seven-day delivery window, backlog limits and rate limits still
+apply. Permanent refusal, revocation and expired delivery cannot be bypassed.
 
 ## Processes: `proc.*`
 
@@ -1091,6 +1156,10 @@ type ProcessSyscalls = {
 `proc.ai.config.get` and `proc.ai.config.set` read and update process-local model
 and reasoning preferences for the next run. `modelId` names an entry in the owning
 human's layered model stack and puts it first; ordinary fallbacks still apply.
+If that model is later removed, the next Process configuration resolution
+clears the missing model preference and inherits the owner's remaining stack.
+Reasoning preferences and conversation history are retained. Explicitly setting
+an unknown model is still rejected.
 `clear: true` returns both preferences to the agent/account defaults. The optional
 `proc.spawn.ai` object uses the same preferences, validated by the Kernel and
 stored with the Process identity before an initial prompt can start. Omitting
@@ -1337,8 +1406,8 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
@@ -1373,7 +1442,7 @@ lowercase hex characters. The receiving client persists a separate random
 `gsv_machine_` credential with a 64-character hex suffix before redemption.
 Its durable machine token has no automatic expiry; explicit device removal or
 token revocation disconnects it. Creation and redemption secrets are excluded
-from ledger arguments. See [device invitations](https://github.com/deathbyknowledge/gsv/blob/main/engineering/device-pairing.md).
+from ledger arguments. The device-pairing design notes in the repository describe the invitation flow.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where its composed MCP client
@@ -1594,7 +1663,8 @@ type SystemSyscalls = {
 `sys.oauth.device.start` and `sys.oauth.device.poll` run the device
 authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
-the accounts a human owns: a `human` account gets a personal agent, and an
+the accounts a human owns: a `human` account gets a personal agent and a separate
+Crew execution account, and an
 `agent` account is a non-login identity the owner can run processes as.
 
 `account.owner.link` requires a signed-in root human and attests the Kernel's

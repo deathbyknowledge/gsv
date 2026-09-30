@@ -18,8 +18,10 @@ import {
 import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "../context";
+import { emitIntegrationConnected } from "../integration-telemetry";
 import type { McpServerRow } from "../mcp-client";
 import type { McpServerRecord } from "../mcp-store";
+import { authorizeNestedOperation } from "../tool-approval";
 
 export type McpAddConnectionInput = {
   uid: number;
@@ -88,6 +90,10 @@ export async function handleSysMcpAdd(
     name,
   });
   ctx.broadcastToUserUid(effectiveUid, "mcp.changed");
+  emitIntegrationConnected(
+    { env: ctx.env, installationId: ctx.installationId },
+    { kind: "mcp", url },
+  );
   return { server: summarizeServer(record, ctx) };
 }
 
@@ -146,6 +152,7 @@ export async function handleSysMcpCall(
   if (!record || record.uid !== effectiveUid) {
     throw new Error("MCP server not found");
   }
+  await authorizeNestedOperation(ctx, "sys.mcp.call", args);
   const providerResult = await ctx.callMcpTool(
     serverId,
     toolName,

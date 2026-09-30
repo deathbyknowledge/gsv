@@ -1,0 +1,156 @@
+.native-input-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-left: auto; min-width: 0; }
+.native-input-controls .native-input-trigger { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 24px; }
+.native-input-controls .is-active { color: var(--accent); }
+.native-sensor-dot { width: 5px; height: 5px; background: var(--online); flex-shrink: 0; }
+.native-sensor-dot.is-paused { background: var(--warn); }
+.native-input-controls .is-error, .native-input-controls .native-input-notice, .native-input-error { color: var(--error); }
+.native-input-controls progress, .native-input-panel progress { accent-color: var(--accent); }
+.native-input-controls .native-hold { position: absolute; bottom: -3px; left: 0; width: 100%; height: 2px; appearance: none; border: 0; background: var(--border); }
+.native-hold::-webkit-progress-bar { background: var(--border); }
+.native-hold::-webkit-progress-value { background: var(--accent); }
+.native-hold::-moz-progress-bar { background: var(--accent); }
+.native-input-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.zen-input-panels { position: absolute; inset: 0; z-index: 20; display: flex; justify-content: flex-end; align-items: flex-end; padding: calc(var(--instrument-header-height) + 12px) 56px 62px; pointer-events: none; }
+.native-input-panel { box-sizing: border-box; width: min(380px, 100%); min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; padding: 20px; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); font: 12px/1.5 var(--gsv-font-mono); box-shadow: 0 8px 28px #0003; }
+.native-input-panel header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.native-input-panel h2, .native-input-panel h3 { margin: 0; color: var(--text-hi); font: inherit; }
+.native-input-panel h2 { font-size: 14px; }
+.native-input-panel kbd { margin-left: 6px; color: var(--faint); font: inherit; }
+.native-input-panel p { margin: 12px 0; }
+.native-panel-state { display: flex; align-items: center; gap: 12px; color: var(--text-dim); }
+.native-panel-state progress { max-width: 90px; height: 4px; }
+.native-panel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.native-input-panel .native-primary { padding: 7px 12px; border: 1px solid var(--accent); color: var(--accent); }
+.native-input-panel .native-hands-free-toggle { min-width: 80px; }
+.native-device { display: grid; gap: 6px; margin-top: 20px; color: var(--text-dim); }
+.native-device select { width: 100%; border: 1px solid var(--border); padding: 7px; background: var(--void); color: var(--text); font: inherit; }
+.native-device select:disabled { opacity: .5; }
+.native-panel-footnote { color: var(--text-dim); font-size: 11px; }
+.native-gesture-guide { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+.native-gesture-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 8px; }
+.native-gesture-guide p { color: var(--text-dim); font-size: 11px; }
+.native-gesture-lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 3px 8px; }
+.native-gesture-lessons button { padding: 6px 0; text-align: left; color: var(--text-dim); font-size: 11px; }
+.native-gesture-lessons button[aria-pressed="true"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
+.native-gesture-example { margin: 8px 0 0; container-type: inline-size; }
+.native-gesture-viewer { cursor: grab; touch-action: pan-y; user-select: none; }
+.native-gesture-viewer[data-dragging] { cursor: grabbing; }
+.instrument .native-gesture-viewer:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] {
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 64%, transparent);
+  --ascii-foreground: var(--glyph);
+  --ascii-stars: var(--accent-bright);
+  --ascii-foreground-glow: none;
+  --ascii-star-glow: none;
+  height: 264px; min-height: 264px; aspect-ratio: auto; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none;
+}
+.native-gesture-animation .gsv-ascii-galaxy-pre {
+  font-family: "Departure Mono", monospace;
+  font-weight: 400;
+  font-size: min(5.5px, 1.6cqi);
+  line-height: 1;
+}
+@container instrument (max-width: 900px) {
+  .zen-input-panels { padding-inline: 18px; padding-bottom: 60px; }
+  .native-input-panel { padding: 16px; }
+}
+
+.native-tutorial-launch { color: var(--accent); font-size: 11px; white-space: nowrap; }
+.native-tutorial-launch:disabled { opacity: .4; cursor: default; }
+.native-sound-settings { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 0 0; margin: 18px 0 0; border: 0; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
+.native-sound-settings legend { padding-right: 8px; color: var(--faint); }
+.native-sound-settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.native-sound-settings input { accent-color: var(--accent); margin: 0; }
+.native-tutorial {
+  position: fixed; inset: 0; box-sizing: border-box;
+  width: min(1080px, calc(100vw / var(--type-scale) - 32px)); max-width: none;
+  height: min(760px, calc(var(--instrument-height) / var(--type-scale) - 32px));
+  max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
+  margin: auto; padding: 0; border: 1px solid var(--border-raised);
+  background: var(--panel); color: var(--text); font: 13px/1.6 var(--gsv-font-mono);
+  overflow: hidden; pointer-events: auto;
+  container: gesture-tutorial / size;
+}
+.native-tutorial[open] { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+.native-tutorial[open][data-complete] { grid-template-rows: auto minmax(0, 1fr) auto; }
+.native-tutorial::backdrop { background: #0006; }
+.native-tutorial button { color: var(--text-dim); font: inherit; }
+.native-tutorial button:disabled { opacity: .4; cursor: default; }
+.native-tutorial .native-primary { padding: 7px 14px; border: 1px solid var(--accent); color: var(--accent); }
+.native-tutorial-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px 12px; font-size: 11px; }
+.native-tutorial-head kbd { font: inherit; color: var(--faint); margin-left: 6px; }
+.native-tutorial-steps { display: flex; justify-content: space-between; gap: 6px; padding: 10px 28px 18px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.native-tutorial-steps button { display: grid; justify-items: center; gap: 4px; min-width: 42px; }
+.native-tutorial-steps button > span { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--border); font-size: 11px; }
+.native-tutorial-steps small { color: var(--faint); font-size: 10px; }
+.native-tutorial-steps [aria-current="step"] > span { color: var(--accent); border-color: var(--accent); }
+.native-tutorial-steps [aria-current="step"] small { color: var(--text-hi); }
+.native-tutorial-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.native-tutorial-visual { min-width: 0; min-height: 0; padding: 16px 24px; display: grid; grid-template-rows: minmax(0, 1fr); }
+.native-tutorial .native-gesture-example { height: 100%; min-height: 0; margin: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+.native-tutorial .native-gesture-viewer { min-height: 0; container-type: size; }
+.native-tutorial .native-gesture-animation.gsv-ascii-galaxy[data-ascii-palette] { height: 100%; min-height: 0; }
+.native-tutorial .native-gesture-animation .gsv-ascii-galaxy-pre { font-size: min(8px, 1.6cqi, 2.04cqb); }
+.native-tutorial-live { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: center; gap: 20px; padding: 12px 28px; border-top: 1px solid var(--border); }
+.native-tutorial-states { display: flex; justify-content: center; gap: 24px; color: var(--faint); font-size: 11px; }
+.native-tutorial-states span[data-current] { color: var(--accent); }
+.native-tutorial-feedback { display: grid; gap: 8px; min-height: 36px; font-size: 11px; color: var(--text-dim); }
+.native-tutorial-feedback progress { width: 100%; height: 3px; accent-color: var(--accent); }
+.native-tutorial-lesson { min-width: 0; min-height: 0; padding: 26px 28px 24px 20px; overflow-y: auto; overscroll-behavior: contain; }
+.native-tutorial-lesson h2 { color: var(--text-hi); font: inherit; font-size: 22px; line-height: 1.4; margin: 4px 0 18px; outline: none; }
+.native-tutorial-count { font-size: 10px; color: var(--faint); margin: 0; letter-spacing: .12em; }
+.native-tutorial-lesson > p:not(.native-tutorial-count) { margin: 12px 0; }
+.native-role-key { display: flex; gap: 40px; margin: 28px 0; font-size: 11px; color: var(--faint); }
+.native-role-key b { display: block; color: var(--accent); font: inherit; font-size: 15px; }
+.native-practice-draft { box-sizing: border-box; width: 100%; height: clamp(56px, 13cqb, 96px); min-height: 56px; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0; color: var(--text-hi); background: var(--void); font: inherit; resize: none; }
+.native-practice-draft:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.native-practice-sent { border-left: 1px solid var(--border); padding-left: 12px; margin-top: 16px; overflow-wrap: anywhere; }
+.native-practice-sent > span { color: var(--faint); font-size: 10px; }
+.native-practice-sent p { margin: 4px 0; font-size: 12px; max-height: 5em; overflow-y: auto; }
+.native-practice-controls { display: flex; gap: 18px; margin-top: 14px; font-size: 11px; }
+.native-practice-scroll { height: clamp(96px, 25cqb, 200px); margin-top: 18px; overflow-y: auto; border-block: 1px solid var(--border); overscroll-behavior: contain; }
+.native-practice-scroll p { display: flex; align-items: center; gap: 16px; min-height: 76px; margin: 0; padding: 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.native-practice-scroll p span { color: var(--faint); }
+.native-tutorial-success { color: var(--accent); font-size: 11px; }
+.native-tutorial-completion { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; padding: 24px; overflow-y: auto; text-align: center; }
+.native-completion-mark { color: var(--accent); font-size: clamp(32px, 7cqb, 56px); line-height: 1; margin-bottom: 24px; }
+.native-tutorial-completion h2 { color: var(--text-hi); font: inherit; font-size: clamp(22px, 4cqb, 32px); line-height: 1.3; margin: 12px 0 20px; outline: none; }
+.native-tutorial-completion > p:not(.native-tutorial-count) { max-width: 40ch; margin: 4px 0; }
+.native-tutorial-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 28px; border-top: 1px solid var(--border); font-size: 11px; }
+.native-tutorial-footer > div { display: flex; gap: 20px; align-items: center; }
+@container gesture-tutorial (max-width: 760px) {
+  .native-tutorial-body { grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); }
+  .native-tutorial-visual { padding: 14px; }
+  .native-tutorial-lesson { padding: 18px 18px 18px 8px; }
+  .native-tutorial-lesson h2 { font-size: 19px; }
+  .native-tutorial-head, .native-tutorial-footer { padding-inline: 18px; }
+  .native-tutorial-steps { padding-inline: 18px; }
+  .native-tutorial-steps small { display: none; }
+  .native-tutorial-live { grid-template-columns: auto minmax(0, 1fr); padding-inline: 18px; }
+  .native-tutorial-states { gap: 12px; }
+}
+@container gesture-tutorial (max-height: 720px) {
+  .native-tutorial-head { padding-block: 10px 6px; }
+  .native-tutorial-steps { padding-block: 6px 10px; }
+  .native-tutorial-steps small { display: none; }
+  .native-tutorial-lesson { padding-block: 12px; }
+  .native-tutorial-lesson h2 { font-size: 19px; margin-bottom: 10px; }
+  .native-tutorial-lesson > p:not(.native-tutorial-count) { margin-block: 8px; }
+  .native-role-key { margin-block: 14px; }
+  .native-tutorial .native-sound-settings { margin-top: 10px; }
+  .native-practice-sent { margin-top: 8px; }
+  .native-practice-controls { margin-top: 8px; }
+  .native-tutorial-live { padding-block: 8px; }
+  .native-tutorial-footer { padding-block: 10px; }
+}
+@container gesture-tutorial (max-width: 500px) {
+  .native-tutorial-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(64px, .65fr) minmax(0, 1fr); }
+  .native-tutorial-visual { padding: 8px 18px; }
+  .native-tutorial-lesson { padding: 8px 18px; }
+  .native-tutorial-steps { gap: 2px; }
+  .native-tutorial-steps button { min-width: 0; flex: 1; }
+  .native-tutorial-live { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .native-tutorial-feedback { min-height: 0; text-align: center; }
+  .native-tutorial-footer, .native-tutorial-footer > div { gap: 10px; }
+}

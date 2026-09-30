@@ -1,5 +1,6 @@
 import type { JsonValue, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { callArgumentText as argText, describeCall, normalizeCallPurpose } from "./callDescription";
 
 type HilWireValue = string | number | boolean | null | HilWireValue[] | HilWireRecord;
 type HilWireRecord = { [key: string]: HilWireValue };
@@ -46,7 +47,7 @@ export function normalizeHilRequest<T>(value: T): ProcHilRequest | null {
     args: request.args ?? {},
     createdAt: request.createdAt ?? Date.now(),
   };
-  const purpose = request.purpose?.replace(/\s+/g, " ").trim();
+  const purpose = normalizeCallPurpose(request.purpose);
   if (purpose) {
     normalized.purpose = purpose;
   }
@@ -55,32 +56,9 @@ export function normalizeHilRequest<T>(value: T): ProcHilRequest | null {
 
 /** The sentence a person reads before deciding: the model's purpose, or one built from the request shape. */
 export function hilRequestSentence(request: ProcHilRequest, place: string): string {
-  const text = request.purpose ?? describeHilRequest(request, place);
+  const text = normalizeCallPurpose(request.purpose) ?? describeCall(request, place);
   const first = Array.from(text)[0] ?? "";
   return `${first.toLocaleUpperCase()}${text.slice(first.length)}`;
-}
-
-/** A bare verb phrase for a request the model did not explain, in the shape the purpose would take. */
-export function describeHilRequest(request: ProcHilRequest, place: string): string {
-  const where = request.target === "gsv" ? `in ${place}` : `on ${place}`;
-  switch (request.syscall) {
-    case "shell.exec": return `run a command ${where}`;
-    case "fs.read": return `read a file ${where}`;
-    case "fs.write": return `write a file ${where}`;
-    case "fs.edit": return `edit a file ${where}`;
-    case "fs.delete": return `delete a file ${where}`;
-    case "fs.search": return `search files ${where}`;
-    case "net.fetch": return `fetch a web address ${where}`;
-    case "mail.send": {
-      const to = argText(request, "to");
-      const subject = argText(request, "subject");
-      if (to && subject) return `send an email to ${to} about ${subject}`;
-      if (to) return `send an email to ${to}`;
-      if (argText(request, "replyToMessageId")) return "reply to an email";
-      return "send an email";
-    }
-    default: return `use ${request.toolName} ${where}`;
-  }
 }
 
 /**
@@ -143,9 +121,4 @@ export function hilDetailLabel(request: ProcHilRequest): string {
 
 function isText(value: JsonValue | undefined): value is string {
   return typeof value === "string";
-}
-
-function argText(request: ProcHilRequest, key: string): string | null {
-  const value = request.args[key];
-  return isText(value) && value.trim() ? value : null;
 }

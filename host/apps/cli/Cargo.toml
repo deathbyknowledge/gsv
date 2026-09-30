@@ -55,6 +55,11 @@ rustls = [
     "rustls_crate",
 ]
 
+[dev-dependencies]
+futures-util = "0.3"
+tempfile = "3"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+
 [lints.clippy]
 # Prevent panic-prone patterns in non-test code.
 string_slice = "warn"

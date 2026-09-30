@@ -44,6 +44,65 @@ function activateContact(store: FederationStore) {
 }
 
 describe("FederationStore", () => {
+  it.each(["revoke", "reconnect"] as const)("ends pending terminal request confirmation on %s", async (operation) => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      store.createRequest({
+        id: "request:completed", remoteId: "request:remote", contactId: contact.id,
+        contactGeneration: contact.generation, direction: "incoming", kind: "task", title: "Work",
+        state: "completed", exchange: { state: "pending", source: "local", deliveryId: "delivery:complete" },
+        createdAtMs: 1_000, updatedAtMs: 2_000,
+      });
+      if (operation === "revoke") store.revoke(contact.id, contact.ownerUid, 3_000);
+      else store.activateContact({
+        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
+        remoteOrigin: contact.remoteOrigin, remotePublicKey: PUBLIC_KEY, sharedSecret: "new-secret",
+        generation: "generation:replacement", threadId: "thread:replacement", now: 3_000,
+      });
+      expect(store.request("request:completed")).toMatchObject({
+        state: "completed", revision: 1,
+        exchange: { state: "failed", deliveryId: "delivery:complete", lastError: expect.stringContaining("Contact") },
+      });
+    });
+  });
+
+  it("retains unsettled request outcomes beyond delivery retention and fences late receipts", async () => {
+    await withStore((store) => {
+      const contact = activateContact(store);
+      const delivery = store.enqueue({
+        deliveryId: "delivery:complete", ownerUid: contact.ownerUid, contactId: contact.id,
+        contactGeneration: contact.generation, idempotencyKey: "complete", fingerprint: "complete",
+        payload: { kind: "request.update", requestId: "request:remote", expectedRevision: 2, state: "completed" },
+        now: 2_000,
+      }).record;
+      const request = store.createRequest({
+        id: "request:local", remoteId: "request:remote", contactId: contact.id,
+        contactGeneration: contact.generation, direction: "incoming", kind: "task", title: "Work",
+        state: "completed", exchange: { state: "pending", source: "local", deliveryId: delivery.deliveryId },
+        createdAtMs: 1_000, updatedAtMs: 2_000,
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toEqual([request]);
+      store.settleRequestDelivery({ ...delivery, state: "terminal", lastError: "Remote rejected the revision" });
+      store.markOutboxFailed(delivery.deliveryId, contact.generation, "pending", "Remote rejected the revision", null, true, 3_000);
+      store.prune({ now: 10_000, receiptCutoff: 4_000, requestCutoff: 0, batchSize: 100 });
+      expect(store.outbox(delivery.deliveryId)).toBeNull();
+      expect(store.request(request.id)?.exchange).toEqual({
+        state: "failed", source: "local", deliveryId: delivery.deliveryId, lastError: "Remote rejected the revision",
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toHaveLength(1);
+
+      store.updateRequest({
+        requestId: request.id, expectedRevision: 1, state: "cancelled", updatedAtMs: 11_000,
+        exchange: { state: "acknowledged" },
+      });
+      expect(store.settleRequestDelivery({ ...delivery, state: "delivered" })).toBeNull();
+      expect(store.request(request.id)).toMatchObject({
+        state: "cancelled", revision: 2, exchange: { state: "acknowledged" },
+      });
+      expect(store.listRequests(contact.ownerUid, contact.id)).toEqual([]);
+    });
+  });
+
   it("keeps a local alias separate from refreshed remote identity", async () => {
     await withStore((store) => {
       const contact = activateContact(store);

@@ -1,61 +1,27 @@
-# macOS development bundle
+# GSV for macOS
 
-`package-macos.sh` assembles one self-contained `GSV.app` for technical
-dogfooding. The bundle contains Desktop, the CLI, `gsvd`, both local helpers,
-the gesture models embedded in `gsv-vision`, a dark rounded-square application
-icon built from the canonical white-and-lavender ship SVG, and the required
-camera and microphone permission descriptions.
+Releases include `gsv-desktop-darwin-arm64.zip` for Apple Silicon and
+`gsv-desktop-darwin-x64.zip` for Intel. Unzip and move `GSV.app` to Applications.
+The app contains the shared Instrument UI, CLI, machine daemon, voice and gesture
+helpers, and third-party notices. macOS 12 or later is required.
 
-The packaged application starts gesture recognition automatically; the camera
-remains local and gesture control starts disarmed. Voice input is available
-from the visible **VOICE** control or `Command+Shift+Space`. Both features ask
-for their macOS privacy permission when first used. The same white ship appears
-as a monochrome menu-bar item with connection, machine, voice, and gesture
-state. The menu can retry or reconnect the Gateway, start or restart `gsvd`,
-ask the machine to reconnect, and display its bounded diagnostics. Closing the
-window keeps Desktop available there. **Quit GSV** or
-`Command+Q` shuts down Desktop and its voice/gesture helpers without stopping
-the independently installed `gsvd` service.
+These builds are ad-hoc signed, without Developer ID or notarization. After the
+first blocked launch, use System Settings → Privacy & Security → Open Anyway.
+Microphone and camera access are requested only when enabled. Closing the window
+quits the app and stops its helpers; an installed `gsvd` service keeps running.
 
-From the repository root on an Apple Silicon or Intel Mac:
+From the repository root on a Mac, after installing JavaScript dependencies:
 
 ```bash
 ./host/scripts/package-macos.sh --debug
 open "host/target/package/macos/$(uname -m)/debug/GSV.app"
 ```
 
-Use `--release` for optimized binaries. Use `--skip-build` to reassemble an app
-from binaries already present under `host/target/`.
+Use `--release` for optimized binaries or `--skip-build` to assemble existing
+binaries. `CARGO_BUILD_TARGET` selects a target-specific Cargo output directory.
+The script builds the shared frontend, includes the same-version host executables,
+generates the icon, signs the bundle, verifies it, and creates a shareable ZIP.
+The release workflow uses this same packaging path.
 
-The output includes `GSV.app` and a matching ZIP. Both are unsigned and
-unnotarized development artifacts. macOS may require a control-click followed
-by **Open** after the ZIP has been copied to another computer. Move the app to
-`/Applications` before connecting the computer so its installed `gsvd`
-LaunchAgent keeps a stable executable path. Public distribution still requires
-Developer ID signing, hardened-runtime entitlements, Apple notarization, and
-stapling.
-
-The bundle layout is:
-
-```text
-GSV.app/Contents/
-├── Info.plist
-├── MacOS/
-│   ├── gsv-desktop
-│   ├── gsv
-│   ├── gsvd
-│   ├── gsv-vision
-│   ├── gsv-transcribe
-│   └── THIRD_PARTY.md
-└── Resources/
-    ├── GSV.icns
-    ├── LICENSE
-    └── licenses/
-        └── gesture-models/
-            ├── LICENSE.apache-2.0
-            └── PROVENANCE.md
-```
-
-`gsv-transcribe` downloads its checksum-pinned speech model on first use. The
-roughly 534 MiB model is deliberately not duplicated inside this application
-bundle.
+The speech model downloads on first use with checksum verification. Gesture
+models and the CPU inference runtime are embedded in `gsv-vision`.

@@ -27,7 +27,7 @@ export function SessionProvider({
   useEffect(() => {
     const unsubscribe = service.subscribe(setSnapshot);
     void service.start();
-    return unsubscribe;
+    return () => { unsubscribe(); service.dispose?.(); };
   }, [service]);
 
   return (

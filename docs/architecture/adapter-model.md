@@ -284,7 +284,7 @@ Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, provider binding, and `mail.send` transport;
 chat pairing does not implicitly enable a mailbox.
 
-Existing Mail deployments must follow the [two-stage queue upgrade](../../deployment/mail-queue-upgrade.md)
+Existing Mail deployments must follow the [two-stage queue upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md)
 before enabling version-2 producers.
 
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
@@ -371,6 +371,13 @@ Without a link, addressed messages may request pairing; they do not enter a
 Process. The first message that requested the code is not replayed as agent
 input. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
+
+A private message on the exact retained route of a password-revoked identity
+returns `revoked_identity`. Managed adapters respond with their own fresh pairing
+code; the revoked message never enters a Process. Removed accounts, unknown
+routes, and obsolete generations remain fenced. Pairing still requires a
+direct, signed-in confirmation, which releases the retained route before
+activating its replacement.
 
 Linked group, channel, and thread traffic is not ambient input. The adapter must
 set `wasMentioned: true` when the bot was addressed according to that

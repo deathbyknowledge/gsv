@@ -22,8 +22,10 @@ import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
-import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
 import {
   handleAiContext,
   handleAiConfig,
@@ -144,6 +146,7 @@ import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
   handleConversationHistory,
+  handleConversationSearch,
   handleConversationShip,
   handleConversationList,
   handleConversationMediaRead,
@@ -157,6 +160,8 @@ import {
   handleContactInviteCreate,
   handleContactInviteList,
   handleContactDeliveryGet,
+  handleContactDeliveryList,
+  handleContactDeliveryRetry,
   handleContactList,
   handleContactRequestCreate,
   handleContactRequestList,
@@ -225,6 +230,13 @@ export async function dispatch(
       handled: true,
       response: rejectBeforeDispatch(frame, 499, requestCancelMessage(ctx.requestSignal)),
     };
+  }
+  if (frame.call === "web.search") {
+    const parsed = webSearchArgsSchema.safeParse(frame.args);
+    if (!parsed.success) {
+      return { handled: true, response: rejectBeforeDispatch(frame, 400, "Invalid web.search arguments") };
+    }
+    frame = { ...frame, args: parsed.data };
   }
   const routingArgs = routableFrameArgs(frame);
   const target = frame.call === "ai.text.generate"
@@ -303,15 +315,35 @@ async function dispatchLocal(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
+  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const requestTarget: DispatchDeps["requestTarget"] = async (targetId, call, args, options) => {
+    const signal = options?.signal ?? nativeContext.requestSignal;
+    try {
+      await authorizeNestedOperation({ ...nativeContext, requestSignal: signal }, call, { ...args, target: targetId });
+      signal?.throwIfAborted();
+      return await deps.requestTarget(targetId, call, args, options);
+    } catch (error) {
+      if (options?.body && !options.body.stream.locked) {
+        await options.body.stream.cancel(error).catch(() => {});
+      }
+      throw error;
+    }
+  };
   const fsTransport = {
     ...deps,
-    openContactSource: async (source: Parameters<typeof openContactResourceSource>[0]) => (
-      await openContactResourceSource(source, ctx)
-    ),
+    requestTarget,
+    openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
+      const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
+      await authorizeNestedOperation(contactContext, "fs.transfer.send", { ...source });
+      contactContext.requestSignal?.throwIfAborted();
+      return await openContactResourceSource(source, contactContext);
+    },
   };
 
   try {
     if (frame.call === "fs.read" && frame.args.target?.startsWith("contact:") === true) {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse(frame.args));
+      ctx.requestSignal?.throwIfAborted();
       return {
         type: "res",
         id: frame.id,
@@ -320,13 +352,16 @@ async function dispatchLocal(
       };
     }
     if (frame.call === "fs.transfer.send" && frame.args.target?.startsWith("contact:") === true) {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse(frame.args));
+      ctx.requestSignal?.throwIfAborted();
       return await handleContactResourceSend(frame.args, ctx, frame.id);
     }
     if (isRoutableSyscall(frame.call)) {
-      return await dispatchGsvTarget(frame, ctx, {
+      await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: "gsv" }));
+      return await dispatchGsvTarget(frame, nativeContext, {
         fsTransport,
-        netFetchTransport: deps,
-        request: (request, signal) => deps.request(request, ctx, signal),
+        netFetchTransport: { requestTarget },
+        request: (request, signal) => deps.request(request, nativeContext, signal),
       });
     }
 
@@ -376,6 +411,9 @@ async function dispatchKernel(
         break;
       case "conversation.history":
         data = await handleConversationHistory(frame.args, ctx);
+        break;
+      case "conversation.search":
+        data = await handleConversationSearch(frame.args, ctx);
         break;
       case "conversation.send":
         data = await handleConversationSend(frame.args, ctx);
@@ -716,6 +754,12 @@ async function dispatchKernel(
       case "contact.send":
         data = await handleContactSend(frame.args, ctx);
         break;
+      case "contact.delivery.list":
+        data = handleContactDeliveryList(frame.args, ctx);
+        break;
+      case "contact.delivery.retry":
+        data = await handleContactDeliveryRetry(frame.args, ctx);
+        break;
       case "contact.delivery.get":
         data = handleContactDeliveryGet(frame.args, ctx);
         break;
@@ -808,6 +852,17 @@ async function routeToTarget(
     };
   }
 
+  try {
+    await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }));
+    ctx.requestSignal?.throwIfAborted();
+  } catch (error) {
+    return {
+      handled: true,
+      response: rejectBeforeDispatch(frame, ctx.requestSignal?.aborted ? 499 : 403,
+        error instanceof Error ? error.message : String(error)),
+    };
+  }
+
   if (frame.call === "shell.exec" && frame.args.start === true) {
     const sessionId = frame.args.sessionId!.trim();
     if (deps.shellSessions.get(sessionId)) {
@@ -881,6 +936,7 @@ async function routeToTarget(
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
+  if (frame.call === "web.search") return WEB_SEARCH_TIMEOUT_MS;
   if (frame.call === "shell.exec") {
     const requested = frame.args.timeout;
     if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {

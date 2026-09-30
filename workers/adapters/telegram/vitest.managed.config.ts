@@ -22,6 +22,9 @@ export default defineConfig({
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, bodyBytes });
                   if (frame.args.message?.text === "__gateway_unavailable__") return null;
+                  if (frame.args.message?.text === "__identity_revoked__") {
+                    return { type: "res", id: frame.id, ok: true, data: { ok: true, droppedReason: "revoked_identity" } };
+                  }
                   return {
                     type: "res",
                     id: frame.id,
@@ -158,7 +161,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/retirement.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts"],
     // Paragraph messages are paced one second apart, so one flow spans several seconds.
     testTimeout: 30_000,
   },

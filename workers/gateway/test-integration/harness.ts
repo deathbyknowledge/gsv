@@ -53,6 +53,7 @@ export function integrationGatewayConfig(options: {
     main: config.main,
     compatibility_date: config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
+    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1" },
     define: config.define,
     rules: config.rules,
     migrations: lifecycleConfig.migrations,
@@ -146,6 +147,7 @@ function integrationEmailConfig(
     send_email: config.send_email,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       {
         binding: "GATEWAY",
         service: gatewayService,
@@ -231,6 +233,7 @@ function integrationManagedInferenceConfig(
     migrations: config.migrations,
     services: [
       { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      { binding: "ENTITLEMENTS", service: ACCOUNTS_WORKER, entrypoint: "EntitlementsEntrypoint" },
       { binding: "INSTALLATION_DIRECTORY", service: ACCOUNTS_WORKER },
       { binding: "AI", service: DEPENDENCY_WORKER },
     ],

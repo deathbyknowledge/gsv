@@ -2,11 +2,8 @@ import type {
   AiSkillIndexMode,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
-import {
-  accountHomeRepoRef,
-  RipgitClient,
-  type RipgitRepoRef,
-} from "../fs";
+import { accountHomeRepoRef } from "../fs/ripgit/repos";
+import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 

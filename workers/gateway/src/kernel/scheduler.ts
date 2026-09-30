@@ -3,6 +3,7 @@ import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { normalizeTimezone, ownerTimezone } from "./timezone";
 import { hasCapability } from "./capabilities";
+import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import type {
   ScheduleExpression,
   SchedulePrincipal,
@@ -585,6 +586,10 @@ export async function handleSchedulerAdd(
   assertSchedulableAtExpression(expression, args.enabled !== false, now);
   const target = normalizeShipScheduleTarget(normalizeScheduleTarget(args.target), ctx);
   validateScheduleTargetAccess(target, ctx);
+  if (target.kind === "command.exec") {
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", { ...args, target }, "ask");
+    assertSchedulableAtExpression(expression, args.enabled !== false, Date.now());
+  }
 
   const principal = principalFromContext(ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -628,6 +633,16 @@ export async function handleSchedulerUpdate(
   }
   if (args.patch.expression !== undefined || args.patch.enabled === true) {
     assertSchedulableAtExpression(nextExpression, nextEnabled, now);
+  }
+
+  if (nextTarget.kind === "command.exec" && (nextEnabled || args.patch.target !== undefined)) {
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.update", {
+      ...args, patch: { ...args.patch, target: nextTarget },
+    }, "ask");
+    if (store.getStored(existing.id)?.updatedAtMs !== existing.updatedAtMs) {
+      throw new Error("Schedule changed while waiting for approval; read it again before updating");
+    }
+    assertSchedulableAtExpression(nextExpression, nextEnabled, Date.now());
   }
 
   const patch = {

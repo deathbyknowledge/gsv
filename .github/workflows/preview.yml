@@ -23,10 +23,13 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: gsv-previews
+    environment:
+      name: gsv-previews
+      deployment: false
     permissions:
       contents: read
       pull-requests: write
+      deployments: write
     concurrency:
       group: gsv-preview-${{ github.repository_id }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -95,6 +98,46 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.GSV_PREVIEW_CLOUDFLARE_API_TOKEN }}
           ALCHEMY_COMMAND: ${{ steps.current.outputs.command }}
         run: npx alchemy "$ALCHEMY_COMMAND" preview.alchemy.ts --stage "pr-${GSV_PREVIEW_NUMBER}" --yes
+      - name: Record the preview deployment
+        if: success() && steps.current.outputs.command != ''
+        uses: actions/github-script@v7
+        env:
+          ALCHEMY_COMMAND: ${{ steps.current.outputs.command }}
+        with:
+          script: |
+            const environment = `gsv-preview-pr-${context.issue.number}`;
+            const logUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const deploying = process.env.ALCHEMY_COMMAND === "deploy";
+            let currentId;
+            if (deploying) {
+              const { data: deployment } = await github.rest.repos.createDeployment({
+                ...context.repo, ref: context.payload.pull_request.head.sha,
+                environment, transient_environment: true, production_environment: false,
+                auto_merge: false, required_contexts: [],
+                description: `GSV preview for PR #${context.issue.number}`,
+              });
+              currentId = deployment.id;
+              await github.rest.repos.createDeploymentStatus({
+                ...context.repo, deployment_id: currentId, state: "success",
+                auto_inactive: false, log_url: logUrl, description: "Preview ready",
+                environment_url: `https://accounts.pr-${context.issue.number}.${process.env.GSV_PREVIEW_BASE_DOMAIN}/admin/installations`,
+              });
+            }
+            const deployments = await github.paginate(github.rest.repos.listDeployments, {
+              ...context.repo, environment, per_page: 100,
+            });
+            for (const deployment of deployments) {
+              if (deployment.id === currentId) continue;
+              const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                ...context.repo, deployment_id: deployment.id, per_page: 1,
+              });
+              if (statuses[0]?.state === "inactive") continue;
+              await github.rest.repos.createDeploymentStatus({
+                ...context.repo, deployment_id: deployment.id, state: "inactive",
+                auto_inactive: false, log_url: logUrl, environment_url: "",
+                description: deploying ? "Preview superseded" : "Preview removed",
+              });
+            }
       - name: Update the preview link
         if: steps.current.outputs.command != ''
         uses: actions/github-script@v7

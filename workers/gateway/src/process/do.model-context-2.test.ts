@@ -885,7 +885,7 @@ describe("model context", () => {
     await runInProcess(stub, async (process) => {
       const { promise: streamCleanupBlocked, resolve: releaseStreamCleanup } = deferred();
       const { promise: streamCleanupStarted, resolve: markStreamCleanupStarted } = deferred();
-      process.streams.abortRun = vi.fn(async () => {
+      vi.spyOn(process.streams, "abortRun").mockImplementationOnce(async () => {
         markStreamCleanupStarted();
         await streamCleanupBlocked;
       });

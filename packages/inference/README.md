@@ -13,6 +13,11 @@ charge customers or write usage records. Its only model/cost fixtures are test
 data. The provider integration keeps the existing `default` AI Gateway and
 pi-ai 0.84.2 during this extraction.
 
+The binding attaches UTF-8 request size and a fixed projection of message,
+tool and image counts to AI Gateway metadata for JSON requests. This projection
+contains no prompt, response, tool argument, tool name or image data. Request
+and response streams remain owned by the transport; payload logging stays off.
+
 The public types use neutral names while retaining the current SDK wire contract
 and diagnostic text for rolling consumers. H&M still owns its funded admission,
 pricing decisions, durable reservations and usage reconciliation. Its Worker

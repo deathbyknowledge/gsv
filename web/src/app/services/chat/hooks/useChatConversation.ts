@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useCallback, useEffect, useMemo } from "preact/hooks";
+import { useViewSnapshot } from "../../navigation/ViewActivity";
+import { useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../navigation/viewQueries";
 import type {
   ConversationMessage,
   ConversationMessageOrigin,
@@ -19,11 +21,7 @@ import {
   preserveDirectedConversationDelivery,
   type ChatConversation,
 } from "../domain/conversations";
-import {
-  addOptimisticUserMessage,
-  dropOneMatchingOptimisticUserRow,
-  type ChatTranscriptRow,
-} from "../domain/transcript";
+import type { ChatTranscriptRow } from "../domain/transcript";
 
 const PAGE_SIZE = 50;
 
@@ -105,10 +103,7 @@ function upsertRow(rows: readonly ChatTranscriptRow[], next: ChatTranscriptRow):
     rows.find((row) => row.id === next.id),
     next,
   );
-  const reconciled = stableNext.role === "user"
-    ? dropOneMatchingOptimisticUserRow(rows, stableNext)
-    : [...rows];
-  const withoutDraft = reconciled.filter((row) => (
+  const withoutDraft = rows.filter((row) => (
     row.id !== stableNext.id
     && !(stableNext.runId
       && row.runId === stableNext.runId
@@ -150,9 +145,7 @@ export function useChatConversationRuntime(
     enabled: enabled && Boolean(conversationId),
     queryFn: () => getChatConversationHistory(client, conversationId, { limit: PAGE_SIZE }),
   });
-  const [runtime, setRuntime] = useState<ConversationRuntime>(EMPTY_RUNTIME);
-  const runtimeRef = useRef(runtime);
-  runtimeRef.current = runtime;
+  const [runtime, setRuntime, runtimeRef] = useViewSnapshot<ConversationRuntime>(EMPTY_RUNTIME);
 
   useEffect(() => {
     if (input.enabled === false || !processId) {
@@ -232,21 +225,6 @@ export function useChatConversationRuntime(
     });
   }, [client, conversationId, enabled, queryClient]);
 
-  const appendOptimistic = useCallback((text: string, media: unknown[] = []) => {
-    setRuntime((current) => ({
-      ...current,
-      rows: addOptimisticUserMessage({
-        activeRunId: null,
-        context: null,
-        contextRevision: 0,
-        messageCount: current.rows.length,
-        pendingHil: null,
-        rows: current.rows,
-        runState: "idle",
-      }, text, media).rows,
-    }));
-  }, []);
-
   const acceptMessage = useCallback((message: ConversationMessage) => {
     setRuntime((current) => current.conversation?.id === message.conversationId
       ? { ...current, rows: upsertRow(current.rows, conversationMessageRow(message)) }
@@ -310,7 +288,6 @@ export function useChatConversationRuntime(
 
   return useMemo(() => ({
     ...visibleRuntime,
-    appendOptimistic,
     acceptMessage,
     historyLoading: conversationQuery.isLoading || historyQuery.isLoading,
     historyFetching: conversationQuery.isFetching || historyQuery.isFetching,
@@ -318,7 +295,6 @@ export function useChatConversationRuntime(
     retryHistory,
     loadOlder,
   }), [
-    appendOptimistic,
     acceptMessage,
     conversationQuery.error,
     conversationQuery.isLoading,

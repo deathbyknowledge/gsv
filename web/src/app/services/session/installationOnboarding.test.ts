@@ -3,7 +3,6 @@ import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
 } from "./installationOnboarding";
-import { createOnboardingService, type OnboardingClient } from "./onboardingService";
 import { createSessionService, type SessionClient } from "./sessionService";
 
 const TOKEN = `onboard_${"a".repeat(43)}`;
@@ -86,12 +85,29 @@ describe("installation onboarding capability", () => {
       rootLocked: false,
     }));
     const client = {
-      connect: vi.fn(),
+      connect: vi.fn<SessionClient["connect"]>().mockResolvedValue({
+        protocol: 4,
+        server: { version: "0.4.1", release: "test", connectionId: "connection:alice" },
+        peer: {
+          id: "web", sessionId: "connection:alice",
+          principal: {
+            kind: "human",
+            account: {
+              uid: 1000, gid: 1000, gids: [1000], username: "alice",
+              home: "/home/alice", cwd: "/home/alice",
+            },
+          },
+          grant: { calls: [], signals: [], implements: [] },
+        },
+      }),
       disconnect: vi.fn(),
       isConnected: () => false,
       onStatus: vi.fn(),
       requestOnce,
-      sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
+      sys: { token: {
+        create: vi.fn(async () => { throw new Error("No token storage in this fixture"); }),
+        revoke: vi.fn(), list: vi.fn(),
+      } },
     } satisfies SessionClient;
     const session = createSessionService(client);
 
@@ -113,24 +129,11 @@ describe("installation onboarding capability", () => {
     );
     expect(readInstallationOnboardingToken()).toBeNull();
     expect(window.location.pathname).toBe("/");
-  });
-
-  it("adds the capability to setup assistant requests", async () => {
-    window.history.replaceState(null, "", `/onboarding#${TOKEN}`);
-    const requestOnce = vi.fn(async () => ({
-      message: "Ready when you are.",
-      patches: [],
-      reviewReady: true,
-    }));
-    const onboarding = createOnboardingService({
-      requestOnce,
-    } satisfies OnboardingClient);
-
-    await onboarding.assist("Help me configure this.");
-    expect(requestOnce).toHaveBeenCalledWith(
-      "wss://local.gsv.space/ws",
-      "sys.setup.assist",
-      expect.objectContaining({ onboardingToken: TOKEN }),
-    );
+    expect(session.snapshot().phase).toBe("ready");
+    expect(client.connect).toHaveBeenCalledWith({
+      url: "wss://local.gsv.space/ws",
+      username: "alice",
+      password: "correct-horse-battery-staple",
+    });
   });
 });

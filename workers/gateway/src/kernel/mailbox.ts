@@ -1,3 +1,4 @@
+import { MAIL_MAX_MESSAGE_BYTES as MAX_RAW_MAIL_BYTES } from "@humansandmachines/gsv/services/mail";
 import type {
   BinaryBody,
   ManagedInboundMailAccepted,
@@ -16,7 +17,6 @@ import { stableOpaqueId } from "../shared/stable-id";
 import { accountIdentity } from "./accounts";
 import type { KernelContext } from "./context";
 
-const MAX_RAW_MAIL_BYTES = 25 * 1024 * 1024;
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
 const MAX_MAIL_ATTACHMENTS = 256;
 const TEXT_ENCODER = new TextEncoder();

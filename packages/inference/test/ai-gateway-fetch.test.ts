@@ -4,6 +4,71 @@ import { createAttributedAiBindingFetch } from "../src/ai-gateway-fetch";
 const ATTRIBUTION = { installationId: "space-a", logicalRequestId: "request-a" };
 
 describe("AI Gateway request attribution", () => {
+  it("records only structural counts and UTF-8 size without modifying a JSON request", async () => {
+    const secret = "private fixture text 🔒";
+    const body = JSON.stringify({
+      messages: [
+        { role: "system", content: secret },
+        { role: "user", content: [{ type: "image_url", image_url: { url: secret } }] },
+        { role: "assistant", content: null, reasoning_content: "", tool_calls: [
+          { id: secret, function: { name: secret, arguments: secret } },
+        ] },
+        { role: "tool", tool_call_id: secret, content: secret },
+        { role: "tool", tool_call_id: "unmatched", content: "" },
+      ],
+      tools: [{ function: { name: secret, description: secret } }],
+      max_tokens: 4096,
+      chat_template_kwargs: { enable_thinking: true, private: secret },
+    });
+    const response = new Response(null, { status: 400 });
+    const bindingFetch = vi.fn<typeof fetch>(async () => response);
+    const fetch = createAttributedAiBindingFetch({ aiGatewayLogId: null, fetch: bindingFetch }, ATTRIBUTION);
+
+    expect(await fetch("https://workers-binding.ai/compat/chat/completions", { method: "POST", body })).toBe(response);
+    const init = bindingFetch.mock.calls[0]![1]!;
+    expect(init.body).toBe(body);
+    const metadata = new Headers(init.headers).get("cf-aig-metadata")!;
+    expect(metadata).not.toContain("private");
+    const parsed = JSON.parse(metadata);
+    expect(Object.keys(parsed)).toHaveLength(5);
+    expect(parsed["gsv.request_bytes"]).toBe(new TextEncoder().encode(body).byteLength);
+    expect(JSON.parse(parsed["gsv.request_shape"])).toEqual({
+      version: 1, messages: 5, users: 1, assistants: 1, toolResults: 2, toolCalls: 1,
+      unmatchedToolResults: 1, images: 1, emptyMessages: 1, reasoningMessages: 1,
+      emptyReasoningMessages: 1, tools: 1, maxTokens: 4096, thinking: true,
+    });
+  });
+
+  it("forwards malformed JSON without retaining its contents or masking the provider response", async () => {
+    const response = new Response(null, { status: 400 });
+    const bindingFetch = vi.fn<typeof fetch>(async () => response);
+    const fetch = createAttributedAiBindingFetch({ aiGatewayLogId: null, fetch: bindingFetch }, ATTRIBUTION);
+    const body = "private invalid JSON";
+
+    expect(await fetch("https://workers-binding.ai/compat/chat/completions", { method: "POST", body })).toBe(response);
+    const init = bindingFetch.mock.calls[0]![1]!;
+    expect(init.body).toBe(body);
+    const metadata = new Headers(init.headers).get("cf-aig-metadata")!;
+    expect(metadata).not.toContain("private");
+    expect(JSON.parse(JSON.parse(metadata)["gsv.request_shape"])).toEqual({ version: 1, validJson: false });
+  });
+
+  it("forwards an invalid request without recording schema errors or private field values", async () => {
+    const response = new Response(null, { status: 400 });
+    const bindingFetch = vi.fn<typeof fetch>(async () => response);
+    const fetch = createAttributedAiBindingFetch({ aiGatewayLogId: null, fetch: bindingFetch }, ATTRIBUTION);
+    const body = JSON.stringify({ messages: [{ role: "user", content: { private: "private text" } }] });
+
+    expect(await fetch("https://workers-binding.ai/compat/chat/completions", { method: "POST", body })).toBe(response);
+    const init = bindingFetch.mock.calls[0]![1]!;
+    expect(init.body).toBe(body);
+    const metadata = new Headers(init.headers).get("cf-aig-metadata")!;
+    expect(metadata).not.toContain("private");
+    expect(JSON.parse(JSON.parse(metadata)["gsv.request_shape"])).toEqual({
+      version: 1, validJson: true, validRequest: false,
+    });
+  });
+
   it("replaces forged metadata after merging without taking ownership of either body", async () => {
     const requestPull = vi.fn();
     const requestCancel = vi.fn();

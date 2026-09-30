@@ -1,3 +1,4 @@
+import { gatewayHttpOrigin } from "../platform/gatewayOrigin";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   AdapterConnectResult,
@@ -157,7 +158,10 @@ export type PollConsoleOpenAiCodexOAuthInput = {
 export type PollConsoleOpenAiCodexOAuthResult = SysOAuthDevicePollResult;
 export type CheckConsoleOpenAiCodexOAuthResult = {
   connected: boolean;
+  email?: string;
 };
+export type StartConsoleOpenAiCodexOAuthInput = { accountKey: string };
+export type CheckConsoleOpenAiCodexOAuthInput = { accountKey: string; uid: number };
 
 export type ConsoleProcessAction = "abort" | "reset" | "kill";
 
@@ -359,10 +363,12 @@ export async function validateConsoleModelConfig(
 
 export async function startConsoleOpenAiCodexOAuth(
   client: Pick<GSVClient, "call">,
+  input: StartConsoleOpenAiCodexOAuthInput,
 ): Promise<StartConsoleOpenAiCodexOAuthResult> {
   return await client.call("sys.oauth.device.start", {
     kind: "ai-provider",
     provider: "openai-codex",
+    accountKey: input.accountKey,
   });
 }
 
@@ -377,16 +383,20 @@ export async function pollConsoleOpenAiCodexOAuth(
 
 export async function checkConsoleOpenAiCodexOAuth(
   client: Pick<GSVClient, "call">,
+  input: CheckConsoleOpenAiCodexOAuthInput,
 ): Promise<CheckConsoleOpenAiCodexOAuthResult> {
-  const result = await client.call("sys.oauth.list", {});
-  return {
-    connected: result.accounts.some((account) =>
-      account.kind === "ai-provider" &&
-      account.provider === OPENAI_CODEX_PROVIDER &&
-      account.accountKey === "default" &&
-      hasOpenAiCodexAccountId(account.metadata)
-    ),
-  };
+  const result = await client.call("sys.oauth.list", { uid: input.uid });
+  const account = result.accounts.find((account) =>
+    account.uid === input.uid &&
+    account.kind === "ai-provider" &&
+    account.provider === OPENAI_CODEX_PROVIDER &&
+    account.accountKey === input.accountKey &&
+    hasOpenAiCodexAccountId(account.metadata)
+  );
+  const email = z.string().trim().min(1).safeParse(account?.metadata?.chatgptEmail);
+  const summary: CheckConsoleOpenAiCodexOAuthResult = { connected: !!account };
+  if (email.success) summary.email = email.data;
+  return summary;
 }
 
 export async function runConsoleProcessAction(
@@ -708,7 +718,7 @@ export async function addConsoleMcpServer(
   }
 
   const transport = input.transport === "streamable-http" || input.transport === "sse" ? input.transport : "auto";
-  const callbackHost = globalThis.window?.location.origin;
+  const callbackHost = gatewayHttpOrigin();
   const result = await client.call("sys.mcp.add", {
     name,
     url,
@@ -820,6 +830,8 @@ function modelValidationConfig(
   if (providerStyle) config.providerStyle = providerStyle;
   const transportTarget = values["config/ai/transport_target"]?.trim();
   if (transportTarget) config.transportTarget = transportTarget;
+  const oauthAccountKey = values["config/ai/oauth_account_key"]?.trim();
+  if (oauthAccountKey) config.oauthAccountKey = oauthAccountKey;
   const maxTokens = positiveInteger(values["config/ai/max_tokens"]);
   if (maxTokens) config.maxTokens = maxTokens;
   const contextWindowTokens = positiveInteger(values["config/ai/context_window_tokens"]);

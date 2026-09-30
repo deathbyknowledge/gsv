@@ -1,5 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
-import { isCancelledError, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { isCancelledError, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { spawnChatProcess } from "../../../services/chat/backend/chatService";
 import { loadConsoleProcesses } from "../../../services/system/consoleService";
@@ -8,6 +10,7 @@ import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 
 /** Ship follows its owner's personal process; an explicit helper keeps its exact identity. */
 export function useZenProcess(pidProp: string | null | undefined, onError: (message: string) => void): string | null {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [ship, setShip] = useState<{ pid: string; ownerUid: number | null } | null>(null);
@@ -19,7 +22,7 @@ export function useZenProcess(pidProp: string | null | undefined, onError: (mess
 
   /* the personal process, spawned if the account has none yet */
   useEffect(() => {
-    if (!connected || pidProp) return undefined;
+    if (!active || !connected || pidProp) return undefined;
     let cancelled = false;
     void (async () => {
       try {
@@ -40,7 +43,7 @@ export function useZenProcess(pidProp: string | null | undefined, onError: (mess
       }
     })();
     return () => { cancelled = true; };
-  }, [cache, client, connected, onError, pidProp]);
+  }, [active, cache, client, connected, onError, pidProp]);
 
   if (pidProp) return pidProp;
   const personal = processes.data?.find((process) => process.personal

@@ -10,7 +10,7 @@ import type {
   ProcessScheduleDeliverArgs,
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
-import { TOOL_TO_SYSCALL } from "../syscalls/constants";
+import { resolveToolSyscall } from "../syscalls/constants";
 import { takePurpose } from "./approval";
 import type { Process } from "./do";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -155,7 +155,7 @@ export function registerToolBlock(
     };
   }
   for (const toolCall of toolCalls) {
-    const syscall = TOOL_TO_SYSCALL[toolCall.name];
+    const syscall = resolveToolSyscall(toolCall.name, process.runs.active?.toolSyscalls);
     const args = syscall
       ? process.tools.prepareToolArgs(syscall, toolCall.arguments).args
       : toolCall.arguments;

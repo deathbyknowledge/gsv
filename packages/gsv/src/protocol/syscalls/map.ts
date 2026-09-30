@@ -20,6 +20,7 @@ import type {
 } from "./fs";
 import type { ShellCancelArgs, ShellCancelResult, ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
+import type { WebSearchArgs, WebSearchResult } from "./web";
 import type {
   CodeModeExecArgs,
   CodeModeExecResult,
@@ -261,6 +262,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipArgs,
   ConversationShipResult,
   ConversationListArgs,
@@ -283,6 +286,10 @@ import type {
   ContactInviteCreateResult,
   ContactInviteListArgs,
   ContactInviteListResult,
+  ContactDeliveryListArgs,
+  ContactDeliveryListResult,
+  ContactDeliveryRetryArgs,
+  ContactDeliveryRetryResult,
   ContactDeliveryGetArgs,
   ContactDeliveryGetResult,
   ContactListArgs,
@@ -314,6 +321,7 @@ export type SyscallDomains = {
   "shell.cancel": { args: ShellCancelArgs; result: ShellCancelResult };
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
+  "web.search": { args: WebSearchArgs; result: WebSearchResult };
 
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
@@ -325,6 +333,7 @@ export type SyscallDomains = {
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
   "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
   "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
+  "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
 
@@ -337,6 +346,8 @@ export type SyscallDomains = {
   "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
   "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
   "contact.send": { args: ContactSendArgs; result: ContactSendResult };
+  "contact.delivery.list": { args: ContactDeliveryListArgs; result: ContactDeliveryListResult };
+  "contact.delivery.retry": { args: ContactDeliveryRetryArgs; result: ContactDeliveryRetryResult };
   "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };
   "contact.request.list": { args: ContactRequestListArgs; result: ContactRequestListResult };
   "contact.request.create": { args: ContactRequestCreateArgs; result: ContactRequestCreateResult };

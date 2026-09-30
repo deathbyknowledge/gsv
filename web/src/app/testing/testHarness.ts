@@ -6,6 +6,7 @@ import type { ConnectFlowDef, ConnectNav } from "../components/connect-flow/conn
 import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/consoleModels";
 
 export type TestNodeProps = {
+  "aria-label"?: string;
   boxed?: boolean;
   children?: ComponentChildren;
   disabled?: boolean;

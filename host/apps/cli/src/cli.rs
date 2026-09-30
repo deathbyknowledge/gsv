@@ -32,6 +32,7 @@ pub(crate) struct Cli {
 pub(crate) enum Commands {
     /// Pair this computer with one invitation from GSV (omit it to resume)
     Pair {
+        /// Invitation (use - to read from stdin, omit to resume)
         code: Option<String>,
         /// Filesystem workspace to expose (defaults to the home directory)
         #[arg(long)]
@@ -39,6 +40,12 @@ pub(crate) enum Commands {
         /// Save pairing without installing or starting the background service
         #[arg(long)]
         no_install: bool,
+        /// Leave the CLI's selected space and login unchanged
+        #[arg(long)]
+        preserve_cli_login: bool,
+        /// Refuse to replace an existing machine credential
+        #[arg(long)]
+        no_replace: bool,
     },
     /// Send a message to the agent (interactive or one-shot)
     Chat {
@@ -584,6 +591,16 @@ mod tests {
         assert!(
             matches!(pair.command, Commands::Pair { code: Some(code), no_install: true, .. }
             if code == "fixture-invitation")
+        );
+    }
+
+    #[test]
+    fn desktop_can_pair_from_stdin_without_replacing_existing_login_or_machine() {
+        let pair =
+            Cli::try_parse_from(["gsv", "pair", "-", "--preserve-cli-login", "--no-replace"])
+                .expect("desktop pairing parses");
+        assert!(
+            matches!(pair.command, Commands::Pair { code: Some(code), preserve_cli_login: true, no_replace: true, no_install: false, .. } if code == "-")
         );
     }
 

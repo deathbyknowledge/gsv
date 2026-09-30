@@ -183,8 +183,9 @@ The model response can contain text, thinking blocks, and tool calls:
   assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
   `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
   command, for people, scripts, and the model alike.
-- Once the Process validates a message command, the originating client receives
-  `message.started` and `message.delta`. Adapters wait for `message.committed`.
+- The originating client receives `message.started` and `message.delta` while the model is still
+  writing a Send's `text`; a Shell `message send` streams once the Process validates it. Adapters
+  wait for `message.committed`.
 - Ordinary assistant text in a human-facing run that stops without yielding causes a `[GSV EVENT]`
   correction that names `Send`. The tool set is part of the cached prompt prefix and never changes
   between turns, corrections included. After three omissions the run ends with an inspectable bounded
@@ -205,7 +206,12 @@ instead of silently completing or hanging.
 
 The model sees a fixed surface of eight tools. Seven are syscall-backed: `Read`, `Write`, `Edit`,
 `Delete`, `Search`, `Shell`, and `CodeMode` map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`,
-`fs.search`, `shell.exec`, and `codemode.exec`. The eighth, `Send`, is the run control as a tool and
+`web.search`, `shell.exec`, and `codemode.exec`. Search is offered when the caller has
+`web.search` and either a native search service or an accessible online search target;
+filesystem search remains available through Shell commands and CodeMode `fs.search`.
+Each run stores its tool-to-syscall routing with the offered schemas; already-active filesystem
+Search calls and legacy history keep their original meaning across an upgrade.
+The eighth, `Send`, is the run control as a tool and
 backs no syscall; it is offered to human-facing runs only.
 
 The message and run-control commands are Process-owned Shell intrinsics, the same actions as `Send`

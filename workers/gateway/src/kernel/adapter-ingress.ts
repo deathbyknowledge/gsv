@@ -380,6 +380,17 @@ async function resolveClaimedAdapterInbound(input: {
   const recovery = normalizeAdapterIngressRecovery(input.recovery);
   const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
   const uid = ctx.adapters.identityLinks.resolveUid(adapter, accountId, actorId);
+  if (!link && routeGeneration && message.surface.kind === "dm") {
+    const revokedLink = ctx.adapters.identityLinks.getForCleanup(adapter, accountId, actorId);
+    if (
+      revokedLink?.metadata?.managed === true
+      && !ctx.auth.isAccountDisabled(revokedLink.uid)
+      && identityLinkRouteGeneration(revokedLink, message.surface) === routeGeneration
+    ) {
+      // The retained route can request fresh pairing, never admit work as the revoked identity.
+      return { ok: true, droppedReason: "revoked_identity" };
+    }
+  }
   const linkedRouteGeneration = link
     ? identityLinkRouteGeneration(link, message.surface)
     : undefined;

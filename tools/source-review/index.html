@@ -34,6 +34,20 @@
           </div>
           <div id="review-stats" class="stats"></div>
         </header>
+        <div id="prompt-controls" class="preview-controls" hidden>
+          <label for="prompt-account">Account</label>
+          <select id="prompt-account">
+            <option value="ship">Ship</option>
+            <option value="crew">Crew</option>
+          </select>
+          <label class="sr-only" for="prompt-view">Preview view</label>
+          <select id="prompt-view">
+            <option value="category">Category</option>
+            <option value="sections">Sections</option>
+            <option value="exact">Exact text</option>
+            <option value="catalog">All sources</option>
+          </select>
+        </div>
         <p id="review-note" class="review-note"></p>
         <div id="preview" class="preview"></div>
       </section>
@@ -41,7 +55,7 @@
       <section class="source-pane">
         <header class="pane-header">
           <div>
-            <p class="eyebrow">RAW WORKTREE SOURCE</p>
+            <p class="eyebrow">SOURCE</p>
             <h2 id="source-path">No file selected</h2>
           </div>
           <div class="source-actions">
@@ -49,8 +63,8 @@
             <button id="save" type="button" disabled>Save</button>
           </div>
         </header>
-        <textarea id="source" aria-label="Raw source" spellcheck="false" disabled></textarea>
-        <details class="diff-panel" open>
+        <textarea id="source" aria-label="Markdown source" spellcheck="true" disabled></textarea>
+        <details class="diff-panel">
           <summary>GIT DIFF</summary>
           <pre id="diff">No file selected.</pre>
         </details>

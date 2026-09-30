@@ -26,6 +26,7 @@ impl Default for RequestId {
 #[serde(rename_all = "camelCase")]
 pub enum DaemonPhase {
     Starting,
+    Unpaired,
     Connecting,
     Connected,
     Reconnecting,

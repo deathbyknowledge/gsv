@@ -34,14 +34,14 @@ import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, formatProcessRuntimeEvent, formatScheduleEventMessage } from "../history/event-renderer";
+import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
   isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome, normalizeOptionalString,
   parseStoredStringArray, cancelResponseBody,
 } from "../internal/messages";
-import { CODEMODE_EXEC, SYSCALL_TOOL_NAMES } from "../../syscalls/constants";
+import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
   InternalResponseFrame,
@@ -253,7 +253,11 @@ async function admitInterruptingSend(
       if (existing) return existing;
     }
 
+    // a reply the person watched being typed is withdrawn while its run can still reach them
     const activeRun = host.runs.active;
+    const streamAbort = activeRun
+      ? host.streams.abortRun(activeRun.runId, "A newer message superseded the run")
+      : undefined;
     if (activeRun) {
       host.tools.cancelPendingRequests(activeRun.runId, USER_SUPERSEDED_TOOL_MESSAGE);
     }
@@ -297,6 +301,7 @@ async function admitInterruptingSend(
       return { effects, messageId };
     });
 
+    await streamAbort;
     if (!admission) {
       const existing = admittedRunId ? host.controller.existingRunAdmission(runId) : null;
       return existing ?? { ok: false, error: "Process no longer exists" };
@@ -656,6 +661,7 @@ async function killProcess(
       pendingCleanup,
     } satisfies ProcessKilledTombstone;
     const bestEffort = postKillTasks(host, pid, activeRun, finishPayload);
+    const streamAbort = activeRun ? host.streams.abortRun(activeRun.runId, "The process was killed") : undefined;
 
     tombstoneKilledProcessStorage(host.ctx.storage, killedTombstone);
     host.killedTombstone = killedTombstone;
@@ -669,6 +675,8 @@ async function killProcess(
     }
 
     return await host.controller.completeKilledProcessCleanup(async () => {
+      await streamAbort;
+      if (activeRun) host.streams.deleteRun(activeRun.runId);
       for (const task of await failedCleanupTasks(bestEffort)) {
         console.warn(`[Process] Post-kill ${task.label} failed for ${pid}`);
       }
@@ -1053,6 +1061,7 @@ export class ProcessController {
     }
 
     const runId = run.runId;
+    const streamAbort = this.host.streams.abortRun(runId, "The run was interrupted");
     this.host.tools.cancelPendingRequests(runId, USER_INTERRUPTED_TOOL_MESSAGE);
     const effects = this.host.ctx.storage.transactionSync((): AbortEffects | null => {
       const active = this.host.runs.active;
@@ -1071,6 +1080,7 @@ export class ProcessController {
       });
       return { approval, interrupted, transition };
     });
+    await streamAbort;
     if (!effects) return { ok: true, pid, aborted: false };
     const { approval, interrupted: recordedTools, transition: completed } = effects;
     if (!completed || !recordedTools) {
@@ -1168,14 +1178,13 @@ export class ProcessController {
       ? toolCalls.find(
           (result) =>
             result.dispatchId === pending.ownerDispatchId &&
-            result.call === CODEMODE_EXEC &&
             result.status === "pending",
         )
       : undefined;
     const error = outerCodeMode
       ? args.decision === "deny"
         ? TOOL_EXECUTION_DENIED_BY_USER_MESSAGE
-        : "CodeMode execution was interrupted while waiting for tool approval"
+        : "Tool execution was interrupted while waiting for approval"
       : `Registered tool call not found: ${pending.runId}/${pending.toolCallId}`;
     if (outerCodeMode) {
       await this.host.tools.failStartedTool(
@@ -1281,7 +1290,7 @@ export class ProcessController {
     );
     const codeModeOwnerDispatchId = pendingHil.ownerDispatchId ?? codeModeApproval?.dispatchId;
     const offeredToolName = codeModeOwnerDispatchId
-      ? SYSCALL_TOOL_NAMES[CODEMODE_EXEC]!
+      ? syscallToolName(this.host.store.tools.getPending(codeModeOwnerDispatchId)?.call ?? "") ?? pendingHil.toolName
       : pendingHil.toolName;
     if (args.decision === "approve" && !this.host.tools.wasToolOffered(run, offeredToolName)) {
       return await this.rejectUnofferedHil(
@@ -1324,6 +1333,7 @@ export class ProcessController {
     this.host.settings.abortTitleGeneration(resetError);
     this.host.resources.abortMediaUploads(resetError);
     const activeRun = this.host.runs.active;
+    const streamAbort = activeRun ? this.host.streams.abortRun(activeRun.runId, resetError.message) : undefined;
     this.host.tools.cancelPendingRequests(null, resetError.message);
     this.host.tools.rejectCodeModeWaiters(null, "Process execution state was reset");
     const effects = this.host.ctx.storage.transactionSync(() => {
@@ -1348,6 +1358,7 @@ export class ProcessController {
       this.host.store.queue.clearQueue();
       return result;
     });
+    await streamAbort;
     if (activeRun) this.host.streams.deleteRun(activeRun.runId);
     if (activeRun && effects.interrupted) {
       this.host.startBackground(
@@ -1605,10 +1616,29 @@ export class ProcessController {
       throw new Error("Runtime event id is invalid");
     }
     const runId = eventId;
+    const historyEvent: ProcHistoryEvent = event.type === "r12y.ready"
+      ? {
+          kind: "responsibility.ready",
+          payload: {
+            batchId: event.batchId,
+            ledgerRevision: event.ledgerRevision,
+            responsibilityIds: event.responsibilityIds,
+            receivedAtMs: Date.now(),
+          },
+          severity: "info",
+          audience: "model",
+        }
+      : {
+          kind: "adapter.work.returned",
+          payload: { eventId, workPid: event.workPid },
+          severity: "info",
+          audience: "model",
+        };
     const admission =
       event.type === "r12y.ready"
-        ? await this.handleRuntimeEvent(null, event.type, {
+        ? await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
             runId,
+            event: historyEvent,
             kind: event.type,
             dedupeId: eventId,
             provenance: JSON.stringify({
@@ -1624,15 +1654,10 @@ export class ProcessController {
               responsibilityIds: event.responsibilityIds,
             },
           })
-        : await this.handleRuntimeEvent(formatProcessRuntimeEvent(event), event.type, {
+        : await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
             distinctRun: true,
             runId,
-            event: {
-              kind: "adapter.work.returned",
-              payload: { eventId, workPid: event.workPid },
-              severity: "info",
-              audience: "model",
-            },
+            event: historyEvent,
           });
     if (!admission.ok) {
       throw new Error(admission.error);
@@ -2004,6 +2029,12 @@ export class ProcessController {
     frame: ProcessRequestFrame,
   ): Promise<ResponseFrame | InternalResponseFrame<ProcessInternalCall> | null> {
     try {
+      if (frame.call === "proc.tool.authorize") {
+        const approved = await this.handleCancellableRequest(frame.id, (signal) =>
+          this.host.tools.authorizeNestedTool(frame.args, signal),
+        );
+        return { type: "res", id: frame.id, ok: true, data: { approved } };
+      }
       if (frame.call === "proc.event.deliver") {
         const result = await deliverProcessEvent(this.host, frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
@@ -2055,7 +2086,7 @@ export class ProcessController {
           break;
         case "codemode.run":
           data = await this.handleCancellableRequest(frame.id, (signal) =>
-            this.host.tools.handleCodeModeRun(frame.args, signal, frame.id),
+            this.host.tools.handleCodeModeRun(frame.args, signal, frame.id, frame.toolOwner),
           );
           break;
         case "proc.history":

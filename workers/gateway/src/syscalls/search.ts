@@ -1,27 +1,40 @@
 import type { ToolDefinition } from ".";
-import { FS_SEARCH, SYSCALL_TOOL_NAMES } from "./constants";
+import { WEB_SEARCH, SYSCALL_TOOL_NAMES } from "./constants";
 
-export const FS_SEARCH_DEFINITION: ToolDefinition = {
-  name: SYSCALL_TOOL_NAMES[FS_SEARCH],
+export const WEB_SEARCH_DEFINITION: ToolDefinition = {
+  name: SYSCALL_TOOL_NAMES[WEB_SEARCH],
   description:
-    "Search file contents using plain text. Returns matching lines with file paths and line numbers.",
+    "Search the web for current information and sources on gsv or an explicit search target. Returns titles, URLs, and excerpts, not full pages. Use Shell commands or CodeMode fs.search for file contents.",
   inputSchema: {
     type: "object",
     properties: {
       query: {
         type: "string",
-        description: "Plain text to search for",
+        description: "Web search query",
+        minLength: 1,
+        maxLength: 2000,
       },
-      path: {
-        type: "string",
-        description: "Directory or file to search in (optional, defaults to current working directory)",
+      limit: {
+        type: "integer",
+        description: "Maximum number of results (defaults to 5)",
+        minimum: 1,
+        maximum: 10,
       },
-      include: {
-        type: "string",
-        description: "Glob pattern to filter files (e.g. \"*.ts\", \"*.json\")",
+      includeDomains: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 10,
+        description: "Only search these hostnames, such as example.com",
+      },
+      excludeDomains: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 10,
+        description: "Exclude these hostnames",
       },
     },
     required: ["query"],
+    additionalProperties: false,
   },
 };
 

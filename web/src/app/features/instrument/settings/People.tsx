@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { createHumanInvitation } from "../../../services/system/peopleService";

@@ -608,6 +608,22 @@ impl CliConfig {
         self.device.token.clone()
     }
 
+    /// Machine credentials retain their issuing gateway independently of the
+    /// CLI login. Older installations stored this identity in `gateway`.
+    pub fn device_gateway_url(&self) -> String {
+        self.device
+            .gateway_url
+            .clone()
+            .unwrap_or_else(|| self.gateway_url())
+    }
+
+    pub fn device_gateway_username(&self) -> Option<String> {
+        self.device
+            .gateway_username
+            .clone()
+            .or_else(|| self.gateway_username())
+    }
+
     /// Whether the machine daemon may install gateway-named releases on its own
     pub fn device_auto_update(&self) -> bool {
         self.device.auto_update.unwrap_or(true)

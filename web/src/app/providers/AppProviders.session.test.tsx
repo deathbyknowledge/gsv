@@ -19,7 +19,6 @@ function session(phase: SessionSnapshot["phase"]): SessionSnapshot {
     connectionId: phase === "ready" ? "connection:hank" : null,
     server: null,
     message: null,
-    setupResult: null,
   };
 }
 
@@ -44,10 +43,7 @@ function createSessionHarness() {
     setup: async () => {
       throw new Error("Not used by this test");
     },
-    continueFromSetup: async () => {
-      throw new Error("Not used by this test");
-    },
-    lock: () => {},
+    lock: async () => {},
     start,
   };
 

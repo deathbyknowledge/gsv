@@ -1,5 +1,6 @@
 import type { AssistantMessage, AssistantMessageEvent, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
 import type { ManagedInferencePartial, ManagedInferenceResult, ManagedInferenceStreamEvent } from "@humansandmachines/gsv/services/inference";
+import type { AiToolCall } from "@humansandmachines/gsv/protocol";
 import { hasWorkersAiModelPricing, isWorkersAiProvider } from "../text/workers-ai";
 
 function partial(message: AssistantMessage): ManagedInferencePartial {
@@ -88,7 +89,9 @@ function thinkingContent(content: ThinkingContent): ThinkingContent {
   return { type: "thinking", thinking: content.thinking,
     thinkingSignature: content.thinkingSignature, redacted: content.redacted };
 }
-function toolContent(content: ToolCall): ToolCall {
-  return { type: "toolCall", id: content.id, name: content.name, arguments: structuredClone(content.arguments),
+function toolContent(content: ToolCall): AiToolCall {
+  // SAFETY: structuredClone creates mutable JSON arrays from pi-ai's readonly JSON values.
+  const args = structuredClone(content.arguments) as AiToolCall["arguments"];
+  return { type: "toolCall", id: content.id, name: content.name, arguments: args,
     thoughtSignature: content.thoughtSignature };
 }

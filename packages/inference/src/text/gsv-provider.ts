@@ -1,10 +1,12 @@
 import {
   createAssistantMessageEventStream,
   createProvider,
+  getCurrentSystemPrompt,
+  getCurrentTools,
   type AssistantMessage,
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
-  type Context,
+  type TranscriptContext,
   type Model,
   type ProviderStreams,
   type SimpleStreamOptions,
@@ -122,7 +124,7 @@ function gsvInferenceStreams(
 function streamGsvInference(
   access: ManagedInferenceAccess,
   attribution: InferenceAttribution,
-  context: Context,
+  context: TranscriptContext,
   options?: StreamOptions | SimpleStreamOptions,
   deadlineAt?: number,
 ): AssistantMessageEventStream {
@@ -142,7 +144,7 @@ function streamGsvInference(
 
 function buildManagedInferenceRequest(
   attribution: InferenceAttribution,
-  context: Context,
+  context: TranscriptContext,
   deadlineAt: number,
   options?: StreamOptions | SimpleStreamOptions,
 ): ManagedInferenceRequest {
@@ -150,7 +152,9 @@ function buildManagedInferenceRequest(
     ? options.reasoning
     : undefined;
   // SAFETY: Context messages use the same JSON message contract as managed inference.
-  const messages = context.messages as ManagedInferenceRequest["messages"];
+  const messages = context.messages.filter((message) => message.role !== "system") as ManagedInferenceRequest["messages"];
+  const systemPrompt = getCurrentSystemPrompt(context.messages);
+  const tools = getCurrentTools(context.messages);
   const request: ManagedInferenceRequest = {
     version: 1,
     installationId: attribution.installationId,
@@ -163,10 +167,10 @@ function buildManagedInferenceRequest(
     deadlineAt,
   };
   if (attribution.workload) request.workload = attribution.workload;
-  if (context.systemPrompt) request.systemPrompt = context.systemPrompt;
-  if (context.tools && context.tools.length > 0) {
+  if (systemPrompt) request.systemPrompt = systemPrompt;
+  if (tools.length > 0) {
     // SAFETY: pi-ai tools and the managed protocol share the same JSON Schema contract.
-    request.tools = context.tools as ManagedInferenceRequest["tools"];
+    request.tools = tools as ManagedInferenceRequest["tools"];
   }
   if (reasoning) request.reasoning = reasoning;
   return request;

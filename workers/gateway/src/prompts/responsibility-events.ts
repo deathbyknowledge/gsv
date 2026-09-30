@@ -1,4 +1,4 @@
-import type { JsonValue, ResponsibilityRecord, ResponsibilityTransition } from "@humansandmachines/gsv/protocol";
+import type { JsonValue, ProcHistoryEventPayload, ResponsibilityRecord, ResponsibilityTransition } from "@humansandmachines/gsv/protocol";
 import { federationResponsibilityDetailsSchema } from "../process/internal/schemas";
 
 export const RESPONSIBILITY_CONTEXT_FIELDS = [
@@ -7,6 +7,16 @@ export const RESPONSIBILITY_CONTEXT_FIELDS = [
 ] as const satisfies readonly (keyof ResponsibilityRecord)[];
 
 type ResponsibilityContextField = typeof RESPONSIBILITY_CONTEXT_FIELDS[number];
+
+export function formatResponsibilityReadyEvent(event: ProcHistoryEventPayload<"responsibility.ready">): string {
+  return [
+    `Responsibility review requested at ${new Date(event.receivedAtMs).toISOString()}.`,
+    `Review the current records and recent conversation for: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,
+    "If a due check is waiting for the human's answer, use Send to remind them of the specific question or decision. No reply is a reason to follow up, not by itself a reason to silently move the check forward again.",
+    "If they already answered, the item is obsolete, or they requested no reminders, update or close it accordingly. Defer only for a concrete reason recorded on the responsibility; choose a suitable next check, or clear it when no follow-up is wanted.",
+    "Resolve, cancel, delegate, or explicitly defer actionable work before yielding. Call Send with yield true when finished; omit text only when no user follow-up is needed.",
+  ].join("\n\n");
+}
 
 const FIELD_LABELS = {
   title: "Title", state: "State", details: "Details", priority: "Priority", assignee: "Assignee",

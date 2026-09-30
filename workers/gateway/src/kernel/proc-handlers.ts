@@ -44,6 +44,7 @@ import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 import { resolveSelectedMessageTarget } from "./targets";
+import { nestedToolOwner } from "./tool-approval";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -774,11 +775,17 @@ export async function forwardToProcess(
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
-  const processFrame = frame.call === "proc.send"
-    ? withProcSendOrigin(frame, ctx)
-    : frame.call === "proc.ai.config.set"
-      ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
-      : frame;
+  const owner = frame.call === "codemode.run" ? nestedToolOwner(ctx) : undefined;
+  if (owner && pid !== ctx.processId) {
+    throw new Error("Agent CodeMode execution must belong to its calling process");
+  }
+  const processFrame = frame.call === "codemode.run"
+    ? { ...frame, toolOwner: owner }
+    : frame.call === "proc.send"
+      ? withProcSendOrigin(frame, ctx)
+      : frame.call === "proc.ai.config.set"
+        ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
+        : frame;
   if (processFrame.call === "proc.send" && processFrame.args.selectedTarget !== undefined) {
     processFrame.args.selectedTarget = await resolveSelectedMessageTarget(ctx, processFrame.args.selectedTarget);
   }

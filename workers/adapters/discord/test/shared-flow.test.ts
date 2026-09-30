@@ -98,6 +98,26 @@ describe("shared Discord provider → peer → Gateway", () => {
     expect((await sent()).filter((row) => row.body.content?.includes("Pairing code:")).every((row) => ["82201", "82202"].includes(row.channel))).toBe(true);
   });
 
+  it("offers fresh private pairing after password revocation and uses a new route after confirmation", async () => {
+    await start();
+    const initial = await link(await issue("2211", "3411"), "recovery-space");
+    const before = (await sent()).length;
+    await message("3412", "2211", "__identity_revoked__");
+    const messages = await until(sent, (rows) => rows.slice(before).some((row) => row.body.content?.includes("Pairing code:")));
+    const reply = messages.slice(before).find((row) => row.body.content?.includes("Pairing code:"))!;
+    expect(reply.channel).toBe("82211");
+    const code = reply.body.content!.match(/Pairing code: ([A-Z2-9-]+)/)![1];
+    await expect(adapter.adapterPairingInspect({ installationId: "recovery-space" }, code)).resolves.toMatchObject({ linked: true });
+    const replacement = await link(code, "recovery-space");
+    expect(replacement.route.generation).not.toBe(initial.route.generation);
+    await message("3413", "2211", "hello after reconnecting");
+    const ingress = await until(calls, (rows) => rows.some((row) => row.args?.deliveryId === "3413"));
+    expect(ingress.find((row) => row.args?.deliveryId === "3413")).toMatchObject({
+      installation: { installationId: "recovery-space" }, args: { routeGeneration: replacement.route.generation },
+    });
+    expect(ingress.filter((row) => row.args?.deliveryId === "3412")).toHaveLength(1);
+  });
+
   it("fences a delayed outbound body when a person moves to another space", async () => {
     await start();
     const old = await link(await issue("2301", "3501"), "old-space");

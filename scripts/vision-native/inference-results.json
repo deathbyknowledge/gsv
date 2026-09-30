@@ -1,0 +1,248 @@
+{
+  "date": "2026-09-09",
+  "baseRevision": "68a1d80393ef19817367fbeb646c869f306957ab",
+  "machine": {
+    "cpu": "AMD Ryzen 9 5900X",
+    "gpu": "NVIDIA RTX 3090",
+    "os": "Linux x86-64",
+    "compiler": "Clang 22.1.8",
+    "rustc": "1.100.0-nightly (bff8e12ff 2026-08-26)"
+  },
+  "nativeGestures": {
+    "modelSha256": "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9",
+    "affinity": "logical CPUs 0-3, distinct physical cores",
+    "scope": "landmark FP32 graph; identical seed-42 synthetic input; 10 warmups and 100 samples; warm invocation includes input/output copies; camera, preprocessing and gesture policy excluded",
+    "xnnpack": {
+      "litertVersion": "2.2.0",
+      "cases": 9,
+      "results": [
+        {
+          "threads": 1,
+          "loadMs": 7.849560992326587,
+          "medianMs": 6.472184002632275,
+          "p95Ms": 6.880502084095496
+        },
+        {
+          "threads": 2,
+          "loadMs": 4.023892019176856,
+          "medianMs": 3.357602981850505,
+          "p95Ms": 3.7059029782540165
+        },
+        {
+          "threads": 4,
+          "loadMs": 3.1468700035475194,
+          "medianMs": 1.8021635187324136,
+          "p95Ms": 2.080472007219214
+        }
+      ]
+    },
+    "tract": {
+      "loadMs": 95.926327,
+      "results": [
+        {
+          "meanMs": 24.359402539999998,
+          "medianMs": 24.07523,
+          "model": "hand_detector",
+          "outputMaxAbsoluteErrors": [
+            0.00013589859008789062,
+            2.9087066650390625e-05
+          ],
+          "p95Ms": 25.699061,
+          "threads": 4
+        },
+        {
+          "meanMs": 9.532127749999997,
+          "medianMs": 9.471212,
+          "model": "hand_landmarks_detector",
+          "outputMaxAbsoluteErrors": [
+            0.000133514404296875,
+            5.960464477539063e-08,
+            1.3709068298339844e-06,
+            3.129243850708008e-07
+          ],
+          "p95Ms": 10.883099999999999,
+          "threads": 4
+        }
+      ],
+      "scope": "exact production model modules; identical random inputs as LiteRT; warm invocation including input/output copies"
+    }
+  },
+  "browserGestures": {
+    "scope": "compatibility smoke; one synthetic palm input and nine synthetic/public landmark crops; all model outputs compared with native LiteRT references; single-threaded WASM with relaxed SIMD; no affinity restriction; timing includes tensor allocation, output copies and JS array conversion; 10 warmups and 30 samples on the last case; no capture, tracking or gesture decisions",
+    "tolerances": {
+      "palmAbsolute": 0.002,
+      "imageLandmarksPixels": 0.002,
+      "otherLandmarkOutputsAbsolute": 2e-05
+    },
+    "webGpuValidation": "unavailable: no WebGPU device in this headless session",
+    "version": "2.5.3",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+    "accelerator": "wasm",
+    "isolated": false,
+    "relaxedSimd": true,
+    "models": [
+      {
+        "file": "/models/hand_detector.tflite",
+        "sha256": "60d1bf8d70a80aba35b36290bb2a0e52e784ca2e524937d49ea80e8161a8a384",
+        "bytes": 2339878,
+        "cases": 1,
+        "outputDetails": [
+          {
+            "name": "Identity",
+            "index": 0,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 2016,
+              "2": 18
+            },
+            "supportedBufferTypes": {}
+          },
+          {
+            "name": "Identity_1",
+            "index": 1,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 2016,
+              "2": 1
+            },
+            "supportedBufferTypes": {}
+          }
+        ],
+        "maxAbs": 3.814697265625e-05,
+        "loadMs": 47.400000005960464,
+        "fullyAccelerated": true,
+        "medianMs": 29.299999982118607,
+        "p95Ms": 32.599999994039536
+      },
+      {
+        "file": "/models/hand_landmarks_detector.tflite",
+        "sha256": "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9",
+        "bytes": 5478949,
+        "cases": 9,
+        "outputDetails": [
+          {
+            "name": "Identity",
+            "index": 0,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 63
+            },
+            "supportedBufferTypes": {}
+          },
+          {
+            "name": "Identity_1",
+            "index": 1,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 1
+            },
+            "supportedBufferTypes": {}
+          },
+          {
+            "name": "Identity_2",
+            "index": 2,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 1
+            },
+            "supportedBufferTypes": {}
+          },
+          {
+            "name": "Identity_3",
+            "index": 3,
+            "dtype": "float32",
+            "shape": {
+              "0": 1,
+              "1": 63
+            },
+            "supportedBufferTypes": {}
+          }
+        ],
+        "maxAbs": 4.656612873077393e-10,
+        "loadMs": 18.200000017881393,
+        "fullyAccelerated": true,
+        "medianMs": 19.400000005960464,
+        "p95Ms": 19.80000001192093
+      }
+    ]
+  },
+  "voice": {
+    "engine": "transcribe-cpp and transcribe-cpp-sys 0.2.2",
+    "scope": "same Vulkan-enabled binary; unpaced public 11-second WAV; right-context 3, automatic language, 4 workers; one warmup + three measured utterances per configuration",
+    "wavSha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+    "modelSha256": "86429e8c4f7fdcf9b3312269ad1ca6669478ba7805331c4aea7a2e33e9910d65",
+    "vulkanHeadersRevision": "409c16be502e39fe70dd6fe2d9ad4842ef2c9a53",
+    "spirvHeadersRevision": "aa6cef192b8e693916eb713e7a9ccadf06062ceb",
+    "cpu": {
+      "loadMs": 357.391835,
+      "results": [
+        {
+          "feedTotalMs": 2220.782352000001,
+          "finalizeMs": 86.947018,
+          "feedP95Ms": 60.069722,
+          "feedMaxMs": 83.17234900000001,
+          "melMs": 396.322998046875,
+          "encodeMs": 1803.9549560546875,
+          "firstChangeAudioMs": 1280.0,
+          "feedMs": 80,
+          "totalComputeMs": 2309.3808820000013,
+          "transcriptSha256": [
+            "bad6d82d59ea3bf7b30aaa4bfaa2cbb6f4a95e4917c581b562eba21a9c221833"
+          ]
+        },
+        {
+          "feedTotalMs": 1832.90792,
+          "finalizeMs": 84.632868,
+          "feedP95Ms": 59.986671,
+          "feedMaxMs": 84.309934,
+          "melMs": 65.56300354003906,
+          "encodeMs": 1767.741943359375,
+          "firstChangeAudioMs": 1280.0,
+          "feedMs": 320,
+          "totalComputeMs": 1918.0531770000002,
+          "transcriptSha256": [
+            "bad6d82d59ea3bf7b30aaa4bfaa2cbb6f4a95e4917c581b562eba21a9c221833"
+          ]
+        }
+      ]
+    },
+    "vulkan": {
+      "loadMs": 755.356529,
+      "results": [
+        {
+          "feedTotalMs": 948.3205849999997,
+          "finalizeMs": 23.891636000000002,
+          "feedP95Ms": 22.941544,
+          "feedMaxMs": 25.311094999999998,
+          "melMs": 334.62298583984375,
+          "encodeMs": 613.010986328125,
+          "firstChangeAudioMs": 1280.0,
+          "feedMs": 80,
+          "totalComputeMs": 975.9560589999998,
+          "transcriptSha256": [
+            "bad6d82d59ea3bf7b30aaa4bfaa2cbb6f4a95e4917c581b562eba21a9c221833"
+          ]
+        },
+        {
+          "feedTotalMs": 684.7188680000002,
+          "finalizeMs": 24.427673000000002,
+          "feedP95Ms": 24.668496,
+          "feedMaxMs": 25.396116,
+          "melMs": 83.5979995727539,
+          "encodeMs": 600.6329956054688,
+          "firstChangeAudioMs": 1280.0,
+          "feedMs": 320,
+          "totalComputeMs": 710.0428120000001,
+          "transcriptSha256": [
+            "bad6d82d59ea3bf7b30aaa4bfaa2cbb6f4a95e4917c581b562eba21a9c221833"
+          ]
+        }
+      ]
+    }
+  }
+}

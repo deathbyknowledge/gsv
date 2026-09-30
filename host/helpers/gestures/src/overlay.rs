@@ -314,6 +314,10 @@ fn scroll_status_text(state: ScrollState) -> (String, u32) {
 
 fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
     match status {
+        ControlStatus::Practice { .. } => (
+            "PRIVATE PRACTICE - HELD POSES FOLLOW THE CURRENT LESSON",
+            PAIR_COLOR,
+        ),
         ControlStatus::Disarmed { .. } => {
             ("GESTURES DISARMED - HOLD BOTH FISTS TO ARM", WARNING_COLOR)
         }
@@ -353,6 +357,7 @@ fn control_diagnostic_text(
                 MUTED_TEXT_COLOR,
             ),
             ControlStatus::Disabled { .. }
+            | ControlStatus::Practice { .. }
             | ControlStatus::Standby { .. }
             | ControlStatus::Active { .. } => (
                 "CONTROL WAITING FOR RIGHT 1-5 OR SCROLL CHORD".to_string(),
@@ -445,6 +450,7 @@ fn control_diagnostic_text(
 
 fn chord_text(chord: ControlChord) -> &'static str {
     match chord {
+        ControlChord::OpenPalm => "OPEN PALM",
         ControlChord::Arm => "ARM",
         ControlChord::Disarm => "DISARM",
         ControlChord::StartTranscription => "START",
@@ -463,6 +469,7 @@ fn status_progress(status: ControlStatus) -> Option<GestureProgress> {
         ControlStatus::Disarmed { progress }
         | ControlStatus::Disabled { progress }
         | ControlStatus::Standby { progress }
+        | ControlStatus::Practice { progress, .. }
         | ControlStatus::Active { progress, .. } => progress,
     }
 }
@@ -535,6 +542,7 @@ fn candidate_style(candidate: GestureCandidate) -> (&'static str, u32) {
         GestureCandidate::Send => ("SEND", WARNING_COLOR),
         GestureCandidate::DeleteBackward => ("DELETE", LEFT_COLOR),
         GestureCandidate::ClearDictation => ("CLEAR", WARNING_COLOR),
+        GestureCandidate::OpenPalm => ("FIVE FINGERS", RIGHT_COLOR),
         GestureCandidate::Mute => ("MUTE", RIGHT_COLOR),
         GestureCandidate::Unmute => ("UNMUTE", PAIR_COLOR),
     }

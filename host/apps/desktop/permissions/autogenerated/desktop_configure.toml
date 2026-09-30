@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-configure"
+description = "Enables the desktop_configure command without any pre-configured scope."
+commands.allow = ["desktop_configure"]
+
+[[permission]]
+identifier = "deny-desktop-configure"
+description = "Denies the desktop_configure command without any pre-configured scope."
+commands.deny = ["desktop_configure"]

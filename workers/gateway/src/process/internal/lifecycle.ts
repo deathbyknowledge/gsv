@@ -112,7 +112,7 @@ export const FINAL_MESSAGE_BLOCK_EXAMPLE =
   "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
 
 export const RUN_CONTROL_INSTRUCTION =
-  "Messages for the user go through the Send tool; `message send` and `yield` here are the same actions. Assistant text is never sent to the user; anything the person should read goes through Send.";
+  "Messages for the user go through the Send tool. Assistant text is never sent to the user; anything the person should read goes through Send.";
 
 export const SEND_TOOL_DESCRIPTION =
   "Send a message to the person this run is for, end the run, or both. Assistant text is never delivered; this is how the person hears from you. yield true ends the run after the message, or silently when there is no text.";
@@ -186,7 +186,7 @@ export const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 
 export const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 
-export const COMPACTION_SUMMARY_MAX_TOKENS = 768;
+export const COMPACTION_SUMMARY_MAX_TOKENS = 4_096;
 
 export const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 

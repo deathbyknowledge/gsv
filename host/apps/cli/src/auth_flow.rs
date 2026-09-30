@@ -275,7 +275,8 @@ pub(crate) fn resolve_device_gateway_auth(
     token: Option<String>,
     cli_username: Option<String>,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
-    let username = resolve_gateway_username(cfg, cli_username);
+    let username = normalize_auth_field(cli_username)
+        .or_else(|| normalize_auth_field(cfg.device_gateway_username()));
     let token =
         normalize_auth_field(token).or_else(|| normalize_auth_field(cfg.default_device_token()));
 
@@ -451,6 +452,13 @@ mod tests {
         let saved = resolve_device_gateway_auth(&cfg, None, None).expect("saved device auth");
         assert_eq!(saved.token.as_deref(), Some("saved-device-token"));
         assert_eq!(saved.username.as_deref(), Some("fixture-owner"));
+        cfg.device.gateway_username = Some("machine-owner".into());
+        let saved =
+            resolve_device_gateway_auth(&cfg, None, None).expect("independent machine auth");
+        assert_eq!(saved.username.as_deref(), Some("machine-owner"));
+        cfg.gateway.username = None;
+        let saved = resolve_device_gateway_auth(&cfg, None, None).expect("no CLI login needed");
+        assert_eq!(saved.username.as_deref(), Some("machine-owner"));
         let explicit = resolve_device_gateway_auth(
             &cfg,
             Some("explicit-device-token".into()),

@@ -91,9 +91,12 @@ responsibility happens before its wake is scheduled.
 When work becomes actionable, the Kernel creates a batch containing the relevant
 responsibility ids and admits a typed `r12y.ready` control event to the existing
 personal Process. An idle Ship starts a run; a busy Ship attaches the batch to its
-current run. The control event contributes no separate model-visible prose. The
-responsibility baseline or revisioned ledger transition is the sole model-visible
-projection of the obligation.
+current run. Admission atomically records a model-visible `responsibility.ready`
+history event with the batch identity, affected ids, and receipt time. This explains
+why Ship has been woken even when a deadline or recovery retry leaves the ledger
+revision unchanged. Replayed admission does not append another event. The baseline
+and revisioned transitions continue to supply the responsibility state without
+duplicating it in the wake event or changing the frozen system prompt.
 
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
@@ -114,11 +117,16 @@ deadline brings that default forward. An explicit check time is preserved, and
 it. System producers keep their own wake conditions, including initial onboarding,
 which must wait for the first user interaction.
 
-A due Ship check is actionable even while a blocker remains. Ship must review the
-current conversation and responsibility, then resolve, cancel, delegate, or defer it
-before yielding. Reasserting `waiting` after the check renews the default when no
-explicit time is provided. The check does not itself send a user message; Ship decides
-whether the question still needs an answer and whether a follow-up is appropriate.
+A due Ship check is actionable even while a blocker remains. The review event directs
+Ship to read the current conversation and responsibility. If the human's answer is
+still needed, Ship should send a specific reminder instead of silently renewing the
+check merely because no answer has arrived. An answer already received, obsolete
+work, or a request for no reminders should instead update or close the item. A
+deferral needs a concrete recorded reason and an appropriate next check; an explicit
+null clears a check when no follow-up is wanted. The Kernel does not send reminders
+automatically. Ship still resolves, cancels, delegates, or explicitly defers actionable
+items before yielding, and reasserting `waiting` still supplies the default check
+when no explicit time is provided.
 
 ## Context epochs
 

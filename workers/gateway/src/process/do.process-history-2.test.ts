@@ -71,7 +71,7 @@ describe("process history", () => {
       mockGeneration(process, async () => {
         throw new Error("chat generation should not run after compaction failure");
       }, async (request: any) => {
-        expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
+        expect(request.options).toMatchObject({ maxTokens: 4096, reasoning: "off" });
         throw new Error("insufficient funds");
       });
 
@@ -131,7 +131,7 @@ describe("process history", () => {
       mockGeneration(process, async () => {
         throw new Error("chat generation should not run after abort");
       }, async (request: any) => {
-        expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
+        expect(request.options).toMatchObject({ maxTokens: 4096, reasoning: "off" });
         await process.controller.handleProcAbort({});
         return "Summary that should not be applied.";
       });

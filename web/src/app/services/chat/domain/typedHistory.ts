@@ -32,6 +32,7 @@ export function historyEventText(event: ProcHistoryEvent): string {
     case "context.changed": return `Context updated: ${event.payload.current.targets.length} targets, ${event.payload.current.mcpServers.length} connected services.`;
     case "context.runway": return `${event.payload.remainingInputTokens.toLocaleString()} input tokens remain before the context limit.`;
     case "responsibility.revision": return `${event.payload.transition.record.title} — ${event.payload.transition.afterState}`;
+    case "responsibility.ready": return `Review requested for ${event.payload.responsibilityIds.length} ${event.payload.responsibilityIds.length === 1 ? "responsibility" : "responsibilities"}.`;
     case "correction.text-only": return `A response needs to finish with Send (${event.payload.attempt}/${event.payload.limit}).`;
     case "correction.exhausted": return `The run stopped after ${event.payload.attempts} response corrections.`;
     case "schedule.fired": return `${event.payload.scheduleName ?? event.payload.scheduleId}: ${event.payload.message}`;
@@ -92,6 +93,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           ...base, id: `tool:${record.runId ?? ""}:${record.payload.callId}`, role: "tool",
           text: displayValue(record.payload.args), toolArgs: record.payload.args,
           toolCallId: record.payload.callId, toolName: record.payload.tool,
+          toolPurpose: record.payload.purpose,
           toolStartedAt: record.createdAt ?? null, toolCallRecordKey: historyRecordKey(record),
           toolSyscall: record.payload.syscall, toolTarget: record.payload.target,
           toolRunControl: isRunControlCall(record.payload),
@@ -109,6 +111,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
           toolCallRecordKey: call ? historyRecordKey(call) : undefined,
           toolOutput: record.payload.output, toolOutcome: record.payload.outcome,
           toolArgs: call?.payload.args, toolSyscall: call?.payload.syscall ?? null,
+          toolPurpose: call?.payload.purpose,
           toolTarget: call?.payload.target ?? null,
           toolRunControl: call ? isRunControlCall(call.payload) : false,
           media: [...record.payload.media, ...record.payload.resources],

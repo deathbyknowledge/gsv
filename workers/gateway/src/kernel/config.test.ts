@@ -111,6 +111,9 @@ describe("ConfigStore", () => {
       expect(store.get(`${stackKey}/primary/api_key`)).toBe("sk-primary");
       expect(store.get(`${stackKey}/backup/api_key`)).toBeNull();
 
+      store.set(stackKey, JSON.stringify({ version: 1, models: [{ ...primary, oauthAccountKey: "another-account" }] }));
+      expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
+
       store.set(stackKey, "");
       expect(store.getExplicit(stackKey)).toBeNull();
       expect(store.get(`${stackKey}/primary/api_key`)).toBeNull();
@@ -170,62 +173,32 @@ describe("ConfigStore", () => {
     }),
   );
 
-  it("defines lean common process context once for all profiles", () => {
+  it("includes shared runtime contracts and substitutions without pinning their prose", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
-    expect(context).toContain("GSV is a personal intelligence OS");
-    expect(context).toContain("its own lightweight Linux virtual computer");
-    expect(context).toContain("skills show browser-target");
-    expect(context).toContain("[GSV EVENT]");
-    expect(context).toContain("typed runtime events from GSV");
+    for (const marker of ["[GSV EVENT]", "Send", "yield: true", "attach"]) {
+      expect(context).toContain(marker);
+    }
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
-    expect(targets).toContain("message destinations");
-    expect(targets).toContain("message attach PATH...");
-    expect(targets).toContain("Send tool");
-    expect(targets).toContain("the run continues");
-    expect(targets).toContain("message send");
-    expect(targets).toContain("yield");
-    expect(targets).toContain(
-      "cp source-target:/path destination-target:/path",
-    );
-    expect(targets).toContain("targets list");
-    expect(targets).toContain("must be run from the `gsv` target");
-    const responsibilities =
-      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
-    expect(responsibilities).toContain("Kernel responsibility ledger");
-    expect(responsibilities).toContain("`r12y` command");
+    for (const command of ["targets list", "`gsv`", "fs.search", "skills show browser-target"]) {
+      expect(targets).toContain(command);
+    }
+    const responsibilities = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
+    expect(responsibilities).toContain("r12y list");
     expect(responsibilities).toContain("{{r12y}}");
-    const discovery =
-      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
+    const discovery = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
-    expect(discovery).toContain("the `mcp` command");
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(discovery).toContain("CodeMode as `mcpTools`");
-    expect(discovery).toContain("Load the relevant skill");
-    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe(
-      "summary",
-    );
-    const orchestration =
-      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"];
-    expect(orchestration).toContain("target `gsv`");
-    expect(orchestration).toContain("proc delegate");
-    expect(orchestration).toContain("proc spawn");
-    expect(orchestration).toContain("sched");
-    expect(orchestration).toContain("crontab");
-    expect(orchestration).toContain("skills show process-orchestration");
-    expect(orchestration).not.toContain("proc agents");
-    expect(orchestration).not.toContain("sched add --here");
-    const runtimeFacts =
-      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
-    expect(runtimeFacts).toContain(
-      "as agent `{{program.username}}` for owner `{{user.username}}`",
-    );
-    expect(runtimeFacts).toContain("Agent home: {{program.home}}");
-    expect(runtimeFacts).toContain("Owner home: {{user.home}}");
-    expect(runtimeFacts).toContain(
-      "Current working directory: {{program.cwd}}",
-    );
-    expect(runtimeFacts).toContain("Date: {{current.date}}");
-    expect(runtimeFacts).toContain("Timezone: {{current.timezone}}");
+    expect(discovery).toContain("mcpTools");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe("summary");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"])
+      .toContain("skills show process-orchestration");
+    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
+    for (const variable of [
+      "program.username", "user.username", "program.home", "user.home", "program.cwd",
+      "current.date", "current.timezone", "targets", "mcpServers",
+    ]) {
+      expect(runtimeFacts).toContain(`{{${variable}}}`);
+    }
   });
 
   it("defines a global default tool approval policy with explicit guarded tool kinds", () => {
@@ -234,9 +207,9 @@ describe("ConfigStore", () => {
     );
 
     expect(policy.default).toBe("auto");
-    expect(policy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
-    expect(policy.rules).toContainEqual({ match: "net.fetch", action: "ask" });
-    expect(policy.rules).toContainEqual({ match: "fs.delete", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "shell.exec", target: "targets/*", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "net.fetch", target: "targets/*", action: "ask" });
+    expect(policy.rules).toContainEqual({ match: "fs.*", target: "targets/*", action: "ask" });
     expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
     expect(policy.rules).not.toContainEqual({ match: "mail.status", action: "ask" });
   });

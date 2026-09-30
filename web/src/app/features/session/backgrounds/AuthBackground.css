@@ -8,7 +8,6 @@
 }
 .auth-bg[data-ascii-palette="light"] .gsv-glyph-stars pre {
   color: #b8b2e6;
-  text-shadow: none;
 }
 .auth-bg .gsv-glyph-stars,
 .auth-bg .auth-bg-galaxy-scan {

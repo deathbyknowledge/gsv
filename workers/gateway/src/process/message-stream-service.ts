@@ -86,12 +86,27 @@ export class ProcessMessageStreamService {
     };
   }
 
+  /** Extends a message with the text the model has written so far; a call that does not extend it is ignored. */
+  async append(runId: string, actionId: string, text: string): Promise<void> {
+    const projection = this.projection(runId, actionId);
+    if (projection.aborted || text === projection.text || !text.startsWith(projection.text)) return;
+    if (!projection.started) {
+      projection.started = true;
+      await this.emitProjection(runId, projection, "started");
+      if (projection.aborted) return;
+    }
+    const delta = text.slice(projection.text.length);
+    projection.text = text;
+    await this.emitProjection(runId, projection, "delta", delta);
+  }
+
   async complete(runId: string, actionId: string, text: string): Promise<void> {
     const projection = this.projection(runId, actionId);
     if (projection.aborted) return;
     if (!projection.started) {
       projection.started = true;
       await this.emitProjection(runId, projection, "started");
+      if (projection.aborted) return;
     }
     if (text === projection.text) return;
     if (!text.startsWith(projection.text)) {
@@ -104,6 +119,7 @@ export class ProcessMessageStreamService {
   }
 
   async silence(runId: string, actionId: string): Promise<void> {
+    await this.abortAction(runId, actionId, "The run yielded without a message");
     await this.emitProjection(runId, this.projection(runId, actionId), "silenced");
   }
 
@@ -118,9 +134,10 @@ export class ProcessMessageStreamService {
 
   async abortRun(runId: string, reason: string): Promise<void> {
     const prefix = `${runId}:`;
-    for (const [key, projection] of this.projections) {
-      if (key.startsWith(prefix)) await this.abort(runId, projection, reason);
-    }
+    const pending = [...this.projections]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, projection]) => this.abort(runId, projection, reason));
+    await Promise.all(pending);
   }
 
   deleteRun(runId: string): void {

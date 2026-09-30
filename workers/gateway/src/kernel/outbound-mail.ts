@@ -1,3 +1,4 @@
+import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
 import type {
   MailSendArgs,
   MailSendResult,
@@ -13,13 +14,13 @@ import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import { managedMailAddressForOwner } from "./mailbox";
+import { authorizeNestedOperation } from "./tool-approval";
 import type {
   MailMessageRecord,
   MailOutboundRecord,
   RecordMailOutboundInput,
 } from "./mailbox-store";
 
-const MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
 const MAX_OUTBOUND_SUBJECT_BYTES = 998;
 const MAX_OUTBOUND_IDENTIFIER_BYTES = 256;
 const MAX_OUTBOUND_HEADER_BYTES = 998;
@@ -59,6 +60,7 @@ export async function handleMailSend(
       throw new MailSendError("Managed mail is not available for this account", false);
     }
     const normalized = normalizeMailSend(value, ownerUid, ctx);
+    await authorizeNestedOperation(ctx, "mail.send", value);
     ctx.requestSignal?.throwIfAborted();
     deliveryId = normalized.deliveryId;
     outboundId = await stableOpaqueId("mail-outbound", [

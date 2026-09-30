@@ -148,6 +148,7 @@ export const runStateSchema = z.object({
   config: aiConfigResultSchema.optional(),
   aiTextGenerateConfig: aiTextGenerateConfigSchema.optional(),
   tools: z.array(toolDefinitionSchema).optional(),
+  toolSyscalls: z.record(z.string(), z.string()).optional(),
   devices: z.array(aiToolsDeviceSchema).optional(),
   mcpServers: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),

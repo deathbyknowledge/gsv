@@ -1,5 +1,6 @@
 import { saveApprovalPolicy } from "./permissionService";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";

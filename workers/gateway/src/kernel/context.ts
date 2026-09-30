@@ -5,6 +5,7 @@
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
+import type { ManualUpdater } from "./sys/manual";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
@@ -44,6 +45,7 @@ import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ProcessToolOwner } from "../protocol/process-frames";
 import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
@@ -58,6 +60,7 @@ export type KernelContext = {
   invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
+  manual: ManualUpdater;
   targets: TargetRegistry;
   procs: ProcessRegistry;
   conversations: ConversationRegistry;
@@ -79,6 +82,7 @@ export type KernelContext = {
   peer?: PeerContext;
   processId?: string;
   processRunId?: string;
+  toolOwner?: ProcessToolOwner;
   requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;

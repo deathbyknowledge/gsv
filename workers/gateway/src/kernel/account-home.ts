@@ -1,10 +1,12 @@
-import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
+import { RipgitClient, RipgitConflictError, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
-  DEFAULT_STYLE_CONTEXT,
+  RETIRED_AGENT_VOICE_CONTEXT,
   RETIRED_BOOT_CONTEXT_TEMPLATE,
+  RETIRED_STYLE_CONTEXT,
+  RETIRED_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
@@ -14,6 +16,32 @@ import {
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+
+/** Seed missing defaults against a fixed revision; a concurrent owner edit wins. */
+export async function seedAccountHome(
+  env: Pick<Env, "RIPGIT">,
+  identity: ProcessIdentity,
+  message: string,
+  collect: (client: RipgitClient, snapshot: RipgitRepoRef) => Promise<RipgitApplyOp[]>,
+): Promise<void> {
+  if (!env.RIPGIT) return;
+  const client = new RipgitClient(env.RIPGIT);
+  const repo = accountHomeRepoRef(identity.username);
+  for (let attempt = 0; ; attempt++) {
+    const head = (await client.refs(repo)).heads.main
+      ?? (await client.apply(repo, identity.username, `${identity.username}@gsv.local`,
+        "gsv: initialize home", [], { allowEmpty: true })).head;
+    if (!head) throw new Error("Home initialization did not produce a revision");
+    const ops = await collect(client, { ...repo, branch: head });
+    if (ops.length === 0) return;
+    try {
+      await client.apply(repo, identity.username, `${identity.username}@gsv.local`, message, ops, { expectedHead: head });
+      return;
+    } catch (error) {
+      if (!(error instanceof RipgitConflictError) || attempt >= 2) throw error;
+    }
+  }
+}
 
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
@@ -26,13 +54,15 @@ export async function ensureAccountHomeLayout(
   } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
+  await seedAccountHome(env, identity, "gsv: scaffold home layout", (client, snapshot) =>
+    homeLayoutOps(client, snapshot, options));
+}
 
-  if (!env.RIPGIT) {
-    return;
-  }
-
-  const client = new RipgitClient(env.RIPGIT);
-  const repo = accountHomeRepoRef(identity.username);
+async function homeLayoutOps(
+  client: RipgitClient,
+  repo: RipgitRepoRef,
+  options: NonNullable<Parameters<typeof ensureAccountHomeLayout>[2]>,
+): Promise<RipgitApplyOp[]> {
   const [
     contextDir,
     bootContext,
@@ -60,6 +90,15 @@ export async function ensureAccountHomeLayout(
       path: "context.d/.dir",
       contentBytes: [],
     });
+  }
+  if (options.seedPromptContext === true || options.cleanupGeneratedPromptContext === true) {
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/00-style.md",
+      styleContext,
+      RETIRED_AGENT_VOICE_CONTEXT,
+      RETIRED_STYLE_CONTEXT,
+    );
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {
@@ -92,23 +131,12 @@ export async function ensureAccountHomeLayout(
       );
       maybeDeleteGeneratedTextFile(
         ops,
-        "context.d/00-style.md",
-        styleContext,
-        DEFAULT_STYLE_CONTEXT,
-      );
-      maybeDeleteGeneratedTextFile(
-        ops,
         "context.d/15-memory.md",
         memoryContext,
         DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+        RETIRED_MEMORY_CONTEXT_TEMPLATE,
       );
     } else {
-      maybePutTextFile(
-        ops,
-        "context.d/00-style.md",
-        styleContext,
-        DEFAULT_STYLE_CONTEXT,
-      );
       maybePutTextFile(
         ops,
         "context.d/15-memory.md",
@@ -125,15 +153,10 @@ export async function ensureAccountHomeLayout(
     );
     maybeDeleteGeneratedTextFile(
       ops,
-      "context.d/00-style.md",
-      styleContext,
-      DEFAULT_STYLE_CONTEXT,
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
       "context.d/15-memory.md",
       memoryContext,
       DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+      RETIRED_MEMORY_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -149,17 +172,7 @@ export async function ensureAccountHomeLayout(
       contentBytes: [],
     });
   }
-  if (ops.length === 0) {
-    return;
-  }
-
-  await client.apply(
-    repo,
-    identity.username,
-    `${identity.username}@gsv.local`,
-    "gsv: scaffold home layout",
-    ops,
-  );
+  return ops;
 }
 
 function maybePutTextFile(
@@ -182,13 +195,13 @@ function maybeDeleteGeneratedTextFile(
   ops: RipgitApplyOp[],
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
-  generatedContent: string,
+  ...generatedContents: string[]
 ): boolean {
   if (existing.kind !== "file") {
     return false;
   }
   const text = TEXT_DECODER.decode(existing.bytes);
-  if (text !== generatedContent) {
+  if (!generatedContents.includes(text)) {
     return false;
   }
   ops.push({

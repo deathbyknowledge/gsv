@@ -9,15 +9,16 @@ import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
-type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[] };
-const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [] };
+type RecordedRoute = { id: string; zoneId: string; pattern: string; script: unknown };
+type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
+const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [], routes: [] };
 const recordedCloudflare = {
   ...Cloudflare,
   Worker(id: string, props: RecordedWorker["props"]) {
     recorded.workers.push({ id, props });
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
-        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32) },
+        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -26,7 +27,11 @@ const recordedCloudflare = {
   DurableObject(binding: string, props: { className: string }) { return { binding, ...props }; },
   WorkerLoader() { return { kind: "loader" }; },
   WorkerEntrypoint(worker: { workerName: string }, options: string | { entrypoint: string; props: { authority: string } }) { return { worker: worker.workerName, options }; },
-  Workers: { AI() { return { kind: "ai" }; } },
+  DNS: { Record() { return Effect.void; } },
+  Workers: {
+    AI() { return { kind: "ai" }; },
+    WorkerRoute(id: string, props: Omit<RecordedRoute, "id">) { recorded.routes.push({ id, ...props }); return Effect.void; },
+  },
 };
 // SAFETY: this injected recorder implements every constructor/bind operation used
 // by these compositions, returns local Effects, and never invokes a provider.
@@ -37,7 +42,7 @@ function run<A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> {
   // so these Effects have no Cloudflare provider services at runtime.
   return Effect.runPromise(effect as Effect.Effect<A, E>);
 }
-beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; });
+beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; recorded.routes.length = 0; });
 
 const input: GsvDeploymentProps = {
   logicalPrefix: "Fixture", domain: "example.com", adminOrigin: "https://accounts.example.com", access: { kind: "operator" },
@@ -57,6 +62,42 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it("routes a configured signup alias to Accounts alongside the administration hostname", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+      ...input.installations, ownerSignupOrigin: "https://join.example.com",
+    } }, dependencies));
+    expect(recorded.routes).toEqual([
+      { id: "FixtureInstallationsRoute", zoneId: "zone", pattern: "accounts.example.com/*", script: "directory" },
+      { id: "FixtureInstallationsSignupRoute", zoneId: "zone", pattern: "join.example.com/*", script: "directory" },
+      { id: "FixtureGatewayRoute", zoneId: "zone", pattern: "*.example.com/*", script: "gateway" },
+    ]);
+    expect(recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.env?.GSV_OWNER_SIGNUP_ORIGIN)
+      .toBe("https://join.example.com");
+  });
+
+  it.each([undefined, input.adminOrigin])("does not duplicate Accounts routing for signup origin %s", async (ownerSignupOrigin) => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+      ...input.installations, ownerSignupOrigin,
+    } }, dependencies));
+    expect(recorded.routes.map((route) => route.pattern)).toEqual(["accounts.example.com/*", "*.example.com/*"]);
+  });
+
+  it("leaves a separately hosted signup alias to the operator overlay when routing is omitted", async () => {
+    await run(GsvDeployment({ ...input, installations: {
+      ...input.installations, ownerSignupOrigin: "https://join.other.example",
+    } }, dependencies));
+    expect(recorded.routes).toEqual([]);
+  });
+
+  it.each(["http://join.example.com", "https://join.example.com/path", "https://join.other.example"])(
+    "rejects an unroutable signup origin before allocating resources: %s", async (ownerSignupOrigin) => {
+      await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
+        ...input.installations, ownerSignupOrigin,
+      } }, dependencies))).rejects.toThrow("Signup requires an HTTPS origin");
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    });
+
   it.each([
     { monthlyRequests: 0, monthlyOutputTokens: 1000 },
     { monthlyRequests: 100, monthlyOutputTokens: 0 },
@@ -122,7 +163,9 @@ describe("public operator composition", () => {
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
     await run(GsvDeployment(input, dependencies));
     expect(recorded.databases).toEqual([{ name: "directory-db", migrationsDir: "public/migrations", migrationsTable: "installation_migrations" }]);
-    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env;
+    const gatewayWorker = recorded.workers.find((worker) => worker.id === "FixtureGateway");
+    expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
+    const gateway = gatewayWorker?.props.env;
     expect(gateway).toHaveProperty("INFERENCE_EXECUTION");
     expect(gateway).not.toHaveProperty("AI");
     expect(gateway).not.toHaveProperty("MANAGED_INFERENCE");
@@ -191,6 +234,42 @@ describe("public operator composition", () => {
     expect(recorded.databases).toEqual([]);
   });
 
+  it("binds supplied search cleanup and discovers its installation namespace", async () => {
+    const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
+    await run(GsvDeployment({ ...input, services: {
+      webSearch: search,
+      webSearchLifecycle: { worker: search, entrypoint: "SearchLifecycle", namespaces: [
+        { className: "WebSearchInstallation", kind: "web-search-installation" },
+      ] },
+    } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.WEB_SEARCH).toBe(search);
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryWebSearchDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_WEB_SEARCH", service: "search-provider", entrypoint: "SearchLifecycle",
+      props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toHaveProperty("7".repeat(32), {
+      ownerId: "web-search", kind: "web-search-installation",
+    });
+  });
+
+  it("rejects incomplete search ownership before creating deployment resources", async () => {
+    const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
+    recorded.workers.length = 0;
+    const lifecycle = { worker: search, entrypoint: "SearchLifecycle", namespaces: [
+      { className: "WebSearchInstallation", kind: "web-search-installation" as const },
+    ] };
+    for (const services of [
+      { webSearch: search },
+      { webSearchLifecycle: lifecycle },
+      { webSearch: search, webSearchLifecycle: { ...lifecycle, entrypoint: " " } },
+      { webSearch: search, webSearchLifecycle: { ...lifecycle, namespaces: [{ className: "", kind: "web-search-installation" as const }] } },
+    ]) {
+      await expect(run(GsvDeployment({ ...input, services }, dependencies))).rejects.toThrow(/Supplied web search/);
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    }
+  });
+
   it("binds adapter cleanup to Accounts with the exact deployment-owned authority", async () => {
     const adapter = await run(dependencies.Cloudflare.Worker("Telegram", { name: "telegram", main: "telegram.js" }));
     await run(GsvDeployment({ ...input, services: { adapters: [{ id: "telegram", worker: adapter,
@@ -231,6 +310,16 @@ describe("public operator composition", () => {
     expect(recorded.databases).toEqual([]);
   });
 
+  it("refuses the local federation setting in a deployed runtime", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const executor = await run(dependencies.Cloudflare.Worker("Inference", { name: "inference", main: "inference.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvRuntime({ ...input, services: { installationDirectory: directory,
+      inferenceExecution: executor, extraBindings: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1" } } }, dependencies)))
+      .rejects.toThrow("only available in the development configuration");
+    expect(recorded.workers).toEqual([]);
+  });
+
   it("derives application scopes while keeping external cleanup explicitly unknown", async () => {
     await run(GsvDeployment({ ...input, deletion: { operatorResources: catalog } }, dependencies));
     const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
@@ -260,7 +349,7 @@ describe("public operator composition", () => {
     const worker = await run(dependencies.Cloudflare.Worker("Provided", { name: "provided", main: "provided.js" }));
     const queue = await run(dependencies.Cloudflare.Queues.Queue("Mail", { name: "mail" }));
     recorded.workers.length = 0;
-    for (const services of [{ installationDirectory: worker }, { inferenceExecution: worker }, { mailOutbound: queue }]) {
+    for (const services of [{ installationDirectory: worker }, { inferenceExecution: worker }, { mailOutbound: queue }, { webSearch: worker }]) {
       await expect(run(GsvDeployment({ ...input, services, deletion: { operatorResources: catalog } }, dependencies)))
         .rejects.toThrow(/adopted operator composition/);
     }

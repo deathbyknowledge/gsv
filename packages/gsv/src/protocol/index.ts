@@ -1,10 +1,12 @@
 export type * from "./syscalls/system";
 export type * from "./syscalls/pairing";
 export * from "./pairing";
+export * from "./tool-approval";
 export type * from "./syscalls/fs";
 export type * from "./syscalls/shell";
 export { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "./syscalls/shell";
 export type * from "./syscalls/net";
+export type * from "./syscalls/web";
 export type * from "./syscalls/codemode";
 export type * from "./syscalls/repositories";
 export type * from "./syscalls/proc";

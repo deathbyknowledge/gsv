@@ -22,6 +22,7 @@ import {
   handleFsWrite,
 } from "./fs";
 import { handleShellExec } from "./shell";
+import { handleWebSearch } from "./web-search";
 import type { NativeShellCommandOptions } from "./shell/commands";
 
 export async function dispatchGsvTarget(
@@ -32,6 +33,9 @@ export async function dispatchGsvTarget(
   let data: unknown;
 
   switch (frame.call) {
+    case "web.search":
+      data = await handleWebSearch(frame.args, ctx);
+      break;
     case "fs.read":
       return {
         type: "res",

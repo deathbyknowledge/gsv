@@ -310,3 +310,54 @@ describe("live conversation attachments", () => {
     } finally { await root.unmount(); queryClient.clear(); vi.unstubAllGlobals(); }
   });
 });
+
+describe("live conversation drafts", () => {
+  it("reconciles a streamed message and withdraws an aborted follow-up in the same run", async () => {
+    vi.stubGlobal("document", {});
+    const summary = conversation("conv:draft", "proc:draft");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createTestRoot("Live conversation drafts");
+    const observed: ObservedHook = {};
+    let listener: Parameters<GSVClient["onSignal"]>[0] | undefined;
+    const gateway: ChatConversationRuntimeGateway = {
+      client: {
+        conversation: { forProcess: async () => ({ conversation: summary }), history: async () => ({ conversation: summary, messages: [], hasMore: false }) },
+        onSignal: (next) => { listener = next; return () => { listener = undefined; }; },
+      }, connected: true,
+    };
+    function Harness() { observed.current = useChatConversationRuntime({ processId: summary.handlerPid }, gateway); return null; }
+    const draft = { conversationId: summary.id, messageId: "draft:run:send-1", processId: summary.handlerPid, runId: "run", timestamp: 5 };
+    const message: ConversationMessage = {
+      id: "message:sent", conversationId: summary.id, sequence: 1, author: { kind: "process", pid: summary.handlerPid, uid: 1000 },
+      text: "Hello, world", createdAt: 6, origin: { kind: "client", clientId: "web" }, processId: summary.handlerPid, runId: "run",
+    };
+    try {
+      await root.render(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+      await vi.waitFor(() => { expect(observed.current?.loaded).toBe(true); expect(listener).toBeDefined(); });
+      await act(() => { listener?.("message.started", draft); });
+      for (const delta of ["Hello", ", ", "world"]) {
+        await act(() => { listener?.("message.delta", { ...draft, delta }); });
+      }
+      expect(observed.current?.rows).toEqual([
+        expect.objectContaining({ id: "conversation-draft:draft:run:send-1", text: "Hello, world", streaming: true, delivery: "directed" }),
+      ]);
+      await act(() => { listener?.("message.committed", { message, directed: true }); });
+      expect(observed.current?.rows).toEqual([
+        expect.objectContaining({ id: "conversation:message:sent", text: "Hello, world", status: "done", delivery: "directed" }),
+      ]);
+      const followup = { ...draft, messageId: "draft:run:send-2", timestamp: 7 };
+      await act(() => {
+        listener?.("message.started", followup);
+        listener?.("message.delta", { ...followup, delta: "More work" });
+      });
+      expect(observed.current?.rows).toHaveLength(2);
+      await act(() => {
+        listener?.("message.aborted", { ...followup, reason: "interrupted" });
+        listener?.("message.delta", { ...followup, delta: " late output" });
+      });
+      expect(observed.current?.rows).toEqual([
+        expect.objectContaining({ id: "conversation:message:sent", text: "Hello, world", status: "done" }),
+      ]);
+    } finally { await root.unmount(); queryClient.clear(); vi.unstubAllGlobals(); }
+  });
+});

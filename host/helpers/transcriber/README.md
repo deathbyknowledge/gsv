@@ -2,7 +2,7 @@
 
 The `transcriber` package builds Desktop's isolated `gsv-transcribe` dictation
 worker. It owns microphone capture, model download and verification, and
-streaming inference in a separate process. The GPUI process only exchanges
+streaming inference in a separate process. The Desktop host only exchanges
 bounded newline-delimited JSON commands and text snapshots with it; if the
 helper stalls, crashes, or exhausts its own resources, the app kills it and
 remains usable for typing.
@@ -15,6 +15,10 @@ incompatible unshipped cutover without changing the numeric v2 protocol.
 
 Build it separately from the UI:
 
+On macOS, the build script links Xcode's compiler runtime for the Metal backend's
+Objective-C availability checks. Xcode Command Line Tools must be selected with
+`xcode-select`; the app does not need a separate runtime installation.
+
 ```bash
 cargo build --release --manifest-path host/helpers/transcriber/Cargo.toml
 ```
@@ -24,9 +28,21 @@ headers (`build-essential cmake pkg-config libasound2-dev`). macOS builds need a
 installation selected with `xcode-select`; Command Line Tools alone cannot compile the Metal
 shaders used by the native inference library.
 
+Linux releases also install `libopenblas-pthread-dev` on the build runner and set
+`TRANSCRIBE_CMAKE_ARGS="-UBLAS_* -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON -DCMAKE_REQUIRE_FIND_PACKAGE_BLAS=ON -DCMAKE_C_STANDARD_LIBRARIES=-lm -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_C_STANDARD_LIBRARIES"`.
+Clear cached BLAS detection first so restored CMake caches cannot retain a shared library.
+Include the system math library in CMake's C link probes: Ubuntu's ARM64 OpenBLAS archive
+uses `sqrt`, and `FindBLAS` otherwise rejects the installed archive as unavailable.
+This bundles accelerated BLAS into the helper: users do not install a BLAS or Fortran runtime,
+and distributions cannot substitute an incompatible `libblas.so.3`. CI uses the same settings.
+Run `python3 host/scripts/check-transcriber.py path/to/gsv-transcribe` to check the built
+artifact's handshake, shutdown and runtime linkage without microphone capture or model setup.
+macOS continues to use the system Accelerate framework.
+
 Place `gsv-transcribe` beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
 development. Debug app builds also discover either a release or debug helper in the workspace
-`target` directory. Ship `THIRD_PARTY.md` beside the helper in distributable packages.
+`target` directory. Ship `THIRD_PARTY.md` beside the helper in standalone distributions;
+macOS app bundles keep it in `Contents/Resources/licenses/transcriber/`.
 `Cmd/Ctrl+Shift+Space` starts or finishes dictation. The first use downloads and SHA-256 verifies
 the pinned 534 MiB Q5 model. Concurrent app instances serialize preparation with a cache lock and
 resume a stable partial download only after the pinned server response confirms the exact remaining

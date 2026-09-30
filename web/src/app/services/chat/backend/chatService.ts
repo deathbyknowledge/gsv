@@ -71,6 +71,7 @@ import {
   MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
 import { randomId } from "../../ids";
+import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 
 type ChatGsvClient = Pick<GSVClient, "proc" | "conversation" | "request">;
 type ChatMediaGsvClient = Pick<GSVClient, "request">;
@@ -126,7 +127,7 @@ export async function spawnChatProcess(
 export async function sendChatMessage(
   client: ChatGsvClient,
   draft: ChatSendDraft,
-  options: { signal?: AbortSignal; onUploaded?: () => void } = {},
+  options: { signal?: AbortSignal; onPrepared?: (messageId: string) => void; onUploaded?: () => void } = {},
 ): Promise<ConversationSendResult> {
   options.signal?.throwIfAborted();
   const uploads = draft.media ?? [];
@@ -138,6 +139,8 @@ export async function sendChatMessage(
   const conversationId = draft.conversationId?.trim()
     || (await client.conversation.forProcess({ pid })).conversation.id;
   const idempotencyKey = draft.idempotencyKey ?? randomId();
+  if (options.onPrepared) options.onPrepared(await conversationSendMessageId(conversationId, idempotencyKey));
+  options.signal?.throwIfAborted();
 
   return withStagedResources(client, uploads, async (media) => {
     options.onUploaded?.();

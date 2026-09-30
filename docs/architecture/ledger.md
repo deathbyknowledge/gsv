@@ -24,6 +24,7 @@ Kernel at all. Both remain in their own records.
 | `target` | The place the call went to: a target id, or `gsv` for the cloud home |
 | `call` | The syscall name |
 | `args` | The call's arguments as sent, as JSON text, whole; cut at 16 KB with the cut marked |
+| `purpose` | The one-sentence purpose the calling tool supplied for the person, when there was one; see [tool purpose](../reference/syscalls.md#tool-purpose) |
 | `outcome` | `ok`, `failed`, `denied`, or `cancelled`; null while the call is in flight. A call whose own result reports failure inside an ok envelope (`ok: false` on fs calls, `status: "failed"` on shell.exec) closes as `failed` |
 | `durationMs` | From dispatch to response |
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
@@ -143,7 +144,11 @@ is suppressed and its completion pushes the finished row. Successful, failed,
 denied, cancelled and stale-expired calls all use the same store transition
 notification. No recurring timer or history query drives this feed.
 
-Fleet merges by sequence, patches existing rows in place, and preserves page
+Open **Settings → Logs** to inspect the complete list and an individual
+action's arguments, outcome and failure details. Process links open Fleet's
+process inspector. Fleet retains its compact activity summaries.
+
+The shared Instrument cache merges by sequence, patches existing rows in place, and preserves page
 cursors. New rows are ordered against the last ordinary snapshot, so delayed
 owner batches seen by root cannot leave holes. Patches arriving during a page
 fetch are applied after its snapshot commits; an open snapshot cannot regress
@@ -151,6 +156,9 @@ a received completion. Initial loading, pagination, reconnect and reopening a
 stale hidden view still use `sys.ledger.list`. Ordinary row changes do not.
 An overflowing client buffer during a stalled fetch recovers with a snapshot;
 failed delivery closes that connection so reconnect recovers it too.
+
+The ledger labels `conversation.search` as “searched a conversation”; its query remains
+inspectable in the owning user's ledger arguments like other syscall inputs.
 
 ## Cost
 

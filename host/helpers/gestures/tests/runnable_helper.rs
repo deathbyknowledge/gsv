@@ -27,9 +27,13 @@ fn runnable_helper_uses_the_current_event_channel_contract() {
 
     let (mut event_input, event_output) = anonymous_pipe().expect("event pipe is available");
     let event_output_fd = event_output.as_raw_fd();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_gsv-vision"));
+    let install = tempfile::tempdir().expect("isolated helper installation");
+    let executable = install.path().join("gsv-vision");
+    std::fs::copy(env!("CARGO_BIN_EXE_gsv-vision"), &executable).expect("relocated helper");
+    let mut command = Command::new(&executable);
     command
         .env_clear()
+        .current_dir(install.path())
         .env(PARENT_STDIN_WATCHDOG, ENABLED_MARKER)
         .env(EVENT_FD_MARKER_ENV, EVENT_CHANNEL_CONTRACT_MARKER)
         .env(SESSION_HIGH_ENV, SESSION.high().to_string())

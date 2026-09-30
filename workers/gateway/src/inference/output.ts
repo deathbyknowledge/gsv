@@ -8,11 +8,13 @@ export function describeAssistantResponseFailure(response: AssistantMessage): st
   if (response.stopReason === "error" || response.stopReason === "aborted") {
     return response.errorMessage ?? `LLM generation ended with ${response.stopReason}`;
   }
-  if (!response.content || response.content.length === 0) {
-    return "LLM returned empty response";
-  }
   if (!hasAssistantVisibleOutput(response)) {
-    return "LLM returned reasoning but no final response";
+    if (response.stopReason === "length") {
+      return "LLM reached the output token limit without text or a tool call";
+    }
+    return hasAssistantThinking(response)
+      ? "LLM returned reasoning but no final response"
+      : "LLM returned empty response";
   }
   if (hasRawToolCallMarkupOutput(response)) {
     return "LLM returned malformed tool call markup as final text";
@@ -80,7 +82,7 @@ function hasAssistantVisibleOutput(response: AssistantMessage): boolean {
 
 function hasAssistantThinking(response: AssistantMessage): boolean {
   return assistantContentBlocks(response).some((block) =>
-    block.type === "thinking" && block.thinking.trim().length > 0
+    block.type === "thinking" && (block.redacted === true || block.thinking.trim().length > 0)
   );
 }
 

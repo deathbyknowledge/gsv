@@ -5,7 +5,11 @@ import { principalOf } from "./context";
 import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
-import type { OAuthAccountRecord } from "./oauth-store";
+import { OAuthStore, type OAuthAccountRecord } from "./oauth-store";
+import { ConfigStore } from "./config";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { handleSysOAuthDeviceStart, handleSysOAuthDevicePoll, handleSysOAuthForget, handleSysOAuthList } from "./sys/oauth";
+import { refreshOpenAICodexAccount } from "./sys/openai-codex-oauth";
 import type { InferenceExecutor, InferenceMediaResult, InferenceModelMetadata } from "@humansandmachines/gsv/services/inference-execution";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
@@ -190,6 +194,7 @@ function makeContext(
     env: {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       LOADER: {} as WorkerLoader,
+      WEB_SEARCH: { getInstallation: async () => ({ search: async () => ({ provider: "fixture", results: [] }), cancel: async () => {} }) },
     },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -224,6 +229,12 @@ describe("handleAiTools", () => {
       "ai.tools should stay a fixed Linux-like surface: filesystem tools, Shell, and CodeMode only. Do not expose OS conveniences such as spawn, sched, MCP, or copy as direct LLM tools.",
     ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
+    expect(result.toolSyscalls?.Search).toBe("web.search");
+    const searchTool = result.tools.find((tool) => tool.name === "Search");
+    expect(searchTool?.inputSchema.properties).toHaveProperty("includeDomains");
+    expect(searchTool?.inputSchema.properties).toHaveProperty("target");
+    expect(searchTool?.inputSchema.required).not.toContain("target");
+    expect(searchTool?.inputSchema.properties).not.toHaveProperty("path");
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("mail.send");
     expect(codeModeTool?.description).toContain("return mcpTools.map");
@@ -246,6 +257,33 @@ describe("handleAiTools", () => {
       "Search",
       "Shell",
     ]);
+  });
+
+  it("only advertises Search with a search implementation and a web.search grant", async () => {
+    const unconfigured = makeContext("ready");
+    delete unconfigured.env.WEB_SEARCH;
+    const filesystemOnly = makeContext("ready", { capabilities: ["fs.*"] });
+    for (const ctx of [unconfigured, filesystemOnly]) {
+      const result = await handleAiTools(ctx);
+      expect(result.tools.some((tool) => tool.name === "Search")).toBe(false);
+      expect(result.toolSyscalls).not.toHaveProperty("Search");
+    }
+  });
+
+  it("offers Search through an accessible online target without a managed search binding", async () => {
+    const ctx = makeContext("ready", { capabilities: ["web.search"] });
+    delete ctx.env.WEB_SEARCH;
+    vi.mocked(ctx.targets.listForUser).mockReturnValue([
+      makeDevice({ target_id: "personal-search", implements: ["web.search"] }),
+    ]);
+    const result = await handleAiTools(ctx);
+    expect(result.tools.map((tool) => tool.name)).toEqual(["Search"]);
+    expect(result.targets).toContainEqual(expect.objectContaining({ id: "personal-search", implements: ["web.search"] }));
+
+    vi.mocked(ctx.targets.listForUser).mockReturnValue([
+      makeDevice({ target_id: "personal-search", implements: ["web.search"], online: false }),
+    ]);
+    expect((await handleAiTools(ctx)).tools).toEqual([]);
   });
 
   it("advertises owner-owned MCP tools for service-account agent processes", async () => {
@@ -1530,6 +1568,39 @@ describe("handleAiConfig", () => {
     }))).rejects.toThrow("AI model not found: missing");
   });
 
+  it("reconciles a deleted Process model preference against the owner's current order", async () => {
+    const result = await handleAiConfig({
+      modelId: "deleted-codex",
+      reasoning: "high",
+      inheritIfModelMissing: true,
+    }, makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [
+        { id: "first", name: "First", provider: "workers-ai", model: "@cf/first" },
+        { id: "preferred", name: "Preferred", provider: "workers-ai", model: "@cf/preferred" },
+      ] }),
+      "users/1000/ai/model_order": JSON.stringify(["deleted-codex", "preferred", "first"]),
+    }, { uid: 2000, ownerUid: 1000, processId: "proc:reconcile" }));
+    expect(result).toMatchObject({ model: "@cf/preferred", reasoning: "high", missingModelId: "deleted-codex" });
+    expect(result.fallbacks?.map((item) => item.model)).toEqual(["@cf/first", "default"]);
+  });
+
+  it("inherits the included model when the last custom model was deleted", async () => {
+    const result = await handleAiConfig({ modelId: "deleted", inheritIfModelMissing: true }, makeAiConfigContext());
+    expect(result).toMatchObject({ provider: "gsv", model: "default", missingModelId: "deleted" });
+  });
+
+  it("preserves an available Process selection during reconciliation", async () => {
+    const result = await handleAiConfig({ modelId: "gsv-included", inheritIfModelMissing: true }, makeAiConfigContext());
+    expect(result).toMatchObject({ provider: "gsv", model: "default" });
+    expect(result).not.toHaveProperty("missingModelId");
+  });
+
+  it("does not treat malformed model configuration as a removed selection", async () => {
+    await expect(handleAiConfig({ modelId: "deleted", inheritIfModelMissing: true }, makeAiConfigContext({
+      "users/1000/ai/models": "broken",
+    }))).rejects.toThrow("Invalid AI model stack");
+  });
+
   it("uses the canonical system stack when the owner has no text-model config", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "config/ai/models": JSON.stringify({
@@ -1642,6 +1713,87 @@ describe("handleAiConfig", () => {
     const disconnected = handleAiModels(makeAiConfigContext({ "users/1000/ai/models": stack }));
     expect(disconnected.models[0]).toMatchObject({ id: "codex", hasCredential: false });
     expect(JSON.stringify(personal)).not.toContain("codex-access-token");
+  });
+
+  it("keeps two Codex sign-ins independent through enrollment, reload, selection, refresh and disconnect", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = makeAiConfigContext();
+      ctx.oauth = new OAuthStore(sql);
+      ctx.config = new ConfigStore(sql);
+      let device = 0;
+      const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/deviceauth/usercode")) {
+          device += 1;
+          return Response.json({ device_auth_id: `device-${device}`, user_code: `code-${device}`, interval: 1 });
+        }
+        if (url.endsWith("/deviceauth/token")) {
+          const body: { user_code: string } = JSON.parse(String(init?.body));
+          return Response.json({ authorization_code: body.user_code, code_verifier: "fixture-verifier" });
+        }
+        if (url.endsWith("/oauth/token")) {
+          const body = new URLSearchParams(String(init?.body));
+          const code = body.get("code") ?? body.get("refresh_token")?.replace("refresh-", "");
+          const accountId = `chatgpt-${code}`;
+          return Response.json({
+            access_token: fakeCodexAccessToken(accountId), refresh_token: `refresh-${code}`,
+            id_token: fakeJwtToken({ email: `${code}@example.com` }), expires_in: 3600,
+          });
+        }
+        throw new Error(`Unexpected OAuth fixture endpoint: ${url}`);
+      });
+      for (const accountKey of ["first", "second"]) {
+        const flow = await handleSysOAuthDeviceStart({ provider: "openai-codex", kind: "ai-provider", accountKey }, ctx, fetcher);
+        const connected = await handleSysOAuthDevicePoll({ flowId: flow.flow.flowId }, ctx, fetcher);
+        expect(connected).toMatchObject({ status: "complete", account: { accountKey } });
+      }
+      // Reload from durable storage, as a new request after eviction would.
+      ctx.oauth = new OAuthStore(sql);
+      const accounts = handleSysOAuthList({}, ctx).accounts;
+      expect(accounts).toHaveLength(2);
+      expect(accounts.find((account) => account.accountKey === "second")?.metadata.chatgptEmail).toBe("code-2@example.com");
+      expect(JSON.stringify(accounts)).not.toContain("refresh-");
+      expect(accounts.some((account) => "accessToken" in account || "refreshToken" in account)).toBe(false);
+      ctx.config.set("users/1000/ai/models", JSON.stringify({ version: 1, models: ["first", "second"].map((id) => ({
+        id, name: id, provider: "openai-codex", model: "gpt-5.5", oauthAccountKey: id,
+      })) }));
+      expect(handleAiModels(ctx).models.slice(0, 2).map((entry) => [entry.id, entry.hasCredential])).toEqual([["first", true], ["second", true]]);
+      const resolved = await handleAiConfig({ modelId: "second" }, ctx);
+      expect(resolved.openAiCodex?.accountId).toBe("chatgpt-code-2");
+      expect(resolved.apiKey).toBe(fakeCodexAccessToken("chatgpt-code-2"));
+      expect(resolved.fallbacks?.[0].openAiCodex?.accountId).toBe("chatgpt-code-1");
+      const validation = await handleAiConfig({ modelConfig: {
+        provider: "openai-codex", model: "gpt-5.5", oauthAccountKey: "second",
+      } }, ctx);
+      expect(validation.openAiCodex?.accountId).toBe("chatgpt-code-2");
+      const firstBefore = ctx.oauth.findAccountByIdentity(1000, "ai-provider", "openai-codex", "first");
+      const second = ctx.oauth.findAccountByIdentity(1000, "ai-provider", "openai-codex", "second")!;
+      await refreshOpenAICodexAccount(ctx.oauth, second, fetcher);
+      expect(ctx.oauth.findAccountByIdentity(1000, "ai-provider", "openai-codex", "first")).toEqual(firstBefore);
+      expect(ctx.oauth.findAccountByIdentity(1000, "ai-provider", "openai-codex", "second")?.accountId).toBe(second.accountId);
+      expect(handleSysOAuthForget({ accountId: firstBefore!.accountId }, ctx)).toEqual({ forgotten: true });
+      expect(handleAiModels(ctx).models.slice(0, 2).map((entry) => [entry.id, entry.hasCredential])).toEqual([["first", false], ["second", true]]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect((await handleAiConfig({ modelId: "second" }, ctx)).openAiCodex?.accountId).toBe("chatgpt-code-2");
+        await expect(handleAiConfig({ modelId: "first" }, ctx)).rejects.toThrow("selected ChatGPT account is not connected");
+      } finally { warn.mockRestore(); }
+    });
+  });
+
+  it("does not substitute a default, another owner's or root's OAuth connection for a missing personal selection", async () => {
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/models": JSON.stringify({ version: 1, models: [
+        { id: "second", name: "Second", provider: "openai-codex", model: "gpt-5.5", oauthAccountKey: "second" },
+      ] }),
+      "users/1000/ai/models/second/api_key": "old-unrelated-key",
+    }, { oauthAccounts: [
+      makeOAuthAccount({ accountKey: "default" }),
+      makeOAuthAccount({ uid: 1002, accountKey: "second" }),
+      makeOAuthAccount({ uid: 0, accountKey: "second" }),
+    ] });
+    expect(handleAiModels(ctx).models[0].hasCredential).toBe(false);
+    await expect(handleAiConfig({}, ctx)).rejects.toThrow("selected ChatGPT account is not connected");
   });
 
   it("keeps two profiles for one connection when they sit in the same layer", () => {

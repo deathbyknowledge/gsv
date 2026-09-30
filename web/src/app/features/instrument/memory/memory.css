@@ -16,7 +16,6 @@
 .memory-rail {
   min-width: 0;
   min-height: 0;
-  padding-top: var(--instrument-header-height);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -90,7 +89,7 @@
   cursor: pointer;
   border-left: 2px solid transparent;
 }
-.memory-rail .page:hover { background: var(--hover); }
+.memory-rail .page:hover, .memory-rail .page:focus { background: var(--hover); }
 .memory-rail .page.is-sel { color: var(--text-hi); border-left-color: var(--accent); background: var(--selected); }
 .memory-folder > summary {
   display: flex;
@@ -102,7 +101,7 @@
   list-style: none;
 }
 .memory-folder > summary::-webkit-details-marker { display: none; }
-.memory-folder > summary:hover { background: var(--hover); }
+.memory-folder > summary:hover, .memory-folder > summary:focus { background: var(--hover); }
 .memory-folder .tri { width: 1ch; flex: none; color: var(--faint); }
 .memory-folder.has-current > summary { color: var(--accent); }
 .memory-folder-pages { margin-left: 16px; border-left: 1px solid var(--border); }
@@ -120,7 +119,6 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding-top: var(--instrument-header-height);
   overflow: hidden;
 }
 .memory-page .page-content {
@@ -196,7 +194,7 @@
   max-width: var(--measure-prose);
 }
 .memory-empty .place { color: var(--target); }
-.memory-empty { padding-top: calc(var(--instrument-header-height) + 8vh); }
+.memory-empty { padding-top: 8vh; }
 .memory-loading { width: 100%; height: 100%; max-width: none; padding: 0; }
 
 @container instrument (max-width: 720px) {

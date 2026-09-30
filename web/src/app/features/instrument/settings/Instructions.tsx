@@ -1,5 +1,6 @@
 import { LoadingState } from "../../../components/ui/Spinner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { canConfigure, newInstructionName, SETTINGS_INSTRUCTIONS_KEY } from "./settingsModel";

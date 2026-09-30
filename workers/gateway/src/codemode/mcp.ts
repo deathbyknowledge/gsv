@@ -35,6 +35,8 @@ const RESERVED_MCP_FUNCTION_NAMES = new Set([
   "mail",
   "mcpTools",
   "net",
+  "web",
+  "__web",
   "shell",
   "__arrayBufferFromBase64",
   "__base64FromArrayBuffer",

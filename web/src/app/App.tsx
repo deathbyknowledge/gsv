@@ -1,5 +1,5 @@
 import { MemberRecoveryScreen } from "./features/session/MemberRecoveryScreen";
-import { AppProviders } from "./providers/AppProviders";
+import { AppProviders, type AppProviderDependencies } from "./providers/AppProviders";
 import { Instrument } from "./features/instrument/Instrument";
 import { AccountRecoveryScreen } from "./features/session/AccountRecoveryScreen";
 import { HumanInvitationScreen } from "./features/session/HumanInvitationScreen";
@@ -14,13 +14,13 @@ function AppRoutes() {
     : pathname === "/recover" ? <AccountRecoveryScreen key={revision} />
     : pathname === "/join" ? <HumanInvitationScreen key={revision} /> : null;
   if (recovery || snapshot.phase !== "ready") {
-    return <AuthScene setup={!recovery && (snapshot.phase === "setup" || snapshot.phase === "setup-complete")}>
+    return <AuthScene setup={!recovery && (snapshot.phase === "setup" || pathname === "/onboarding")}>
       {recovery ?? <Instrument initialPath={pathname} />}
     </AuthScene>;
   }
   return <Instrument initialPath={pathname} />;
 }
 
-export function App() {
-  return <AppProviders><AppRoutes /></AppProviders>;
+export function App(dependencies: AppProviderDependencies = {}) {
+  return <AppProviders {...dependencies}><AppRoutes /></AppProviders>;
 }

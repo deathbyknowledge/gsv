@@ -38,7 +38,7 @@ struct Args {
 
 pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let mut settings = resolve_settings(&args)?;
+    let mut settings = resolve_settings(&args, &CliConfig::load())?;
     let _logging_guard = machine::logger::init_device_logging()?;
     let (runtime, mut actions) = DaemonRuntime::new(settings.device_id.clone());
     let endpoint = DaemonControlEndpoint::current_user()?;
@@ -55,14 +55,22 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         runtime.set_machine_id(settings.device_id.clone());
         let driver_shutdown = CancellationToken::new();
         let driver_settings = settings.clone();
-        let driver = machine::device::run(
-            &driver_settings.url,
-            driver_settings.auth.clone(),
-            driver_settings.device_id.clone(),
-            driver_settings.workspace.clone(),
-            driver_shutdown.clone(),
-            runtime.clone(),
-        );
+        let driver = async {
+            if driver_settings.auth.token.is_none() {
+                runtime.pairing_required("Connect this computer to a space.");
+                driver_shutdown.cancelled().await;
+                return Ok(());
+            }
+            machine::device::run(
+                &driver_settings.url,
+                driver_settings.auth.clone(),
+                driver_settings.device_id.clone(),
+                driver_settings.workspace.clone(),
+                driver_shutdown.clone(),
+                runtime.clone(),
+            )
+            .await
+        };
         tokio::pin!(driver);
 
         enum SupervisorEvent {
@@ -88,7 +96,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 match action {
                     ControlAction::Reload => {
                         runtime.set_phase(DaemonPhase::Reloading);
-                        match resolve_settings(&args) {
+                        match resolve_settings(&args, &CliConfig::load()) {
                             Ok(reloaded) => settings = reloaded,
                             Err(error) => {
                                 runtime.reconnecting(
@@ -137,9 +145,8 @@ struct Settings {
     workspace: PathBuf,
 }
 
-fn resolve_settings(args: &Args) -> Result<Settings, Box<dyn std::error::Error>> {
-    let cfg = CliConfig::load();
-    let url = args.url.clone().unwrap_or_else(|| cfg.gateway_url());
+fn resolve_settings(args: &Args, cfg: &CliConfig) -> Result<Settings, Box<dyn std::error::Error>> {
+    let url = args.url.clone().unwrap_or_else(|| cfg.device_gateway_url());
     let device_id = args
         .id
         .clone()
@@ -152,17 +159,11 @@ fn resolve_settings(args: &Args) -> Result<Settings, Box<dyn std::error::Error>>
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let workspace = workspace.canonicalize().unwrap_or(workspace);
     let auth = GatewayAuth {
-        username: args.user.clone().or_else(|| cfg.gateway_username()),
+        username: args.user.clone().or_else(|| cfg.device_gateway_username()),
         password: None,
         token: args.token.clone().or_else(|| cfg.default_device_token()),
     };
     auth.validate()?;
-    if auth.username.is_some() && auth.token.is_none() {
-        return Err(
-            "Missing non-interactive device credential. Create a machine invitation in your space's Fleet, then run `gsv pair CODE` on this computer."
-                .into(),
-        );
-    }
 
     let _ = args.foreground;
     Ok(Settings {
@@ -200,6 +201,65 @@ fn default_device_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args() -> Args {
+        Args {
+            url: None,
+            user: None,
+            token: None,
+            id: None,
+            workspace: None,
+            foreground: true,
+        }
+    }
+
+    #[test]
+    fn enrolled_machine_uses_its_own_identity_without_a_cli_login() {
+        let mut cfg = CliConfig::default();
+        cfg.device.gateway_url = Some("wss://machine.example/ws".into());
+        cfg.device.gateway_username = Some("machine-owner".into());
+        cfg.device.token = Some("machine-credential".into());
+        cfg.device.id = Some("laptop".into());
+
+        for unrelated_cli_login in [false, true] {
+            if unrelated_cli_login {
+                cfg.gateway.url = Some("wss://cli.example/ws".into());
+                cfg.gateway.username = Some("cli-owner".into());
+                cfg.gateway.token = Some("cli-credential".into());
+            }
+            let settings = resolve_settings(&args(), &cfg).expect("paired machine can start");
+            assert_eq!(settings.url, "wss://machine.example/ws");
+            assert_eq!(settings.auth.username.as_deref(), Some("machine-owner"));
+            assert_eq!(settings.auth.token.as_deref(), Some("machine-credential"));
+            assert_eq!(settings.device_id, "laptop");
+        }
+
+        let settings = resolve_settings(
+            &Args {
+                url: Some("wss://override.example/ws".into()),
+                user: Some("override-owner".into()),
+                token: Some("override-credential".into()),
+                ..args()
+            },
+            &cfg,
+        )
+        .expect("explicit connection overrides");
+        assert_eq!(settings.url, "wss://override.example/ws");
+        assert_eq!(settings.auth.username.as_deref(), Some("override-owner"));
+        assert_eq!(settings.auth.token.as_deref(), Some("override-credential"));
+    }
+
+    #[test]
+    fn older_machine_configurations_keep_their_gateway_identity() {
+        let mut cfg = CliConfig::default();
+        cfg.gateway.url = Some("wss://existing.example/ws".into());
+        cfg.gateway.username = Some("existing-owner".into());
+        cfg.device.token = Some("machine-credential".into());
+        let settings = resolve_settings(&args(), &cfg).expect("legacy configuration");
+        assert_eq!(settings.url, "wss://existing.example/ws");
+        assert_eq!(settings.auth.username.as_deref(), Some("existing-owner"));
+        assert_eq!(settings.auth.token.as_deref(), Some("machine-credential"));
+    }
 
     #[test]
     fn default_id_is_namespaced_as_a_device() {

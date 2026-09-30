@@ -36,6 +36,7 @@
     }
   ],
   "services": [
+    { "binding": "ENTITLEMENTS", "service": "gsv-accounts-dev", "entrypoint": "EntitlementsEntrypoint" },
     {
       "binding": "ACCOUNTS",
       "service": "gsv-accounts-dev"

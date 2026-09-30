@@ -8,7 +8,7 @@ import type { FleetRow } from "../Instrument";
 
 /** The cloud home is a place too; the target list does not carry it, so Fleet adds it. */
 export const CLOUD_TARGET_ID = "gsv";
-export const CLOUD_TARGET_LABEL = "your cloud home";
+export const CLOUD_TARGET_LABEL = "your cloud";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
 export type FleetConnectReference = { kind: "connect"; to: "place" | "contact" };
@@ -73,6 +73,7 @@ export type LedgerLine = {
 };
 
 export function placeFromTarget(target: ConsoleTarget): Place {
+  if (target.deviceId === CLOUD_TARGET_ID) return cloudPlace();
   return {
     id: target.deviceId,
     label: target.label || target.deviceId,
@@ -101,12 +102,13 @@ export function cloudPlace(): Place {
 }
 
 /** Machines first, then the cloud home, then browsers and the rest, each group alphabetical. */
+// The current UI pins the cloud first, before the remaining groups described above.
 export function orderPlaces(targets: readonly ConsoleTarget[]): Place[] {
   const places = targets.map(placeFromTarget);
   if (!places.some((place) => place.id === CLOUD_TARGET_ID)) {
     places.push(cloudPlace());
   }
-  const rank = (kind: PlaceKind) => (kind === "machine" ? 0 : kind === "cloud" ? 1 : kind === "browser" ? 2 : 3);
+  const rank = (kind: PlaceKind) => (kind === "cloud" ? 0 : kind === "machine" ? 1 : kind === "browser" ? 2 : 3);
   return places.sort((a, b) => rank(a.kind) - rank(b.kind) || a.label.localeCompare(b.label));
 }
 
@@ -179,19 +181,9 @@ export function visibleProcesses(processes: readonly ConsoleProcess[], selected:
   return processes.slice(0, Math.max(limit, selectedIndex + 1));
 }
 
-/** A linked process or target keeps its identity when unavailable; ordinary row navigation can leave it. */
-export function reconcileFleetSelection(selected: FleetRow | null, initialRow: FleetRow | null, visibleRows: readonly FleetRow[]): FleetRow | null {
-  if (selected && (visibleRows.includes(selected) || (selected === initialRow && (selected.startsWith("proc:") || selected.startsWith("target:"))))) return selected;
-  return initialRow && visibleRows.includes(initialRow) ? initialRow : visibleRows[0] ?? null;
-}
-
-export function ledgerRow(lineId: string): FleetRow {
-  return `ledger:${lineId}`;
-}
-
 /** Every selectable row in manifest order: places, then processes. */
-export function rowKeys(places: readonly Place[], processes: readonly ConsoleProcess[], ledger: readonly LedgerLine[] = []): FleetRow[] {
-  return [...places.map((place) => targetRow(place.id)), ...processes.map((process) => processRow(process.pid)), ...ledger.map((line) => ledgerRow(line.id))];
+export function rowKeys(places: readonly Place[], processes: readonly ConsoleProcess[]): FleetRow[] {
+  return [...places.map((place) => targetRow(place.id)), ...processes.map((process) => processRow(process.pid))];
 }
 
 const toolArgsSchema = z.object({
@@ -236,6 +228,7 @@ export function describeToolCall(syscall: string, args: ChatTranscriptValue | un
   const parsed = parseToolArgs(args);
   let detail = "";
   if (syscall === "shell.exec") detail = parsed.input ?? "";
+  else if (syscall === "web.search") detail = parsed.query ?? "";
   else if (syscall === "fs.copy") detail = [parsed.source, parsed.destination].map((endpoint) => endpoint ? `${endpoint.target ? `${endpoint.target}:` : ""}${endpoint.path}` : "").filter(Boolean).join(" → ");
   else if (syscall.startsWith("fs.")) detail = [parsed.path, syscall === "fs.search" ? parsed.query : null].filter(Boolean).join(" · ");
   else if (syscall.startsWith("net.")) detail = parsed.url ?? "";
@@ -296,6 +289,7 @@ export function humanCall(syscall: string, args: ChatTranscriptValue | undefined
   if (syscall === "fs.delete") return name ? `removed ${name}` : "removed a file";
   if (syscall === "fs.copy") return name ? `copied ${name}` : "copied a file";
   if (syscall === "fs.search") return parsed.query ? `searched for ${parsed.query}` : "searched files";
+  if (syscall === "web.search") return parsed.query ? `searched the web for ${parsed.query}` : "searched the web";
   if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
   return ledgerLabel(syscall);
 }

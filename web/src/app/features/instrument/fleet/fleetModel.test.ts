@@ -18,7 +18,6 @@ import {
   humanCall,
   ledgerFromSysLines,
   visibleProcesses,
-  reconcileFleetSelection,
   fleetReferenceRow,
   isApprovalReference,
   referencedApproval,
@@ -40,7 +39,6 @@ describe("Fleet references and supported place actions", () => {
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {
     const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
     expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");
-    expect(reconcileFleetSelection(fleetReferenceRow(reference), fleetReferenceRow(reference), ["proc:another"])).toBe("proc:proc:child:123");
     expect(fleetReferenceRow("target:browser:profile")).toBe("target:browser:profile");
     expect(fleetReferenceRow(null)).toBeNull();
   });
@@ -125,15 +123,18 @@ function sysLine(overrides: Partial<SysLine>): SysLine {
 }
 
 describe("places", () => {
-  it("adds the cloud home and orders machines first", () => {
+  it("adds your cloud first, followed by machines and browsers", () => {
     const places = orderPlaces([target({ deviceId: "browser-1", kind: "browser", label: "Chrome" }), target({})]);
-    expect(places.map((place) => place.id)).toEqual(["laptop", CLOUD_TARGET_ID, "browser-1"]);
-    expect(places[1].kind).toBe("cloud");
+    expect(places.map((place) => place.id)).toEqual([CLOUD_TARGET_ID, "laptop", "browser-1"]);
+    expect(places[0].kind).toBe("cloud");
+    expect(places[0].label).toBe("your cloud");
   });
 
   it("keeps an existing cloud target instead of adding a second one", () => {
     const places = orderPlaces([target({ deviceId: CLOUD_TARGET_ID, kind: "unknown", label: "gsv" })]);
     expect(places).toHaveLength(1);
+    expect(places[0].label).toBe("your cloud");
+    expect(places[0].kind).toBe("cloud");
   });
 
   it("maps every kind to a planet", () => {
@@ -146,14 +147,6 @@ describe("places", () => {
 });
 
 describe("processes", () => {
-  it.each(["proc:replaced", "target:removed"] as const)("retains an unavailable explicit reference %s until the person leaves it", (requested) => {
-    const rows = ["target:gsv", "proc:current"] as const;
-    expect(reconcileFleetSelection(requested, requested, [])).toBe(requested);
-    expect(reconcileFleetSelection(requested, requested, rows)).toBe(requested);
-    expect(reconcileFleetSelection(requested, requested, [...rows, requested])).toBe(requested);
-    expect(reconcileFleetSelection("proc:current", requested, rows)).toBe("proc:current");
-    expect(reconcileFleetSelection("proc:disappeared", requested, rows)).toBe("target:gsv");
-  });
   it("leads with the ship, then the most recently active", () => {
     const ordered = orderProcesses([
       process({ pid: "42", lastActiveAt: 10 }),
@@ -165,7 +158,7 @@ describe("processes", () => {
 
   it("lists row keys as places then processes", () => {
     const keys = rowKeys(orderPlaces([target({})]), [process({ pid: "7" })]);
-    expect(keys).toEqual(["target:laptop", "target:gsv", "proc:7"]);
+    expect(keys).toEqual(["target:gsv", "target:laptop", "proc:7"]);
   });
 
   it("reveals a linked process beyond the first page when the list arrives", () => {

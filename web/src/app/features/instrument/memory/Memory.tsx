@@ -1,7 +1,9 @@
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import { useQuery } from "../../../services/navigation/viewQueries";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { listLibraryCollections, saveLibraryPage } from "../../../services/memory/libraryService";
 import { libraryPathInDb } from "../../../services/memory/libraryModel";
@@ -13,7 +15,7 @@ import { refreshSavedMemoryPage } from "./memoryQueries";
 import { MemoryArticle } from "./MemoryArticle";
 import { memoryLinkFromUrl, type MemoryLink } from "./memoryLinks";
 import { MemoryPageTree } from "./MemoryPageTree";
-import { buildMemoryTree, memoryTreePages } from "./memoryTree";
+import { buildMemoryTree } from "./memoryTree";
 import "./memory.css";
 
 export type MemoryProps = {
@@ -30,6 +32,7 @@ export type MemoryProps = {
  * when opened, a search in the gateway.
  */
 export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
@@ -44,6 +47,8 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const [status, setStatus] = useState<{ db: string; path: string; text: string; error: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const pagesRef = useRef<HTMLElement>(null);
+  const focusedRow = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!initialPage) return;
@@ -52,7 +57,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setFragment("");
     setEditor(null);
     setStatus(null);
-  }, [initialPage?.db, initialPage?.path]);
+  }, [initialPage]);
 
   const collectionsQuery = useQuery({
     queryKey: [...MEMORY_KEY, "collections"],
@@ -82,7 +87,6 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   });
   const pages = useMemo(() => (asked ? (searchQuery.data?.entries ?? []) : (pagesQuery.data ?? [])), [asked, pagesQuery.data, searchQuery.data]);
   const pageTree = useMemo(() => buildMemoryTree(pagesQuery.data ?? [], selectedDb), [pagesQuery.data, selectedDb]);
-  const orderedPages = useMemo(() => asked ? pages : memoryTreePages(pageTree), [asked, pages, pageTree]);
   /* the first page of a collection opens by itself; a page the person picked stays */
   const currentPath = path ?? pagesQuery.data?.[0]?.path ?? null;
   const pageQuery = useQuery({
@@ -150,15 +154,16 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setStatus(null);
   }, [note, selectedDb, writable]);
   useEffect(() => {
-    if (editing && !creating) editorRef.current?.focus();
+    if (active && editing && !creating) editorRef.current?.focus();
   }, [editing]);
 
   /* keys: j k walk the pages, enter opens, / searches, e edits, esc leaves the editor or the search */
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
       const target = event.target;
-      const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+      const typing = target instanceof HTMLElement && (Boolean(target.closest("input, textarea, select")) || target.isContentEditable);
       if (event.key === "Escape") {
         if (editing) {
           event.preventDefault();
@@ -172,15 +177,26 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
         return;
       }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      const at = orderedPages.findIndex((entry) => entry.path === note?.path);
-      if (event.key === "j" || event.key === "ArrowDown") {
+      if (event.key === "j" || event.key === "ArrowDown" || event.key === "k" || event.key === "ArrowUp") {
         event.preventDefault();
-        const next = orderedPages[Math.min(orderedPages.length - 1, at + 1)];
-        if (next) open(next);
-      } else if (event.key === "k" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const next = orderedPages[Math.max(0, at - 1)];
-        if (next) open(next);
+        // Read the visible tree structure without measuring every row or changing the open page.
+        const rows = Array.from(pagesRef.current?.querySelectorAll<HTMLElement>(".page, .memory-folder > summary") ?? []).filter((row) => {
+          if (row.closest("[hidden]")) return false;
+          for (let folder = row.closest("details"); folder; folder = folder.parentElement?.closest("details") ?? null) {
+            if (!folder.open && folder.firstElementChild !== row) return false;
+          }
+          return true;
+        });
+        let at = rows.findIndex((row) => row === document.activeElement);
+        if (at < 0) at = rows.findIndex((row) => row === focusedRow.current);
+        if (at < 0) at = rows.findIndex((row) => row.getAttribute("aria-current") === "page");
+        const direction = event.key === "j" || event.key === "ArrowDown" ? 1 : -1;
+        const next = rows[Math.max(0, Math.min(rows.length - 1, at + direction))];
+        if (next) {
+          next.focus({ preventScroll: true });
+          next.scrollIntoView({ block: "nearest" });
+        }
+        // Space and Enter activate the focused button/summary through the browser's native behavior.
       } else if (event.key === "/") {
         event.preventDefault();
         searchRef.current?.focus();
@@ -191,7 +207,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [beginEdit, editing, note?.path, open, orderedPages, dirty, save.isPending]);
+  }, [active, beginEdit, editing, dirty, save.isPending]);
 
   const onEditorKey = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -273,7 +289,9 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
               </form>
             </div>
             {writable && <button type="button" class="memory-new-page" disabled={!connected || save.isPending} onClick={newPage}>new page</button>}
-            <nav class="pages" aria-label={asked ? "Matches" : "Pages"}>
+            <nav class="pages" ref={pagesRef} aria-label={asked ? "Matches" : "Pages"} onFocusCapture={(event) => {
+              if (event.target instanceof HTMLElement && event.target.matches(".page, .memory-folder > summary")) focusedRow.current = event.target;
+            }}>
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">

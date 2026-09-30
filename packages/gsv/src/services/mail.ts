@@ -71,3 +71,8 @@ export type {
   ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
 } from "../protocol/mail";
+
+
+/** Transport safety ceilings; a space's plan may grant a smaller allowance. */
+export const MAIL_MAX_MESSAGE_BYTES = 25 * 1024 * 1024;
+export const MAIL_MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;

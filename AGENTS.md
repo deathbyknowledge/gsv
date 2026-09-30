@@ -57,6 +57,8 @@ This document is the root engineering contract for the repository. It explains h
 
 The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Send is the run control, message and yield, as a tool, and is the only tool that is not a capability. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
 
+Search exposes the provider-neutral, targetable `web.search` syscall. It defaults to `gsv`, whose implementation uses an optional operator-owned service binding; other accessible targets may advertise the same syscall. Filesystem search uses Shell commands or CodeMode `fs.search`. Provider credentials and metering belong to the provider implementation.
+
 GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction burden for models and humans. This is a design model, not a promise of POSIX compatibility.
 
 ### Treat agents as real processes
@@ -64,6 +66,8 @@ GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction 
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
+
+Ship's default delegation uses an ordinary owned Crew account through `proc delegate --as`. Account homes separate conversation and execution instructions; the human owner's context and memory remain shared. Account identity selects prompt context, and children follow ordinary spawn rules.
 
 A Process context epoch freezes the exact rendered system prompt, its source manifest, and the initial responsibility baseline across normal runs. Later responsibility revisions enter as ordered GSV events rather than rewriting the prompt. Kernel-owned availability facts such as accessible targets, ready MCP servers, the current date and timezone, and the skill catalog follow the same rule: Process stores an initial and last-observed projection and atomically appends meaningful deltas before generation. Reset, compaction, Process replacement, or effective standing-context changes close and archive the epoch, including its exact prompt, Process activity, projection and responsibility transitions, and run boundaries.
 
@@ -96,7 +100,7 @@ Process history uses typed message, note, call, result, and event records. Stora
 - `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
-- `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
+- `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
@@ -136,7 +140,9 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 ### Data and security
 
 - Enforce authorization in the Kernel, not only in UI or callers.
+- Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
+- Accounts owns hashed, single-use space-creation invites. A verified owner claims an invite and resumes one durable creation operation; private policy prepares its allowance before setup authorization. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
 - A signed-in human issues device enrollment invitations scoped to the installation, account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
@@ -163,6 +169,7 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 ### Protected prompt and context content
 
 - Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `workers/gateway/src/prompts/**`.
+- Write active standing defaults and standalone task prompts as Markdown files imported by TypeScript. Use `npm run review:prompts` to edit and preview them; keep runtime selection and structured event formatting in code.
 - Treat `workers/gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
 - Do not edit prompt or seeded `context.d` content to work around runtime, protocol, tool-discovery, or UI behavior. Fix the owning implementation boundary.
 - If a task appears to require changing protected prompt or context content without explicit authorization, stop and ask first.
@@ -214,6 +221,8 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
+Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts`.
+
 - Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
 - Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
@@ -227,6 +236,12 @@ Validate only the surfaces affected by the change:
 - Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
+
+Documentation is an output of the change, not a follow-up. A change to product-facing behaviour updates `docs/` in the same pull request, and the GSV Manual (`deathbyknowledge/gsv-manual`, which every installation imports for its agents) in its own pull request when the operating model or a user workflow moved.
+
+- Docs: `npm run docs:check`
+
+That check verifies the site's links, redirects and sidebar, refuses content that is not publishable, and fails a pull request that touches a documented surface without changing one of the pages that own it. `tools/docs/coverage-map.json` maps source paths to those pages; when a new page takes over a surface, add it there. When a change genuinely needs no documentation, say so: add the `docs-not-needed` label, or put a line in the pull request body starting with `Docs:` that gives the reason. Manual-only work is recorded the same way, as `Docs: gsv-manual PR <url>`.
 
 ## Deployment model
 
@@ -255,6 +270,7 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 - Architecture: `docs/architecture/`
 - Rust CLI, daemon, Desktop, and local IPC: `docs/architecture/rust-host-applications.md`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
+- Public documentation and its currency rule: `docs/` and `tools/docs/coverage-map.json`
 - Web product and app design: `engineering/builtin-app-design.md`
 
 Read the relevant detailed guide before changing that subsystem; do not duplicate its full policy here.

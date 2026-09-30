@@ -1,6 +1,7 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery } from "@tanstack/preact-query";
+import { useInfiniteQuery } from "../../../services/navigation/viewQueries";
 import { useLayoutEffect, useRef } from "preact/hooks";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
@@ -23,6 +24,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
   contact: ContactSummary;
   account: ConsoleAccount | undefined;
 }) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
   const mayRead = !!account && canConfigure(account, "conversation.history");
   const maySend = !!account && canConfigure(account, "contact.send")
@@ -45,16 +47,16 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend }
   });
   const messages = history.data?.pages.slice().reverse().flatMap((page) => page.messages) ?? [];
   const followLatest = () => {
-    if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+    if (active && follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   };
   useLayoutEffect(() => {
     const element = scroll.current;
-    if (!element) return;
+    if (!active || !element) return;
     if (olderHeight.current !== null) {
       element.scrollTop += element.scrollHeight - olderHeight.current;
       olderHeight.current = null;
     } else followLatest();
-  }, [history.data]);
+  }, [active, history.data]);
   const addFiles = (files: readonly File[]) => {
     if (disabled) return;
     if (files.some((file) => file.size > MAX_STAGED_RESOURCE_BYTES)) {

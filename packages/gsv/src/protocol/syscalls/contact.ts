@@ -182,6 +182,9 @@ export type ContactDeliveryStatus = {
   updatedAtMs: number;
   deliveredAtMs?: number;
   lastError?: string;
+  retryable?: boolean;
+  messageId?: string;
+  messageSequence?: number;
 };
 
 export type ContactDeliveryGetArgs = {
@@ -191,6 +194,11 @@ export type ContactDeliveryGetArgs = {
 export type ContactDeliveryGetResult = {
   delivery: ContactDeliveryStatus | null;
 };
+
+export type ContactDeliveryListArgs = { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+export type ContactDeliveryListResult = { deliveries: ContactDeliveryStatus[] };
+export type ContactDeliveryRetryArgs = { deliveryId: string; expectedUpdatedAtMs: number };
+export type ContactDeliveryRetryResult = ContactSendResult;
 
 export type ContactRequestState =
   | "offered"
@@ -211,9 +219,29 @@ export type ContactRequestRecord = {
   details?: JsonObject;
   state: ContactRequestState;
   revision: number;
+  /** Confirmation of this revision, independent of its locally recorded work state. */
+  exchange?: ContactRequestExchange;
   createdAtMs: number;
   updatedAtMs: number;
 };
+
+export type ContactRequestExchange = {
+  state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+  source?: "local" | "remote";
+  deliveryId?: string;
+  lastError?: string;
+};
+
+export function contactRequestTransitions(
+  state: ContactRequestState,
+  participant: "requester" | "performer",
+): Exclude<ContactRequestState, "offered">[] {
+  if (participant === "requester") return state === "offered" ? ["cancelled"] : [];
+  if (state === "offered") return ["accepted", "rejected"];
+  if (state === "accepted") return ["active", "completed", "cancelled"];
+  if (state === "active") return ["completed", "cancelled"];
+  return [];
+}
 
 export type ContactRequestListArgs = {
   contactId?: string;

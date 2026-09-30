@@ -109,6 +109,7 @@ export type ChatTranscriptRow = {
   toolStartedAt?: number | null;
   toolCallRecordKey?: string;
   toolName?: string;
+  toolPurpose?: string;
   toolOutcome?: ChatToolOutcome;
   toolOutput?: ChatTranscriptValue;
   toolSyscall?: string | null;
@@ -800,6 +801,7 @@ function toolRowFromStarted(record: ChatTranscriptRecord | null): ChatTranscript
     toolArgs: record?.args ?? {},
     toolCallId: callId,
     toolName,
+    toolPurpose: asString(record?.purpose) ?? undefined,
     toolSyscall: syscall,
     toolTarget: asString(record?.target),
     runId: asString(record?.runId) ?? undefined,
@@ -821,17 +823,21 @@ function toolRowFromStreamEvent(event: ChatTranscriptRecord, runId: string): Cha
   }
   const toolName = asString(rawToolCall.name) ?? "Tool";
   const args = rawToolCall.arguments ?? rawToolCall.args ?? {};
+  const argsRecord = asRecord(args);
+  const purpose = asString(rawToolCall.purpose) ?? asString(argsRecord?.purpose);
+  const executionArgs = argsRecord ? Object.fromEntries(Object.entries(argsRecord).filter(([key]) => key !== "purpose")) : args;
   const syscall = asString(rawToolCall.syscall);
   const now = Date.now();
   return {
     id: `tool:${callId}`,
     role: "tool",
-    text: formatToolInput(args),
+    text: formatToolInput(executionArgs),
     timestamp: now,
     time: formatTranscriptTime(now),
-    toolArgs: args,
+    toolArgs: executionArgs,
     toolCallId: callId,
     toolName,
+    toolPurpose: purpose ?? undefined,
     toolSyscall: syscall,
     toolTarget: asString(rawToolCall.target),
     runId,

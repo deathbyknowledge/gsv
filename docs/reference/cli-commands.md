@@ -1,9 +1,8 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local Desktop application, device
-daemon, process tree, adapters, and Cloudflare infrastructure. Most commands
-talk to the Kernel syscall surface over WebSocket; `desktop` uses a same-user
-local endpoint and `infra` talks directly to Cloudflare.
+The `gsv` binary controls a GSV gateway, the local Desktop application, the
+machine daemon, the process tree, and adapters. Most commands talk to the Kernel
+syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
 ## Global Options
 
@@ -68,6 +67,7 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
@@ -158,6 +158,16 @@ producers as `configurable`. Only configurable producers can be changed. Use
 Ship responsibility for each message; enabling it affects future completions.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
+
+`message search "words"` searches retained conversation messages saved after search was
+enabled, including those later archived, and defaults to Ship. Older search entries
+are removed as the conversation database approaches its storage budget; their original
+messages remain readable through history. Pre-feature messages are not indexed retroactively.
+Search returns newest matches first, with literal word prefixes combined with AND.
+`--before` accepts the returned `nextBeforeSequence` to page older matches.
+A signed-in user or their Ship may search;
+delegated work does not inherit conversation access. Use `message history` with
+the match's sequence plus one as `--before` and `--limit 1` to read it in full.
 
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination
@@ -270,7 +280,12 @@ remote confirmation; use `message delivery show` with its delivery id.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
-a stale client from overwriting a newer decision. Resources attached with
+a stale client from overwriting a newer decision. The requester may cancel an
+unaccepted offer; only the performer may accept, reject, start, complete or stop
+accepted work. `contact request list` includes an `EXCHANGE` column: a locally
+recorded update stays pending until the peer confirms it. Failed confirmation
+leaves the exchange unsettled, even if the recorded work state is completed.
+Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
 the receiving GSV only when opened.
 
@@ -305,7 +320,7 @@ starts an agent process, use `proc spawn --non-interactive` and do not expect it
 answer to appear in a chat:
 
 ```cron
-0 9 * * * proc spawn --non-interactive --label refresh-index "Refresh the search index."
+0 9 * * * proc spawn --non-interactive --label 'Refresh search index' "Refresh the search index."
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the
@@ -323,15 +338,16 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 gsv proc list [--uid UID]
 gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE --pid PID
-gsv proc history --pid PID [--limit N] [--offset N]
+gsv proc history --pid PID [--tail] [--limit N] [--offset N]
 gsv proc reset --pid PID
 gsv proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
-`send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
-lists and requires root when viewing another user.
+`send`, `history`, `reset`, and `kill` require a PID. `history --tail` reads
+the newest messages instead of the oldest page. `--uid` filters process lists
+and requires root when viewing another user.
 
 Spawn's `--model` and `--effort` flags have the same semantics as the native
 commands above; the settings apply before the optional initial prompt starts.
@@ -379,7 +395,7 @@ window state, and the selected PID; `--json` prints those same redacted fields
 for scripts. The command returns an error when Desktop is not running.
 
 The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
 an explicit executable when testing a nonstandard installation.
 
 These commands use the versioned same-user IPC contract in
@@ -392,13 +408,18 @@ preference, and process-switch fencing.
 
 ## Daemon Commands
 
-Open **Fleet → Places → connect**, name the computer and create an invitation.
+Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 
 ```bash
 gsv pair CODE [--workspace PATH] [--no-install]
 gsv pair  # resume an interrupted exchange
 ```
+
+Use `gsv pair -` to read the invitation from stdin instead of exposing it in
+process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+credentials unchanged; `--no-replace` refuses to overwrite an existing machine
+credential. Desktop uses these together for integrated machine setup.
 
 The invitation supplies the gateway, account and target identity. It expires in
 ten minutes and can enroll one device. The CLI saves its credential before the

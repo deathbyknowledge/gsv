@@ -10,9 +10,9 @@ import {
   CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL,
   type AiBinding,
 } from "@earendil-works/pi-ai/api/cloudflare-ai-binding";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import { createAttributedAiBindingFetch } from "../ai-gateway-fetch";
+import { getWorkersAiModels } from "../workers-ai-models";
 import type { InferenceAttribution } from "./provider";
 import * as z from "zod/mini";
 
@@ -73,7 +73,7 @@ const workersAiGatewayPayloadSchema = z.looseObject({});
 type WorkersAiGatewayPayload = z.infer<typeof workersAiGatewayPayloadSchema>;
 type PiAiPayload = Parameters<NonNullable<SimpleStreamOptions["onPayload"]>>[0];
 
-const workersAiCatalog = getBuiltinModels(PI_WORKERS_AI_PROVIDER);
+const workersAiCatalog = getWorkersAiModels();
 if (!workersAiCatalog.some((model) => model.id === GLM_5_3_FLASH.id)) {
   workersAiCatalog.push(GLM_5_3_FLASH);
 }
@@ -107,8 +107,7 @@ export function createWorkersAiProvider(
         },
       },
     },
-    models: workersAiCatalog.flatMap((model) => {
-      if (model.api !== "openai-completions") return [];
+    models: workersAiCatalog.map((model) => {
       const workersAiModel: Model<"openai-completions"> = {
         ...model,
         provider: WORKERS_AI_PROVIDER,
@@ -121,7 +120,7 @@ export function createWorkersAiProvider(
           ...model.compat,
         },
       };
-      return [workersAiModel];
+      return workersAiModel;
     }),
     api: openAICompletionsApi(),
   });

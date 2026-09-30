@@ -4,7 +4,7 @@ const ROTATION_RATE = 0.18;
 export const ASCII_ORBIT_PERIOD = Math.PI / (6 * ROTATION_RATE);
 
 /** A rotating wire sphere: a second scene using the same glyph host, with no galaxy particles or text targets. */
-export function createAsciiOrbit({ cols = 200, rows = 72 }: { cols?: number; rows?: number } = {}): AsciiAnimationScene {
+export function createAsciiOrbit({ cols = 200, rows = 72, cellAspect = 1 / 1.65 }: { cols?: number; rows?: number; cellAspect?: number } = {}): AsciiAnimationScene {
   const ramp = " ·:+*#@";
   const radius = Math.min(rows * 0.28, cols / 4);
   const latitudeSteps = Math.max(24, Math.ceil(radius * 12));
@@ -20,7 +20,7 @@ export function createAsciiOrbit({ cols = 200, rows = 72 }: { cols?: number; row
         const z = Math.cos(latitude) * Math.sin(longitude + turn);
         const tiltX = x * Math.cos(0.35) - y * Math.sin(0.35);
         const tiltY = x * Math.sin(0.35) + y * Math.cos(0.35);
-        const column = Math.round((cols - 1) / 2 + tiltX * radius * 1.65);
+        const column = Math.round((cols - 1) / 2 + tiltX * radius / cellAspect);
         const row = Math.round((rows - 1) / 2 + tiltY * radius);
         if (column < 0 || column >= cols || row < 0 || row >= rows) return;
         const index = row * cols + column;

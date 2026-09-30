@@ -3,6 +3,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationShipResult,
   ConversationListResult,
   ConversationMediaReadArgs,
@@ -21,7 +23,7 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
-import { stableOpaqueId } from "../shared/stable-id";
+import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
@@ -80,6 +82,7 @@ export async function handleConversationHistory(
   const conversation = ownedConversation(args?.conversationId, ctx);
   const history = await getConversationById(ctx.installationId, conversation.id).history({
     beforeSequence: args.beforeSequence,
+    afterSequence: args.afterSequence,
     limit: args.limit,
   });
   if (history.latestSequence > conversation.latestSequence) {
@@ -90,6 +93,18 @@ export async function handleConversationHistory(
     messages: history.messages,
     hasMore: history.hasMore,
   };
+}
+
+export async function handleConversationSearch(
+  args: ConversationSearchArgs,
+  ctx: KernelContext,
+): Promise<ConversationSearchResult> {
+  const ownerUid = requireConversationReader(ctx);
+  const conversation = ownedConversation(args.conversationId ?? ctx.conversations.getShip(ownerUid)?.id, ctx);
+  const result = await getConversationById(ctx.installationId, conversation.id).search({
+    query: args.query, beforeSequence: args.beforeSequence, limit: args.limit,
+  });
+  return { conversation, ...result };
 }
 
 export async function handleConversationSend(
@@ -110,7 +125,7 @@ export async function handleConversationSend(
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
-  const messageId = await stableOpaqueId("msg", [conversation.id, idempotencyKey]);
+  const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
   const origin = conversationOrigin(ctx);
   const interactionOrigin = processInteractionOrigin(ctx);

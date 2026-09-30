@@ -4,7 +4,7 @@ This is the distributed part. Connecting a device turns it into part of one comp
 
 ## Connect a machine
 
-1. Open **Fleet** and click **connect** beside Places, or expand the computer row in your first-day empty state.
+1. Open **Fleet** and click **connect** beside Places.
 2. Enter a name, such as **My macbook**. The target ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
 4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies the gateway, account and target identity and starts the background daemon.
@@ -19,7 +19,7 @@ Once the daemon connects, the place appears as connected.
 Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.
 Click its toolbar icon to open the panel, paste the invitation, and choose
-**Pair this browser**. The first-day browser row opens this flow too.
+**Pair this browser**.
 
 While your GSV works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the

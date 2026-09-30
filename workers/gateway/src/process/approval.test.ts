@@ -37,14 +37,31 @@ describe("tool approval policy", () => {
     });
   });
 
-  it("asks for default guarded tool kinds", () => {
-    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec").action).toBe("ask");
-    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "net.fetch").action).toBe("ask");
-    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("ask");
+  it("allows native work and keeps mail and integrations guarded", () => {
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec")).toMatchObject({
+      action: "auto", target: "gsv", matchedRule: "shell.exec",
+    });
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec").action).toBe("auto");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "net.fetch").action).toBe("auto");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "mail.send").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "web.search")).toMatchObject({ action: "auto", matchedRule: "web.search" });
   });
+
+  it.each(["shell.exec", "net.fetch", "fs.write", "fs.edit", "fs.delete", "fs.copy", "fs.transfer.receive"])(
+    "asks before %s changes a connected target", (syscall) => {
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, { target: "laptop" }).action).toBe("ask");
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, { target: "gsv" }).action).toBe("auto");
+    },
+  );
+
+  it.each(["fs.read", "fs.search", "fs.transfer.stat", "fs.transfer.send"])(
+    "allows %s on connected targets", (syscall) => {
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, { target: "laptop" }).action).toBe("auto");
+    },
+  );
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -99,6 +116,19 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { target: "gateway" }).target).toBe("gsv");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { target: "macbook" }).target).toBe("macbook");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { sessionId: "sh_123" }).target).toBe("targets/*");
+  });
+
+  it("applies search approval rules to the actual target", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "deny",
+      rules: [
+        { match: "web.search", target: "gsv", action: "auto" },
+        { match: "web.search", target: "targets/*", action: "ask" },
+      ],
+    }));
+    expect(resolveToolApproval(policy, "web.search", { query: "news" })).toMatchObject({ action: "auto", target: "gsv" });
+    expect(resolveToolApproval(policy, "web.search", { query: "news", target: "personal-search" }))
+      .toMatchObject({ action: "ask", target: "personal-search" });
   });
 
   it("prefers exact syscall rules over domain wildcards", () => {

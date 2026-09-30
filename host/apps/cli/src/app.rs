@@ -39,7 +39,20 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             code,
             workspace,
             no_install,
-        } => crate::pairing::run_pair(code, workspace, no_install).await,
+            preserve_cli_login,
+            no_replace,
+        } => {
+            crate::pairing::run_pair(
+                code,
+                workspace,
+                crate::pairing::PairOptions {
+                    no_install,
+                    preserve_cli_login,
+                    no_replace,
+                },
+            )
+            .await
+        }
         Commands::Chat { message, pid } => {
             run_with_login_retry(
                 &url,
@@ -138,6 +151,9 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
                 let attempt_cfg = CliConfig::load();
+                let url = cli_url_override
+                    .clone()
+                    .unwrap_or_else(|| attempt_cfg.device_gateway_url());
                 let auth = resolve_device_gateway_auth(
                     &attempt_cfg,
                     cli_token_override.clone(),

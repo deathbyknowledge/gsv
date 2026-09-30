@@ -13,7 +13,18 @@ export default defineConfig({
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
               const installationResolveAttempts = new Map();
+              const policies = new Map();
               export default class AccountsTest extends WorkerEntrypoint {
+                async setMailPolicy(installationId, values) { policies.set(installationId, values); }
+                async getEntitlements({ installationId }) {
+                  const now = Date.now();
+                  return { version: 1, installationId, revision: "test", issuedAt: now, refreshAfter: now + 300000, expiresAt: now + 300000,
+                    values: { "mail.inbound.enabled": true, "mail.inbound.max_message_bytes": 16777216,
+                      "mail.inbound.daily_messages": 2, "mail.inbound.daily_bytes": 3145728, "mail.daily_summarizations": 1,
+                      "mail.outbound.enabled": true, "mail.outbound.max_text_bytes": 1048576,
+                      "mail.outbound.daily_messages": 2, "mail.outbound.daily_bytes": 6291456,
+                      ...policies.get(installationId) } };
+                }
                 async resolveHostname(hostname) {
                   if (!hostname.startsWith("active-")) return { found: false };
                   const handle = hostname.split(".")[0];
@@ -303,6 +314,7 @@ export default defineConfig({
         ],
         serviceBindings: {
           ACCOUNTS: "gsv-mail-accounts-test",
+          ENTITLEMENTS: "gsv-mail-accounts-test",
           GATEWAY: "gsv-mail-gateway-test",
           INFERENCE: "gsv-mail-inference-test",
         },

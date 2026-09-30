@@ -5,7 +5,7 @@ import { ownerIdentityEnabled, type InstallationOwnerEnvironment } from "./owner
 
 const origin = "https://accounts.example.com";
 function environment(): InstallationOwnerEnvironment {
-  return { INSTALLATIONS_DB: env.INSTALLATIONS_DB, GSV_ADMIN_ORIGIN: origin,
+  return { INSTALLATIONS_DB: env.INSTALLATIONS_DB, GSV_ADMIN_ORIGIN: origin, GSV_BASE_DOMAIN: "example.com",
     OWNER_EMAIL: { send: vi.fn(async () => ({ messageId: "fixture" })) },
     GSV_OWNER_EMAIL_FROM: "accounts@example.com", GSV_OWNER_AUTH_SECRET: "fixture-secret-".repeat(4),
     ACCOUNTS_GATEWAY_RECOVERY: { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),

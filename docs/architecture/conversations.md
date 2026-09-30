@@ -79,14 +79,24 @@ human delivery cannot erase a caller result.
 The run route identifies the endpoint that caused the interaction. It controls immediate delivery,
 not conversation ownership:
 
-- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` once
-  each message command has been validated, then `message.committed`.
+- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` while
+  the model is still writing the message, then `message.committed`.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
 - A background Personal run without a conversation-origin route may use the last authorized private
   adapter destination. A disconnected client-origin conversation never falls back to an adapter.
+
+Streaming begins before the Send call is complete. As the model writes the call's arguments, the
+Process reads the `text` string out of the partial JSON and appends each newly completed run of
+characters to a message projection keyed by the tool call id, so the person watches the reply grow
+word by word. Escape sequences and surrogate pairs are released only once whole, and members that
+precede `text` are skipped. When the call completes, the committed text is reconciled against what
+was streamed: a match sends the remainder as one last delta, a difference aborts the projection so
+the client drops the preview and shows the committed message. A Send that fails validation, a
+generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
+their projections, so no partial text outlives its message. Adapters never see the projection.
 
 The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its
 connection disappears, while a background Personal event may use the authorized private fallback.
@@ -123,11 +133,71 @@ Process history keeps its existing lifecycle and archive policy. Conversation hi
 activity can therefore rotate independently without conflating what the user saw with how the work
 was performed.
 
+Desktop keeps voice and hands-free controls at the right edge beneath the prompt. Reconnect feedback
+appears beside the attachment actions, without reserving blank space to the right of the input controls.
+The outgoing-message spinner lasts until delivery is acknowledged. Ship's activity mark follows the
+active run independently of its transcript, including context preparation and reasoning before any
+visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
+shows activity again until it ends. The model label identifies the run's selected model, not whether
+the provider has started returning tokens.
+
+Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
+use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
+files to the system Downloads folder. Audio and video retain their inline players. Documents and
+active formats such as HTML and SVG remain downloads rather than executable previews. A Desktop
+image preview retains its own temporary URL until it closes, so navigating away from the source
+message cannot invalidate an open preview; closing it or signing out releases that URL.
+Older messages may link directly to a remote file. Those links open separately in the browser;
+native saves apply to the attachment blobs resolved by the authenticated frontend.
+
+## Search
+
+Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`. Selecting a result shows the
+original message and surrounding messages in the dialog, preserving the conversation position and
+any draft when the dialog closes.
+
+`conversation.search` searches canonical message text using the Conversation DO's SQLite FTS5 index.
+Words are literal prefixes, combined with AND; punctuation is not a query language. Results contain
+plain-text snippets, authors, dates, message IDs and sequences, newest first. Queries accept up to
+256 characters and 32 words, with up to 50 results per page. `nextBeforeSequence` pages older hits.
+Attachment contents and internal Process reasoning are not included.
+
+Only messages committed after search is enabled are indexed. Existing messages remain readable
+through history, with no archive backfill or indexing alarms. Each new message adds its terms and
+sequence to a contentless FTS index in the same transaction as the message. Idempotent replays do not
+add another index entry.
+
+The index retains terms and positions when messages move to R2, without retaining another copy of
+their text or metadata. Search resolves the returned matches from hot messages or the relevant R2
+segments to produce previews; a segment containing several matches is read once per query.
+
+Search retention uses a 6 GB pressure threshold for the entire Conversation database, including
+message receipts and archive metadata. SQLite's live database size excludes reusable pages. Above
+the threshold, each new message advances a bounded FTS merge or removes up to 128 oldest search
+entries and advances the merge. Contentless-delete indexing permits eviction without reading old
+message bodies from R2. Reclamation runs within normal message writes, with no alarms or backfill.
+
+This is an incremental storage budget, with headroom below the 10 GB paid-plan limit, rather than a
+synchronous hard ceiling: deleted postings are reclaimed as merges progress. Pruning always leaves
+the incoming message searchable. Canonical messages, media, archive references and idempotency
+receipts are never removed by search retention; an evicted result remains readable through history.
+Those canonical records have their own storage lifetime, so this policy does not bound all
+conversation metadata forever.
+
+Ship uses the same syscall through `message search "words"`. `--with` selects an owned conversation or
+Contact, `--before` pages older matches, and `--json` returns the structured result. A message sequence
+can be read with `message history --with CONVERSATION --before NEXT_SEQUENCE --limit 1`.
+
+Clients can use `conversation.history` with `afterSequence` to read forwards from a match. It cannot
+be combined with `beforeSequence`. Both return messages in chronological order; `hasMore` continues
+to describe earlier messages, while the conversation's `latestSequence` identifies newer messages.
+
 ## Authorization
 
-Public `conversation.*` syscalls require a direct authenticated user client. Process callers cannot
-append user messages, read a user's canonical conversation through those syscalls, or recursively
-admit themselves. Adapter ingress and Process message commits use private Kernel-owned paths after
+Public conversation mutations require a direct authenticated user client. History and search also
+admit that user's canonical Ship with the corresponding capabilities; other Process callers cannot
+read the user's conversations. Processes cannot append user messages or recursively admit themselves.
+Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the

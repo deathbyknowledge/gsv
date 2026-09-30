@@ -3,6 +3,8 @@ import { InstallationRetirement, durableResourceName, stateWithRetirementStorage
 import { DurableObject } from "cloudflare:workers";
 import type {
   ConversationKind,
+  ConversationSearchArgs,
+  ConversationSearchResult,
   ConversationMessage,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
@@ -33,6 +35,7 @@ export type ConversationInitializeInput = {
 
 export type ConversationHistoryInput = {
   beforeSequence?: number;
+  afterSequence?: number;
   limit?: number;
 };
 
@@ -190,6 +193,41 @@ export class Conversation extends DurableObject<GatewayEnv> {
     };
   }
 
+  async search(input: Omit<ConversationSearchArgs, "conversationId">): Promise<Omit<ConversationSearchResult, "conversation">> {
+    this.retirement.assertActive();
+    if (!input.query.trim() || input.query.length > 256) {
+      throw new Error("Search requires between 1 and 256 characters");
+    }
+    const terms = input.query.trim().split(/\s+/);
+    if (terms.length > 32) throw new Error("Search accepts at most 32 words");
+    const query = terms.map((term) => `"${term.replaceAll('"', '""')}"*`).join(" AND ");
+    const limit = input.limit ?? 20;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Search limit must be between 1 and 50");
+    const before = normalizeBeforeSequence(input.beforeSequence, this.store.latestSequence() + 1);
+    const sequences = this.store.search(query, before, limit + 1);
+    const hasMore = sequences.length > limit;
+    sequences.length = Math.min(sequences.length, limit);
+    const messages = new Map(sequences.map((sequence) => [sequence, this.store.messageAt(sequence)]));
+    const archived = sequences.filter((sequence) => !messages.get(sequence));
+    if (archived.length) {
+      const segments = this.store.archiveSegmentsBefore(before).filter((segment) => (
+        archived.some((sequence) => sequence >= segment.fromSequence && sequence <= segment.toSequence)
+      ));
+      for (const segment of segments) {
+        for (const message of await this.readArchive(segment)) {
+          if (messages.has(message.sequence)) messages.set(message.sequence, message);
+        }
+      }
+    }
+    const hits = sequences.map((sequence) => {
+      const message = messages.get(sequence);
+      if (!message) throw new Error("Search entry has no canonical message");
+      return { id: message.id, sequence, author: message.author, createdAt: message.createdAt,
+        snippet: searchSnippet(message.text, input.query) };
+    });
+    return { hits, nextBeforeSequence: hasMore ? sequences.at(-1)! : null };
+  }
+
   async history(input: ConversationHistoryInput = {}): Promise<{
     messages: ConversationMessage[];
     hasMore: boolean;
@@ -197,6 +235,22 @@ export class Conversation extends DurableObject<GatewayEnv> {
   }> {
     const limit = normalizeLimit(input.limit);
     const latestSequence = this.store.latestSequence();
+    if (input.afterSequence !== undefined) {
+      if (input.beforeSequence !== undefined || !Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0) {
+        throw new Error("afterSequence must be a non-negative integer and cannot be combined with beforeSequence");
+      }
+      const hot = this.store.listHotAfter(input.afterSequence, limit);
+      const archived: ConversationMessage[] = [];
+      const segments = this.store.archiveSegmentsBefore(latestSequence + 1)
+        .filter((segment) => segment.toSequence > input.afterSequence!).reverse();
+      for (const segment of segments) {
+        archived.push(...(await this.readArchive(segment)).filter((message) => message.sequence > input.afterSequence!));
+        if (archived.length >= limit) break;
+      }
+      const messages = [...new Map([...archived, ...hot].map((message) => [message.sequence, message])).values()]
+        .sort((left, right) => left.sequence - right.sequence).slice(0, limit);
+      return { messages, hasMore: this.store.hasSequenceBefore(messages[0]?.sequence ?? input.afterSequence + 1), latestSequence };
+    }
     const beforeSequence = normalizeBeforeSequence(input.beforeSequence, latestSequence + 1);
     const selected = new Map<number, ConversationMessage>();
     for (const message of this.store.listHot(beforeSequence, limit)) {
@@ -432,6 +486,23 @@ function requireConversationKind(value: ConversationKind): void {
   if (value !== "ship" && value !== "work" && value !== "group" && value !== "contact") {
     throw new Error("Conversation kind is invalid");
   }
+}
+
+function searchSnippet(text: string, query: string): string {
+  const points = [...text];
+  if (points.length <= 360) return text;
+  const fold = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const normalized = fold(text);
+  const offsets = (fold(query).match(/[\p{L}\p{N}]+/gu) ?? [])
+    .map((term) => normalized.indexOf(term)).filter((offset) => offset >= 0);
+  const match = offsets.length ? Math.min(...offsets) : 0;
+  let position = 0;
+  for (let offset = 0; offset < match && position < points.length; position++) {
+    offset += fold(points[position]).length;
+  }
+  const start = Math.max(0, position - 80);
+  const end = Math.min(points.length, start + 360);
+  return `${start ? "…" : ""}${points.slice(start, end).join("").replace(/\s+/g, " ").trim()}${end < points.length ? "…" : ""}`;
 }
 
 function normalizeLimit(value: number | undefined): number {

@@ -4,7 +4,7 @@ import { AdapterPeerRetirement } from "../../shared/src/peer-retirement";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
-import { InboundDeliveryLedger, adapterInboundResultDisposition, type InboundDeliveryDisposition } from "../../shared/src/inbound-delivery";
+import { InboundDeliveryLedger, adapterInboundResultDisposition, adapterInboundRequiresPairing, type InboundDeliveryDisposition } from "../../shared/src/inbound-delivery";
 import { activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing, type AdapterPeerLink, type AdapterPeerPairing, type AdapterPeerRoute } from "../../shared/src/pairing-route";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import { cancelBinaryBody, cancelResponseBody } from "../../shared/src/media-body";
@@ -182,6 +182,10 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
         replyToId: input.message.message_reference?.message_id, timestamp: input.message.timestamp ? Date.parse(input.message.timestamp) : Date.now(),
       },
     }, media.body);
+    if (adapterInboundRequiresPairing(result)) {
+      if (!await this.current(context, { surface, actorId: state.actorId })) return { terminal: true };
+      return await this.pairingResponse(input);
+    }
     const disposition = adapterInboundResultDisposition(result, { surface, providerMessageId: input.message.id });
     return { ...disposition, responses: disposition.responses?.map((response) => ({ ...response, message: { ...response.message, actorId: state.actorId }, context })) };
   }

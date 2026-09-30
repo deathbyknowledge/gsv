@@ -38,9 +38,15 @@ describe("waiting responsibility reviews", () => {
       const review = runtime.ai.hold({ kind: "tool-calls", calls: [{ id: "attempt-skip-review", name: "Shell", arguments: { input: "yield" } }] });
       releases.push(review.release);
       const checkAt = Date.now() + 5_000;
-      await runtime.client.r12y.update({ id: responsibilityId, patch: { nextCheckAtMs: checkAt } });
+      const scheduled = await runtime.client.r12y.update({ id: responsibilityId, patch: { nextCheckAtMs: checkAt } });
       await review.started;
       expect(Date.now()).toBeGreaterThanOrEqual(checkAt);
+      expect((await runtime.client.r12y.get({ id: responsibilityId })).responsibility.revision).toBe(scheduled.responsibility.revision);
+      const reviewContext = JSON.stringify(runtime.ai.requests.at(-1)?.messages);
+      expect(reviewContext).toContain("Responsibility review requested at");
+      expect(reviewContext).toContain(responsibilityId);
+      expect(reviewContext).toContain("use Send to remind them of the specific question or decision");
+      expect(reviewContext).toContain("not by itself a reason to silently move the check forward again");
       const dueRequestIndex = runtime.ai.requests.length;
       runtime.ai.enqueue(
         { kind: "tool-calls", calls: [{ id: "resolve-reviewed-question", name: "Shell", arguments: { input: `r12y update ${responsibilityId} --json '{"state":"resolved"}'` } }] },

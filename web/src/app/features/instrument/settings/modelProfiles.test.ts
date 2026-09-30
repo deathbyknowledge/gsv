@@ -18,6 +18,22 @@ const stack = (models: AiModelListEntry[], uid = 1000) => entry(uid === 0 ? "con
 const config = [stack(listing.models.slice(0, 2)), entry("users/1000/ai/models/one/api_key", "private-fixture-one"), entry("users/1000/ai/models/two/api_key", "private-fixture-two")];
 
 describe("model definition changes", () => {
+  it("retains independent OAuth connections when reloading, renaming or removing models", () => {
+    const codex: AiModelsResult = { preferredModelId: null, models: ["first", "second"].map((id) => ({
+      id, name: id, provider: "openai-codex", model: "gpt-5.5", oauthAccountKey: id,
+      source: "personal", hasCredential: true,
+    })) };
+    const stored = [stack(codex.models)];
+    const profiles = modelProfilesFromListing(codex, [], 1000);
+    expect(profiles.map((profile) => profile.values["config/ai/oauth_account_key"])).toEqual(["first", "second"]);
+    const renamed = modelProfileChangeWrites(codex, stored, 1000, profiles[0], {
+      kind: "edit", name: "Renamed", values: profiles[0].values, clearApiKey: false,
+    });
+    expect(JSON.parse(renamed[0].value!).models.map((model: { oauthAccountKey: string }) => model.oauthAccountKey)).toEqual(["first", "second"]);
+    const removed = modelProfileChangeWrites(codex, stored, 1000, profiles[0], { kind: "remove" });
+    expect(JSON.parse(removed[0].value!).models).toEqual([{ id: "second", name: "second", provider: "openai-codex", model: "gpt-5.5", oauthAccountKey: "second" }]);
+  });
+
   it("edits one stable model ID without rewriting credentials, the other model or the fallback order", () => {
     const before = JSON.stringify(config);
     const writes = modelProfileChangeWrites(listing, config, 1000, original, { kind: "edit", name: "Renamed", values: original.values, clearApiKey: false });
@@ -73,7 +89,7 @@ describe("model definition changes", () => {
   it("keeps a credential for equivalent defaults but requires a new one when the connection changes", () => {
     const before = { ...original.values, "config/ai/provider_style": "", "config/ai/transport_target": "" };
     expect(modelConnectionChanged(before, { ...before, "config/ai/provider": " CUSTOM ", "config/ai/provider_style": "auto", "config/ai/transport_target": "worker", "config/ai/max_tokens": "4096" })).toBe(false);
-    for (const field of ["provider", "model", "base_url", "provider_style", "transport_target"]) {
+    for (const field of ["provider", "model", "base_url", "provider_style", "transport_target", "oauth_account_key"]) {
       expect(modelConnectionChanged(before, { ...before, [`config/ai/${field}`]: "changed" })).toBe(true);
     }
   });

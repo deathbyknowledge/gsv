@@ -115,6 +115,12 @@ export const procHistoryEventPayloadSchemas = {
     transition: responsibilityTransitionSchema,
     contextFields: z.optional(z.array(z.string())),
   }),
+  "responsibility.ready": z.strictObject({
+    batchId: z.string(),
+    ledgerRevision: nonNegativeIntegerSchema,
+    responsibilityIds: z.array(z.string()),
+    receivedAtMs: z.number(),
+  }),
   "correction.text-only": z.strictObject({
     attempt: nonNegativeIntegerSchema,
     limit: nonNegativeIntegerSchema,
@@ -251,6 +257,12 @@ export type ProcHistoryEventPayloadMap = {
     /** Exact record fields introduced or updated in model context; absent on older events. */
     contextFields?: string[];
   };
+  "responsibility.ready": {
+    batchId: string;
+    ledgerRevision: number;
+    responsibilityIds: string[];
+    receivedAtMs: number;
+  };
   "correction.text-only": { attempt: number; limit: number };
   "correction.exhausted": { attempts: number; limit: number; conversationId?: string; messageId?: string };
   "generation.failed": { reason: string; error: string; provider?: string; model?: string };
@@ -334,6 +346,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("context.runway"),
   eventSchema("context.failed"),
   eventSchema("responsibility.revision"),
+  eventSchema("responsibility.ready"),
   eventSchema("correction.text-only"),
   eventSchema("correction.exhausted"),
   eventSchema("generation.failed"),

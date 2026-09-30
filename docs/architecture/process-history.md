@@ -61,6 +61,13 @@ Older events without a field projection render their present record fields;
 older prompt epochs without rendering metadata do not imply that the baseline
 was shown. This can introduce a record again once during an upgrade.
 
+Responsibility wakes also retain a `responsibility.ready` event with the admitted
+batch, ledger revision, affected ids, and receipt time. This is a review request,
+including guidance for following up on unanswered human questions; the current
+records still come from the baseline, transitions, or an explicit ledger read.
+A deadline can therefore produce new model input without fabricating a ledger
+mutation. Event history and batch admission share the same deduplicated transaction.
+
 `process/history/compaction-renderer.ts` renders typed JSONL for summarization.
 The bounded transcript preserves head and tail records and explicitly marks
 omission and oversized payloads. Person-only events are excluded from summary

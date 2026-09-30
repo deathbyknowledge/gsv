@@ -1,6 +1,9 @@
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
+  normalizeContext,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -191,13 +194,15 @@ function buildRequestBody(
   context: Context,
   options: OpenAiCodexFetchOptions | undefined,
 ): OpenAiCodexRequestBody {
+  const transcript = normalizeContext(context);
+  const tools = getCurrentTools(transcript.messages);
   // Provider converters retain optional undefined fields until HTTP JSON serialization.
   const body: OpenAiCodexRequestBody = {
     model: model.id,
     store: false,
     stream: true,
-    instructions: context.systemPrompt || "You are a helpful assistant.",
-    input: convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+    instructions: getCurrentSystemPrompt(transcript.messages) || "You are a helpful assistant.",
+    input: convertResponsesMessages(model, transcript, CODEX_TOOL_CALL_PROVIDERS, {
       includeSystemPrompt: false,
     }),
     text: { verbosity: options?.textVerbosity ?? "low" },
@@ -218,8 +223,8 @@ function buildRequestBody(
   if (serviceTier !== undefined) {
     body.service_tier = serviceTier;
   }
-  if (context.tools && context.tools.length > 0) {
-    body.tools = convertResponsesTools(context.tools, { strict: null });
+  if (tools.length > 0) {
+    body.tools = convertResponsesTools(tools, { strict: null });
   }
 
   const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;

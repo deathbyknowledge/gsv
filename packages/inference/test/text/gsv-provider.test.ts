@@ -12,9 +12,12 @@ import type {
   InferenceTarget as ManagedInferenceTarget,
 } from "@humansandmachines/gsv/services/inference";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 import {
   createGsvInferenceProviderFactory,
 } from "../../src/text/gsv-provider";
+import { createGenerationService } from "../../src/text/service";
+import { createWorkersAiGeneration } from "../../src/workers-ai";
 
 const ATTRIBUTION = {
   installationId: "inst_test",
@@ -58,6 +61,90 @@ describe("GSV inference provider", () => {
 
     expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
       .toBe(32_768);
+  });
+
+  it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {
+    const generateStream = vi.fn(async () => eventStream({ type: "done", reason: "stop", message: RESULT }));
+    const { service } = managedService(generateStream);
+    const models = createModels();
+    models.setProvider(createGsvInferenceProviderFactory(service).create(ATTRIBUTION));
+    const tools = [{ name: "Read", description: "Read a fixture", parameters: Type.Object({ path: Type.String() }) }];
+    const context: Context = { ...CONTEXT, systemPrompt: "Synthetic system policy.", tools };
+
+    await models.completeSimple(models.getModel("gsv", GSV_INFERENCE_MODEL)!, context);
+
+    expect(generateStream).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      systemPrompt: context.systemPrompt,
+      tools: JSON.parse(JSON.stringify(tools)),
+      messages: CONTEXT.messages,
+    }));
+    expect(context.messages).toEqual(CONTEXT.messages);
+  });
+
+  it("disables DeepSeek thinking for a bounded compaction request through GSV Default", async () => {
+    const modelId = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+    const bindingFetch = vi.fn<typeof fetch>(async () => new Response([
+      `data: ${JSON.stringify({
+        id: "summary_test",
+        model: modelId,
+        choices: [{ index: 0, delta: { content: "Completed summary." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 },
+      })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join(""), { headers: { "content-type": "text/event-stream" } }));
+    const { service, target } = managedService(async (input) => {
+      const generation = createWorkersAiGeneration(input, { aiGatewayLogId: null, fetch: bindingFetch });
+      const message = await generation.result({
+        version: 2,
+        updatedAt: 1,
+        models: [{
+          modelId,
+          displayName: "DeepSeek V4 Flash",
+          contextWindow: 1_048_576,
+          maxOutputTokens: 32_768,
+          reasoning: true,
+          inputNanoUsdPerToken: 440,
+          outputNanoUsdPerToken: 1_320,
+          cacheReadNanoUsdPerToken: 14,
+          cacheWriteNanoUsdPerToken: 0,
+        }],
+      });
+      return eventStream({ type: "done", reason: "stop", message });
+    });
+    const result = await createGenerationService({
+      providers: [createGsvInferenceProviderFactory(service)],
+    }).generate({
+      config: {
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+        executor: { kind: "process", pid: ATTRIBUTION.actor.processId },
+        capabilities: [],
+        reasoning: "high",
+        maxTokens: 32_768,
+        contextWindowTokens: 1_048_576,
+        contextWindowSource: "model",
+        maxContextBytes: 32_768,
+        generationTimeoutMs: 1_000,
+      },
+      context: CONTEXT,
+      options: { reasoning: "off", maxTokens: 768 },
+      attribution: { ...ATTRIBUTION, workload: "compaction" },
+    });
+
+    expect(result).toMatchObject({
+      stopReason: "stop",
+      content: [{ type: "text", text: "Completed summary." }],
+    });
+    expect(bindingFetch).toHaveBeenCalledOnce();
+    const payload: unknown = await new Request(...bindingFetch.mock.calls[0]).json();
+    expect(payload).toMatchObject({
+      model: `workers-ai/${modelId}`,
+      max_tokens: 768,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(payload).not.toHaveProperty("thinking");
+    expect(target.generate).not.toHaveBeenCalled();
   });
 
   it("forwards deltas before the managed result completes", async () => {

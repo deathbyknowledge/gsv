@@ -12,7 +12,11 @@ import {
   type ManagedOutboundMailReference,
   type ManagedMailSummary,
 } from "@humansandmachines/gsv/protocol";
-import { mailLimits, type MailEnv, type MailLimits } from "./env";
+import type { MailEnv, MailLimits } from "./env";
+import { ENTITLEMENT_CACHE_MAX_AGE_MS } from "@humansandmachines/gsv/services/entitlements";
+import { MailPolicy } from "./policy";
+import { MAIL_MAX_MESSAGE_BYTES } from "@humansandmachines/gsv/services/mail";
+import { emitTelemetry, type TelemetryEvent } from "@humansandmachines/gsv/telemetry";
 import { parseMail } from "./mime";
 import { OutboundDeliveryCoordinator } from "./outbound";
 import { runMailSqlMigrations } from "./schema/migrations";
@@ -43,7 +47,7 @@ export type MailEnvelope = {
 export type MailIntakeResult =
   | { status: "accepted"; intakeId: string }
   | { status: "duplicate"; intakeId: string }
-  | { status: "rejected"; reason: "invalid" | "quota" };
+  | { status: "rejected"; reason: "invalid" | "quota" | "disabled" | "size" };
 
 export type MailUsageSnapshot = {
   installationId: string;
@@ -102,7 +106,7 @@ type UsageRow = {
 export class MailInstallation extends DurableObject<MailEnv> {
   private readonly installationId: string;
   private readonly retirement: MailRetirement;
-  private readonly limits: MailLimits;
+  private readonly policy: MailPolicy;
   private readonly activeIntakes = new Map<string, Promise<MailIntakeResult>>();
   private readonly outbound: OutboundDeliveryCoordinator;
 
@@ -113,7 +117,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       throw new Error("MailInstallation must be addressed by installation ID");
     }
     this.installationId = name;
-    this.limits = mailLimits(env);
+    this.policy = new MailPolicy(env, name);
     runMailSqlMigrations(ctx.storage);
     this.retirement = new MailRetirement(ctx.storage, this.installationId);
     if (!this.retirement.retired) this.ensureIdentity();
@@ -121,14 +125,28 @@ export class MailInstallation extends DurableObject<MailEnv> {
       ctx,
       env,
       this.installationId,
-      this.limits,
+      this.policy,
       this.retirement,
     );
   }
 
   async intake(installation: AdapterInstallationContext, envelope: MailEnvelope, body: BinaryBody): Promise<MailIntakeResult> {
-    try { return await this.retirement.run(() => this.acceptIntake(installation, envelope, body)); }
-    catch (error) { await cancelBody(body, error instanceof Error ? error.message : String(error)); throw error; }
+    const startedAt = Date.now();
+    let result: MailIntakeResult | undefined;
+    try {
+      result = await this.retirement.run(() => this.acceptIntake(installation, envelope, body));
+      return result;
+    } catch (error) {
+      await cancelBody(body, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      const properties: Extract<TelemetryEvent, { name: "mail.intake.finished" }>["properties"] = {
+        outcome: result?.status ?? "error", durationMs: Math.max(0, Date.now() - startedAt),
+      };
+      if (result?.status === "rejected") properties.reason = result.reason;
+      emitTelemetry(this.env, { installationId: this.installationId, component: "mail",
+        event: { stream: "operational", name: "mail.intake.finished", properties } });
+    }
   }
 
   private async acceptIntake(
@@ -138,12 +156,17 @@ export class MailInstallation extends DurableObject<MailEnv> {
   ): Promise<MailIntakeResult> {
     try {
       this.requireOwnedInstallation(installation);
-      const envelope = parseEnvelope(envelopeValue, this.limits.maxMessageBytes);
+      const envelope = parseEnvelope(envelopeValue, MAIL_MAX_MESSAGE_BYTES);
+      const limits = await this.policy.limits();
+      if (!limits.inboundEnabled || envelope.rawSize > limits.maxMessageBytes) {
+        await cancelBody(body, "Mail allowance rejected the message");
+        return { status: "rejected", reason: !limits.inboundEnabled ? "disabled" : "size" };
+      }
       if (body.length !== envelope.rawSize) {
         await cancelBody(body, "Mail body length does not match its envelope");
         return { status: "rejected", reason: "invalid" };
       }
-      const raw = await bodyToBytes(body, this.limits.maxMessageBytes, this.retirement.cancellation.signal);
+      const raw = await bodyToBytes(body, limits.maxMessageBytes, this.retirement.cancellation.signal);
       const digest = await messageDigest(raw);
       const active = this.activeIntakes.get(digest);
       if (active) {
@@ -333,7 +356,16 @@ export class MailInstallation extends DurableObject<MailEnv> {
       } catch {
         return { status: "rejected", reason: "invalid" };
       }
+      const [limits, installation] = await Promise.all([
+        this.policy.limits(), this.env.ACCOUNTS.resolveInstallation(this.installationId),
+      ]);
       this.retirement.requireLive();
+      if (!installation.found || installation.installationId !== this.installationId || installation.state !== "active") {
+        throw new Error("Mail installation is unavailable");
+      }
+      if (!limits.inboundEnabled || raw.byteLength > limits.maxMessageBytes) {
+        return { status: "rejected", reason: !limits.inboundEnabled ? "disabled" : "size" };
+      }
       const reserved = this.reserveUpload({
         intakeId,
         digest,
@@ -341,7 +373,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         rawSize: raw.byteLength,
         metadataJson: JSON.stringify(parsed.metadata),
         summaryInputJson: JSON.stringify(parsed.summaryInput),
-      });
+      }, limits);
       if (reserved.status !== "ready") return reserved.result;
       upload = reserved.upload;
     }
@@ -426,7 +458,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
     rawSize: number;
     metadataJson: string;
     summaryInputJson: string;
-  }):
+  }, limits: MailLimits):
     | { status: "ready"; upload: UploadRow }
     | { status: "rejected"; result: MailIntakeResult } {
     return this.ctx.storage.transactionSync(() => {
@@ -444,8 +476,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
       this.ensureUsageDay(day);
       const usage = this.usageRow(day);
       if (
-        usage.inbound_messages + 1 > this.limits.dailyInboundMessages
-        || usage.inbound_bytes + input.rawSize > this.limits.dailyInboundBytes
+        usage.inbound_messages + 1 > limits.dailyInboundMessages
+        || usage.inbound_bytes + input.rawSize > limits.dailyInboundBytes
       ) {
         return {
           status: "rejected" as const,
@@ -635,7 +667,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         now,
         row.intake_id,
       );
-      logRetry("storage", String(error));
+      logRetry(this.env, this.installationId, "storage", String(error));
     } finally {
       if (body) {
         await cancelBody(body, "Managed mail storage RPC finished");
@@ -755,9 +787,28 @@ export class MailInstallation extends DurableObject<MailEnv> {
       await this.notifySummary(row);
       return;
     }
+    let limits: MailLimits;
+    try {
+      const [allowance, installation] = await Promise.all([
+        this.policy.limits(), this.env.ACCOUNTS.resolveInstallation(this.installationId),
+      ]);
+      if (!installation.found || installation.installationId !== this.installationId || installation.state !== "active") {
+        throw new Error("Mail installation is unavailable");
+      }
+      limits = allowance;
+    } catch {
+      this.deferSummaryFailure(row.intake_id, row.summary_attempts, "Mail allowance unavailable", false);
+      return;
+    }
+    this.retirement.requireLive();
     const now = Date.now();
-    const reserved = this.reserveSummary(row.intake_id, now);
-    if (!reserved) return;
+    const reserved = this.reserveSummary(row.intake_id, now, limits);
+    if (reserved !== "reserved") {
+      if (reserved === "quota") emitTelemetry(this.env, { installationId: this.installationId, component: "mail", event: {
+        stream: "operational", name: "mail.work.deferred", properties: { stage: "summary", reason: "quota" },
+      } });
+      return;
+    }
 
     let input: SummaryInput;
     try {
@@ -827,7 +878,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
     if (notifying) await this.notifySummary(notifying);
   }
 
-  private reserveSummary(intakeId: string, now: number): boolean {
+  private reserveSummary(intakeId: string, now: number, limits: MailLimits): "reserved" | "quota" | "busy" {
     return this.ctx.storage.transactionSync(() => {
       const row = this.ctx.storage.sql.exec<{
         summary_state: IntakeRow["summary_state"];
@@ -838,22 +889,22 @@ export class MailInstallation extends DurableObject<MailEnv> {
         intakeId,
       ).toArray()[0];
       if (!row || !["pending", "deferred"].includes(row.summary_state)) {
-        return false;
+        return "busy";
       }
       const day = utcDay(now);
       this.ensureUsageDay(day);
       const usage = this.usageRow(day);
-      if (usage.summarization_attempts >= this.limits.dailySummarizations) {
+      if (usage.summarization_attempts >= limits.dailySummarizations) {
         this.ctx.storage.sql.exec(
           `UPDATE mail_intakes
            SET summary_state = 'deferred', summary_next_attempt_at = ?,
                summary_reservation_expires_at = NULL, updated_at = ?
            WHERE intake_id = ?`,
-          nextUtcDay(now),
+          this.env.ENTITLEMENTS ? Math.min(nextUtcDay(now), now + ENTITLEMENT_CACHE_MAX_AGE_MS) : nextUtcDay(now),
           now,
           intakeId,
         );
-        return false;
+        return "quota";
       }
       this.ctx.storage.sql.exec(
         `UPDATE mail_daily_usage
@@ -872,7 +923,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         now,
         intakeId,
       );
-      return true;
+      return "reserved";
     });
   }
 
@@ -894,7 +945,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       now,
       intakeId,
     );
-    logRetry("summary", String(error));
+    logRetry(this.env, this.installationId, "summary", String(error));
   }
 
   private async notifySummary(row: IntakeRow): Promise<void> {
@@ -937,7 +988,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         now,
         row.intake_id,
       );
-      logRetry("completion", String(error));
+      logRetry(this.env, this.installationId, "completion", String(error));
     }
   }
 
@@ -1245,13 +1296,12 @@ function retryDelay(attempt: number): number {
 }
 
 function logRetry(
+  env: MailEnv,
+  installationId: string,
   phase: "storage" | "summary" | "completion",
-  error: Error | string | null | undefined,
+  _error: Error | string | null | undefined,
 ): void {
-  console.warn(JSON.stringify({
-    service: "managed_mail",
-    event: "retry_scheduled",
-    phase,
-    errorType: error instanceof Error ? error.name : "Error",
-  }));
+  emitTelemetry(env, { installationId, component: "mail", event: {
+    stream: "operational", name: "mail.work.deferred", properties: { stage: phase, reason: "unavailable" },
+  } });
 }

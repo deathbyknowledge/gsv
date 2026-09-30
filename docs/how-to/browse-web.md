@@ -4,7 +4,7 @@ The browser extension gives GSV control over your browser — navigate, read pag
 
 ## Connect your browser
 
-1. In GSV, open **Fleet → Connect** and choose **Browser.** Give it a name or leave the default.
+1. In GSV, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your GSV**, and load it at `chrome://extensions` with developer mode on.
 3. Click its toolbar icon, paste the invitation from GSV, and choose **Pair this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your GSV works there; that's normal.
