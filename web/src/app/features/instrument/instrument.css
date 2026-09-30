@@ -91,6 +91,22 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
+.distance[data-view="memory"] { --instrument-rail-width: 300px; }
+.distance[data-view="people"] { --instrument-rail-width: 320px; }
+.distance:is([data-view="memory"], [data-view="people"])::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--instrument-header-height));
+  bottom: 0;
+  left: calc(var(--instrument-rail-width) - 1px);
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+  z-index: 2;
+}
+@container instrument (max-width: 720px) {
+  .distance::before { display: none; }
+}
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
 

@@ -4,7 +4,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
 import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
-import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
+import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_BLOCKS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROFILE_KEY, INSTRUMENT_APPROACHES_KEY, INSTRUMENT_INBOX_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
 import { syncWorkSignal } from "./workSync";
@@ -50,16 +50,29 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "approach.changed") {
+        void queryClient.cancelQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }));
+        return;
+      }
+      if (signal === "profile.changed") {
+        void queryClient.cancelQueries({ queryKey: INSTRUMENT_PROFILE_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROFILE_KEY }));
+        return;
+      }
       if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed") {
         void syncWorkSignal(queryClient, signal);
         return;
       }
       // Contacts carry invalidations, so invitation codes and private records stay out of signals.
       if (signal === "contact.changed" || signal === "contact.invite.changed") {
+        if (signal === "contact.changed") {
+          void queryClient.cancelQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY }));
+          void queryClient.cancelQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }));
+        }
+        if (signal === "contact.changed") void queryClient.cancelQueries({ queryKey: INSTRUMENT_INBOX_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_INBOX_KEY }));
         void refreshContactQuery(queryClient, signal === "contact.changed" ? INSTRUMENT_CONTACTS_KEY : INSTRUMENT_CONTACT_INVITES_KEY);
         return;
       }
-      if (signal === "contact.request.changed" || signal === "conversation.changed") {
+      if (signal === "contact.request.changed" || signal === "contact.delivery.changed" || signal === "conversation.changed") {
         void syncContactDetailSignal(queryClient, signal, payload);
         return;
       }

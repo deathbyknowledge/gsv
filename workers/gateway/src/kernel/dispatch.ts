@@ -52,6 +52,7 @@ import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleS
 import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
+import { handleSysFeedback } from "./sys/feedback";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "./sys/pair";
 import { DevicePairingCreateError } from "./device-pairings";
@@ -117,6 +118,10 @@ import {
   handleAdapterSend,
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
+import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
+import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -163,6 +168,7 @@ import {
   handleContactDeliveryList,
   handleContactDeliveryRetry,
   handleContactList,
+  handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
@@ -406,6 +412,15 @@ async function dispatchKernel(
       case "conversation.forProcess":
         data = await handleConversationForProcess(frame.args, ctx);
         break;
+      case "conversation.inbox":
+        data = handleConversationInbox(frame.args, ctx);
+        break;
+      case "conversation.view.get":
+        data = handleConversationViewGet(frame.args, ctx);
+        break;
+      case "conversation.view.update":
+        data = handleConversationViewUpdate(frame.args, ctx);
+        break;
       case "conversation.list":
         data = await handleConversationList(ctx);
         break;
@@ -561,6 +576,9 @@ async function dispatchKernel(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
+        break;
+      case "sys.feedback":
+        data = await handleSysFeedback(frame.args, ctx, frame.body);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
@@ -726,6 +744,36 @@ async function dispatchKernel(
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
+      case "profile.get":
+        data = handleProfileGet(ctx);
+        break;
+      case "approach.create":
+        data = await handleApproachCreate(frame.args, ctx);
+        break;
+      case "approach.get":
+        data = handleApproachGet(frame.args, ctx);
+        break;
+      case "approach.list":
+        data = handleApproachList(frame.args, ctx);
+        break;
+      case "approach.decide":
+        data = await handleApproachDecide(frame.args, ctx);
+        break;
+      case "approach.retry":
+        data = await handleApproachRetry(frame.args, ctx);
+        break;
+      case "profile.update":
+        data = handleProfileUpdate(frame.args, ctx);
+        break;
+      case "profile.publish":
+        data = await handleProfilePublish(frame.args, ctx);
+        break;
+      case "profile.unpublish":
+        data = await handleProfileUnpublish(frame.args, ctx);
+        break;
+      case "profile.resolve":
+        data = await handleProfileResolve(frame.args, ctx);
+        break;
       // --- contact.* ---
       case "contact.identity":
         data = await handleContactIdentity(ctx);
@@ -744,6 +792,18 @@ async function dispatchKernel(
         break;
       case "contact.list":
         data = handleContactList(frame.args, ctx);
+        break;
+      case "contact.notice.dismiss":
+        data = handleContactNoticeDismiss(ctx);
+        break;
+      case "contact.preferences.update":
+        data = await handleContactPreferencesUpdate(frame.args, ctx);
+        break;
+      case "contact.block.set":
+        data = await handleContactBlockSet(frame.args, ctx);
+        break;
+      case "contact.block.list":
+        data = handleContactBlockList(frame.args, ctx);
         break;
       case "contact.alias.set":
         data = handleContactAliasSet(frame.args, ctx);

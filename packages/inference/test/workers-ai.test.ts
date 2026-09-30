@@ -20,8 +20,10 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWorkersAiGeneration,
+  createWorkersAiTransport,
   toInferenceStreamEvent,
 } from "../src/workers-ai";
+import { createInferenceGeneration } from "../src/generation";
 
 interface TestObject { [key: string]: TestValue; }
 type TestValue = string | number | boolean | null | TestObject | TestValue[];
@@ -334,6 +336,29 @@ describe("shared Workers AI inference", () => {
       accepted: true,
       result: { stopReason: "stop" },
     }]);
+  });
+
+  it("uses only the explicitly selected transport for each routed attempt", async () => {
+    const first = vi.fn<NonNullable<AiBinding["fetch"]>>(async () =>
+      new Response("busy", { status: 503 }));
+    const second = vi.fn<NonNullable<AiBinding["fetch"]>>(async () =>
+      completionResponse(SECOND_MODEL.modelId));
+    const firstTransport = createWorkersAiTransport(REQUEST, testBinding(first).binding);
+    const secondTransport = createWorkersAiTransport(REQUEST, testBinding(second).binding);
+    const select = vi.fn((model: ManagedInferenceModelRouting) =>
+      model.modelId === FIRST_MODEL.modelId ? firstTransport : secondTransport);
+    const generation = createInferenceGeneration(REQUEST, select);
+
+    expect((await generation.result(FALLBACK_ROUTING)).responseModel).toBe(SECOND_MODEL.modelId);
+    expect(select.mock.calls.map(([model]) => model.modelId)).toEqual([
+      FIRST_MODEL.modelId, SECOND_MODEL.modelId,
+    ]);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(generation.attempts()).toMatchObject([
+      { accepted: false, providerStatusCode: 503 },
+      { accepted: true, result: { stopReason: "stop" } },
+    ]);
   });
 
   it("does not fall back after provider output has started", async () => {

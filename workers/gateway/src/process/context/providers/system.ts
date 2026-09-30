@@ -32,10 +32,14 @@ function renderContextFiles(
           location: "/sys/config/ai/context.d",
         },
       };
-      if (/\{\{\s*r12y\s*\}\}/.test(file.text)) section.responsibilityBaseline = true;
+      if (countResponsibilityTemplates(file.text) > 0) section.responsibilityBaseline = true;
       return section;
     })
     .filter((section): section is PromptSection => section !== null);
+}
+
+export function countResponsibilityTemplates(template: string): number {
+  return template.match(/\{\{\s*r12y\s*\}\}/g)?.length ?? 0;
 }
 
 function renderContextTemplate(

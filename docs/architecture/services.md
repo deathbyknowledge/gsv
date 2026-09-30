@@ -58,6 +58,17 @@ five to fifteen minutes, but must not use it after `expiresAt`. Entitlements do
 not replace strong usage accounting: inference, email, and other metered services
 still own their reservations, counters, idempotency, and settlement.
 
+## Inference execution
+
+The shared generation loop accepts an operator-selected transport for each
+explicitly routed model. Provider credentials and endpoint configuration stay
+with the operator; the loop owns deadlines, first-output fallback, cancellation,
+response-body cleanup and usage projection. Workers AI remains a transport
+adapter over this loop. Changing a funded provider does not change the
+`gsv/default` identity or the Gateway/client contract.
+Managed inference telemetry identifies the executing provider; failures before
+a provider is selected use `gsv` rather than naming a provider that was not called.
+
 ## Inference deadlines
 
 The Gateway starts one generation budget before acquiring the managed inference
@@ -99,6 +110,23 @@ the provider's cancellation RPC. The Gateway defers that notification and
 disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
+
+## Feedback
+
+Operators can supply `GsvRuntime.services.feedback`, exposed to the Gateway as
+`FEEDBACK`, implementing `FeedbackService.submitFeedback`. The authenticated
+`sys.feedback` syscall keeps retry identity and UI context in its arguments,
+with the bounded report and optional selected Ship activity in a JSON frame body.
+Kernel consumes or cancels that body and derives the installation and human owner.
+The syscall ledger retains only arguments, without the report or attachment.
+The service owns the inbox and delivery acknowledgement. No report content enters
+the telemetry tail contract. Gateway replaces service exceptions with a generic
+delivery error so report content cannot leak through errors or the syscall ledger.
+
+The Instrument offers feedback when the binding exists and the caller has
+`sys.feedback`. The native `feedback` shell command uses the same syscall, so
+Ship can report an issue when asked. An unconfigured deployment sends nothing
+to an external inbox and does not show the header action.
 
 ## Adapters
 

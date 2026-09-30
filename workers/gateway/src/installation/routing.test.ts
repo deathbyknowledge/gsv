@@ -62,6 +62,9 @@ describe("installation routing", () => {
     { state: "active", path: "/ws" },
     { state: "provisioning", path: "/ws" },
     { state: "active", path: "/public/retained.txt" },
+    { state: "active", path: "/@person" },
+    { state: "provisioning", path: "/@person" },
+    { state: "active", path: "/_gsv/federation/v2/subjects/subject%3Aone" },
   ])("rejects the historical Kernel identity on $state $path before namespace or asset access", async ({ state, path }) => {
     let installationId = "singleton";
     const resolveHostname = vi.fn(async () => ({

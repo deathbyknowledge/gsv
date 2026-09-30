@@ -238,6 +238,8 @@ describe("installation resource retirement", () => {
     const otherId = crypto.randomUUID();
     const kernel = env.KERNEL.getByName(input.installationId);
     const other = env.KERNEL.getByName(otherId);
+    const conversation = env.CONVERSATION.getByName(conversationDurableObjectName(input.installationId, "conv:ship"));
+    await conversation.initialize({ ownerUid: 1000, kind: "ship" });
     await runInDurableObject(kernel, (instance: Kernel) => {
       const identity = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
       instance.procs.spawn("proc:old", identity, {});
@@ -251,11 +253,17 @@ describe("installation resource retirement", () => {
     await oldStorage.put("home/person/page", "old");
     await otherStorage.put("home/person/page", "other");
     expect((await kernel.quiesceInstallation(input)).phase).toBe("quiesced");
+    expect(await conversation.inspectInstallationResource()).toMatchObject({ empty: false });
+    await runInDurableObject(conversation, (instance: Conversation) => {
+      expect(() => instance.initialize({ ownerUid: 1000, kind: "ship" })).toThrow("retired");
+    });
     expect((await kernel.eraseInstallation(input)).phase).toBe("erasing");
     const result = await kernel.eraseInstallation(input);
     expect(result.phase).toBe("live-erased");
     expect(result.outcome).toBe("retention-pending");
     expect(result.retainedCopies[0]?.kind).toBe("backup");
+    await evictDurableObject(conversation);
+    expect(await conversation.inspectInstallationResource()).toMatchObject({ empty: true });
     await evictDurableObject(kernel);
     expect(await kernel.installationDeletionStatus(input)).toEqual(result);
     await runInDurableObject(kernel, (instance: Kernel) => {

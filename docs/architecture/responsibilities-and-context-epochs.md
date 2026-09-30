@@ -56,7 +56,9 @@ let a child bypass the Ship's ordinary result path.
 
 A responsibility has one identity and state machine. Optional fields describe its
 source, audience, hierarchy, assignment, deadline, and blocker without
-creating separate commitment or duty concepts.
+creating separate commitment or duty concepts. Its id is `r12y:` followed by a
+UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
+prefix, so a caller that copies the id without it still reaches the same record.
 
 ```text
 r12y:<id>
@@ -135,10 +137,24 @@ runs. A run begins with admitted work and ends at `yield`; an epoch ends only wh
 effective baseline is replaced by reset, compaction, Process replacement, or a
 standing-context change.
 
-At epoch creation, Process assembles the exact rendered system prompt and renders the
-current responsibility names, ids, and initial states through the `{{ r12y }}` system
-context template. It records the corresponding Kernel ledger revision. That rendered
-system prompt remains byte-for-byte fixed for the epoch.
+At epoch creation, Process renders current responsibility names, ids, and initial
+states through the `{{ r12y }}` system context template. It also includes structured
+`details` for Ship assignments and assignments to the current Process. Assignments
+to other Processes remain compact summaries. Kernel visibility still limits a child
+to its assignments and their ancestors. Record text, including contact-supplied
+details, is explicitly labeled as data rather than authority or instructions.
+
+The snapshot includes up to 32 KiB of rendered detail bodies in ledger order,
+counting every copy when custom system context repeats the `{{ r12y }}` template.
+A body that does not fit is omitted whole, with a `r12y show ID` reference; smaller
+later bodies may still fit. The existing 500-record limit also reports omitted records.
+The source manifest records exactly which bodies were rendered, so later updates
+do not repeat unchanged details or assume omitted details were seen. Older epochs
+without that manifest field retain their original rendering and delta behavior.
+
+Process records the corresponding Kernel ledger revision. The rendered system
+prompt remains byte-for-byte fixed for the epoch; resolving a responsibility removes
+it from the next rebuilt snapshot, not from the already captured prompt.
 
 Later responsibility changes do not rewrite the system prompt. Before each provider
 turn, Process synchronizes ordered transitions after the epoch's last observed ledger
@@ -157,7 +173,10 @@ Responsibility `r12y:beta` was resolved.
 
 The model's current view is the frozen baseline plus ordered deltas. These events sit
 after the previously cached prompt and history, preserving provider prefix/KV cache
-reuse. `r12y list` remains the authoritative on-demand query.
+reuse. New records include their details in these events, and changes to details
+appear in later updates. Agents can use the snapshot and subsequent events directly;
+`r12y list` and `r12y show ID` remain available to inspect records or retrieve omitted
+content.
 
 The same epoch owns a normalized availability projection for accessible online
 targets, ready MCP servers, current date and timezone, and the visible skill catalog.
@@ -227,15 +246,17 @@ System-owned producers use the same ledger contract:
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
-- Activating either side of a contact invite creates one generation-scoped
-  `contact.added` responsibility. It asks Ship to learn about the contact and preserve
-  useful context in the owner's existing knowledge system without assuming a specific
-  wiki or inventing missing facts. Acceptance retries return the same responsibility;
-  pairing again after revocation creates another for the new generation.
-- Receiving a contact message or request asks Ship to inspect it and consult the owner.
-  Ship does not reply or decide for the owner by default. It may continue directly only
-  when the owner explicitly authorizes the action or has granted applicable standing
-  permission.
+- Pairing a contact and accepting a first message create no agent responsibility.
+  An explicit standing handoff reuses one active `contact.handoff` responsibility for
+  that contact generation. Enabling handling again or receiving a message after Ship
+  completes that work creates a fresh responsibility; terminal records stay terminal.
+  Task-specific sends can instead bind replies to existing Ship
+  work. A relevant reply reopens that responsibility regardless of human or Process
+  authorship. Duplicates and acknowledgements create no work. Revocation cancels the
+  standing handoff and returns unfinished tasks to Ship with the disconnection recorded.
+  The former global `contact.added` and `federation.received` source switches are retired.
+- Structured work requests retain their own participant-authorized lifecycle. A remote
+  offer alone creates no local commitment; accepting work locally records that commitment.
 - The first registration of a physical machine creates one `machine.added`
   responsibility. Browser-backed targets and later reconnects do not create another.
 - An owned messaging account first becoming connected and authenticated creates one
