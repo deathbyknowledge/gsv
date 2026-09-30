@@ -25,8 +25,13 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 ## Chat and Shell
 
 When the operator enables feedback, the Instrument header has a **feedback** action.
-Reports include the text you submit, your space, account, and app/server versions;
-conversation history and logs are not attached. A failed submission keeps your draft.
+Reports include the text you submit, your space, account, and app/server versions.
+The optional **Include last 20 Ship messages** checkbox starts unchecked. It
+captures recent messages, thinking, tool inputs/results and runtime events through
+your existing history permissions. Review the snapshot before sending: tool results
+can contain private content. No files or media are fetched for the report, and
+oversized activity is visibly shortened to 64,000 characters. Unchecking removes it. A failed submission keeps your draft
+and the exact selected snapshot for retry.
 The same report can be sent from the `gsv` target shell:
 
 ```bash

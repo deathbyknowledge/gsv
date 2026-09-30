@@ -1461,6 +1461,7 @@ type SystemSyscalls = {
     args: {
       message: string;
       id?: string;
+      activity?: { pid: string; messageCount: number; text: string; truncated: boolean };
       context?: { view?: "zen" | "fleet" | "memory" | "people" | "settings"; platform?: "web" | "desktop"; version?: string };
     };
     result: { id: string };

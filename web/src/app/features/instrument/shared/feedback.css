@@ -49,6 +49,14 @@
 .feedback-dialog footer > span { color: var(--faint); font-size: 11px; }
 .feedback-dialog .feedback-send { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 6.5em; height: 38px; padding: 8px 14px; border: 1px solid var(--border-raised); text-align: center; }
 .feedback-dialog .feedback-send:disabled { opacity: .5; cursor: default; }
+.feedback-activity { flex: none; margin-top: 16px; font-size: 12px; }
+.feedback-activity label { display: flex; align-items: center; gap: 8px; }
+.feedback-activity input { margin: 0; accent-color: var(--accent); }
+.feedback-activity > span { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--faint); }
+.feedback-activity details { margin-top: 8px; }
+.feedback-activity summary { cursor: pointer; color: var(--text-dim); }
+.feedback-activity p { margin: 8px 0; color: var(--text-dim); }
+.feedback-activity pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border: 1px solid var(--border-raised); font: inherit; }
 .feedback-error { margin: 16px 0 0; color: var(--error, var(--text)); }
 .feedback-sent p { margin: 0 0 24px; }
 @container instrument (max-width: 500px) {

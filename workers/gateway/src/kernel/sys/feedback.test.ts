@@ -90,6 +90,16 @@ describe("operator feedback", () => {
     expect(submitFeedback).toHaveBeenCalledWith(expect.objectContaining({ ownerUid: 1000, source: "agent" }));
   });
 
+  it("forwards only explicitly supplied activity within the report bounds", async () => {
+    const { ctx, submitFeedback } = fixture();
+    const activity = { pid: "proc:ship", messageCount: 2, text: "user: help\nShip: inspecting", truncated: false };
+    await handleSysFeedback({ message: "A report", activity }, ctx);
+    expect(submitFeedback).toHaveBeenCalledWith(expect.objectContaining({ activity }));
+    await expect(handleSysFeedback({ message: "A report", activity: { ...activity, text: "x".repeat(64_001) } }, ctx)).rejects.toThrow("Invalid feedback report");
+    await expect(handleSysFeedback({ message: "A report", activity: { ...activity, messageCount: 21 } }, ctx)).rejects.toThrow("Invalid feedback report");
+    expect(submitFeedback).toHaveBeenCalledTimes(1);
+  });
+
   it.each([undefined, null, {}, { id: "wrong-report" }, { id: 17 }, "invalid"])("rejects an invalid inbox receipt and permits a retry: %j", async (receipt) => {
     const { ctx, submitFeedback } = fixture();
     // SAFETY: intentionally malformed RPC results exercise the service trust boundary.

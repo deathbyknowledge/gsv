@@ -31,6 +31,9 @@ describe("clean-space operator feedback", () => {
     expect(connection.server.features).toContain("operator-feedback");
     const id = crypto.randomUUID();
     expect(await client.sys.feedback({ id, message: "A synthetic UI report", context: { platform: "web", view: "zen" } })).toEqual({ id });
+    expect(await client.sys.feedback({ id, message: "A report with activity", activity: {
+      pid: "proc:ship", messageCount: 1, text: "Synthetic user-authorized snapshot", truncated: false,
+    } })).toEqual({ id });
     const shellId = crypto.randomUUID();
     const shell = await client.shell.exec({ input: `feedback --id ${shellId} 'A synthetic shell report'` });
     expect(shell).toMatchObject({ status: "completed", exitCode: 0, output: `${JSON.stringify({ id: shellId })}\n` });
