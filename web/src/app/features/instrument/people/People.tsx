@@ -52,7 +52,7 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
   const contacts = contactsQuery.data?.contacts ?? [];
   const inbox = useInfiniteQuery({
     queryKey: [...INSTRUMENT_INBOX_KEY, archived],
-    enabled: connected && human && canConfigure(account!, "conversation.inbox"),
+    enabled: connected && view === "inbox" && human && canConfigure(account!, "conversation.inbox"),
     initialPageParam: NO_INBOX_CURSOR,
     queryFn: ({ pageParam }) => client.conversation.inbox({ archived, before: pageParam, limit: 30 }),
     getNextPageParam: (page) => page.next,
