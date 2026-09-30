@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TextInput } from "../../components/ui/TextInput";
@@ -10,6 +10,78 @@ beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owner welcome", () => {
+  it.each([false, true])("requires agreement before sending a signup email (resumed: %s)", async (resumed) => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: resumed ? {
+      origin: "https://accounts.example.com", flow: "create", sessionSecret: null,
+      challenge: null, inviteCode: "invite_fixture", inviteId: null, handle: null,
+    } : null };
+    const fetcher = vi.fn(async () => Response.json({ deliveryStatus: "sent" }));
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => {
+      snapshot = { revision: crypto.randomUUID(), value };
+      return structuredClone(snapshot);
+    } }, "https://accounts.example.com", fetcher);
+    const root = createTestRoot("Owner signup agreement");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "invite", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    // SAFETY: The screen's native form owns an Event-based submit handler.
+    const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+    // SAFETY: The screen's only native input is its agreement checkbox.
+    const checkbox = () => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    const field = (label: string) => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === label)!;
+    try {
+      await root.render(<Harness />);
+      if (!resumed) {
+        await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
+        await act(() => { field("Invite code").props.onChange?.("invite_fixture"); });
+        await act(() => form().props.onSubmit(new Event("submit")));
+      }
+      await vi.waitFor(() => expect(field("Email")?.props.disabled).toBe(false));
+      await act(() => { field("Email").props.onChange?.("owner@example.com"); });
+      expect(checkbox().props.required).toBe(true);
+      expect(checkbox().props.checked).toBe(false);
+      await act(() => form().props.onSubmit(new Event("submit")));
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(checkbox().props["aria-invalid"]).toBe(true);
+      expect(collectText(tree)).toContain("Confirm your age and agreement to continue.");
+
+      // SAFETY: The handler only reads the checkbox's checked state.
+      await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+      expect(checkbox().props["aria-invalid"]).toBeUndefined();
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(field("Code")).toBeDefined());
+      expect(fetcher).toHaveBeenCalledExactlyOnceWith("https://accounts.example.com/owner/api/code", expect.objectContaining({ method: "POST" }));
+    } finally { await root.unmount(); }
+  });
+
+  it("does not require a signup agreement to sign in to an existing owner account", async () => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
+    const fetcher = vi.fn(async () => Response.json({ deliveryStatus: "sent" }));
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => {
+      snapshot = { revision: crypto.randomUUID(), value };
+      return structuredClone(snapshot);
+    } }, "https://accounts.example.com", fetcher);
+    const root = createTestRoot("Owner sign-in");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      const email = () => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Email");
+      await vi.waitFor(() => expect(email()?.props.disabled).toBe(false));
+      expect(collectNodes(tree).some((node) => node.type === "input")).toBe(false);
+      await act(() => { email()!.props.onChange?.("owner@example.com"); });
+      // SAFETY: The screen's native form owns an Event-based submit handler.
+      const form = collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+      await act(() => form.props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    } finally { await root.unmount(); }
+  });
+
   it("keeps sign-in recovery available through direct address and Back after loading fails", async () => {
     const reload = vi.fn();
     vi.stubGlobal("window", { location: { reload } });

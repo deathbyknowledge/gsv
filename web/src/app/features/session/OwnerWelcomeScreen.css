@@ -21,6 +21,14 @@
 .desktop-welcome-submit { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 .desktop-welcome-detail { margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
 .desktop-welcome-links { display: flex; gap: 24px; justify-content: space-between; }
+.gsv-owner-consent { font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.55; }
+.gsv-owner-consent-row { display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
+.gsv-owner-consent label { cursor: pointer; }
+.gsv-owner-consent input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+.gsv-owner-consent input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-owner-consent.is-error input { outline: 2px solid var(--error); outline-offset: 3px; }
+.gsv-owner-consent input:disabled { cursor: not-allowed; }
+.gsv-owner-consent-error { margin: 6px 0 0 26px; color: var(--error); }
 @media (max-width: 760px) {
   .desktop-welcome { gap: 24px; }
   .desktop-welcome-columns { grid-template-columns: minmax(0, 1fr); gap: 32px; }
