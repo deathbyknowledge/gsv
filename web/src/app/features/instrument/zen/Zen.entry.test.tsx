@@ -15,6 +15,8 @@ import { collectNodes, collectText, createTestRoot, deferred } from "../../../te
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
+import { ConnectPlace } from "../fleet/ConnectPlace";
+import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 
@@ -159,6 +161,46 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",
       })));
+    } finally { await zen.unmount(); }
+  });
+
+  it("offers to connect a place while the cloud is the only one, and stays in Zen", async () => {
+    const zen = await mountedZen();
+    try {
+      const cloud = () => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+      const connect = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-connect-place")!;
+      expect(cloud().props.class).toBe("zen-place is-alone");
+      expect(connect()).toBeDefined();
+      expect(zen.props(FleetDialog).open).toBe(false);
+
+      await act(() => { connect().props.onClick!(); });
+      expect(zen.props(FleetDialog).open).toBe(true);
+      expect(zen.props(FleetDialog).title).toBe("Connect a place");
+      expect(zen.props(ConnectPlace).targets).toEqual([]);
+
+      await act(() => { zen.props(ConnectPlace).onClose(); });
+      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(PromptLine).place.id).toBe("gsv");
+
+      await act(() => { connect().props.onClick!(); });
+      await act(() => { zen.props(ConnectPlace).onConnected("laptop"); });
+      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(PromptLine).place.id).toBe("laptop");
+      expect(zen.onFleet).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps the selected place styling once another place is connected", async () => {
+    targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+      ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    const zen = await mountedZen();
+    try {
+      const cloud = zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+      expect(cloud.props.class).toBe("zen-place is-selected");
+      expect(zen.nodes().some((node) => node.props.class === "zen-connect-place")).toBe(false);
+      expect(zen.props(FleetDialog).open).toBe(false);
     } finally { await zen.unmount(); }
   });
 

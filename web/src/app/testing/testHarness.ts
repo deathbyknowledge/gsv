@@ -9,6 +9,7 @@ export type TestNodeProps = {
   "aria-label"?: string;
   boxed?: boolean;
   children?: ComponentChildren;
+  class?: string;
   disabled?: boolean;
   href?: string;
   label?: string;
