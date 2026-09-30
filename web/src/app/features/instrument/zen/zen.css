@@ -391,6 +391,7 @@
 .zen-connect-place { visibility: hidden; white-space: nowrap; color: var(--text-dim); }
 .zen-places li:hover .zen-connect-place, .zen-places li:focus-within .zen-connect-place { visibility: visible; }
 .zen-connect-place:hover, .zen-connect-place:focus-visible { color: var(--accent); }
+@media (hover: none) { .zen-connect-place { visibility: visible; } }
 .zen-place-status {
   flex: none;
   width: 7px;

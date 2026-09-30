@@ -922,8 +922,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
-  /* the cloud is always listed; alone, it is not a choice, so it reads as plain text and offers to connect a place */
-  const cloudAlone = selectorPlaces.length === 1;
+  /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
+  const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
   const activeRun = connected ? runtime.activeRunId : null;
   const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
   const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
