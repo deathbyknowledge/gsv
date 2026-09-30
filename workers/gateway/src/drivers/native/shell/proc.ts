@@ -251,6 +251,8 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
             .responsibility,
         };
       }
+      // The record's own id, not the argument as typed: the IPC call and its recovery look the record up by it.
+      const responsibilityId = responsibilityRollback?.original.id;
       const label = parsed.label ?? summarizeDelegateLabel(parsed.message);
       const spawnArgs: ProcSpawnArgs = {
         interactive: false,
@@ -274,12 +276,12 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           message: parsed.message,
           timeoutMs: checkInMs,
         };
-        if (parsed.responsibilityId) {
-          callArgs.metadata = { responsibilityId: parsed.responsibilityId };
+        if (responsibilityId) {
+          callArgs.metadata = { responsibilityId };
         }
         const callOptions: NonNullable<Parameters<typeof handleProcIpcCall>[2]> = {
           superviseAfterTimeout: true,
-          responsibilityId: parsed.responsibilityId,
+          responsibilityId,
         };
         if (responsibilityRollback) {
           callOptions.onSupervisionScheduled = async (deadlineAt) => {
@@ -314,9 +316,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           `queued=${result.queued === true}`,
           `check_in=${new Date(result.deadlineAt).toISOString()}`,
           `label=${quoteShellField(label)}`,
-          ...(parsed.responsibilityId
-            ? [`responsibility=${parsed.responsibilityId}`]
-            : []),
+          ...(responsibilityId ? [`responsibility=${responsibilityId}`] : []),
         ].join(" ") + "\n",
         stderr: "",
         exitCode: 0,
