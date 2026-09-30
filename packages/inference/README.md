@@ -1,17 +1,23 @@
 # Shared inference execution
 
-This package owns the Workers AI execution path used by GSV inference services:
+This package owns the execution path used by GSV inference services:
 provider request construction, streamed results, truthful response-model
 attribution, generation deadlines, first-output fallback, cancellation and late
 body cleanup. Both a public reference service and an operator's funded service
 use this implementation so reliability fixes land once.
 
-`createWorkersAiGeneration` accepts a validated installation-scoped request and
-an operator's AI binding. The caller supplies model routing and observes attempt
+`createInferenceGeneration` accepts a validated installation-scoped request and
+a transport selector for each explicitly routed model. The transport supplies
+its fetch implementation and pi-ai stream; the shared loop still owns deadlines,
+first-output fallback, cancellation, attempt observation and result projection.
+It never invents another provider or retries after exposing output.
+
+`createWorkersAiGeneration` remains the AI-binding wrapper over that same loop.
+Its `createWorkersAiTransport` adapter can be composed with operator-owned
+transports without changing Gateway or client contracts. The caller supplies model routing and observes attempt
 outcomes; this package does not choose prices, grant funding, reserve credit,
 charge customers or write usage records. Its only model/cost fixtures are test
-data. The provider integration keeps the existing `default` AI Gateway and
-pi-ai 0.84.2 during this extraction.
+data. The Workers AI integration keeps the existing `default` AI Gateway.
 
 The binding attaches UTF-8 request size and a fixed projection of message,
 tool and image counts to AI Gateway metadata for JSON requests. This projection

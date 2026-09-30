@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./generation": "./src/generation.ts",
     "./workers-ai": "./src/workers-ai.ts",
     "./failure": "./src/failure.ts",
     "./types": "./src/types.ts",

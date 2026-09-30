@@ -58,6 +58,17 @@ five to fifteen minutes, but must not use it after `expiresAt`. Entitlements do
 not replace strong usage accounting: inference, email, and other metered services
 still own their reservations, counters, idempotency, and settlement.
 
+## Inference execution
+
+The shared generation loop accepts an operator-selected transport for each
+explicitly routed model. Provider credentials and endpoint configuration stay
+with the operator; the loop owns deadlines, first-output fallback, cancellation,
+response-body cleanup and usage projection. Workers AI remains a transport
+adapter over this loop. Changing a funded provider does not change the
+`gsv/default` identity or the Gateway/client contract.
+Managed inference telemetry identifies the executing provider; failures before
+a provider is selected use `gsv` rather than naming a provider that was not called.
+
 ## Inference deadlines
 
 The Gateway starts one generation budget before acquiring the managed inference
