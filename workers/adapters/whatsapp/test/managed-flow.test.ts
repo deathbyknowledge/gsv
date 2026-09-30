@@ -685,6 +685,28 @@ describe("managed WhatsApp clean-instance flow", () => {
     })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("code 131026") });
   });
 
+  it("keeps an incomplete successful send ambiguous without replaying it", async () => {
+    const { peer, route } = await linkedPeer("open");
+    const delivery = {
+      deliveryId: "outbound-incomplete-response",
+      surface: { kind: "dm" as const, id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: route.generation,
+      text: "graph omits message id",
+    };
+    await expect(peer.sendMessage(route.installationId, delivery)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: "WhatsApp Graph API returned an invalid response",
+    });
+    await expect(peer.sendMessage(route.installationId, delivery)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: true,
+    });
+    expect((await graphRecords()).filter((record) => record.kind === "incomplete"
+      && record.body.text?.body === delivery.text)).toHaveLength(1);
+  });
+
   it("sends the template when Meta refuses a free-form message and lets the person's reply clear it", async () => {
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;

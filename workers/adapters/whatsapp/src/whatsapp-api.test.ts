@@ -72,6 +72,21 @@ describe("WhatsApp Graph API client", () => {
     expect(classifyWhatsAppFailure(400, 4, false)).toBe("retryable");
   });
 
+  it.each([
+    {},
+    { messages: [] },
+    { messages: [{}] },
+    { messages: [{ id: "" }] },
+    { messages: [{ id: " \n " }] },
+    { messages: [{ id: 123 }] },
+  ])("treats a successful response without a usable message id as ambiguous: %j", async (body) => {
+    await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "34611111189" }, async () => Response.json(body)))
+      .rejects.toMatchObject({
+        kind: "ambiguous",
+        message: "WhatsApp Graph API returned an invalid response",
+      });
+  });
+
   it("marks a message read with an optional typing indicator", async () => {
     const fetcher = vi.fn<ManagedWhatsAppFetch>(async () => Response.json({ success: true }));
     await markWhatsAppMessageRead(TOKEN, PHONE_NUMBER_ID, "wamid.in", fetcher, { typing: true });

@@ -49,6 +49,8 @@ hosting plan in `engineering/unified-hosting-and-web-release.md`.
   one is sent, so a retry after a retryable rejection resumes at the first
   message the person has not received; an interrupted delivery stays ambiguous
   and is never replayed.
+  A successful Graph response must include a message id; an incomplete success
+  response also stays ambiguous rather than being recorded as delivered.
 - `image`, `video`, `audio`, and `document` attachments are sent one message
   each. Bytes from the request body are uploaded to the number's media store
   and referenced by id; a `url` attachment is passed as a link. The text becomes

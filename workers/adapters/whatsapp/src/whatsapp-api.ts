@@ -21,7 +21,7 @@ export type WhatsAppJsonValue =
   | { [key: string]: WhatsAppJsonValue };
 /** One `messages` request body without the fixed `messaging_product` field. */
 export type WhatsAppOutboundPayload = { [key: string]: WhatsAppJsonValue };
-export type WhatsAppSentMessage = { messageId?: string };
+export type WhatsAppSentMessage = { messageId: string };
 type WhatsAppReadReceipt = {
   messaging_product: "whatsapp";
   status: "read";
@@ -53,7 +53,7 @@ const graphErrorSchema = z.object({
   }).passthrough(),
 }).passthrough();
 const sentMessageSchema = z.object({
-  messages: z.array(z.object({ id: z.string().optional() }).passthrough()).optional(),
+  messages: z.array(z.object({ id: z.string().trim().min(1) }).passthrough()).nonempty(),
 }).passthrough();
 const mediaLookupSchema = z.object({
   url: z.string(),
@@ -104,8 +104,7 @@ export async function sendWhatsAppMessage(
     fetcher,
     { idempotent: false, schema: sentMessageSchema },
   );
-  const messageId = result.messages?.[0]?.id?.trim();
-  return messageId ? { messageId } : {};
+  return { messageId: result.messages[0]!.id };
 }
 
 /** Marks one inbound message read; the typing indicator rides on the same call. */

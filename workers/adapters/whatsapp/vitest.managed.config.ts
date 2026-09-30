@@ -187,6 +187,10 @@ export default defineConfig({
                     if (body.text?.body === "graph rejects this") {
                       return Response.json({ error: { message: "rejected", type: "OAuthException", code: 131026 } }, { status: 400 });
                     }
+                    if (body.text?.body === "graph omits message id") {
+                      records.push({ kind: "incomplete", version, phoneNumberId: segments[1], body, result: {} });
+                      return Response.json({ messages: [] });
+                    }
                     if (throttledText && body.text?.body?.includes(throttledText)) {
                       rejected.push({ kind: "message", status: 429, body });
                       return Response.json({ error: { message: "Too many requests", type: "OAuthException", code: 130429 } }, { status: 429 });
