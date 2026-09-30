@@ -41,8 +41,13 @@ describe("clean-space operator feedback", () => {
       pid: "proc:ship", messageCount: 1, text: "Synthetic user-authorized snapshot", truncated: false,
     } })).toEqual({ id });
     const shellId = crypto.randomUUID();
-    const shell = await client.shell.exec({ input: `feedback --id ${shellId} 'A synthetic shell report'` });
+    const report = "PRIVATE_SHELL_REPORT_CONTENT";
+    const uploaded = await client.request("fs.transfer.receive", { path: "/home/person/report.txt" }, { body: bodyFromText(report) });
+    expect(uploaded.data.ok).toBe(true);
+    const shell = await client.shell.exec({ input: `feedback --id ${shellId} < /home/person/report.txt` });
     expect(shell).toMatchObject({ status: "completed", exitCode: 0, output: `${JSON.stringify({ id: shellId })}\n` });
+    expect(JSON.stringify(await client.sys.ledger.list({ limit: 200 }))).not.toContain(report);
+    expect(await client.shell.exec({ input: "feedback unsupported-argument" })).toMatchObject({ status: "failed", exitCode: 1 });
     await expect(submit({ message: " " })).rejects.toThrow("Invalid feedback report");
     await expect(new GSVClient().requestOnce(url, "sys.feedback", {})).rejects.toThrow();
     const machineToken = await client.sys.token.create({ kind: "machine", peerId: "feedback-machine" });

@@ -35,12 +35,14 @@ and the exact selected snapshot for retry.
 The same report can be sent from the `gsv` target shell:
 
 ```bash
-feedback 'The attachment download did not open.'
 feedback < report.txt
 ```
 
+Use a report file rather than inline text, `printf`, or a heredoc: shell command
+text is recorded in Logs.
+
 Ship can use this command when asked to report an issue. Send only the details the
-user wants shared. `feedback --id UUID ...` keeps the same report identity on a retry.
+user wants shared. `feedback --id UUID < report.txt` keeps the same report identity on a retry.
 Reports go to the operator's configured inbox; the public runtime has no default
 destination. The header action appears only when `sys.connect` advertises
 `operator-feedback` for the caller.

@@ -9,13 +9,14 @@ export function buildFeedbackCommand(ctx: KernelContext, request?: NativeShellCo
   return defineCommand("feedback", async (args, shell): Promise<ExecResult> => {
     try {
       if (args.some((arg) => arg === "--help" || arg === "-h")) {
-        return { stdout: "Usage: feedback [--id UUID] MESSAGE...\n       feedback [--id UUID] < report.txt\n", stderr: "", exitCode: 0 };
+        return { stdout: "Usage: feedback [--id UUID] < report.txt\n", stderr: "", exitCode: 0 };
       }
       requireCommandCapability(ctx, "sys.feedback");
       let id: string | undefined;
       if (args[0] === "--id") { id = requireShellOptionValue(args[1], "--id"); args = args.slice(2); }
       if (args[0] === "--") args = args.slice(1);
-      const message = args.length ? args.join(" ") : decodeShellStdin(shell.stdin);
+      if (args.length) throw new Error("Use feedback [--id UUID] < report.txt");
+      const message = decodeShellStdin(shell.stdin);
       if (!request) throw new Error("direct syscall transport is unavailable");
       const response = await request({ type: "req", id: crypto.randomUUID(), call: "sys.feedback", args: { id }, body: bodyFromText(JSON.stringify({ message })) }, shell.signal);
       if (!response.ok) throw new Error(response.error.message);
