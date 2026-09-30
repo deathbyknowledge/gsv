@@ -2,7 +2,8 @@
 .settings-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(12rem, max-content) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .settings-sections { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 1rem; padding: 2rem 1.5rem 2rem; border-right: 1px solid var(--border); overflow-y: auto; }
 .settings-sections button { flex: 0 0 auto; width: 100%; text-align: center; white-space: nowrap; }
-.settings-sections .active { color: var(--accent); }
+.settings-sections .ibtn { color: var(--text-dim); }
+.settings-sections .ibtn[aria-current="page"] { color: var(--text-hi); border-color: var(--accent); background: var(--selected); }
 .settings-content { overflow: auto; min-height: 0; padding: 2rem clamp(1.25rem, 4cqw, 4rem) 5rem; }
 .settings-content:has(> .gsv-loading-state.is-panel) { flex: 1; padding: 0; }
 .settings-content section { max-width: 54rem; }

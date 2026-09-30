@@ -53,7 +53,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess, openReque
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry === "profile" ? !!account && account.uid >= 1000 : !["people", "sign-in"].includes(entry) || account?.uid === 0).map((entry) => <button class={`ibtn${section === entry ? " active" : ""}`} aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry === "profile" ? !!account && account.uid >= 1000 : !["people", "sign-in"].includes(entry) || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content">
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
