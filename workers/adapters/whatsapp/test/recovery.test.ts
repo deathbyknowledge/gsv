@@ -121,3 +121,80 @@ it.each([false, true])("keeps a pending template across duplicate ingress (anoth
   expect(held).toMatchObject({ ok: true });
   expect((await messages(actorId)).filter((message) => message.body.type === "template")).toHaveLength(1);
 });
+
+it("releases held output before answering a linked /link command", async () => {
+  const actorId = "34690105555";
+  const { peer, route } = await seed(actorId);
+  const text = "A waiting report. ".repeat(100).trim();
+  using held = await peer.sendMessage(route.installationId, {
+    deliveryId: "held-before-link", routeGeneration: route.generation,
+    surface: { kind: "dm", id: actorId }, actorId, text,
+  });
+  expect(held).toMatchObject({ ok: true });
+  await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.link.release", "/link") });
+  const replies = (await messages(actorId)).filter((message) => message.body.type === "text");
+  expect(replies[0]?.body.text?.body).toBe(text);
+  expect(replies[1]?.body.text?.body).toContain("Pairing code:");
+  await runInDurableObject(peer, async (_instance, state) => {
+    expect((await state.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).size).toBe(0);
+  });
+});
+
+it("drops a /link command admitted before the number was relinked", async () => {
+  const actorId = "34690106666";
+  const { peer, route } = await seed(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+    await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "new-generation" } });
+    expect(await instance["forwardInbound"]({
+      kind: "message", routeGeneration: route.generation,
+      inbound: incoming(actorId, "wamid.link.stale", "/link"),
+    })).toEqual({ terminal: true });
+    expect((await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pairing).toBeUndefined();
+  });
+  expect(await messages(actorId)).toEqual([]);
+});
+
+it("does not write a pairing claim when its route changes during allocation", async () => {
+  const actorId = "34690107777";
+  const { peer, route } = await seed(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const pairing = instance["pairing"];
+    instance["pairing"] = () => ({ initialize: async () => {
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "new-generation" } });
+      return { created: true };
+    } });
+    try {
+      expect(await instance["forwardInbound"]({
+        kind: "message", routeGeneration: route.generation,
+        inbound: incoming(actorId, "wamid.link.allocation", "/link"),
+      })).toEqual({ terminal: true });
+      expect((await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pairing).toBeUndefined();
+    } finally {
+      instance["pairing"] = pairing;
+    }
+  });
+  expect(await messages(actorId)).toEqual([]);
+});
+
+it("does not deliver a pairing response after its route changes", async () => {
+  const actorId = "34690108888";
+  const { peer, route } = await seed(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const disposition = await instance["forwardInbound"]({
+      kind: "message", routeGeneration: route.generation,
+      inbound: incoming(actorId, "wamid.link.response", "/link"),
+    });
+    const response = disposition.responses?.[0];
+    if (!response?.context) throw new Error("Expected a pairing response");
+    const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+    await state.storage.put(stateKey, {
+      ...current, lastInboundAt: Date.now(), activeRoute: { ...route, generation: "new-generation" },
+    });
+    expect(await instance["deliverMessage"](response.message, response.context)).toMatchObject({
+      ok: false, error: "WhatsApp route changed before delivery",
+    });
+  });
+  expect(await messages(actorId)).toEqual([]);
+});

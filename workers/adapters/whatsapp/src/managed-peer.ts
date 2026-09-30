@@ -146,7 +146,7 @@ type InboundPayload =
     };
 
 type ResponseContext =
-  | { kind: "platform"; claimId?: string }
+  | { kind: "platform"; claimId?: string; routeGeneration?: string | null }
   | { kind: "installation"; installationId: string; generation: string };
 
 type DeliveryOptions = {
@@ -553,9 +553,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       if (inbound.unsupportedContent) {
         return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, { kind: "platform" });
       }
-      return await this.pairingResponse(inbound);
+      return await this.pairingResponse(inbound, null);
     }
-    if (isManagedWhatsAppPairCommand(inbound.text)) return await this.pairingResponse(inbound);
     const route = state.activeRoute;
     if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) {
       return { terminal: true };
@@ -566,6 +565,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     await this.markRead(inbound.messageId, route);
     // The person's message reopened the window: held replies go out first, then theirs is relayed.
     await this.releaseHeld(route);
+    if (isManagedWhatsAppPairCommand(inbound.text)) return await this.pairingResponse(inbound, route.generation);
     if (inbound.unsupportedContent) {
       return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, linked);
     }
@@ -645,8 +645,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     );
     if (this.retirement.retired(route)) return { terminal: true };
     if (adapterInboundRequiresPairing(result)) {
-      if ((await this.requireState()).activeRoute?.generation !== route.generation) return { terminal: true };
-      return await this.pairingResponse(inbound);
+      return await this.pairingResponse(inbound, route.generation);
     }
     const disposition = adapterInboundResultDisposition(result, {
       surface: { kind: "dm", id: inbound.surfaceId },
@@ -669,8 +668,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
 
   private async pairingResponse(
     inbound: ManagedWhatsAppInbound,
+    routeGeneration: string | null,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
     const state = await this.requireState();
+    if (!this.isCurrentPairingRoute(state, routeGeneration)) return { terminal: true };
     if (
       state.pairing
       && (state.pairing.status === "prepared" || state.pairing.status === "active")
@@ -680,10 +681,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         inbound,
         `managed-pairing-in-progress:${state.pairing.claimId}:${inbound.deliveryId}`,
         "This WhatsApp connection is still being confirmed in GSV. Finish or retry that confirmation, then send your message again.",
-        { kind: "platform", claimId: state.pairing.claimId },
+        { kind: "platform", claimId: state.pairing.claimId, routeGeneration },
       );
     }
-    const issue = await this.issuePairing();
+    const issue = await this.issuePairing(routeGeneration);
+    if (!issue) return { terminal: true };
     return {
       terminal: true,
       responses: [{
@@ -702,14 +704,15 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
           replyToId: inbound.messageId,
         },
         expiresAt: issue.expiresAt,
-        context: { kind: "platform", claimId: issue.claimId },
+        context: { kind: "platform", claimId: issue.claimId, routeGeneration },
       }],
     };
   }
 
-  private async issuePairing(): Promise<PairingIssue> {
+  private async issuePairing(routeGeneration: string | null): Promise<PairingIssue | null> {
     const now = Date.now();
     const state = await this.requireState();
+    if (!this.isCurrentPairingRoute(state, routeGeneration)) return null;
     const current = state.pairing;
     if (current?.status === "pending" && current.expiresAt > now) {
       return { code: current.code, claimId: current.claimId, expiresAt: current.expiresAt };
@@ -727,9 +730,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         expiresAt,
       } satisfies ManagedWhatsAppPairingRecord);
       if (!initialized.created) continue;
-      await this.ctx.storage.transaction(async (txn) => {
+      const claimed = await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
         if (!latest) throw new Error("Managed WhatsApp peer is not initialized");
+        if (!this.isCurrentPairingRoute(latest, routeGeneration) || latest.pairing?.claimId !== state.pairing?.claimId) return false;
         await txn.put(STATE_KEY, {
           ...latest,
           pairing: {
@@ -739,7 +743,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
             status: "pending",
           },
         } satisfies ManagedWhatsAppPeerState);
+        return true;
       });
+      if (!claimed) return null;
       return { code, claimId, expiresAt };
     }
     throw new Error("Could not allocate a WhatsApp pairing code");
@@ -1200,7 +1206,15 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (context.claimId && state.pairing?.claimId !== context.claimId) {
       return "WhatsApp pairing changed before delivery";
     }
+    if (context.routeGeneration !== undefined && !this.isCurrentPairingRoute(state, context.routeGeneration)) {
+      return "WhatsApp route changed before delivery";
+    }
     return null;
+  }
+
+  private isCurrentPairingRoute(state: ManagedWhatsAppPeerState, generation: string | null): boolean {
+    return (state.activeRoute?.generation ?? null) === generation
+      && (!state.activeRoute || !this.retirement.retired(state.activeRoute));
   }
 
   private assertPeerDestination(
