@@ -59,7 +59,7 @@ describe("initial onboarding responsibility", () => {
       for (const heading of ["## Goal", "## Acceptance criteria", "## Outcome", "## Instructions", "## Support"]) {
         expect(text).toContain(heading);
       }
-      expect(text).toContain("0 - On the website the user was greeted with");
+      expect(text).toContain("0 - On the website or in the desktop app the user was greeted with");
       expect(text).toContain("5 - Once the task is completed");
       expect(replay).toEqual({
         record: first.record,
