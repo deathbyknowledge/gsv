@@ -133,10 +133,9 @@ tree under "Message templates": category Utility, body `Your GSV: {{1}}`, one
 quick-reply button labelled `Show me`, and the adapter's `WHATSAPP_TEMPLATE_NAME`
 and `WHATSAPP_TEMPLATE_LANGUAGE` values (`gsv_message` and `en` by default).
 
-Meta currently restricts general-purpose assistants on the WhatsApp Business
-Platform to numbers with European Economic Area or Brazilian country codes, so
-availability is not worldwide. Ask your operator whether your number is
-eligible.
+Availability depends on the operator's Meta account and the current terms for
+this use of the WhatsApp Business Platform. Ask your operator whether the
+service is offered for your number.
 
 The earlier linked-device adapter, which paired by scanning a QR code, is no
 longer bundled, and its pairings do not carry over.

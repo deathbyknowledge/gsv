@@ -16,12 +16,12 @@ different phone numbers.
 
 ## Availability
 
-Meta's Business Solution Terms restrict general-purpose assistants on the
-WhatsApp Business Platform. At the time of writing the exception covers users
-whose registered numbers have European Economic Area or Brazilian country codes,
-so the operator's offer is not worldwide. Account eligibility, pricing, and
-country coverage must be rechecked when the number is provisioned; see the
-hosting plan in `engineering/unified-hosting-and-web-release.md`.
+Before enabling this adapter, the operator must verify that its Meta account
+and GSV's personal-assistant use are eligible under the current
+[WhatsApp Business Platform Terms](https://www.whatsapp.com/legal/WhatsApp-Terms-for-WhatsApp-Business-Platform)
+and the Meta Terms for WhatsApp Business Platform they incorporate. Earlier research about regional
+exceptions predates the September 23, 2026 terms and does not establish current
+eligibility. The adapter does not enforce or assume a geographic exception.
 
 ## Inbound
 
