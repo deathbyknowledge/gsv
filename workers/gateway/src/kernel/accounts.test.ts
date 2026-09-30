@@ -300,7 +300,7 @@ describe("handleAccountCreate", () => {
     );
     expect(createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
       ownerUid: result.account.uid,
-      title: "Get to know the user and finish initial GSV setup",
+      title: "Welcome to gsv",
       dedupeKey: "onboarding.initial",
     }));
     const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
