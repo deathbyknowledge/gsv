@@ -183,7 +183,7 @@ describe("ConfigStore", () => {
       expect(targets).toContain(command);
     }
     const responsibilities = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
-    expect(responsibilities).toContain("r12y list");
+    expect(responsibilities).toContain("`r12y`");
     expect(responsibilities).toContain("{{r12y}}");
     const discovery = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");

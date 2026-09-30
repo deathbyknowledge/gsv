@@ -135,10 +135,22 @@ runs. A run begins with admitted work and ends at `yield`; an epoch ends only wh
 effective baseline is replaced by reset, compaction, Process replacement, or a
 standing-context change.
 
-At epoch creation, Process assembles the exact rendered system prompt and renders the
-current responsibility names, ids, and initial states through the `{{ r12y }}` system
-context template. It records the corresponding Kernel ledger revision. That rendered
-system prompt remains byte-for-byte fixed for the epoch.
+At epoch creation, Process renders current responsibility names, ids, and initial
+states through the `{{ r12y }}` system context template. It also includes structured
+`details` for Ship assignments and assignments to the current Process. Assignments
+to other Processes remain compact summaries. Kernel visibility still limits a child
+to its assignments and their ancestors.
+
+The snapshot includes up to 32 KiB of rendered detail bodies in ledger order. A body
+that does not fit is omitted whole, with a `r12y show ID` reference; smaller later
+bodies may still fit. The existing 500-record limit also reports omitted records.
+The source manifest records exactly which bodies were rendered, so later updates
+do not repeat unchanged details or assume omitted details were seen. Older epochs
+without that manifest field retain their original rendering and delta behavior.
+
+Process records the corresponding Kernel ledger revision. The rendered system
+prompt remains byte-for-byte fixed for the epoch; resolving a responsibility removes
+it from the next rebuilt snapshot, not from the already captured prompt.
 
 Later responsibility changes do not rewrite the system prompt. Before each provider
 turn, Process synchronizes ordered transitions after the epoch's last observed ledger
@@ -157,7 +169,10 @@ Responsibility `r12y:beta` was resolved.
 
 The model's current view is the frozen baseline plus ordered deltas. These events sit
 after the previously cached prompt and history, preserving provider prefix/KV cache
-reuse. `r12y list` remains the authoritative on-demand query.
+reuse. New records include their details in these events, and changes to details
+appear in later updates. Agents can use the snapshot and subsequent events directly;
+`r12y list` and `r12y show ID` remain available to inspect records or retrieve omitted
+content.
 
 The same epoch owns a normalized availability projection for accessible online
 targets, ready MCP servers, current date and timezone, and the visible skill catalog.

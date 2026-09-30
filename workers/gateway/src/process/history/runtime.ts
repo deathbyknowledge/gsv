@@ -61,9 +61,8 @@ import {
 } from "./model-renderer";
 import { normalizeModelHistoryGroup } from "../storage/history-records";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
-import { formatResponsibilityBaseline } from "../internal/events";
 import {
-  formatResponsibilityTransitionEvent, RESPONSIBILITY_CONTEXT_FIELDS,
+  formatResponsibilityTransitionEvent, renderResponsibilityBaseline, RESPONSIBILITY_CONTEXT_FIELDS,
 } from "../../prompts/responsibility-events";
 
 
@@ -2014,6 +2013,7 @@ export class ProcessHistory {
     } else {
       delete promptConfig.systemContextFiles;
     }
+    const baseline = renderResponsibilityBaseline(ledger, this.host.pid);
     const snapshot = promptOverride
       ? { prompt: promptOverride, sources: [] }
       : await assembleSystemPromptSnapshot({
@@ -2023,7 +2023,7 @@ export class ProcessHistory {
           targets: projection.targets,
           mcpServers: projection.mcpServers,
           runtime: projection.runtime,
-          r12y: formatResponsibilityBaseline(ledger),
+          r12y: baseline.text,
           storage: this.host.storage,
           ripgit: this.host.ripgit,
         });
@@ -2042,6 +2042,7 @@ export class ProcessHistory {
       if (tool.description !== undefined) record.description = tool.description;
       return record;
     });
+    const r12yBaselineRendered = snapshot.sources.some((source) => source.responsibilityBaseline === true);
     const sourceManifest = jsonObjectSchema.parse({
       version: 2,
       process: {
@@ -2054,7 +2055,8 @@ export class ProcessHistory {
       contextProjection: projection,
       offeredTools,
       promptSources: snapshot.sources,
-      r12yBaselineRendered: snapshot.sources.some((source) => source.responsibilityBaseline === true),
+      r12yBaselineRendered,
+      r12yBaselineDetailIds: r12yBaselineRendered ? baseline.detailIds : [],
       recoveredRunPrompt: promptOverride !== undefined,
     });
     return { prompt: snapshot.prompt, sourceManifest };
