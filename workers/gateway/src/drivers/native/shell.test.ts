@@ -16,6 +16,7 @@ import {
   handleFsWrite,
 } from "./fs";
 import * as inferenceService from "../../inference/execution-client";
+import * as federationService from "../../kernel/federation";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -149,6 +150,8 @@ function makeProcess(
 
 function makeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, shipHandlesMessages: false, revision: 1 },
+    blocked: false,
     id: "contact:friend",
     ownerUid: IDENTITY.uid,
     state: "active",
@@ -332,6 +335,7 @@ function makeContext(options?: {
     ),
     federation: focusedFixture<KernelContext["federation"]>({
       list: vi.fn(() => []),
+      attentionNotice: vi.fn(() => undefined),
       ...options?.federation,
     }),
     conversations: focusedFixture<KernelContext["conversations"]>(
@@ -1095,7 +1099,7 @@ describe("native shell capability discovery", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("MESSAGE(1)");
     expect(result.stdout).toContain("message current [--json]");
-    expect(result.stdout).toContain("[--delivery-id ID] [--also]");
+    expect(result.stdout).toContain("[--delivery-id ID] [--responsibility ID] [--also]");
     expect(result.stdout).toContain("message send [--message TEXT]");
     expect(result.stdout).toContain("append `&& yield`");
     expect(result.stdout).toContain("message send --to DESTINATION");
@@ -4380,6 +4384,7 @@ describe("native administration shell commands", () => {
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({
       get: vi.fn(() => conversation),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     });
 
     const history = await handleShellExec({
@@ -4389,6 +4394,27 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain(`conversation=${conversation.id}`);
     expect(history.stdout).toContain("Flynn (contact:friend)");
     expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("links a contact send to Ship work and rejects that option for other destinations", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
+      deliveryId: "delivery:work", conversationId: "conversation:friend", state: "queued",
+    });
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"] });
+      const sent = await handleShellExec({
+        input: 'message send --to contact:friend --message "Friday?" --responsibility r12y:friday --delivery-id delivery:work --also',
+      }, ctx);
+      expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(send).toHaveBeenCalledWith({ contactId: "contact:friend", text: "Friday?",
+        responsibilityId: "r12y:friday", idempotencyKey: "delivery:work" }, expect.anything());
+      const rejected = await handleShellExec({
+        input: 'message send --to adapter:destination --message "Friday?" --responsibility r12y:friday --also',
+      }, ctx);
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stderr).toContain("--responsibility requires a contact destination");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally { send.mockRestore(); }
   });
 
   it("lets Ship search its conversation through the shared syscall and enforces the capability", async () => {

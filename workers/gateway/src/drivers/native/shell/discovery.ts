@@ -95,7 +95,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "message delivery show DELIVERY_ID [--json]",
     "message send [--message TEXT]",
-    "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
+    "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
   mail: command("Read, send, reply to, and inspect managed email.", "Read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "read", "message", "search", "send", "reply", "status", "delivery"], [], [

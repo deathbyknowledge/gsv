@@ -6,6 +6,7 @@ describe("conversation search over the authenticated protocol", () => {
     const runtime = await startProcessRuntimeHarness();
     try {
       const { conversation } = await runtime.client.conversation.ship({});
+      if (!conversation.handlerPid) throw new Error("Ship must have a process");
       await runtime.configureAi(conversation.handlerPid);
       runtime.ai.enqueue({ kind: "message", text: "Rotterdam cafés open at nine." });
       const sent = await runtime.client.conversation.send({ conversationId: conversation.id, text: "Find Rotterdam cafés." });

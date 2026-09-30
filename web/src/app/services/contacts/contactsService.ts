@@ -1,6 +1,8 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   ContactSendResult,
+  ContactDeliveryStatus,
+  OriginMessageRef,
   ContactInviteCreateResult,
   ContactInviteSummary,
   ContactRequestRecord,
@@ -29,6 +31,7 @@ export type ContactsWorkspace = {
 };
 
 export type ContactSendIntent = {
+  replyTo?: OriginMessageRef;
   idempotencyKey: string;
   text: string;
   media: readonly StagedResourceUpload[];
@@ -114,7 +117,16 @@ export function sendContactMessage(
   return withStagedResources(client, intent.media, (media) => client.contact.send({
     contactId,
     text: intent.text,
+    ...(intent.replyTo ? { replyTo: intent.replyTo } : undefined),
     ...(media.length > 0 ? { media } : undefined),
     idempotencyKey: intent.idempotencyKey,
+  }), intent.idempotencyKey, signal);
+}
+
+export function retryContactMessage(
+  client: GSVClient, intent: ContactSendIntent, status: ContactDeliveryStatus, signal?: AbortSignal,
+): Promise<ContactSendResult> {
+  return withStagedResources(client, status.messageSequence ? [] : intent.media, () => client.contact.delivery.retry({
+    deliveryId: status.deliveryId, expectedUpdatedAtMs: status.updatedAtMs,
   }), intent.idempotencyKey, signal);
 }
