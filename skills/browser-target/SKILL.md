@@ -1,6 +1,6 @@
 ---
 name: browser-target
-description: Use a paired browser target to inspect and operate the user's signed-in browser profile through its advertised filesystem and shell commands. It reaches any site the user is logged into, such as a calendar, mail, or an admin dashboard, with no integration. Load it whenever the user asks about a website or web app; if no browser target is connected, offer to pair one.
+description: Use a paired browser: the user's signed-in profile, reaching any site they are logged into (calendar, mail, dashboards) with no integration. Load for any website or web app question; if none is paired, offer pairing.
 aliases: browser-extension, browser
 ---
 
