@@ -702,7 +702,7 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
-| `contact.request.update` | Applies a valid state transition using an optional expected revision for optimistic concurrency. |
+| `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
 
 `contact.send` reports `queued` when the sender has durably accepted the work
 and `delivered` only after the receiving Kernel has durably committed it. A
@@ -782,6 +782,12 @@ type ContactRequestRecord = {
   details?: JsonObject;
   state: "offered" | "accepted" | "rejected" | "active" | "completed" | "cancelled";
   revision: number;
+  exchange?: {
+    state: "pending" | "acknowledged" | "failed" | "unconfirmed";
+    source?: "local" | "remote";
+    deliveryId?: string;
+    lastError?: string;
+  };
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -831,6 +837,14 @@ type ContactSyscalls = {
       state: "queued" | "delivered" | "failed";
     };
   };
+  "contact.delivery.list": {
+    args: { contactId: string; deliveryIds?: string[]; messageSequences?: number[] };
+    result: { deliveries: ContactDeliveryStatus[] };
+  };
+  "contact.delivery.retry": {
+    args: { deliveryId: string; expectedUpdatedAtMs: number };
+    result: { deliveryId: string; conversationId: string; state: "queued" | "delivered" | "failed" };
+  };
   "contact.delivery.get": {
     args: { deliveryId: string };
     result: { delivery: ContactDeliveryStatus | null };
@@ -861,6 +875,17 @@ type ContactSyscalls = {
   };
 };
 ```
+
+`contact.delivery.list` reads up to 100 selected delivery IDs or local message
+sequences for one owned contact. Status includes `messageId`, `messageSequence`
+and `retryable` when available. A missing retained receipt does not prove delivery.
+
+`contact.delivery.retry` lets the signed-in human or their canonical Ship resume
+the same stored message after a recoverable failure. It preserves the original
+message, idempotency key and contact generation. `expectedUpdatedAtMs` prevents
+retrying an outdated status; a retry epoch fences outcomes from earlier attempts.
+The original seven-day delivery window, backlog limits and rate limits still
+apply. Permanent refusal, revocation and expired delivery cannot be bypassed.
 
 ## Processes: `proc.*`
 

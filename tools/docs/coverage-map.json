@@ -133,6 +133,7 @@
         "web/src/app/features/instrument/fleet/**"
       ],
       "docs": [
+        "docs/how-to/contact-people.md",
         "docs/how-to/connect-devices.md",
         "docs/how-to/browse-web.md",
         "docs/how-to/invite-people.md",

@@ -16,3 +16,7 @@ export async function stableOpaqueId(
 export function conversationSendMessageId(conversationId: string, idempotencyKey: string): Promise<string> {
   return stableOpaqueId("msg", [conversationId, idempotencyKey]);
 }
+
+export function contactSendMessageId(contactId: string, generation: string, idempotencyKey: string): Promise<string> {
+  return stableOpaqueId("msg", [contactId, generation, idempotencyKey]);
+}
