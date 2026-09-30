@@ -1,14 +1,40 @@
+import type { JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+
+import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
-const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
+export const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
 
-export function ensureInitialOnboardingResponsibility(
-  ownerUid: number,
-  responsibilities: ResponsibilityStore,
-  now = Date.now(),
-): ResponsibilityCreateOutcome {
-  return responsibilities.create({
-    ownerUid,
+const ONBOARDING_SOURCE = { kind: "system", component: "onboarding" } as const;
+
+type OnboardingContract = {
+  title: string;
+  details: JsonObject;
+  blocker: string;
+};
+
+/**
+ * The current onboarding contract. The Ship's prompt snapshot renders the
+ * record with its details, and the responsibilities context tells the Ship to
+ * follow them while this record is unresolved. The brief itself is the Markdown
+ * prompt file `prompts/onboarding/welcome.md`.
+ */
+const WELCOME_CONTRACT: OnboardingContract = {
+  title: "Welcome to gsv",
+  details: {
+    responsibilityType: "onboarding.initial",
+    instructions: welcomeBrief.trim(),
+  },
+  blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
+};
+
+/**
+ * Contracts earlier releases seeded. An unresolved record that still matches one
+ * of them in every field is rewritten to the current contract; any owner change
+ * leaves the record alone.
+ */
+const PREVIOUS_ONBOARDING_CONTRACTS: readonly OnboardingContract[] = [
+  {
     title: "Get to know the user and finish initial GSV setup",
     details: {
       responsibilityType: "onboarding.initial",
@@ -20,14 +46,91 @@ export function ensureInitialOnboardingResponsibility(
       ],
       completionCondition: "The user confirms that onboarding or setup is complete.",
     },
-    source: { kind: "system", component: "onboarding" },
+    blocker: "Waiting for the user to begin or continue setup.",
+  },
+];
+
+/**
+ * Every field a seeded record carries, so an owner edit to any of them, not only
+ * the text, stops the migration. Stored details round-trip through JSON in the
+ * key order this module wrote them, and each previous contract keeps that order,
+ * so serialized equality is exact.
+ */
+function isUntouchedSeed(record: ResponsibilityRecord, contract: OnboardingContract): boolean {
+  return record.title === contract.title
+    && record.blocker === contract.blocker
+    && JSON.stringify(record.details ?? {}) === JSON.stringify(contract.details)
+    && record.state === "waiting"
+    && record.priority === "high"
+    && record.assignee.kind === "ship"
+    && record.parentId === undefined
+    && record.audience === undefined
+    && record.dueAtMs === undefined
+    && record.nextCheckAtMs === undefined
+    && record.leaseExpiresAtMs === undefined
+    && record.resolution === undefined;
+}
+
+function migrateUntouchedSeed(
+  record: ResponsibilityRecord,
+  responsibilities: ResponsibilityStore,
+  now: number,
+): ResponsibilityRecord {
+  if (!PREVIOUS_ONBOARDING_CONTRACTS.some((contract) => isUntouchedSeed(record, contract))) return record;
+  return responsibilities.update({
+    ownerUid: record.ownerUid,
+    id: record.id,
+    patch: {
+      title: WELCOME_CONTRACT.title,
+      details: WELCOME_CONTRACT.details,
+      blocker: WELCOME_CONTRACT.blocker,
+    },
+    actor: ONBOARDING_SOURCE,
+    observedByShip: true,
+    now,
+  }).record;
+}
+
+/**
+ * Seed the owner's onboarding responsibility, or bring an untouched one from an
+ * earlier release onto the current contract. A resolved, cancelled, or edited
+ * record is returned unchanged. Only a new personal agent, or the retirement of
+ * the exact generated boot file that preceded the ledger, may seed: a home that
+ * finished the earlier flow has no record and must not be onboarded again.
+ */
+export function ensureInitialOnboardingResponsibility(
+  ownerUid: number,
+  responsibilities: ResponsibilityStore,
+  now = Date.now(),
+): ResponsibilityCreateOutcome {
+  const outcome = responsibilities.create({
+    ownerUid,
+    title: WELCOME_CONTRACT.title,
+    details: WELCOME_CONTRACT.details,
+    source: ONBOARDING_SOURCE,
     assignee: { kind: "ship" },
     state: "waiting",
     priority: "high",
-    blocker: "Waiting for the user to begin or continue setup.",
+    blocker: WELCOME_CONTRACT.blocker,
     dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY,
-    actor: { kind: "system", component: "onboarding" },
+    actor: ONBOARDING_SOURCE,
     observedByShip: true,
     now,
   });
+  if (outcome.created) return outcome;
+  const record = migrateUntouchedSeed(outcome.record, responsibilities, now);
+  return { record, created: false, revision: responsibilities.revision(ownerUid) };
+}
+
+/**
+ * Bring an existing owner's untouched onboarding record from an earlier release
+ * onto the current contract, without seeding one where none exists.
+ */
+export function reconcileInitialOnboardingResponsibility(
+  ownerUid: number,
+  responsibilities: ResponsibilityStore,
+  now = Date.now(),
+): ResponsibilityRecord | null {
+  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
+  return record ? migrateUntouchedSeed(record, responsibilities, now) : null;
 }

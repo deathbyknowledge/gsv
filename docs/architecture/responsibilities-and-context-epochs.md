@@ -228,10 +228,19 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility. It waits for the user rather than waking the Ship on
-  its own, is present in Ship's first context epoch, and remains unresolved until
-  the user confirms setup is complete. This replaces the generated boot context
-  file.
+  onboarding responsibility titled "Welcome to gsv". It waits for the user's first
+  message rather than waking the Ship on its own and is present in Ship's first
+  context epoch, rendered with its details like any Ship assignment. Those details
+  carry the onboarding brief, the Markdown prompt file
+  `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
+  criteria, outcomes and step-by-step instructions. The system responsibilities
+  context puts an unresolved onboarding record ahead of everything else: other
+  responsibilities are parked or delegated until the Ship resolves it, once the user
+  has completed one small task. Ensuring the personal agent also rewrites an
+  unresolved record still carrying an earlier release's wording onto the current
+  contract; resolved, cancelled, or owner-edited records are left alone, and a
+  home that finished the earlier boot-file flow and has no record is never
+  onboarded again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

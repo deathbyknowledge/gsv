@@ -41,7 +41,7 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
+import { ensureInitialOnboardingResponsibility, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
 import { CREW_CONTEXT, crewDelegationContext } from "../prompts/personal-intelligence";
 
@@ -186,6 +186,7 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
+      reconcileInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
