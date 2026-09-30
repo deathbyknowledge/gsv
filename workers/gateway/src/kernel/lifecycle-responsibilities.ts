@@ -1,7 +1,6 @@
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import type { AdapterStatusRecord } from "./adapter-status";
-import type { FederationContactRecord } from "./federation-store";
 import { stableOpaqueId } from "../shared/stable-id";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 
@@ -9,8 +8,6 @@ type AdapterTransitionOptions = {
   suppressAuthenticationRequired?: boolean;
   intentionalDisconnect?: boolean;
 };
-
-export type ContactInviteDirection = "incoming" | "outgoing";
 
 export async function recordMachineAddedResponsibility(
   machine: TargetRecord,
@@ -54,50 +51,6 @@ export async function recordMachineAddedResponsibility(
     now: machine.first_seen_at,
   });
   if (outcome.created) scheduleLifecycleWake(ownerUid, ctx);
-}
-
-export function recordContactAddedResponsibility(
-  contact: FederationContactRecord,
-  inviteDirection: ContactInviteDirection,
-  ctx: KernelContext,
-): void {
-  const ownerUid = humanOwnerUid(contact.ownerUid, ctx);
-  if (
-    ownerUid === null
-    || !ctx.responsibilitySources.isEnabled(ownerUid, "contact.added")
-  ) {
-    return;
-  }
-
-  const dedupeKey = `contact.added:${contact.id}:${contact.generation}`;
-  ctx.responsibilities.create({
-    ownerUid,
-    title: "Learn about a new contact and preserve useful context",
-    details: {
-      eventType: "contact.added",
-      contactId: boundedUntrustedText(contact.id, 512),
-      contactGeneration: boundedUntrustedText(contact.generation, 512),
-      conversationId: boundedUntrustedText(contact.conversationId, 512),
-      remoteShipId: boundedUntrustedText(contact.remoteShipId, 512),
-      remoteSubjectId: boundedUntrustedText(contact.remoteSubject.id, 512),
-      displayName: boundedUntrustedText(contact.remoteSubject.displayName, 512),
-      inviteDirection,
-      activatedAt: contact.updatedAtMs,
-      contentTrust: "untrusted",
-    },
-    source: {
-      kind: "event",
-      eventType: "contact.added",
-      eventId: dedupeKey,
-    },
-    assignee: { kind: "ship" },
-    state: "open",
-    priority: "normal",
-    dedupeKey,
-    actor: { kind: "system", component: "contact-lifecycle" },
-    observedByShip: false,
-    now: contact.updatedAtMs,
-  });
 }
 
 export function recordAdapterStatusTransition(

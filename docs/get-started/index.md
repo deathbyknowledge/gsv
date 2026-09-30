@@ -43,12 +43,15 @@ Existing standalone deployments should read the
 
 ## Look around
 
-The web console is called **Instrument** and has four views:
+The web console is called **Instrument** and has five views:
 
 - **Zen** is your Ship conversation, and where you inspect what a run did.
-- **Fleet** lists your places, processes, contacts and responsibilities, and recently touched files.
+- **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
+- **People** holds conversations, message requests and private contacts across GSV spaces.
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
+
+The Settings sidebar highlights the section you're viewing.
 
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns

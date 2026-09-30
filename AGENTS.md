@@ -77,6 +77,8 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 
 Process history uses typed message, note, call, result, and event records. Storage owns legacy inference; model context, compaction, and client presentation each render those records at their owning boundary. Preserve the captured provider-context contract when changing rendering. Person-only events remain inspectable without entering provider context or summary input. Format-2 history synchronization replaces complete message groups, including late companions and media changes; reset and compaction invalidate earlier cursors. See `docs/architecture/process-history.md`.
 
+Contact conversations have no mandatory Process handler. Pairing and first-message acceptance create no agent commitment. A human may hand a contact generation to Ship through one ordinary responsibility, or bind replies to existing Ship work when sending for a specific task. Human and Process authorship remain visible but do not choose the local handler. Duplicates and delivery receipts never admit new agent work. People owns social presentation; the Kernel owns contact authority, private inbox state, public profile publication and first-contact admission.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.

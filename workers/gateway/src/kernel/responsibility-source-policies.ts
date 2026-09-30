@@ -50,20 +50,6 @@ const POLICY_DEFINITIONS = [
     defaultEnabled: true,
   },
   {
-    id: "federation.received",
-    name: "Contact messages and requests",
-    description: "Triggers when another paired Ship sends a message or changes a shared request.",
-    control: "configurable",
-    defaultEnabled: true,
-  },
-  {
-    id: "contact.added",
-    name: "New contacts",
-    description: "Triggers when an invite becomes an active contact so Ship can learn about them and preserve useful context.",
-    control: "configurable",
-    defaultEnabled: true,
-  },
-  {
     id: "machine.added",
     name: "New machines",
     description: "Triggers when a physical machine is added so Ship can confirm that it is connected.",

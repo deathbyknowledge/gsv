@@ -19,6 +19,7 @@ import type {
   ContactDeliveryGetResult,
   ContactListArgs,
   ContactListResult,
+  ContactNoticeDismissResult,
   ContactRequestCreateArgs,
   ContactRequestCreateResult,
   ContactRequestListArgs,
@@ -30,12 +31,11 @@ import type {
   ContactRevokeResult,
   ContactSendArgs,
   ContactSendResult,
-  ContactSummary,
   ConversationMessage,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
-  FederationDeliveryEnvelope,
-  FederationDeliveryReceipt,
+  FederationTransportEnvelope,
+  FederationTransportReceipt,
   FederationRequestDelivery,
   FederationShipDocument,
   FederationSubject,
@@ -51,6 +51,11 @@ import {
   contactDisplayName,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
+  federationDeliveryPayloadSchema,
+  federationDeliveryEnvelopeV2Schema,
+  federationDeliveryReceiptV2Schema,
+  federationDeliveryPayloadV2Schema,
+  originMessageRefSchema,
   federationShipDocumentSchema,
   federationSubjectSchema,
   jsonObjectSchema,
@@ -59,6 +64,10 @@ import {
   MAX_FEDERATION_REQUEST_DETAILS_BYTES,
   MAX_FEDERATION_REQUEST_TITLE_BYTES,
   MAX_FEDERATION_RESOURCE_BYTES,
+  approachEnvelopeSchema,
+  approachClaimSchema,
+  approachConfirmationSchema,
+  approachWithdrawalSchema,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
@@ -70,17 +79,19 @@ import {
   handleFsTransferSend,
   type FsOpenedSource,
 } from "../drivers/native/fs";
-import { isLocked } from "../auth/shadow";
 import type { KernelContext } from "./context";
+import { ApproachAdmissionError } from "./approach-store";
+import { receiveApproach } from "./approaches/admission";
+import { claimApproach, confirmApproach, withdrawApproach } from "./approaches/pairing";
+import { APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH } from "./approaches/shared";
 import { kernelPeerContext } from "./peer";
-import { principalOf } from "./context";
-import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
 import {
   processMediaOwner,
   retainConversationResources,
 } from "./conversation-handlers";
 import {
+  FederationActorBlockedError,
   FederationRequestIdentityConflictError,
   type FederationContactRecord,
   type FederationInboxRecord,
@@ -112,8 +123,11 @@ import {
   requireCommittedPairingContact,
   revokeFederationContact,
 } from "./federation/pairing";
+import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
+import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { fetchFederation, fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES, readFederationBody } from "./federation/http";
+import { DELIVERY_V2_PATH, SHIP_DOCUMENT_V2_PATH, localShipDocumentV2, negotiateContactProtocol } from "./federation/protocol";
 import {
   assertDeliveryReplay,
   contactDeliveryStatus,
@@ -220,6 +234,9 @@ type PublicFederationFailure = { status: number; message: string; retryAfterMs?:
 
 export function isFederationPublicPath(pathname: string): boolean {
   return pathname === SHIP_DOCUMENT_PATH
+    || pathname === SHIP_DOCUMENT_V2_PATH
+    || pathname === DELIVERY_V2_PATH
+    || [APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(pathname)
     || pathname === INVITE_ACCEPT_PATH
     || pathname === DELIVERY_PATH
     || pathname.startsWith(RESOURCE_PATH_PREFIX);
@@ -309,6 +326,7 @@ export function handleContactInviteCancel(
   const inviteId = args.inviteId.trim();
   if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
   const previous = ctx.federation.invite(inviteId);
+  if (previous?.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
   const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
   if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
   return { invite: contactInviteSummary(invite, now) };
@@ -458,7 +476,6 @@ export async function handleContactInviteAccept(
     );
     const activated = activateFederationContact({
       ownerUid,
-      inviteDirection: "incoming",
       generation: accepted.generation,
       remoteShipId: accepted.document.shipId,
       remoteSubject: accepted.subject,
@@ -497,7 +514,14 @@ export function handleContactList(
   const ownerUid = requireContactCaller(ctx, false);
   return {
     contacts: ctx.federation.list(ownerUid, args.includeRevoked ?? false).map(contactSummary),
+    attentionNotice: ctx.federation.attentionNotice(ownerUid),
   };
+}
+
+export function handleContactNoticeDismiss(ctx: KernelContext): ContactNoticeDismissResult {
+  const ownerUid = requireContactHuman(ctx);
+  if (ctx.federation.dismissAttentionNotice(ownerUid)) ctx.broadcastToUserUid(ownerUid, "contact.changed");
+  return {};
 }
 
 export function handleContactAliasSet(
@@ -590,12 +614,15 @@ export async function handleContactSend(
   if (!text.trim() && !requestedMedia?.length) {
     throw new Error("Contact message requires text or a resource");
   }
-  const contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
+  let contact = requireOwnedActiveContact(args.contactId, ownerUid, ctx);
+  const replyTo = args.replyTo ? originMessageRefSchema.parse(args.replyTo) : undefined;
   const fingerprint = await federationInputFingerprint(jsonValue({
     operation: "contact.send",
     contactId: contact.id,
     text,
     media: requestedMedia ?? [],
+    ...(replyTo ? { replyTo } : undefined),
+    ...(args.responsibilityId ? { responsibilityId: args.responsibilityId } : undefined),
   }));
   const existing = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
   if (existing) {
@@ -614,14 +641,19 @@ export async function handleContactSend(
     return contactSendResult(replay, replayContact);
   }
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
-  const processId = await ensurePersonalController(ownerUid, ctx);
-  const process = ctx.procs.get(processId);
-  if (!process) throw new Error("Personal intelligence is unavailable");
+  contact = await negotiateContactProtocol(contact, ctx);
+  const v2Messages = contact.protocol?.version === 2 && contact.protocol.features.includes("messages");
+  if (replyTo && !v2Messages) throw new Error("Replies require federation v2 message support from this contact");
+  if (replyTo && !await getConversationById(ctx.installationId, contact.conversationId).resolveOrigin(replyTo, contact.threadId)) {
+    throw new Error("Reply must reference a message in this contact conversation");
+  }
+  const processId = requestedMedia?.length ? await ensurePersonalController(ownerUid, ctx) : undefined;
   // Media is persisted under the handler's archive, so only the handler and
   // the work it delegated may attach it. Reject here so a delegated child
   // learns at send time instead of after every background retry fails.
   if (
     requestedMedia?.length
+    && processId
     && ctx.processId
     && ctx.processId !== processId
     && !ctx.procs.isDescendant(ctx.processId, processId)
@@ -644,8 +676,19 @@ export async function handleContactSend(
     ctx,
     now,
   });
+  if (v2Messages) {
+    const document = await localShipDocument(ctx);
+    const subject = ensureLocalSubject(ownerUid, ctx);
+    localMessage.social = {
+      threadId: contact.threadId,
+      reference: { actor: { shipId: document.shipId, subjectId: subject.id }, messageId },
+      provenance: localMessage.author.kind === "process"
+        ? { kind: "process", processId: localMessage.author.pid } : { kind: "human" },
+      ...(replyTo ? { replyTo } : undefined),
+    };
+  }
   ctx.requestSignal?.throwIfAborted();
-  const admitted = ctx.federation.transaction(() => {
+  const admitted = await ctx.coordinateFederationContact(contact.id, () => ctx.federation.transaction(() => {
     ctx.requestSignal?.throwIfAborted();
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     const concurrent = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
@@ -661,6 +704,7 @@ export async function handleContactSend(
     assertOutboundCapacity(ownerUid, admittedContact.id, ctx, now);
     consumeOutboundDeliveryRate(ownerUid, admittedContact.id, ctx, now);
     assertResourceGrantCapacity(admittedContact.id, requestedMedia?.length ?? 0, ctx);
+    if (args.responsibilityId) bindContactReply(admittedContact, localMessage, args.responsibilityId, ctx);
     return ctx.federation.prepareMessage({
       deliveryId,
       ownerUid,
@@ -676,9 +720,10 @@ export async function handleContactSend(
         resources: requestedMedia ?? [],
         localMessage,
       },
+      wireVersion: v2Messages ? 2 : 1,
       now,
     }).record;
-  });
+  }));
   await ctx.scheduleFederationDelivery(admitted.deliveryId, now, true);
   const record = admitted.state === "preparing"
     ? await advanceFederationMessagePreparationOrRecordFailure(admitted, ctx)
@@ -920,8 +965,7 @@ export async function handleContactRequestUpdate(
       conversationId: contact.conversationId,
       deliveryId,
       remoteInput: false,
-      createAllowed: current.direction === "outgoing"
-        || ctx.responsibilitySources.isEnabled(ownerUid, "federation.received"),
+      createAllowed: current.direction === "outgoing" || args.state === "accepted" || args.state === "active",
       now,
     }, ctx);
     ctx.federation.enqueue({
@@ -968,14 +1012,18 @@ export async function processFederationDelivery(
     return;
   }
 
+  if (ctx.approaches.pendingConnection(contact.id, contact.generation)) {
+    await ctx.scheduleFederationDelivery(deliveryId, Date.now() + 30_000);
+    return;
+  }
+
   try {
     await commitLocalOutboxMessage(record, contact, ctx);
     if (!currentFederationDeliveryContact(record, ctx)) return;
     const document = await localShipDocument(ctx);
     if (!currentFederationDeliveryContact(record, ctx)) return;
     const subject = ensureLocalSubject(record.ownerUid, ctx);
-    const unsigned = {
-      version: 1,
+    const fields = {
       deliveryId: record.deliveryId,
       senderShipId: document.shipId,
       senderSubjectId: subject.id,
@@ -983,15 +1031,17 @@ export async function processFederationDelivery(
       generation: record.contactGeneration,
       timestampMs: Date.now(),
       nonce: randomBase64Url(18),
-      payload: record.payload,
-    } satisfies Omit<FederationDeliveryEnvelope, "signature">;
-    const envelope: FederationDeliveryEnvelope = {
+    };
+    const unsigned = record.wireVersion === 2
+      ? { ...fields, version: 2 as const, domain: "gsv-federation/2/delivery" as const, payload: federationDeliveryPayloadV2Schema.parse(record.payload) }
+      : { ...fields, version: 1 as const, payload: federationDeliveryPayloadSchema.parse(record.payload) };
+    const envelope: FederationTransportEnvelope = {
       ...unsigned,
       signature: await signContactEnvelope(contact.sharedSecret, jsonValue(unsigned)),
     };
     if (!currentFederationDeliveryContact(record, ctx)) return;
-    const receipt = federationDeliveryReceiptSchema.parse(await fetchJson(
-      `${contact.remoteOrigin}${DELIVERY_PATH}`,
+    const receipt = (record.wireVersion === 2 ? federationDeliveryReceiptV2Schema : federationDeliveryReceiptSchema).parse(await fetchJson(
+      `${contact.remoteOrigin}${record.wireVersion === 2 ? DELIVERY_V2_PATH : DELIVERY_PATH}`,
       {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -1061,13 +1111,11 @@ async function advanceFederationMessagePreparation(
   ctx: KernelContext,
 ): Promise<FederationOutboxRecord> {
   if (record.state !== "preparing") return record;
-  const processId = await ensurePersonalController(record.ownerUid, ctx);
-  const retained = await retainConversationResources(
-    record.preparation.resources,
-    processId,
-    ctx,
-    record.deliveryId,
-  ) ?? [];
+  const processId = record.preparation.resources.length > 0
+    ? await ensurePersonalController(record.ownerUid, ctx) : undefined;
+  const retained = processId
+    ? await retainConversationResources(record.preparation.resources, processId, ctx, record.deliveryId) ?? []
+    : [];
   if (retained.length !== record.preparation.resources.length) {
     throw new Error("Personal intelligence retained an incomplete resource batch");
   }
@@ -1088,7 +1136,7 @@ async function advanceFederationMessagePreparation(
     const localMessage: FederationOutboxLocalMessage = {
       ...current.preparation.localMessage,
       ...(resources.length ? { media: retained } : undefined),
-      ...(current.preparation.localMessage.author.kind === "user"
+      ...(current.preparation.localMessage.author.kind === "user" && processId
         ? { processId }
         : undefined),
     };
@@ -1100,6 +1148,7 @@ async function advanceFederationMessagePreparation(
         messageId: current.preparation.messageId,
         threadId: current.preparation.threadId,
         text: current.preparation.text,
+        ...(localMessage.social ? { social: localMessage.social } : undefined),
         ...(resources.length ? { resources } : undefined),
       },
       localMessage,
@@ -1196,6 +1245,30 @@ export async function handleFederationHttpRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   try {
+    if ([APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(url.pathname) && request.method === "POST") {
+      consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
+      const input = await readBoundedJson(request);
+      const publicContext = { ...ctx, requestSignal: request.signal };
+      if (url.pathname === APPROACH_PATH) return jsonResponse(jsonValue(await receiveApproach(approachEnvelopeSchema.parse(input), publicContext)));
+      if (url.pathname === APPROACH_CLAIM_PATH) return jsonResponse(jsonValue(await claimApproach(approachClaimSchema.parse(input), publicContext)));
+      if (url.pathname === APPROACH_CONFIRM_PATH) return jsonResponse(jsonValue(await confirmApproach(approachConfirmationSchema.parse(input), publicContext)));
+      return jsonResponse(jsonValue(await withdrawApproach(approachWithdrawalSchema.parse(input), publicContext)));
+    }
+    if (url.pathname === SHIP_DOCUMENT_V2_PATH && (request.method === "GET" || request.method === "POST")) {
+      if (request.body) {
+        try {
+          await readFederationBody({ stream: request.body }, 0, request.signal, 5_000);
+        } catch {
+          throw new PublicFederationError(400, "Ship discovery accepts no request body");
+        }
+      }
+      return jsonResponse(jsonValue(await localShipDocumentV2(ctx)));
+    }
+    if (url.pathname === DELIVERY_V2_PATH && request.method === "POST") {
+      return jsonResponse(jsonValue(await receiveRemoteDelivery(
+        federationDeliveryEnvelopeV2Schema.parse(await readBoundedJson(request)), ctx,
+      )));
+    }
     if (url.pathname === SHIP_DOCUMENT_PATH && request.method === "GET") {
       return jsonResponse(await localShipDocument(ctx));
     }
@@ -1381,6 +1454,7 @@ async function acceptRemoteInvite(
   const tokenHash = await sha256Base64Url(input.token);
   const invite = ctx.federation.inviteByTokenHash(tokenHash);
   if (!invite) throw new PublicFederationError(404, "Contact invite not found");
+  if (invite.purpose === "approach") throw new PublicFederationError(404, "Contact invite not found");
   if (invite.state === "cancelled") {
     throw new PublicFederationError(410, "Contact invite was cancelled");
   }
@@ -1490,7 +1564,6 @@ async function acceptRemoteInvite(
     );
     const activated = activateFederationContact({
       ownerUid: currentInvite.ownerUid,
-      inviteDirection: "outgoing",
       generation,
       remoteShipId: input.document.shipId,
       remoteSubject,
@@ -1539,9 +1612,9 @@ async function acceptRemoteInvite(
 }
 
 async function receiveRemoteDelivery(
-  envelope: FederationDeliveryEnvelope,
+  envelope: FederationTransportEnvelope,
   ctx: KernelContext,
-): Promise<FederationDeliveryReceipt> {
+): Promise<FederationTransportReceipt> {
   assertCurrentTimestamp(envelope.timestampMs);
   const contact = ctx.federation.getForInbound(
     envelope.senderShipId,
@@ -1592,7 +1665,7 @@ async function receiveRemoteDelivery(
       ) {
         throw new PublicFederationError(409, "Contact revocation generation changed");
       }
-      if (existing && existing.payloadHash !== payloadHash) {
+      if (existing && (existing.payloadHash !== payloadHash || existing.wireVersion !== envelope.version)) {
         throw new PublicFederationError(409, "Federation delivery id was reused");
       }
       const received = existing ?? ctx.federation.transaction(() => {
@@ -1617,11 +1690,12 @@ async function receiveRemoteDelivery(
           deliveryId: envelope.deliveryId,
           payloadHash,
           payload: envelope.payload,
+          wireVersion: envelope.version,
           now,
         }).record;
       });
       if (received.state === "committed" && received.response) {
-        return federationDeliveryReceiptSchema.parse(received.response);
+        return (received.wireVersion === 2 ? federationDeliveryReceiptV2Schema : federationDeliveryReceiptSchema).parse(received.response);
       }
       if (received.state === "rejected") {
         throw new PublicFederationError(409, "Federation delivery was rejected");
@@ -1671,7 +1745,7 @@ export async function recoverFederationInbox(
       const inbox = ctx.federation.inbox(contactId, contactGeneration, deliveryId);
       if (!inbox) throw new PublicFederationError(404, "Federation delivery not found");
       if (inbox.state === "committed" && inbox.response) {
-        return federationDeliveryReceiptSchema.parse(inbox.response);
+        return (inbox.wireVersion === 2 ? federationDeliveryReceiptV2Schema : federationDeliveryReceiptSchema).parse(inbox.response);
       }
       if (inbox.state === "rejected") {
         throw new PublicFederationError(409, "Federation delivery was rejected");
@@ -1711,15 +1785,14 @@ async function projectInboundDelivery(
   inbox: FederationInboxRecord,
   contact: FederationContactRecord,
   ctx: KernelContext,
-): Promise<FederationDeliveryReceipt> {
+): Promise<FederationTransportReceipt> {
   try {
     await commitInboundDelivery(inbox, contact, ctx);
     const committedAtMs = Date.now();
-    const receiptUnsigned = {
-      version: 1,
-      deliveryId: inbox.deliveryId,
-    } as const;
-    const receipt: FederationDeliveryReceipt = {
+    const receiptUnsigned = inbox.wireVersion === 2
+      ? { version: 2 as const, domain: "gsv-federation/2/receipt" as const, deliveryId: inbox.deliveryId }
+      : { version: 1 as const, deliveryId: inbox.deliveryId };
+    const receipt: FederationTransportReceipt = {
       ...receiptUnsigned,
       signature: await signContactEnvelope(
         contact.sharedSecret,
@@ -1798,20 +1871,6 @@ async function commitInboundDelivery(
         );
       });
       if (contact.state !== "revoked") ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
-      if (!ctx.auth.isAccountDisabled(contact.ownerUid)) {
-        createFederationResponsibility({
-          ownerUid: contact.ownerUid,
-          title: `Review contact change ${contact.id}`,
-          details: {
-            eventType: "federation.contact.revoked",
-            contactId: contact.id,
-            deliveryId: inbox.deliveryId,
-            remoteDisplayName: contactDisplayName(contact),
-          },
-          dedupeKey: `federation.contact.revoked:${contact.id}:${contact.generation}`,
-          deliveryId: inbox.deliveryId,
-        }, ctx);
-      }
       await ctx.reconcileResponsibilityWake(contact.ownerUid);
   }
 }
@@ -1826,6 +1885,23 @@ async function commitInboundMessage(
   if (payload.threadId !== contact.threadId) {
     throw new PublicFederationError(409, "Contact thread does not match this relationship");
   }
+  const social = "social" in payload ? payload.social : undefined;
+  if (social) {
+    if (social.reference.actor.shipId !== contact.remoteShipId
+      || social.reference.actor.subjectId !== contact.remoteSubject.id
+      || social.reference.messageId !== payload.messageId || social.threadId !== contact.threadId) {
+      throw new PublicFederationError(409, "Message origin does not match this relationship");
+    }
+    if (social.replyTo) {
+      const actor = social.replyTo.actor;
+      const document = await localShipDocument(ctx);
+      const subject = ensureLocalSubject(contact.ownerUid, ctx);
+      if (!(actor.shipId === contact.remoteShipId && actor.subjectId === contact.remoteSubject.id)
+        && !(actor.shipId === document.shipId && actor.subjectId === subject.id)) {
+        throw new PublicFederationError(409, "Reply origin is outside this relationship");
+      }
+    }
+  }
   const conversation = await ensureContactConversation(contact, ctx);
   const messageId = await stableOpaqueId(
     "msg",
@@ -1833,11 +1909,18 @@ async function commitInboundMessage(
   );
   const resources = validateFederationResourceDescriptors(payload.resources);
   const media = resources?.map((resource) => localizeResource(contact, resource));
+  if (social) {
+    const existing = await getConversationById(ctx.installationId, conversation.id).resolveOrigin(social.reference, social.threadId);
+    if (existing && existing.messageId !== messageId) {
+      throw new PublicFederationError(409, "Message origin has already been delivered");
+    }
+  }
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId,
     idempotencyKey: `federation:${contact.id}:${contact.generation}:${inbox.deliveryId}`,
     author: contactAuthor(contact),
     text: payload.text,
+    ...(social ? { social } : undefined),
     ...(media?.length ? { media } : undefined),
     ...(media?.length
       ? { mediaAuthority: { kind: "federation", target: contact.id } as const }
@@ -1845,29 +1928,11 @@ async function commitInboundMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId: inbox.deliveryId },
     createdAt: inbox.receivedAtMs,
   });
-  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
-  if (ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received")) {
-    createFederationResponsibility({
-      ownerUid: contact.ownerUid,
-      title: `Review contact message ${messageId} with the owner`,
-      details: {
-        eventType: "federation.message.received",
-        contactId: contact.id,
-        contactGeneration: contact.generation,
-        conversationId: conversation.id,
-        messageId,
-        deliveryId: inbox.deliveryId,
-        remoteDisplayName: contactDisplayName(contact),
-        resourceCount: media?.length ?? 0,
-        contentTrust: "untrusted",
-      },
-      dedupeKey: `federation.message:${contact.id}:${contact.generation}:${inbox.deliveryId}`,
-      deliveryId: inbox.deliveryId,
-      conversationId: conversation.id,
-    }, ctx);
-    await ctx.reconcileResponsibilityWake(contact.ownerUid);
-  }
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
+  admitContactMessage(contact, inbox, appended.message, ctx);
+  // Reconcile even on recovery: the responsibility may have committed before scheduling failed.
+  await ctx.reconcileResponsibilityWake(contact.ownerUid);
 }
 
 async function commitInboundRequest(
@@ -1915,10 +1980,7 @@ async function commitInboundRequest(
         conversationId: conversation.id,
         deliveryId: inbox.deliveryId,
         remoteInput: true,
-        createAllowed: ctx.responsibilitySources.isEnabled(
-          contact.ownerUid,
-          "federation.received",
-        ),
+        createAllowed: false,
         now: inbox.receivedAtMs,
       }, ctx);
       return created;
@@ -2001,8 +2063,7 @@ async function commitInboundRequestUpdate(
       conversationId: contact.conversationId,
       deliveryId: inbox.deliveryId,
       remoteInput: true,
-      createAllowed: !ctx.auth.isAccountDisabled(contact.ownerUid)
-        && ctx.responsibilitySources.isEnabled(contact.ownerUid, "federation.received"),
+      createAllowed: false,
       now: receivedAtMs,
     }, ctx);
     return next;
@@ -2200,21 +2261,23 @@ async function commitLocalOutboxMessage(
   const local = outbox.localMessage;
   if (!local || outbox.localSequence !== undefined) return;
   const conversation = await ensureContactConversation(contact, ctx);
-  const process = ctx.procs.get(conversation.handlerPid);
-  if (!process) throw new Error("Contact conversation handler is unavailable");
+  const archivePid = local.media?.length ? await ensurePersonalController(contact.ownerUid, ctx) : undefined;
+  const process = archivePid ? ctx.procs.get(archivePid) : undefined;
+  if (local.media?.length && !process) throw new Error("Contact media archive owner is unavailable");
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId: local.messageId,
     idempotencyKey: `federation-local:${outbox.deliveryId}`,
     author: local.author,
     text: local.text,
+    ...(local.social ? { social: local.social } : undefined),
     media: local.media,
     // The handler's archive owns the bytes; the pid names the sender that the
     // send-time lineage check admitted, which may be a delegated subprocess.
-    ...(local.media?.length
+    ...(local.media?.length && archivePid && process
       ? {
         mediaOwner: {
-          ...processMediaOwner(conversation.handlerPid, process),
-          pid: local.processId ?? conversation.handlerPid,
+          ...processMediaOwner(archivePid, process),
+          pid: local.processId ?? archivePid,
         },
       }
       : undefined),
@@ -2224,18 +2287,16 @@ async function commitLocalOutboxMessage(
     createdAt: local.createdAtMs,
   });
   ctx.federation.markLocalMessageCommitted(outbox.deliveryId, appended.message.sequence);
-  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
 async function ensureContactConversation(
   contact: FederationContactRecord,
   ctx: KernelContext,
 ) {
-  const handlerPid = await ensurePersonalController(contact.ownerUid, ctx);
   const conversation = ctx.conversations.ensureContact(
     contact.ownerUid,
-    handlerPid,
     contactDisplayName(contact),
     contact.conversationId,
   );
@@ -2266,8 +2327,8 @@ async function appendContactSystemMessage(
     origin: { kind: "federation", contactId: contact.id, deliveryId },
     createdAt,
   });
-  ctx.conversations.recordSequence(conversationId, appended.message.sequence);
-  if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
+  ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
+  if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
 function createFederationResponsibility(input: {
@@ -2324,7 +2385,7 @@ function localOutboundMessage(input: {
   messageId: string;
   text: string;
   media?: ResourceBlock[];
-  handlerPid: string;
+  handlerPid?: string;
   ownerUid: number;
   contact: FederationContactRecord;
   deliveryId: string;
@@ -2380,12 +2441,15 @@ function contactAuthor(contact: FederationContactRecord): ConversationMessageAut
 }
 
 function broadcastCommittedMessage(
-  ownerUid: number,
+  contact: FederationContactRecord,
   message: ConversationMessage,
   ctx: KernelContext,
 ): void {
-  ctx.broadcastToUserUid(ownerUid, "message.committed", { message, directed: false });
-  ctx.broadcastToUserUid(ownerUid, "conversation.changed", {
+  const current = ctx.federation.get(contact.id);
+  const attention = message.author.kind === "contact" && current?.state === "active" && !current.blocked && !current.preferences.muted
+    ? "notify" : "quiet";
+  ctx.broadcastToUserUid(contact.ownerUid, "message.committed", { message, directed: false, attention });
+  ctx.broadcastToUserUid(contact.ownerUid, "conversation.changed", {
     conversationId: message.conversationId,
     latestSequence: message.sequence,
   });
@@ -2404,92 +2468,6 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
     ownerUid,
     boundedText(account.username, "Contact display name", MAX_CONTACT_DISPLAY_NAME_BYTES, false),
   );
-}
-
-function requireContactCaller(ctx: KernelContext, directHuman: boolean): number {
-  if (principalOf(ctx)?.kind !== "human") throw new Error("Contact operations require a user");
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  if (directHuman) {
-    const process = ctx.processId ? ctx.procs.get(ctx.processId) : null;
-    const ownShip = process?.isPersonalController === true && process.ownerUid === ownerUid;
-    const directClient = Boolean(ctx.connection && !ctx.processId);
-    if (!directClient && !ownShip) {
-      throw new Error("This contact operation requires a signed-in human or their Ship");
-    }
-    const account = ctx.auth.getPasswdByUid(ownerUid);
-    const shadow = account ? ctx.auth.getShadowByUsername(account.username) : null;
-    if (
-      !account
-      || ownerUid < 1_000
-      || ctx.auth.isPersonalAgentUid(ownerUid)
-      || !shadow
-      || isLocked(shadow)
-    ) {
-      throw new Error("This contact operation requires a signed-in human or their Ship");
-    }
-  }
-  return ownerUid;
-}
-
-function requireOwnedActiveContact(
-  contactIdValue: string,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const contactId = contactIdValue.trim();
-  const contact = ctx.federation.get(contactId);
-  if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active") {
-    throw new Error(`Contact not found: ${contactId}`);
-  }
-  return contact;
-}
-
-function requireOwnedActiveContactGeneration(
-  expected: FederationContactRecord,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const current = requireOwnedActiveContact(expected.id, ownerUid, ctx);
-  if (current.generation !== expected.generation) {
-    throw new Error("Contact generation changed during operation");
-  }
-  return current;
-}
-
-function requireOwnedContact(
-  contactIdValue: string,
-  ownerUid: number,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const contactId = contactIdValue.trim();
-  const contact = ctx.federation.get(contactId);
-  if (!contact || contact.ownerUid !== ownerUid) {
-    throw new Error(`Contact not found: ${contactId}`);
-  }
-  return contact;
-}
-
-function contactSummary(contact: FederationContactRecord): ContactSummary {
-  return {
-    id: contact.id,
-    ownerUid: contact.ownerUid,
-    state: contact.state,
-    generation: contact.generation,
-    remoteShipId: contact.remoteShipId,
-    remoteSubject: contact.remoteSubject,
-    remoteOrigin: contact.remoteOrigin,
-    ...(contact.localAlias !== undefined ? { localAlias: contact.localAlias } : undefined),
-    conversationId: contact.conversationId,
-    createdAtMs: contact.createdAtMs,
-    updatedAtMs: contact.updatedAtMs,
-    ...(contact.revokedAtMs !== undefined ? { revokedAtMs: contact.revokedAtMs } : undefined),
-    ...(contact.lastReceivedAtMs !== undefined
-      ? { lastReceivedAtMs: contact.lastReceivedAtMs }
-      : undefined),
-    ...(contact.lastDeliveredAtMs !== undefined
-      ? { lastDeliveredAtMs: contact.lastDeliveredAtMs }
-      : undefined),
-  };
 }
 
 function contactInviteSummary(
@@ -2660,6 +2638,12 @@ function assertCurrentTimestamp(timestampMs: number): void {
 }
 
 function publicFederationFailure(cause: unknown): PublicFederationFailure {
+  if (cause instanceof FederationActorBlockedError) return { status: 404, message: "Contact pairing is unavailable" };
+  if (cause instanceof ApproachAdmissionError) {
+    if (cause.reason === "collision") return { status: 409, message: "A message request is already pending for these participants", retryAfterMs: 60_000 };
+    if (cause.reason === "capacity") return { status: 429, message: "Message requests are temporarily unavailable", retryAfterMs: 3_600_000 };
+    return { status: 404, message: "Message requests are unavailable" };
+  }
   if (cause instanceof PublicFederationError) {
     return {
       status: cause.status,

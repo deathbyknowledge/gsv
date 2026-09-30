@@ -28,12 +28,9 @@ import {
 
 describe("Fleet references and supported place actions", () => {
   it("opens connection controls without selecting a row or treating them as approvals", () => {
-    for (const to of ["place", "contact"] as const) {
-      const reference = { kind: "connect" as const, to };
-      expect(isApprovalReference(reference)).toBe(false);
-      expect(fleetReferenceRow(reference)).toBeNull();
-    }
-    expect(fleetReferenceRow("contact:person:123")).toBe("contact:person:123");
+    const reference = { kind: "connect" as const, to: "place" as const };
+    expect(isApprovalReference(reference)).toBe(false);
+    expect(fleetReferenceRow(reference)).toBeNull();
   });
 
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {
