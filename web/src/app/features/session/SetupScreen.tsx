@@ -1,6 +1,7 @@
+import { useId } from "preact/hooks";
 import { TextInput } from "../../components/ui/TextInput";
 import { AuthLayout } from "./AuthLayout";
-import { PrivacyPolicyLink } from "./PolicyLinks";
+import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
 import { SessionError } from "./SessionChrome";
 import { USERNAME_FORMAT_DESCRIPTION, type SetupAccount, type SetupAccountErrors } from "./sessionDomain";
 import "./SetupScreen.css";
@@ -13,18 +14,22 @@ type SetupScreenProps = {
   username: string;
   password: string;
   passwordConfirm: string;
+  consent: boolean;
+  consentError: string | null;
   error: string | null;
   fieldErrors: SetupAccountErrors;
   onUsername: (value: string) => void;
   onPassword: (value: string) => void;
   onPasswordConfirm: (value: string) => void;
+  onConsent: (checked: boolean) => void;
   onBack: () => void;
   onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => void;
   onSubmitPointerDown: () => void;
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, step, username, password, passwordConfirm, error, fieldErrors, onUsername, onPassword, onPasswordConfirm, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, step, username, password, passwordConfirm, consent, consentError, error, fieldErrors, onUsername, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+  const consentId = useId();
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
       <div class={`gsv-setup-head${step === "consent" ? " is-consent" : ""}`}>
@@ -55,7 +60,18 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
             <p>Depending on what you allow, it can work with files, run commands, use websites and signed-in services, and send communications on your behalf.</p>
             <p>GSV is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.</p>
           </div>
-          <p class="gsv-setup-privacy">By continuing, you acknowledge the <PrivacyPolicyLink />.</p>
+          <div class={`gsv-setup-consent${consentError ? " is-error" : ""}`}>
+            <div class="gsv-setup-consent-row">
+              <input id={consentId} type="checkbox" required checked={consent} disabled={busy}
+                aria-labelledby={`${consentId}-label`}
+                aria-invalid={consentError ? true : undefined}
+                aria-describedby={consentError ? `${consentId}-error` : undefined}
+                onChange={(event) => onConsent(event.currentTarget.checked)} />
+              <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label>
+                <TermsOfServiceLink /> <label for={consentId}>and acknowledge the </label><PrivacyPolicyLink />.</span>
+            </div>
+            {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">Confirm your age and agreement to continue.</p> : null}
+          </div>
         </div>}
         <SessionError message={error} />
         <div class="gsv-setup-actions">

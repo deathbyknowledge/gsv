@@ -21,6 +21,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupUsername, setSetupUsername] = useState(snapshot.username);
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
+  const [setupConsent, setSetupConsent] = useState(false);
+  const [setupConsentTouched, setSetupConsentTouched] = useState(false);
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
@@ -116,6 +118,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPassword("");
       setSetupPasswordConfirm("");
       setSetupTouched({});
+      setSetupConsent(false);
+      setSetupConsentTouched(false);
       setSetupStep("credentials");
     }
     if (snapshot.phase === "ready") setLoginPassword("");
@@ -152,6 +156,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupStep("consent");
       return;
     }
+    setSetupConsentTouched(true);
+    if (!setupConsent) return;
     setLoginValidationError(null);
     setLoginUsername(account.username);
     setLoginUsernameTouched(false);
@@ -184,9 +190,12 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       username: setupUsername,
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
+      consent: setupConsent,
+      consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
       onUsername: (value: string) => { setSetupUsername(value.toLowerCase()); },
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
+      onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },
       onBack: () => {
         if (busy) return;
         window.history.back();

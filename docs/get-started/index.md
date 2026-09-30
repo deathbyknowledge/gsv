@@ -7,9 +7,9 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 
 If an operator has created a space for you, open its setup invitation and choose
 the username and password you'll use inside that space. Continue to review the
-early-access disclosure and Privacy Policy notice before creating your account.
-Continuing acknowledges the Privacy Policy; there is no additional checkbox inside
-the space. **Back** lets you revise your credentials.
+early-access disclosure and confirm the age, Terms of Service and Privacy Policy
+agreement before creating your account. This checkbox is required inside the space
+as well as on the signup email step. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
