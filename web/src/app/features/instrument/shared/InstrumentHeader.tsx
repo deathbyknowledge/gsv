@@ -23,6 +23,7 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
         <button type="button" aria-label="GSV · Open Zen" onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
+        <Feedback view={distance} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
@@ -37,7 +38,6 @@ export function InstrumentHeader({ distance, onNavigate, helper, onShip, help, o
           <kbd>,</kbd>{distance === "settings" ? "zen" : "settings"}
         </button>
         <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>keys</button>
-        <Feedback view={distance} />
       </nav>
     </header>
   );
