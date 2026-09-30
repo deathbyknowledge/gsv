@@ -24,10 +24,11 @@ type SetupScreenProps = {
   onConsent: (checked: boolean) => void;
   onBack: () => void;
   onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => void;
+  onSubmitPointerDown: () => void;
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, step, username, password, passwordConfirm, consent, consentError, error, fieldErrors, onUsername, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, step, username, password, passwordConfirm, consent, consentError, error, fieldErrors, onUsername, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const consentId = useId();
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
@@ -84,7 +85,8 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
         <SessionError message={error} />
         <div class="gsv-setup-actions">
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>Back</button> : null}
-          <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}>
+          <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
+            onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
             {busy ? "Opening your space…" : step === "credentials" ? "Continue" : "Create account"}
           </button>
         </div>

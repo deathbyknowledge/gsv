@@ -24,6 +24,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
+  const setupSubmitPressed = useRef(false);
+  const setupHasConsentEntry = useRef(false);
   const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
@@ -32,7 +34,20 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     : snapshot.phase === "booting" ? "booting" : "login";
 
   useEffect(() => {
+    const releaseSubmit = () => { setupSubmitPressed.current = false; };
+    window.addEventListener("pointerup", releaseSubmit, true);
+    window.addEventListener("pointercancel", releaseSubmit, true);
+    window.addEventListener("blur", releaseSubmit);
+    return () => {
+      window.removeEventListener("pointerup", releaseSubmit, true);
+      window.removeEventListener("pointercancel", releaseSubmit, true);
+      window.removeEventListener("blur", releaseSubmit);
+    };
+  }, []);
+
+  useEffect(() => {
     if (visibleView !== "setup") return;
+    setupHasConsentEntry.current = false;
     window.history.replaceState({ gsvSetupConsent: false }, "");
     const onPopState = () => {
       const state = setupHistoryStateSchema.safeParse(window.history.state);
@@ -45,16 +60,31 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       if (!state.success) return;
       const destination = window.location.href;
       window.history.replaceState(null, "");
-      if (!state.data.gsvSetupConsent) return;
+      if (!setupHasConsentEntry.current) return;
       // Restore the completed URL before route listeners observe the original
       // wizard entry. Capability setup may already have replaced /onboarding.
-      window.addEventListener("popstate", () => {
+      const restoreCredentials = () => {
         const previous = setupHistoryStateSchema.safeParse(window.history.state);
         if (previous.success && !previous.data.gsvSetupConsent) {
           window.history.replaceState(null, "", destination);
         }
-      }, { once: true, capture: true });
-      window.history.back();
+      };
+      const collapseConsent = () => {
+        window.history.replaceState(null, "", destination);
+        window.addEventListener("popstate", restoreCredentials, { once: true, capture: true });
+        window.history.back();
+      };
+      if (state.data.gsvSetupConsent) collapseConsent();
+      else {
+        // Browser Back can leave consent ahead of us while setup is pending.
+        // Rewrite that entry too, then return to the completed credentials slot.
+        window.history.replaceState({ gsvSetupConsent: false }, "", destination);
+        window.addEventListener("popstate", () => {
+          const next = setupHistoryStateSchema.safeParse(window.history.state);
+          if (next.success && next.data.gsvSetupConsent) collapseConsent();
+        }, { once: true, capture: true });
+        window.history.forward();
+      }
     };
   }, [visibleView]);
 
@@ -110,6 +140,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
 
   const submitSetup = (event: Event): void => {
     event.preventDefault();
+    setupSubmitPressed.current = false;
     if (busy) return;
     const account = { username: setupUsername, password: setupPassword };
     setSetupTouched({ username: true, password: true, passwordConfirm: true });
@@ -121,6 +152,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     }
     if (setupStep === "credentials") {
       window.history.pushState({ gsvSetupConsent: true }, "");
+      setupHasConsentEntry.current = true;
       setSetupStep("consent");
       return;
     }
@@ -172,9 +204,10 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => {
         // Submission validates every field. Showing an error on pointer-down
         // would move Continue before pointer-up and swallow the click.
-        if (next && next === screenRef.current?.querySelector("[data-setup-submit]")) return;
+        if (setupSubmitPressed.current || (next && next === screenRef.current?.querySelector("[data-setup-submit]"))) return;
         setSetupTouched((touched) => ({ ...touched, [field]: true }));
       },
+      onSubmitPointerDown: () => { setupSubmitPressed.current = true; },
       onSubmit: submitSetup,
     },
   };

@@ -18,6 +18,7 @@ async function setupScreen(path = "/") {
   ];
   let index = 1;
   const traverse = (offset: number) => queueMicrotask(() => {
+    if (index + offset < 0 || index + offset >= entries.length) return;
     index += offset;
     events.dispatchEvent(new Event("popstate"));
   });
@@ -37,6 +38,7 @@ async function setupScreen(path = "/") {
     },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
+    dispatchEvent: events.dispatchEvent.bind(events),
   });
   const root = createTestRoot("Session account form");
   let snapshot: SessionSnapshot = {
@@ -69,6 +71,34 @@ async function setupScreen(path = "/") {
 }
 
 describe("minimal account setup", () => {
+  it("defers blur errors until submit when a pointer press does not focus Continue", async () => {
+    const screen = await setupScreen();
+    try {
+      await act(() => {
+        screen.state().setup.onSubmitPointerDown();
+        screen.state().setup.onFieldBlur("username", null);
+      });
+      expect(screen.state().setup.fieldErrors.username).toBeUndefined();
+      await act(() => { window.dispatchEvent(new Event("pointerup")); });
+      expect(screen.state().setup.fieldErrors.username).toBeUndefined();
+      await act(() => screen.state().setup.onSubmit(new Event("submit")));
+      expect(screen.state().setup.fieldErrors.username).toBe("Username is required.");
+      expect(screen.state().setup.fieldErrors.password).toBeDefined();
+      expect(screen.state().setup.fieldErrors.passwordConfirm).toBeDefined();
+      expect(screen.setup).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it.each(["pointerup", "pointercancel", "blur"])("resumes blur validation after an abandoned submit press ends with %s", async (event) => {
+    const screen = await setupScreen();
+    try {
+      await act(() => screen.state().setup.onSubmitPointerDown());
+      await act(() => { window.dispatchEvent(new Event(event)); });
+      await act(() => screen.state().setup.onFieldBlur("username", null));
+      expect(screen.state().setup.fieldErrors.username).toBe("Username is required.");
+    } finally { await screen.unmount(); }
+  });
+
   it.each(["/", "/onboarding"])("collapses the completed wizard before the next browser Back from %s", async (path) => {
     const screen = await setupScreen(path);
     await act(() => {
@@ -107,6 +137,37 @@ describe("minimal account setup", () => {
     window.history.replaceState(null, "", "/recover");
     await next.unmount();
     expect(window.location.pathname).toBe("/recover");
+  });
+
+  it.each(["/", "/onboarding"])("cleans both wizard entries when setup completes after in-flight Back from %s", async (path) => {
+    const screen = await setupScreen(path);
+    await act(() => {
+      screen.state().setup.onUsername("alice");
+      screen.state().setup.onPassword("password123");
+      screen.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await act(() => screen.state().setup.onConsent(true));
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await screen.change({ phase: "authenticating" });
+    await act(async () => window.history.back());
+    expect(screen.state()).toMatchObject({ visibleView: "setup", busy: true, setup: { step: "credentials" } });
+    expect(screen.setup).toHaveBeenCalledOnce();
+
+    window.history.replaceState(window.history.state, "", "/");
+    await screen.unmount();
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+    await act(() => window.history.back());
+    expect(window.location.pathname).toBe("/previous");
+    await act(() => window.history.forward());
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
+    // Even the former consent slot must point to the completed space when
+    // reached from forward history, without restoring wizard state.
+    await act(() => window.history.forward());
+    expect(window.location.pathname).toBe("/");
+    expect(window.history.state).toBeNull();
   });
 
   it("returns to the original credentials entry after Back, invalid edits and Forward", async () => {
