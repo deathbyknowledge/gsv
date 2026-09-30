@@ -51,6 +51,8 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   and is never replayed.
   A successful Graph response must include a message id; an incomplete success
   response also stays ambiguous rather than being recorded as delivered.
+  If the reply window closes after some parts were delivered, the remaining
+  delivery fails without sending the original text again through a template.
 - `image`, `video`, `audio`, and `document` attachments are sent one message
   each. Bytes from the request body are uploaded to the number's media store
   and referenced by id; a `url` attachment is passed as a link. The text becomes

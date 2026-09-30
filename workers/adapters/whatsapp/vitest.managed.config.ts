@@ -234,7 +234,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts", "test/delivery.test.ts"],
     // The window scenario holds, releases and approves several messages in one flow.
     testTimeout: 30_000,
   },

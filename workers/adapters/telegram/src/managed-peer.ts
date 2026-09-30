@@ -729,13 +729,18 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         return { ok: false, error, retryable: true };
       }
       if (kind === "ambiguous") {
-        await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error);
+        try {
+          await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error);
+        } catch {
+          // The durable attempting receipt already prevents replay if this write fails.
+        }
         return { ok: false, error, ambiguous: true };
       }
       await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error);
       return { ok: false, error };
     };
 
+    let sentInAttempt = 0;
     try {
       const current = await this.requireState();
       this.assertPeerDestination(current, message.surface, message.actorId);
@@ -799,7 +804,6 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // Every accepted part is recorded before the next provider call, so a
       // retry of this delivery resumes after the parts the person already has.
       let anchorMessageId = claim.progress.messageId;
-      let sentInAttempt = 0;
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.pauseBetweenParts(chatId, fetcher);
         const messageId = await parts[index]!();
@@ -815,7 +819,9 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     } catch (error) {
       // A definite rejection resumes at the first unsent part on retry; an
       // unknown provider outcome stays ambiguous and is never replayed.
-      return await fail(error instanceof ManagedTelegramDeliveryError ? error.kind : "permanent");
+      return await fail(error instanceof ManagedTelegramDeliveryError
+        ? error.kind
+        : sentInAttempt > 0 || claim.progress.sent > 0 ? "ambiguous" : "permanent");
     }
   }
 

@@ -832,7 +832,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         return { ok: false, error, retryable: true };
       }
       if (kind === "ambiguous") {
-        await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error);
+        try {
+          await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error);
+        } catch {
+          // The durable attempting receipt already prevents replay if this write fails.
+        }
         return { ok: false, error, ambiguous: true };
       }
       await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error);
@@ -851,7 +855,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const issue = this.deliveryContextIssue(current, context);
       if (issue) throw new Error(issue);
       if (!whatsAppWindowOpen(current, Date.now())) {
-        if (!fallbackOwner) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR);
+        if (!fallbackOwner || claim.progress.sent > 0) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR);
         return await this.deliverOutsideWindow(message, fallbackOwner, claim, options, fail, current);
       }
       // Replies still held behind a template go out first so the person reads them in order.
@@ -933,7 +937,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         // unknown provider outcome stays ambiguous and is never replayed.
         return await fail(error.kind, error.message);
       }
-      return await fail("permanent");
+      return await fail(sentInAttempt > 0 || claim.progress.sent > 0 ? "ambiguous" : "permanent");
     }
   }
 
@@ -1003,12 +1007,16 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         if (kind === "permanent" && !complete) await this.held.remove(message.deliveryId);
         return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined);
       }
-      await this.settlePendingTemplate(claimedAt, sent.messageId);
-      // A held prompt reports no id: its approval attaches to the interactive
-      // message that the person's reply releases.
-      const messageId = options.approval ? undefined : sent.messageId;
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-      return messageId ? { ok: true, messageId } : { ok: true };
+      try {
+        await this.settlePendingTemplate(claimedAt, sent.messageId);
+        // A held prompt reports no id: its approval attaches to the interactive
+        // message that the person's reply releases.
+        const messageId = options.approval ? undefined : sent.messageId;
+        await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
+        return messageId ? { ok: true, messageId } : { ok: true };
+      } catch {
+        return await fail("ambiguous");
+      }
     })();
     this.templateAttempt = attempt;
     try {

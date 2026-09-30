@@ -161,7 +161,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts", "test/delivery.test.ts"],
     // Paragraph messages are paced one second apart, so one flow spans several seconds.
     testTimeout: 30_000,
   },
