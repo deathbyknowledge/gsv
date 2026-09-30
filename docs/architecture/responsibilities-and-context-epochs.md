@@ -56,7 +56,9 @@ let a child bypass the Ship's ordinary result path.
 
 A responsibility has one identity and state machine. Optional fields describe its
 source, audience, hierarchy, assignment, deadline, and blocker without
-creating separate commitment or duty concepts.
+creating separate commitment or duty concepts. Its id is `r12y:` followed by a
+UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
+prefix, so a caller that copies the id without it still reaches the same record.
 
 ```text
 r12y:<id>
