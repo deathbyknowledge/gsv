@@ -50,6 +50,7 @@ export async function ensureAccountHomeLayout(
     seedPromptContext?: boolean;
     personalAgent?: boolean;
     cleanupGeneratedPromptContext?: boolean;
+    beforeRetiringGeneratedBootContext?: () => void;
   } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
@@ -101,12 +102,15 @@ async function homeLayoutOps(
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {
-      maybeDeleteGeneratedTextFile(
+      const retiringGeneratedBootContext = maybeDeleteGeneratedTextFile(
         ops,
         "context.d/00-boot.md",
         bootContext,
         RETIRED_BOOT_CONTEXT_TEMPLATE,
       );
+      if (retiringGeneratedBootContext) {
+        options.beforeRetiringGeneratedBootContext?.();
+      }
       maybePutTextFile(
         ops,
         "context.d/00-role.md",
@@ -192,18 +196,19 @@ function maybeDeleteGeneratedTextFile(
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
   ...generatedContents: string[]
-): void {
+): boolean {
   if (existing.kind !== "file") {
-    return;
+    return false;
   }
   const text = TEXT_DECODER.decode(existing.bytes);
   if (!generatedContents.includes(text)) {
-    return;
+    return false;
   }
   ops.push({
     type: "delete",
     path,
   });
+  return true;
 }
 
 async function ensureHomeDir(

@@ -165,6 +165,7 @@ function createCtx() {
       } as KernelContext["config"],
       responsibilities: {
         create: createResponsibility,
+        getByDedupeKey: vi.fn(() => null),
       } as KernelContext["responsibilities"],
       peer,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -549,6 +550,17 @@ describe("handleAccountCreate", () => {
       ownerUid: 1000,
       dedupeKey: "onboarding.initial",
     }));
+  });
+
+  it("does not onboard again a home that finished the earlier flow", async () => {
+    const state = createCtx();
+    provisionExistingPersonalAgent(state);
+    const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+
+    const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+
+    expect(result.created).toBe(false);
+    expect(state.createResponsibility).not.toHaveBeenCalled();
   });
 
   it("keeps the generated boot context when its replacement cannot be recorded", async () => {

@@ -945,7 +945,7 @@ describe("proc handlers", () => {
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
       responsibilities: {
-        create: vi.fn(() => ({ record: { id: "r12y:onboarding", state: "waiting" }, created: true, revision: 1 })),
+        getByDedupeKey: vi.fn(() => null),
       },
       procs: {
         get: vi.fn(() => null),
@@ -1015,7 +1015,7 @@ describe("proc handlers", () => {
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
       responsibilities: {
-        create: vi.fn(() => ({ record: { id: "r12y:onboarding", state: "waiting" }, created: true, revision: 1 })),
+        getByDedupeKey: vi.fn(() => null),
       },
       procs: {
         get: vi.fn(() => null),

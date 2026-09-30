@@ -220,8 +220,9 @@ System-owned producers use the same ledger contract:
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an
   unresolved record still carrying an earlier release's wording onto the current
-  contract; resolved, cancelled, or owner-edited records are left alone. This
-  replaces the generated boot context file.
+  contract; resolved, cancelled, or owner-edited records are left alone, and a
+  home that finished the earlier boot-file flow and has no record is never
+  onboarded again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

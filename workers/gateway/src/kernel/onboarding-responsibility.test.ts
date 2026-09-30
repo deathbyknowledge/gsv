@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { ensureInitialOnboardingResponsibility, INITIAL_ONBOARDING_DEDUPE_KEY } from "./onboarding-responsibility";
+import { ensureInitialOnboardingResponsibility, INITIAL_ONBOARDING_DEDUPE_KEY, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ResponsibilityStore } from "./responsibility-store";
 
 const PREVIOUS_CONTRACT = {
@@ -89,6 +89,23 @@ describe("initial onboarding responsibility", () => {
 
       const replay = ensureInitialOnboardingResponsibility(1000, responsibilities, 3_000);
       expect(replay.revision).toBe(migrated.revision);
+    });
+  });
+
+  it("reconciles an existing record without seeding one for a home that has none", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const responsibilities = new ResponsibilityStore(storage);
+      expect(reconcileInitialOnboardingResponsibility(1000, responsibilities, 1_000)).toBeNull();
+      expect(responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)).toBeNull();
+
+      const seeded = seedPreviousContract(responsibilities, 1001, 1_000);
+      const migrated = reconcileInitialOnboardingResponsibility(1001, responsibilities, 2_000);
+      expect(migrated?.id).toBe(seeded.record.id);
+      expect(migrated?.title).toBe("Welcome to gsv");
+
+      const current = ensureInitialOnboardingResponsibility(1002, responsibilities, 1_000);
+      const unchanged = reconcileInitialOnboardingResponsibility(1002, responsibilities, 2_000);
+      expect(unchanged).toEqual(current.record);
     });
   });
 

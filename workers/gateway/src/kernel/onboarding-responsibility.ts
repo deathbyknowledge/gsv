@@ -71,10 +71,32 @@ function isUntouchedSeed(record: ResponsibilityRecord, contract: OnboardingContr
     && record.resolution === undefined;
 }
 
+function migrateUntouchedSeed(
+  record: ResponsibilityRecord,
+  responsibilities: ResponsibilityStore,
+  now: number,
+): ResponsibilityRecord {
+  if (!PREVIOUS_ONBOARDING_CONTRACTS.some((contract) => isUntouchedSeed(record, contract))) return record;
+  return responsibilities.update({
+    ownerUid: record.ownerUid,
+    id: record.id,
+    patch: {
+      title: WELCOME_CONTRACT.title,
+      details: WELCOME_CONTRACT.details,
+      blocker: WELCOME_CONTRACT.blocker,
+    },
+    actor: ONBOARDING_SOURCE,
+    observedByShip: true,
+    now,
+  }).record;
+}
+
 /**
  * Seed the owner's onboarding responsibility, or bring an untouched one from an
  * earlier release onto the current contract. A resolved, cancelled, or edited
- * record is returned unchanged.
+ * record is returned unchanged. Only a new personal agent, or the retirement of
+ * the exact generated boot file that preceded the ledger, may seed: a home that
+ * finished the earlier flow has no record and must not be onboarded again.
  */
 export function ensureInitialOnboardingResponsibility(
   ownerUid: number,
@@ -96,19 +118,19 @@ export function ensureInitialOnboardingResponsibility(
     now,
   });
   if (outcome.created) return outcome;
-  const { record } = outcome;
-  if (!PREVIOUS_ONBOARDING_CONTRACTS.some((contract) => isUntouchedSeed(record, contract))) return outcome;
-  const updated = responsibilities.update({
-    ownerUid,
-    id: record.id,
-    patch: {
-      title: WELCOME_CONTRACT.title,
-      details: WELCOME_CONTRACT.details,
-      blocker: WELCOME_CONTRACT.blocker,
-    },
-    actor: ONBOARDING_SOURCE,
-    observedByShip: true,
-    now,
-  });
-  return { record: updated.record, created: false, revision: updated.revision };
+  const record = migrateUntouchedSeed(outcome.record, responsibilities, now);
+  return { record, created: false, revision: responsibilities.revision(ownerUid) };
+}
+
+/**
+ * Bring an existing owner's untouched onboarding record from an earlier release
+ * onto the current contract, without seeding one where none exists.
+ */
+export function reconcileInitialOnboardingResponsibility(
+  ownerUid: number,
+  responsibilities: ResponsibilityStore,
+  now = Date.now(),
+): ResponsibilityRecord | null {
+  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
+  return record ? migrateUntouchedSeed(record, responsibilities, now) : null;
 }
