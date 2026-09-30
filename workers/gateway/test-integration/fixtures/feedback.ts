@@ -3,6 +3,7 @@ import type { FeedbackSubmission } from "@humansandmachines/gsv/services/feedbac
 
 const stalledReports = new Set<string>();
 const misreportedReceipts = new Set<string>();
+const rejectedReports = new Set<string>();
 
 export default class FeedbackFixture extends WorkerEntrypoint {
   async submitFeedback(input: FeedbackSubmission) {
@@ -10,6 +11,10 @@ export default class FeedbackFixture extends WorkerEntrypoint {
       throw new Error("Unexpected feedback caller");
     }
     if (!input.serverVersion || !input.space || !input.message.trim()) throw new Error("Missing report context");
+    if (input.message.startsWith("PRIVATE_REJECTED_REPORT_CONTENT") && !rejectedReports.has(input.id)) {
+      rejectedReports.add(input.id);
+      throw new Error(`${input.message}: ${input.activity?.text ?? ""}`);
+    }
     if (input.message === "Stall the first attempt" && !stalledReports.has(input.id)) {
       stalledReports.add(input.id);
       await new Promise(resolve => setTimeout(resolve, 60_000));

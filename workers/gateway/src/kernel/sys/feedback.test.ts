@@ -73,6 +73,21 @@ describe("operator feedback", () => {
     expect(submitFeedback).not.toHaveBeenCalled();
   });
 
+  it.each(["throw", "reject", "receipt"])("does not expose inbox errors or prevent retry (%s)", async (failure) => {
+    vi.useFakeTimers();
+    const { ctx, submitFeedback } = fixture();
+    const input = { id: crypto.randomUUID(), message: "PRIVATE_REPORT_CONTENT", activity: {
+      pid: "proc:ship", messageCount: 1, text: "PRIVATE_ACTIVITY_CONTENT", truncated: false,
+    } };
+    const error = new Error(`${input.message}: ${input.activity.text}`);
+    if (failure === "throw") submitFeedback.mockImplementationOnce(() => { throw error; });
+    else if (failure === "reject") submitFeedback.mockRejectedValueOnce(error);
+    else submitFeedback.mockResolvedValueOnce({ get id(): string { throw error; } });
+    await expect(handleSysFeedback(input, ctx)).rejects.toThrow(/^Feedback delivery failed$/);
+    expect(await handleSysFeedback(input, ctx)).toEqual({ id: input.id });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("bounds a stalled inbox, disposes the remote call and allows a retry", async () => {
     vi.useFakeTimers();
     const { ctx, submitFeedback } = fixture();

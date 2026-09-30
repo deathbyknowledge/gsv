@@ -120,7 +120,8 @@ with the bounded report and optional selected Ship activity in a JSON frame body
 Kernel consumes or cancels that body and derives the installation and human owner.
 The syscall ledger retains only arguments, without the report or attachment.
 The service owns the inbox and delivery acknowledgement. No report content enters
-the telemetry tail contract.
+the telemetry tail contract. Gateway replaces service exceptions with a generic
+delivery error so report content cannot leak through errors or the syscall ledger.
 
 The Instrument offers feedback when the binding exists and the caller has
 `sys.feedback`. The native `feedback` shell command uses the same syscall, so

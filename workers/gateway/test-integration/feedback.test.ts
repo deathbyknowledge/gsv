@@ -83,4 +83,26 @@ describe("clean-space operator feedback", () => {
     await expect(submit(input)).rejects.toThrow("Invalid feedback receipt");
     expect(await submit(input)).toEqual({ id: input.id });
   });
+
+  it("keeps rejected report content out of syscall errors, shell output and the full ledger", async () => {
+    const input = { id: crypto.randomUUID(), message: "PRIVATE_REJECTED_REPORT_CONTENT", activity: {
+      pid: "proc:ship", messageCount: 1, text: "PRIVATE_REJECTED_ACTIVITY_CONTENT", truncated: false,
+    } };
+    await expect(submit(input)).rejects.toThrow(/^Feedback delivery failed$/);
+    const shellId = crypto.randomUUID();
+    const uploaded = await client.request("fs.transfer.receive", { path: "/home/person/rejected-report.txt" }, { body: bodyFromText(input.message) });
+    expect(uploaded.data.ok).toBe(true);
+    expect(await client.shell.exec({ input: `feedback --id ${shellId} < /home/person/rejected-report.txt` })).toMatchObject({
+      status: "failed", exitCode: 1, output: "feedback: Feedback delivery failed\n",
+    });
+    const ledger = await client.sys.ledger.list({ limit: 200 });
+    for (const id of [input.id, shellId]) {
+      expect(ledger.lines.find(line => line.call === "sys.feedback" && JSON.parse(line.args).id === id)).toMatchObject({
+        outcome: "failed", error: "Feedback delivery failed",
+      });
+    }
+    expect(JSON.stringify(ledger)).not.toContain(input.message);
+    expect(JSON.stringify(ledger)).not.toContain(input.activity.text);
+    expect(await submit(input)).toEqual({ id: input.id });
+  });
 });

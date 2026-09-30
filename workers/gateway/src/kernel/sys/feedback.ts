@@ -22,20 +22,27 @@ export async function handleSysFeedback(args: SysFeedbackArgs, ctx: KernelContex
       catch { throw new Error("Invalid feedback report"); }
       signal.throwIfAborted();
       const id = input.data.id ?? crypto.randomUUID();
-      const pending = ctx.env.FEEDBACK.submitFeedback({
-        ...input.data, ...content, id,
-        installationId: ctx.installationId,
-        space: ctx.installationIdentity?.canonicalOrigin ?? null,
-        ownerUid: resolveCallerOwnerUid(ctx),
-        source: ctx.processId ? "agent" : "client",
-        serverVersion: ctx.serverVersion,
-      });
-      const receipt = await raceWithAbort(pending, signal, { onAbort: () => {
-        // SAFETY: Workers RPC promises expose disposal to cancel the remote call.
-        const rpc = pending as typeof pending & Partial<Disposable>;
-        try { rpc[Symbol.dispose]?.(); } catch { /* Cancellation remains terminal. */ }
-      } });
-      if (!receipt || receipt.id !== id) throw new Error("Invalid feedback receipt");
+      let receiptId: unknown;
+      try {
+        const pending = ctx.env.FEEDBACK.submitFeedback({
+          ...input.data, ...content, id,
+          installationId: ctx.installationId,
+          space: ctx.installationIdentity?.canonicalOrigin ?? null,
+          ownerUid: resolveCallerOwnerUid(ctx),
+          source: ctx.processId ? "agent" : "client",
+          serverVersion: ctx.serverVersion,
+        });
+        const receipt = await raceWithAbort(pending, signal, { onAbort: () => {
+          // SAFETY: Workers RPC promises expose disposal to cancel the remote call.
+          const rpc = pending as typeof pending & Partial<Disposable>;
+          try { rpc[Symbol.dispose]?.(); } catch { /* Cancellation remains terminal. */ }
+        } });
+        receiptId = receipt?.id;
+      } catch {
+        signal.throwIfAborted();
+        throw new Error("Feedback delivery failed");
+      }
+      if (receiptId !== id) throw new Error("Invalid feedback receipt");
       return { id };
     } finally {
       clearTimeout(timer);
