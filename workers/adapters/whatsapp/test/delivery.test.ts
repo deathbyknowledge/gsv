@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
+import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeerEnv } from "../src/managed-peer";
 import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
 
@@ -112,4 +113,65 @@ it("retries an unsent suffix after a local failure before the next provider call
   using retried = await peer.sendMessage(route.installationId, message);
   expect(retried).toMatchObject({ ok: true });
   expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([first, second]);
+});
+
+it.each([false, true])("does not dispatch after the route changes during preparation (template: %s)", async (closed) => {
+  const actorId = closed ? "34690208888" : "34690209999";
+  const { peer, route, message } = await seed(actorId, closed);
+  await runInDurableObject(peer, async (instance, state) => {
+    const relink = async () => {
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "new-generation" } });
+    };
+    const release = instance["releaseHeld"];
+    const claim = instance["claimPendingTemplate"];
+    if (closed) {
+      instance["claimPendingTemplate"] = async (observed) => {
+        const result = await claim.call(instance, observed);
+        await relink();
+        return result;
+      };
+    } else {
+      instance["releaseHeld"] = async (owner) => { await release.call(instance, owner); await relink(); };
+    }
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({
+        ok: false, error: "WhatsApp route changed before delivery",
+      });
+    } finally {
+      instance["releaseHeld"] = release;
+      instance["claimPendingTemplate"] = claim;
+    }
+  });
+  expect(await messages(actorId)).toEqual([]);
+});
+
+it("rechecks the route between uploading media and sending it", async () => {
+  const actorId = "34690210000";
+  const { peer, route, message } = await seed(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const factory = instance["whatsAppFetch"];
+    instance["whatsAppFetch"] = (...args) => {
+      const fetcher = factory.apply(instance, args);
+      return async (input, init) => {
+        const response = await fetcher(input, init);
+        if (String(input).endsWith("/media")) {
+          const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+          await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "new-generation" } });
+        }
+        return response;
+      };
+    };
+    try {
+      expect(await instance.sendMessage(route.installationId, {
+        ...message,
+        media: [{ type: "image", mimeType: "image/png", filename: "test.png", size: 4, body: { offset: 0, length: 4 } }],
+      }, binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4])))).toMatchObject({
+        ok: false, error: "WhatsApp route changed before delivery",
+      });
+    } finally {
+      instance["whatsAppFetch"] = factory;
+    }
+  });
+  expect(await messages(actorId)).toEqual([]);
 });

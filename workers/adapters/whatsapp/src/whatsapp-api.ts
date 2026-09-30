@@ -246,7 +246,8 @@ export async function callWhatsAppGraph<T>(
   let response: Response;
   try {
     response = await fetcher(url, { method: init.method, headers, body });
-  } catch {
+  } catch (error) {
+    if (error instanceof ManagedWhatsAppDeliveryError) throw error;
     throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API transport failed", unknownOutcome);
   }
 

@@ -747,7 +747,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       this.assertPeerDestination(current, message.surface, message.actorId);
       this.assertDeliveryContext(current, context);
       const token = this.botToken();
-      const fetcher = this.telegramFetch(owner);
+      const fetcher = this.telegramFetch(owner, context);
       const replyToMessageId = parseTelegramMessageId(message.replyToId);
       const chatId = current.surfaceId;
       const parts: DeliveryPart[] = [];
@@ -883,9 +883,23 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return value;
   }
 
-  private telegramFetch(owner: AdapterDataScope = null): ManagedTelegramFetch {
-    return (input, init) => {
-      this.retirement.requireLive(owner);
+  private telegramFetch(
+    owner: AdapterDataScope = null,
+    context: ResponseContext = owner ? { kind: "installation", ...owner } : { kind: "platform" },
+  ): ManagedTelegramFetch {
+    return async (input, init) => {
+      let state: ManagedTelegramPeerState;
+      try {
+        state = await this.requireState();
+      } catch {
+        throw new ManagedTelegramDeliveryError("Telegram delivery route is unavailable", "retryable");
+      }
+      try {
+        this.retirement.requireLive(owner);
+        this.assertDeliveryContext(state, context);
+      } catch {
+        throw new ManagedTelegramDeliveryError("Telegram route changed before delivery", "permanent");
+      }
       const signal = owner ? this.retirement.signal(owner) : undefined;
       const request = { ...init, signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal };
       return this.env.TELEGRAM_API ? this.env.TELEGRAM_API.fetch(input, request) : fetch(input, request);

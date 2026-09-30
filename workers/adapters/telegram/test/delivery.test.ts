@@ -1,6 +1,7 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
 import type { ManagedTelegramPeerEnv } from "../src/managed-peer";
+import type { ManagedTelegramPeerState } from "../src/managed-peer-state";
 
 // SAFETY: the managed test configuration binds these Workers and namespaces.
 const bindings = env as ManagedTelegramPeerEnv & { TELEGRAM_API: Fetcher };
@@ -88,4 +89,26 @@ it("does not replay when response handling throws after a provider request", asy
   using repeated = await peer.sendMessage(route.installationId, message);
   expect(repeated).toMatchObject({ ok: false, ambiguous: true });
   expect(await sentTexts(actorId)).toEqual([message.text]);
+});
+
+it("does not send the next part when the route changes during the pacing pause", async () => {
+  const actorId = "72345";
+  const { peer, route, message } = await seed(actorId);
+  const first = "a".repeat(400);
+  message.text = `${first}\n\n${"b".repeat(400)}`;
+  await runInDurableObject(peer, async (instance, state) => {
+    const pause = instance["pauseBetweenParts"];
+    instance["pauseBetweenParts"] = async () => {
+      const current = (await state.storage.get<ManagedTelegramPeerState>("managed_telegram_peer:v1:state"))!;
+      await state.storage.put("managed_telegram_peer:v1:state", { ...current, activeRoute: { ...route, generation: "new-generation" } });
+    };
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({
+        ok: false, error: "Telegram delivery failed (permanent)",
+      });
+    } finally {
+      instance["pauseBetweenParts"] = pause;
+    }
+  });
+  expect(await sentTexts(actorId)).toEqual([first]);
 });

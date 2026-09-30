@@ -869,7 +869,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       if (fallbackOwner) await this.releaseHeld(fallbackOwner);
       const token = this.accessToken();
       const phoneNumberId = this.phoneNumberId();
-      const fetcher = this.whatsAppFetch(owner);
+      const fetcher = this.whatsAppFetch(owner, context);
       const to = current.surfaceId;
       const replyToId = whatsAppMessageId(message.replyToId);
       // Only the first provider message quotes the inbound message.
@@ -1252,9 +1252,25 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     return value;
   }
 
-  private whatsAppFetch(owner: AdapterDataScope = null): ManagedWhatsAppFetch {
-    return (input, init) => {
-      this.retirement.requireLive(owner);
+  private whatsAppFetch(
+    owner: AdapterDataScope = null,
+    context: ResponseContext = owner ? { kind: "installation", ...owner } : { kind: "platform" },
+  ): ManagedWhatsAppFetch {
+    return async (input, init) => {
+      let state: ManagedWhatsAppPeerState;
+      try {
+        state = await this.requireState();
+      } catch {
+        throw new ManagedWhatsAppDeliveryError("WhatsApp delivery route is unavailable", "retryable");
+      }
+      let issue: string | null;
+      try {
+        this.retirement.requireLive(owner);
+        issue = this.deliveryContextIssue(state, context);
+      } catch {
+        issue = "WhatsApp route changed before delivery";
+      }
+      if (issue) throw new ManagedWhatsAppDeliveryError(issue, "permanent");
       const signal = owner ? this.retirement.signal(owner) : undefined;
       const request = { ...init, signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal };
       return this.env.WHATSAPP_API ? this.env.WHATSAPP_API.fetch(input, request) : fetch(input, request);

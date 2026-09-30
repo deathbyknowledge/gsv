@@ -140,7 +140,8 @@ export async function callManagedTelegramApi<T>(
       headers: formData ? undefined : { "Content-Type": "application/json; charset=utf-8" },
       body: formData ? payload : JSON.stringify(payload),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ManagedTelegramDeliveryError) throw error;
     throw new ManagedTelegramDeliveryError(
       `Telegram API ${method} transport failed`,
       "ambiguous",
