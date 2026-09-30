@@ -688,7 +688,7 @@ export async function handleContactSend(
     };
   }
   ctx.requestSignal?.throwIfAborted();
-  const admitted = ctx.federation.transaction(() => {
+  const admitted = await ctx.coordinateFederationContact(contact.id, () => ctx.federation.transaction(() => {
     ctx.requestSignal?.throwIfAborted();
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     const concurrent = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
@@ -723,7 +723,7 @@ export async function handleContactSend(
       wireVersion: v2Messages ? 2 : 1,
       now,
     }).record;
-  });
+  }));
   await ctx.scheduleFederationDelivery(admitted.deliveryId, now, true);
   const record = admitted.state === "preparing"
     ? await advanceFederationMessagePreparationOrRecordFailure(admitted, ctx)

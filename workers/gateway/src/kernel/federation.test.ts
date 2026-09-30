@@ -754,6 +754,7 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
       isPersonalAgentUid: () => false,
     },
     procs: {},
+    coordinateFederationContact: async <T>(_id: string, operation: () => T | Promise<T>) => operation(),
     broadcastToUserUid: vi.fn(),
     approaches: focusedFixture({ pendingConnection: () => false }),
     ...overrides,

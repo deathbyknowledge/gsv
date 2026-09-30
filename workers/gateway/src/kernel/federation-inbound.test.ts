@@ -34,6 +34,7 @@ import type { ResponsibilityStore } from "./responsibility-store";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { syncFederationRequestResponsibility } from "./federation/requests";
 import { handleContactPreferencesUpdate } from "./federation/preferences";
+import { handleContactSend } from "./federation";
 import type { KernelContext } from "./context";
 
 const OWNER: ProcessIdentity = {
@@ -988,6 +989,62 @@ describe("federation inbound boundary", () => {
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({ details: { contactReply: { messageId: messages[1]?.id } } });
     });
+    expect(messages).toHaveLength(2);
+  });
+
+  it("binds a task reply only after an earlier inbound message finishes", async () => {
+    const enteredAppend = Promise.withResolvers<void>();
+    const releaseAppend = Promise.withResolvers<void>();
+    getConversationById.mockImplementation((_installationId, conversationId) => fakeConversation(conversationId, messages, async () => {
+      enteredAppend.resolve();
+      await releaseAppend.promise;
+    }));
+    vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake").mockResolvedValue();
+    const earlier = await signedEnvelope({
+      kind: "message", messageId: "message:earlier", threadId: contact.threadId, text: "Arriving before the question",
+    }, "delivery:earlier");
+    const workId = await runInDurableObject(kernel, async (instance: Kernel) => {
+      instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
+      instance.federation.setProtocol(contact.id, contact.generation, { version: 1, features: [], checkedAtMs: Date.now() });
+      const actor = { kind: "human", uid: OWNER.uid } as const;
+      const work = instance.responsibilities.create({ ownerUid: OWNER.uid, title: "Arrange Friday's visit", assignee: { kind: "ship" },
+        source: actor, actor, state: "waiting", blocker: "Awaiting the contact", priority: "normal", observedByShip: true, now: Date.now() }).record;
+      const ctx = instance.buildKernelContext({ peer: testPeer({ account: OWNER, calls: ["contact.*", "r12y.*"] }) });
+      // SAFETY: this handler only checks that a direct human connection exists.
+      ctx.connection = {} as KernelContext["connection"];
+      ctx.scheduleFederationDelivery = vi.fn(async () => {});
+      const pending = instance.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", {
+        method: "POST", body: JSON.stringify(earlier),
+      }));
+      await enteredAppend.promise;
+      const waitingForAdmission = Promise.withResolvers<void>();
+      const coordinate = ctx.coordinateFederationContact.bind(ctx);
+      vi.spyOn(ctx, "coordinateFederationContact").mockImplementation((id, operation) => {
+        waitingForAdmission.resolve();
+        return coordinate(id, operation);
+      });
+      const sending = handleContactSend({ contactId: contact.id, text: "Does Friday work?", responsibilityId: work.id,
+        idempotencyKey: "task-question" }, ctx);
+      try { await Promise.race([waitingForAdmission.promise, sending]); }
+      finally { releaseAppend.resolve(); }
+      const response = await pending;
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+      expect(await sending).toMatchObject({ state: "queued" });
+      expect(instance.responsibilities.get(OWNER.uid, work.id)).toEqual(work);
+      return work.id;
+    });
+    const later = await deliver(await signedEnvelope({
+      kind: "message", messageId: "message:later", threadId: contact.threadId, text: "Friday works",
+    }, "delivery:later"));
+    expect(later.status).toBe(200);
+    await later.arrayBuffer();
+    const updated = await runInDurableObject(kernel, (instance: Kernel) => instance.responsibilities.get(OWNER.uid, workId));
+    expect(updated).toMatchObject({ state: "open", details: { contactReply: { messageId: messages[1]?.id } } });
+    const replay = await deliver(earlier);
+    expect(replay.status).toBe(200);
+    await replay.arrayBuffer();
+    expect(await runInDurableObject(kernel, (instance: Kernel) => instance.responsibilities.get(OWNER.uid, workId))).toEqual(updated);
     expect(messages).toHaveLength(2);
   });
 
