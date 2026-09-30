@@ -6,17 +6,17 @@ import { useSessionScreensState } from "./useSessionScreensState";
 
 afterEach(() => vi.unstubAllGlobals());
 
-type SetupHistoryState = { gsvSetupConsent: boolean } | null;
+type SetupHistoryState = { gsvSetupConsent: boolean } | { scrollPosition: number } | null;
 type HistoryEntry = { url: string; state: SetupHistoryState };
 
-async function setupScreen(path = "/") {
+async function setupScreen(path = "/", preceding: HistoryEntry[] = [{ url: "https://space.example/previous", state: null }]) {
   vi.stubGlobal("document", {});
   const events = new EventTarget();
   const entries: HistoryEntry[] = [
-    { url: "https://space.example/previous", state: null },
+    ...preceding,
     { url: `https://space.example${path}`, state: null },
   ];
-  let index = 1;
+  let index = preceding.length;
   const traverse = (offset: number) => queueMicrotask(() => {
     if (index + offset < 0 || index + offset >= entries.length) return;
     index += offset;
@@ -25,6 +25,7 @@ async function setupScreen(path = "/") {
   vi.stubGlobal("window", {
     get location() { return new URL(entries[index]!.url); },
     history: {
+      get length() { return entries.length; },
       get state() { return entries[index]!.state; },
       replaceState: (state: SetupHistoryState, _unused: string, url?: string) => {
         entries[index] = { state, url: new URL(url ?? entries[index]!.url, entries[index]!.url).href };
@@ -35,6 +36,7 @@ async function setupScreen(path = "/") {
       },
       back: () => traverse(-1),
       forward: () => traverse(1),
+      go: traverse,
     },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
@@ -62,6 +64,7 @@ async function setupScreen(path = "/") {
   await render();
   return {
     state: () => state, setup, login,
+    history: () => ({ index, entries: structuredClone(entries) }),
     async visitConsentStep() {
       await act(() => window.history.forward());
     },
@@ -168,6 +171,63 @@ describe("minimal account setup", () => {
     await act(() => window.history.forward());
     expect(window.location.pathname).toBe("/");
     expect(window.history.state).toBeNull();
+  });
+
+  it.each([
+    { path: "/", backCount: 2 },
+    { path: "/onboarding", backCount: 2 },
+    { path: "/", backCount: 3 },
+    { path: "/onboarding", backCount: 3 },
+  ])("repairs the wizard after $backCount Back presses from $path without changing preceding entries", async ({ path, backCount }) => {
+    const preceding: HistoryEntry[] = [
+      { url: "https://space.example/earlier?view=kept#position", state: { scrollPosition: 42 } },
+      { url: "https://space.example/previous", state: null },
+    ];
+    const screen = await setupScreen(path, preceding);
+    await act(() => {
+      screen.state().setup.onUsername("alice");
+      screen.state().setup.onPassword("password123");
+      screen.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await act(() => screen.state().setup.onConsent(true));
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await screen.change({ phase: "authenticating" });
+    for (let count = 0; count < backCount; count++) await act(async () => window.history.back());
+    const position = screen.history().index;
+    expect(window.location.href).toBe(preceding[position]!.url);
+
+    // The completed screen unmounts the wizard while the preceding entry is
+    // current. Capability completion must not rewrite that unrelated page.
+    await screen.unmount();
+    await vi.waitFor(() => expect(screen.history()).toEqual({ index: position, entries: [
+      ...preceding,
+      { url: "https://space.example/", state: null },
+      { url: "https://space.example/", state: null },
+    ] }));
+    for (let index = position + 1; index < preceding.length + 2; index++) {
+      await act(async () => window.history.forward());
+      expect(window.location.href).toBe(index < preceding.length ? preceding[index]!.url : "https://space.example/");
+      expect(window.history.state).toBeNull();
+    }
+  });
+
+  it("leaves a new navigation alone after it prunes the forward wizard entries", async () => {
+    const screen = await setupScreen("/onboarding");
+    await act(() => {
+      screen.state().setup.onUsername("alice");
+      screen.state().setup.onPassword("password123");
+      screen.state().setup.onPasswordConfirm("password123");
+    });
+    await act(() => screen.state().setup.onSubmit(new Event("submit")));
+    await act(async () => window.history.back());
+    await act(async () => window.history.back());
+    window.history.pushState(null, "");
+    // Keep the same URL to ensure history length, rather than URL alone,
+    // distinguishes a new navigation that removed the wizard from history.
+    const history = screen.history();
+    await screen.unmount();
+    expect(screen.history()).toEqual(history);
   });
 
   it("returns to the original credentials entry after Back, invalid edits and Forward", async () => {

@@ -26,6 +26,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
+  const setupHistoryLength = useRef(0);
   const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
@@ -48,16 +49,39 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   useEffect(() => {
     if (visibleView !== "setup") return;
     setupHasConsentEntry.current = false;
+    const setupUrl = new URL(window.location.href);
+    const completedUrl = setupUrl.pathname === "/onboarding" ? new URL("/", setupUrl).href : setupUrl.href;
+    let outsideUrl: string | null = null;
     window.history.replaceState({ gsvSetupConsent: false }, "");
     const onPopState = () => {
       const state = setupHistoryStateSchema.safeParse(window.history.state);
+      outsideUrl = state.success ? null : window.location.href;
       setSetupStep(state.success && state.data.gsvSetupConsent ? "consent" : "credentials");
     };
     window.addEventListener("popstate", onPopState);
     return () => {
       window.removeEventListener("popstate", onPopState);
       const state = setupHistoryStateSchema.safeParse(window.history.state);
-      if (!state.success) return;
+      if (!state.success) {
+        // Back can leave both wizard entries ahead of an unrelated page.
+        // Only traverse when that page was reached through history and the
+        // forward entries have not been pruned by a new navigation.
+        if (!setupHasConsentEntry.current || outsideUrl !== window.location.href
+          || window.history.length !== setupHistoryLength.current) return;
+        let traversed = 0;
+        const repairForward = () => {
+          traversed++;
+          const next = setupHistoryStateSchema.safeParse(window.history.state);
+          if (next.success) window.history.replaceState(null, "", completedUrl);
+          if ((next.success && next.data.gsvSetupConsent) || traversed >= setupHistoryLength.current - 1) {
+            window.removeEventListener("popstate", repairForward, true);
+            window.history.go(-traversed);
+          } else window.history.forward();
+        };
+        window.addEventListener("popstate", repairForward, true);
+        window.history.forward();
+        return;
+      }
       const destination = window.location.href;
       window.history.replaceState(null, "");
       if (!setupHasConsentEntry.current) return;
@@ -153,6 +177,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (setupStep === "credentials") {
       window.history.pushState({ gsvSetupConsent: true }, "");
       setupHasConsentEntry.current = true;
+      setupHistoryLength.current = window.history.length;
       setSetupStep("consent");
       return;
     }
