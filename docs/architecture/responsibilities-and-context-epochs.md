@@ -230,11 +230,10 @@ System-owned producers use the same ledger contract:
 - Provisioning a new personal intelligence creates one high-priority initial
   onboarding responsibility titled "Welcome to gsv". It waits for the user's first
   message rather than waking the Ship on its own and is present in Ship's first
-  context epoch. The prompt snapshot shows only its title and blocker; the record's
-  details carry the onboarding brief, the Markdown prompt file
+  context epoch, rendered with its details like any Ship assignment. Those details
+  carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
-  criteria, outcomes and step-by-step instructions, which the Ship reads with
-  `r12y show`. The system responsibilities
+  criteria, outcomes and step-by-step instructions. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an

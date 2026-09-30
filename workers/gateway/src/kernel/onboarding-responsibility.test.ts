@@ -49,7 +49,7 @@ describe("initial onboarding responsibility", () => {
         assignee: { kind: "ship" },
         state: "waiting",
         priority: "high",
-        blocker: "Waiting for the user's first message. Read this responsibility with `r12y show ID` and follow its instructions before replying.",
+        blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
         details: { responsibilityType: "onboarding.initial" },
       });
       const brief = first.record.details?.instructions;

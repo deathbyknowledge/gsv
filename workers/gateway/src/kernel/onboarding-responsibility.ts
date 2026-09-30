@@ -14,10 +14,10 @@ type OnboardingContract = {
 };
 
 /**
- * The current onboarding contract. The ledger snapshot in the Ship's prompt
- * shows only the title and blocker; the Ship reads the rest with `r12y show`,
- * as its responsibilities context tells it to while this record is unresolved.
- * The brief itself is the Markdown prompt file `prompts/onboarding/welcome.md`.
+ * The current onboarding contract. The Ship's prompt snapshot renders the
+ * record with its details, and the responsibilities context tells the Ship to
+ * follow them while this record is unresolved. The brief itself is the Markdown
+ * prompt file `prompts/onboarding/welcome.md`.
  */
 const WELCOME_CONTRACT: OnboardingContract = {
   title: "Welcome to gsv",
@@ -25,7 +25,7 @@ const WELCOME_CONTRACT: OnboardingContract = {
     responsibilityType: "onboarding.initial",
     instructions: welcomeBrief.trim(),
   },
-  blocker: "Waiting for the user's first message. Read this responsibility with `r12y show ID` and follow its instructions before replying.",
+  blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
 };
 
 /**
