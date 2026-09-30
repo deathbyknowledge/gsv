@@ -109,7 +109,7 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
     onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }),
   });
   return <aside class="people-note" aria-label="Contact handling changed">
-    <p>Accepting a contact no longer starts Ship. Choose “hand to Ship” in a conversation to hand it over.</p>
+    <p>Accepting a contact no longer starts Ship. Enable “Ship replies” in a conversation to let it respond to new messages.</p>
     <button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>dismiss</button>
     {dismiss.error && <p class="people-error" role="alert">{dismiss.error.message}</p>}
   </aside>;
@@ -161,12 +161,11 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <header class="people-conversation-header">
       <div><h1>{name}</h1>
         {contact.state !== "active" ? <p class="people-conversation-state">Connection ended</p>
-          : preferences && <div class="people-handling">
-            {preferences.shipHandlesMessages && <span class="people-handling-state" role="status">Ship handling</span>}
-            <button class="people-action" disabled={!controls.canEdit || controls.pending || contact.blocked} title={preferences.shipHandlesMessages ? "Stop ongoing Ship handling" : "Let Ship follow and reply to this conversation"} onClick={() => controls.update({ shipHandlesMessages: !preferences.shipHandlesMessages })}>
-              {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined ? <LoadingState>{updatePreferences.variables.shipHandlesMessages ? "handing over…" : "taking back…"}</LoadingState> : preferences.shipHandlesMessages ? "take back" : "hand to Ship"}
-            </button>
-          </div>}
+          : preferences && <label class="people-handling" title="Allow Ship to reply to new messages">
+            <input type="checkbox" role="switch" aria-label="Ship replies" checked={(updatePreferences.isPending ? updatePreferences.variables?.shipHandlesMessages : undefined) ?? preferences.shipHandlesMessages} disabled={!controls.canEdit || controls.pending || contact.blocked} onChange={(event) => controls.update({ shipHandlesMessages: event.currentTarget.checked })} />
+            <span>Ship replies</span>
+            {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined && <LoadingState>saving…</LoadingState>}
+          </label>}
         {!detailsOpen && controls.error && <p class="people-error" role="alert">{controls.error.message}</p>}
       </div>
       <div class="people-header-actions">

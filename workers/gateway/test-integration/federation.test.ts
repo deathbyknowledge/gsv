@@ -492,6 +492,32 @@ describe("cross-GSV federation integration", () => {
     expect((await first.r12y.get({ id: responsibility.id })).responsibility.revision).toBe(finished.revision);
     expect((await waitForContact(first)).preferences?.shipHandlesMessages).toBe(false);
   });
+
+  it("waits for a new incoming message after enabling Ship replies", async () => {
+    let contact = await waitForContact(first);
+    const remote = await waitForContact(second);
+    const handling = async () => (await first.r12y.list({ includeTerminal: true, limit: 500 })).responsibilities
+      .filter((work) => work.source.kind === "system" && work.source.component === "contact-conversation" && work.details?.contactId === contact.id);
+    expect(await handling()).toEqual([]);
+    ({ contact } = await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: true } }));
+    expect(contact.preferences?.shipHandlesMessages).toBe(true);
+    expect(await handling()).toEqual([]);
+
+    const incoming = { contactId: remote.id, text: "A new message after enabling replies", idempotencyKey: "integration-enabled-replies" };
+    await waitForDelivery(second, incoming);
+    await expect.poll(async () => (await handling()).length).toBe(1);
+    const [work] = await handling();
+    expect(work.details).toMatchObject({ contactReply: { contactId: contact.id, provenance: "human" } });
+    await waitForDelivery(second, incoming);
+    expect((await handling()).map((entry) => entry.id)).toEqual([work.id]);
+
+    ({ contact } = await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } }));
+    expect((await first.r12y.get({ id: work.id })).responsibility.state).toBe("cancelled");
+    ({ contact } = await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: true } }));
+    expect((await handling()).map((entry) => entry.id)).toEqual([work.id]);
+    expect((await first.r12y.get({ id: work.id })).responsibility.state).toBe("cancelled");
+    await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
+  });
 });
 
 function loopbackOrigin(value: URL): URL {

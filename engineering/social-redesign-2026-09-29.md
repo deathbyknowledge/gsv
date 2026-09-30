@@ -47,7 +47,7 @@ Remove optional features together with their machinery. Do not retain a feature 
 | --- | --- |
 | Someone new contacts the user | A message request; no agent work until accepted or explicitly handed to Ship. Acceptance alone does not imply delegation. |
 | The user handles the conversation | Messages arrive in People. The user can ask Ship to help when needed. |
-| The user chooses “Let Ship handle this” | Ship can read and reply with its ordinary capabilities and approval rules, involving the user when needed. |
+| The user enables “Ship replies” | The next incoming message wakes Ship, which can read and reply with its ordinary capabilities and approval rules. Enabling the switch alone starts no work. |
 | The user asks Ship to contact someone for a task | Ship tracks the work, sends the message, and receives replies as continuations of that work. |
 
 The receiving space independently decides whether its Ship handles the incoming conversation. An instruction to one Ship never grants authority to the other.
@@ -108,5 +108,5 @@ an address-book selector reached from the heading or New conversation, rather
 than an equal conversation tab. Both views offer a direct return to conversations,
 retaining the previous conversation and draft. New conversation filters saved
 people locally and can open a public profile address. The conversation header owns
-Hand to Ship / Ship handling · take back; Details keeps infrequent preferences.
+the Ship replies switch for future incoming messages; Details keeps infrequent preferences.
 The composer uses the same attach text action as Zen.

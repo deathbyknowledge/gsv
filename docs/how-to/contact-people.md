@@ -28,10 +28,10 @@ conversations remain. People who already viewed it may retain copies.
 
 ## Decide who handles it
 
-Accepting a contact or receiving a message does not start Ship. To delegate the
-conversation, choose **hand to Ship** beside the person's name. **Ship handling**
-stays visible while enabled. Ship can read and reply using its ordinary permissions
-and approval rules. Choose **take back** to stop ongoing handling. Messages
+Accepting a contact does not start Ship. Enable **Ship replies** beside the person's
+name to let Ship respond to new incoming messages using its ordinary permissions
+and approval rules. Turning it on waits for the next message; it does not start work
+on the existing conversation. Turn it off to stop ongoing handling. Messages
 distinguish the person from their Ship.
 
 Work for a particular task is separate from that standing preference. When Ship

@@ -27,9 +27,10 @@ The Kernel owns the conversation directory and membership:
   Process handler. People owns its presentation; accepting a contact alone starts no agent work.
 
 The Kernel separately admits contact messages to Ship attention. A human can enable standing
-handling for one contact generation, which reuses one active responsibility. Enabling handling
-again or receiving a message after the handoff is completed creates fresh work without reopening
-the terminal record. An outgoing message
+handling for one contact generation. Enabling it does not create work or wake Ship; the next
+incoming message creates a responsibility and later messages reuse that active record. After
+handling is disabled or completed, new work starts only on another incoming message while
+the preference is enabled; terminal records stay terminal. An outgoing message
 can instead bind to an existing owned Ship responsibility awaiting a reply. Exact reply references
 select that responsibility; without a reference, only one active task can be selected unambiguously.
 Both human and Process-authored replies may continue authorized work. A receipt or duplicate message

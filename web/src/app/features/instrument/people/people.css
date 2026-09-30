@@ -35,10 +35,10 @@
 .people-conversation-header, .people-composer { width: min(100%, 840px); align-self: center; padding-inline: var(--people-gutter); box-sizing: border-box; }
 .people-conversation-header h1 { margin: 0; color: var(--text-title); font: 500 26px/1.2 var(--gsv-font-prose); overflow-wrap: anywhere; }
 .people-conversation-state { margin: 8px 0 0; font-size: 10px; color: var(--text-dim); }
-.people-handling { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; margin-top: 6px; font: 11px/1.5 var(--gsv-font-mono); }
-.people-handling-state { color: var(--accent); }
-.people-handling-state::after { content: "·"; margin-left: 12px; color: var(--faint); }
-.people-handling .people-action { min-height: 30px; }
+.people-handling { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 30px; margin-top: 6px; color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); cursor: pointer; }
+.people-handling input { flex-shrink: 0; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.people-handling input:checked + span { color: var(--accent); }
+.people-handling:has(input:disabled) { opacity: .45; cursor: default; }
 .people-header-actions { display: flex; gap: 24px; flex-shrink: 0; }
 .people-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .people-history { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 18px var(--people-gutter) 8px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }

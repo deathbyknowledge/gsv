@@ -18,10 +18,13 @@ export async function handleContactPreferencesUpdate(args: ContactPreferencesUpd
     const previous = ctx.federation.get(args.contactId);
     const current = ctx.federation.updatePreferences(ownerUid, { ...args, patch });
     handlingChanged = previous?.preferences.shipHandlesMessages !== current.preferences.shipHandlesMessages;
-    if (handlingChanged) changeContactHandling(current, ctx);
+    if (handlingChanged && current.preferences.shipHandlesMessages && (current.state !== "active" || current.blocked)) {
+      throw new Error("Only an active contact can enable Ship replies");
+    }
+    if (handlingChanged && !current.preferences.shipHandlesMessages) changeContactHandling(current, ctx);
     return current;
   });
-  if (handlingChanged) await ctx.reconcileResponsibilityWake(ownerUid);
+  if (handlingChanged && !contact.preferences.shipHandlesMessages) await ctx.reconcileResponsibilityWake(ownerUid);
   if (contact.preferences.revision !== args.expectedRevision) ctx.broadcastToUserUid(ownerUid, "contact.changed");
   return { contact: contactSummary(contact) };
 }

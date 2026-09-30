@@ -917,6 +917,10 @@ retrying an outdated status; a retry epoch fences outcomes from earlier attempts
 The original seven-day delivery window, backlog limits and rate limits still
 apply. Permanent refusal, revocation and expired delivery cannot be bypassed.
 
+Setting `patch.shipHandlesMessages` to `true` through `contact.preferences.update` allows Ship to handle new incoming
+messages. The preference change itself creates no responsibility, wakes no Process and does
+not replay existing history. Disabling it cancels ongoing standing handling.
+
 `contact.send.responsibilityId` binds replies to an existing, nonterminal Ship responsibility
 owned by the caller. Only the signed-in human or canonical Ship can bind that work. It does not
 enable standing `shipHandlesMessages`. An exact `replyTo` selects its existing association;

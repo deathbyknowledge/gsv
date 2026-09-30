@@ -24,11 +24,42 @@ describe("contact attention admission", () => {
     });
   });
 
-  it("reuses one handoff across messages, suppresses duplicates, and lets the person take it back", async () => {
+  it("enables future replies without waking Ship or replaying previous messages", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      const earlier = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, earlier.inbox, earlier.message, ctx)).toBe(false);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      expect(ctx.federation.get(contact.id)?.preferences.shipHandlesMessages).toBe(true);
+      expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "contact.changed");
+      expect(admitContactMessage(contact, earlier.inbox, earlier.message, ctx)).toBe(false);
+      expect(ctx.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
+    });
+  });
+
+  it.each(["revoked", "blocked"] as const)("cannot enable replies for a %s contact", async (state) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      if (state === "revoked") ctx.federation.revoke(contact.id, OWNER.uid);
+      else ctx.federation.setActorBlock(OWNER.uid, { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, true);
+      const revision = ctx.federation.get(contact.id)!.preferences.revision;
+      await expect(handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: revision, patch: { shipHandlesMessages: true } }, ctx))
+        .rejects.toThrow("Only an active contact");
+      expect(ctx.federation.get(contact.id)?.preferences).toMatchObject({ revision, shipHandlesMessages: false });
+      expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+    });
+  });
+
+  it("reuses one responsibility across new messages, suppresses duplicates, and stops when replies are disabled", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = context(storage);
       const contact = activate(ctx);
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const initial = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, initial.inbox, initial.message, ctx)).toBe(true);
       const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
       expect(work.assignee).toEqual({ kind: "ship" });
       for (const kind of ["human", "process"] as const) {
@@ -69,20 +100,26 @@ describe("contact attention admission", () => {
     });
   });
 
-  it("creates a fresh handoff when handling is enabled again", async () => {
+  it("waits for a new message to create work after replies are re-enabled", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = context(storage);
       const contact = activate(ctx);
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const initial = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, initial.inbox, initial.message, ctx)).toBe(true);
       const first = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { shipHandlesMessages: false } }, ctx);
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 3, patch: { shipHandlesMessages: true } }, ctx);
+      expect(ctx.responsibilities.list({ ownerUid: OWNER.uid }).records).toEqual([]);
+      expect(admitContactMessage(contact, initial.inbox, initial.message, ctx)).toBe(false);
+      const incoming = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(true);
       const active = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records;
       expect(active).toHaveLength(1);
       expect(active[0]!.id).not.toBe(first.id);
       expect(ctx.responsibilities.get(OWNER.uid, first.id)?.state).toBe("cancelled");
-      const incoming = receive(contact, ctx, "human");
-      expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(true);
+      const later = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, later.inbox, later.message, ctx)).toBe(true);
       expect(ctx.responsibilities.list({ ownerUid: OWNER.uid }).records.map((work) => work.id)).toEqual([active[0]!.id]);
       expect(endContactHandling(contact, ctx)).toBe(true);
       expect(ctx.responsibilities.get(OWNER.uid, active[0]!.id)?.state).toBe("cancelled");
@@ -94,6 +131,8 @@ describe("contact attention admission", () => {
       const ctx = context(storage);
       const contact = activate(ctx);
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const initial = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, initial.inbox, initial.message, ctx)).toBe(true);
       const first = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
       ctx.responsibilities.update({ ownerUid: OWNER.uid, id: first.id, patch: { state: "resolved" }, actor: HUMAN, observedByShip: true, now: Date.now() });
       const incoming = receive(contact, ctx, "human");
