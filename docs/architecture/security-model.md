@@ -185,6 +185,24 @@ The forwarded request keeps the same syscall shape. Agents always see the same
 tools; `target` selects the capability environment. See
 [Targets and Capability Environments](./targets.md).
 
+## Federation
+
+Contact delivery authenticates the other space and its contact generation. Each
+request participant controls only its own decisions: a requester cannot accept
+or complete the performer's work. Recorded work state and remote confirmation
+are separate; only a verified delivery receipt confirms a local update.
+
+Retries retain the original message and delivery identity. A new retry epoch
+rejects late outcomes from a previous attempt series, and revocation or a new
+contact generation prevents old work from resuming. Unconfirmed terminal request
+updates remain inspectable after their delivery receipts expire.
+
+Federation HTTP uses bounded bodies, timeouts and no redirects. Production
+requires public HTTPS destinations and enables Cloudflare's
+`global_fetch_strictly_public` boundary, including for requests to the gateway's
+own zone. Local loopback traffic requires both an explicit development setting
+and a loopback installation origin; the operator deployment rejects that setting.
+
 ## Adapters and External Actors
 
 Adapters bridge external messaging systems into GSV. Inbound adapter calls

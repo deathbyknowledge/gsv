@@ -133,6 +133,7 @@
         "web/src/app/features/instrument/fleet/**"
       ],
       "docs": [
+        "docs/how-to/contact-people.md",
         "docs/how-to/connect-devices.md",
         "docs/how-to/browse-web.md",
         "docs/how-to/invite-people.md",
@@ -277,6 +278,9 @@
     {
       "id": "ledger",
       "paths": [
+        "web/src/app/features/instrument/settings/Logs.tsx",
+        "web/src/app/features/instrument/settings/LedgerLine.tsx",
+        "web/src/app/features/instrument/wire/useLedger.ts",
         "workers/gateway/src/kernel/ledger.ts",
         "workers/gateway/src/kernel/ledger-feed.ts",
         "workers/gateway/src/kernel/sys/ledger.ts"

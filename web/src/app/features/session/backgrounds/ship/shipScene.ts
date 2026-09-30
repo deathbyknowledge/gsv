@@ -13,8 +13,8 @@ export function createShipScene() {
     stillAt: 4,
     subscribe(redraw) { listeners.add(redraw); return () => { listeners.delete(redraw); }; },
     turn(dx, dy) {
-      heading = (heading + dx) % (Math.PI * 2);
-      pitch = Math.max(-1.35, Math.min(1.35, pitch + dy));
+      heading = (heading - dx) % (Math.PI * 2);
+      pitch = Math.max(-1.35, Math.min(1.35, pitch - dy));
       for (const listener of listeners) listener();
     },
     reset() { heading = 0; pitch = 0; for (const listener of listeners) listener(); },

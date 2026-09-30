@@ -2,7 +2,7 @@ import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
-import { useViewActive } from "../../../services/navigation/ViewActivity";
+import { RetainedView, useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
@@ -13,22 +13,24 @@ import { MessengerConnections } from "./MessengerConnections";
 import { Mcp } from "./Mcp";
 import { OwnerAccess } from "./OwnerAccess";
 import { People } from "./People";
+import { Logs } from "./Logs";
 import "./settings.css";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSignOut?: () => void;
+  onInspectProcess: (pid: string) => void;
 };
 
-const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "mcp", "sign-in", "people"] as const;
+const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in", "people"] as const;
 type Section = typeof SECTIONS[number];
 
-export function Settings({ onDirtyChange, onSignOut }: SettingsProps) {
+export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
   const active = useViewActive();
   const { client, connected } = useGateway();
   const { service: session } = useSession();
   const [section, setSection] = useState<Section>("preferences");
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, mcp: false, "sign-in": false, people: false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false, people: false });
   const peopleDirty = useCallback((value: boolean) => setDirty((old) => old.people === value ? old : { ...old, people: value }), []);
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
@@ -64,6 +66,7 @@ export function Settings({ onDirtyChange, onSignOut }: SettingsProps) {
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
+          <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           {account.uid === 0 && <div hidden={section !== "people"}><People account={account} active={active && section === "people"} onDirty={peopleDirty} /></div>}
           {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>Sign-in</h1><OwnerAccess /></div>}
         </div>}

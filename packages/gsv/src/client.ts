@@ -291,6 +291,8 @@ const SYSCALL_NAMES = [
   "contact.revoke",
   "contact.send",
   "contact.delivery.get",
+  "contact.delivery.list",
+  "contact.delivery.retry",
   "contact.request.list",
   "contact.request.create",
   "contact.request.update",

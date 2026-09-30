@@ -46,13 +46,17 @@ Existing standalone deployments should read the
 The web console is called **Instrument** and has four views:
 
 - **Zen** is your Ship conversation, and where you inspect what a run did. The first time your Ship needs your approval it walks you through what it does on its own and lets you decide, once per kind of action, whether it should ask; you can bring that back from **Settings → permissions**.
-- **Fleet** lists your places, processes, contacts and responsibilities, the ledger of actions and their outcomes, and recently touched files.
+- **Fleet** lists your places, processes, contacts and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
-- **Settings** holds preferences (models), permissions, instructions, messengers and MCP connections. The **people** and **sign-in** sections appear only for the root account.
+- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
 
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns
 to your place and draft.
+
+The composer starts on **your cloud** (`gsv`). Choose another place explicitly
+when you want a message or command to target it; that choice stays while you
+move between views. The header stays above the scrolling content.
 
 ## Next steps
 

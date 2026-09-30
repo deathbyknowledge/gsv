@@ -1,4 +1,5 @@
 import type {
+  ContactRequestExchange,
   ContactRequestRecord,
   ContactRequestState,
   ContactState,
@@ -95,6 +96,8 @@ export type FederationMessagePreparation = {
 };
 
 type FederationOutboxBase = {
+  retryable: boolean;
+  retryEpoch: number;
   deliveryId: string;
   ownerUid: number;
   contactId: string;
@@ -304,6 +307,8 @@ type PairingAttemptRow = {
 };
 
 type OutboxRow = {
+  retryable: number;
+  retry_epoch: number;
   delivery_id: string;
   owner_uid: number;
   contact_id: string;
@@ -349,6 +354,10 @@ type RequestRow = {
   details_json: string | null;
   state: ContactRequestState;
   revision: number;
+  exchange_state: ContactRequestExchange["state"];
+  exchange_delivery_id: string | null;
+  exchange_error: string | null;
+  exchange_source: "local" | "remote" | null;
   created_at: number;
   updated_at: number;
 };
@@ -754,13 +763,15 @@ export class FederationStore {
       if (existing.generation !== input.generation) {
         this.sql.exec(
           `UPDATE federation_requests SET
-             state = 'cancelled', revision = revision + 1, updated_at = ?
+             state = 'cancelled', revision = revision + 1, updated_at = ?,
+             exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
            WHERE contact_id = ? AND contact_generation <> ?
              AND state NOT IN ('rejected', 'completed', 'cancelled')`,
           now,
           existing.id,
           input.generation,
         );
+        this.failPendingRequestExchanges(existing.id, existing.generation, "Contact generation changed");
         this.sql.exec(
           `UPDATE federation_inbox SET
              state = 'rejected', last_error = 'Contact generation changed', updated_at = ?
@@ -970,7 +981,8 @@ export class FederationStore {
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
-         state = 'cancelled', revision = revision + 1, updated_at = ?
+         state = 'cancelled', revision = revision + 1, updated_at = ?,
+         exchange_state = 'unconfirmed', exchange_delivery_id = NULL, exchange_error = NULL, exchange_source = NULL
        WHERE contact_id = ?
          AND contact_generation = ?
          AND state NOT IN ('rejected', 'completed', 'cancelled')`,
@@ -978,6 +990,7 @@ export class FederationStore {
       contactId,
       contact.generation,
     );
+    this.failPendingRequestExchanges(contactId, contact.generation, "Contact was revoked");
     this.sql.exec(
       `DELETE FROM federation_resource_reads
        WHERE contact_id = ? AND contact_generation = ?`,
@@ -1227,12 +1240,13 @@ export class FederationStore {
     deliveryId: string,
     contactGeneration: string,
     now = Date.now(),
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = 'delivered', delivered_at = ?, next_attempt_at = NULL,
          last_error = NULL, updated_at = ?
-       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ?
+       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ? AND retry_epoch = ?
          AND EXISTS (
            SELECT 1 FROM federation_contacts
            WHERE contact_id = federation_outbox.contact_id AND generation = ?
@@ -1241,6 +1255,7 @@ export class FederationStore {
       now,
       deliveryId,
       contactGeneration,
+      retryEpoch,
       contactGeneration,
     );
     return cursor.rowsWritten > 0;
@@ -1254,13 +1269,15 @@ export class FederationStore {
     nextAttemptAtMs: number | null,
     terminal: boolean,
     now = Date.now(),
+    retryable = false,
+    retryEpoch = 0,
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = ?, attempt_count = attempt_count + 1, next_attempt_at = ?,
          resource_count = CASE WHEN ? THEN 0 ELSE resource_count END,
-         last_error = ?, updated_at = ?
-       WHERE delivery_id = ? AND state = ? AND contact_generation = ?`,
+         last_error = ?, updated_at = ?, retryable = ?
+       WHERE delivery_id = ? AND state = ? AND contact_generation = ? AND retry_epoch = ?`,
       terminal
         ? expectedState === "preparing" ? "preparation_failed" : "terminal"
         : expectedState,
@@ -1268,11 +1285,34 @@ export class FederationStore {
       terminal ? 1 : 0,
       error,
       now,
+      Number(terminal && retryable),
       deliveryId,
       expectedState,
       contactGeneration,
+      retryEpoch,
     );
     return cursor.rowsWritten > 0;
+  }
+
+  listDeliveries(ownerUid: number, contactId: string, ids: readonly string[], sequences: readonly number[] = []): FederationOutboxRecord[] {
+    if (!ids.length && !sequences.length) return [];
+    return this.sql.exec<OutboxRow>(
+      `SELECT * FROM federation_outbox WHERE owner_uid = ? AND contact_id = ?
+       AND (delivery_id IN (${ids.map(() => "?").join(",")}) OR local_sequence IN (${sequences.map(() => "?").join(",")}))`, ownerUid, contactId, ...ids, ...sequences,
+    ).toArray().map(outboxFromRow);
+  }
+
+  retryMessage(record: FederationOutboxRecord, now = Date.now()): FederationOutboxRecord {
+    const updated = this.sql.exec(
+      `UPDATE federation_outbox SET state = CASE WHEN state = 'preparation_failed' THEN 'preparing' ELSE 'pending' END,
+        attempt_count = 0, next_attempt_at = ?, last_error = NULL, updated_at = ?, retryable = 0, retry_epoch = retry_epoch + 1,
+        resource_count = CASE WHEN state = 'preparation_failed' THEN json_array_length(preparation_json, '$.resources') ELSE resource_count END
+       WHERE delivery_id = ? AND owner_uid = ? AND contact_generation = ? AND updated_at = ?
+       AND retryable = 1 AND state IN ('preparation_failed', 'terminal')`,
+      now, now, record.deliveryId, record.ownerUid, record.contactGeneration, record.updatedAtMs,
+    );
+    if (!updated.rowsWritten) throw new Error("Delivery changed; review its current state before retrying");
+    return this.outbox(record.deliveryId)!;
   }
 
   terminatePendingForRevokedContact(
@@ -1570,8 +1610,9 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_requests (
          request_id, remote_request_id, contact_id, contact_generation, direction,
-         kind, title, details_json, state, revision, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         kind, title, details_json, state, revision, created_at, updated_at,
+         exchange_state, exchange_delivery_id, exchange_error, exchange_source
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.remoteId ?? null,
       input.contactId,
@@ -1583,6 +1624,10 @@ export class FederationStore {
       input.state,
       input.createdAtMs,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
     );
     return this.request(input.id)!;
   }
@@ -1637,6 +1682,30 @@ export class FederationStore {
     return row ? requestFromRow(row) : null;
   }
 
+  private failPendingRequestExchanges(contactId: string, generation: string, reason: string): void {
+    this.sql.exec(
+      `UPDATE federation_requests SET exchange_state = 'failed', exchange_error = ?
+       WHERE contact_id = ? AND contact_generation = ? AND exchange_state = 'pending' AND exchange_source = 'local'`,
+      reason, contactId, generation,
+    );
+  }
+
+  settleRequestDelivery(record: FederationReadyOutboxRecord): ContactRequestRecord | null {
+    const state = record.state === "delivered" ? "acknowledged"
+      : record.state === "terminal" ? "failed" : "pending";
+    const row = this.sql.exec<RequestRow>(
+      `UPDATE federation_requests SET exchange_state = ?, exchange_error = ?
+       WHERE exchange_source = 'local' AND exchange_delivery_id = ? AND contact_id = ? AND contact_generation = ?
+       RETURNING *`,
+      state,
+      record.lastError ?? null,
+      record.deliveryId,
+      record.contactId,
+      record.contactGeneration,
+    ).toArray()[0];
+    return row ? requestFromRow(row) : null;
+  }
+
   listRequests(
     ownerUid: number,
     contactId?: string,
@@ -1649,7 +1718,7 @@ export class FederationStore {
       values.push(contactId);
     }
     if (!includeTerminal) {
-      conditions.push("r.state NOT IN ('rejected', 'completed', 'cancelled')");
+      conditions.push("(r.state NOT IN ('rejected', 'completed', 'cancelled') OR r.exchange_state IN ('pending', 'failed'))");
     }
     return this.sql.exec<RequestRow>(
       `SELECT r.* FROM federation_requests r
@@ -1664,6 +1733,7 @@ export class FederationStore {
     requestId: string;
     expectedRevision: number;
     state: ContactRequestState;
+    exchange?: ContactRequestExchange;
     details?: JsonObject;
     updatedAtMs: number;
   }): ContactRequestRecord {
@@ -1675,11 +1745,16 @@ export class FederationStore {
     this.sql.exec(
       `UPDATE federation_requests SET
          state = ?, details_json = COALESCE(?, details_json),
-         revision = revision + 1, updated_at = ?
+         revision = revision + 1, updated_at = ?,
+         exchange_state = ?, exchange_delivery_id = ?, exchange_error = ?, exchange_source = ?
        WHERE request_id = ? AND revision = ?`,
       input.state,
       input.details ? JSON.stringify(input.details) : null,
       input.updatedAtMs,
+      input.exchange?.state ?? "unconfirmed",
+      input.exchange?.deliveryId ?? null,
+      input.exchange?.lastError ?? null,
+      input.exchange?.source ?? null,
       input.requestId,
       input.expectedRevision,
     );
@@ -1782,6 +1857,8 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
 
 function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   const base = {
+    retryable: row.retryable === 1,
+    retryEpoch: row.retry_epoch,
     deliveryId: row.delivery_id,
     ownerUid: row.owner_uid,
     contactId: row.contact_id,
@@ -1851,6 +1928,12 @@ function requestFromRow(row: RequestRow): ContactRequestRecord {
       : undefined),
     state: row.state,
     revision: row.revision,
+    exchange: {
+      state: row.exchange_state,
+      ...(row.exchange_source ? { source: row.exchange_source } : undefined),
+      ...(row.exchange_delivery_id ? { deliveryId: row.exchange_delivery_id } : undefined),
+      ...(row.exchange_error ? { lastError: row.exchange_error } : undefined),
+    },
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
   };

@@ -280,7 +280,12 @@ remote confirmation; use `message delivery show` with its delivery id.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
-a stale client from overwriting a newer decision. Resources attached with
+a stale client from overwriting a newer decision. The requester may cancel an
+unaccepted offer; only the performer may accept, reject, start, complete or stop
+accepted work. `contact request list` includes an `EXCHANGE` column: a locally
+recorded update stays pending until the peer confirms it. Failed confirmation
+leaves the exchange unsettled, even if the recorded work state is completed.
+Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
 the receiving GSV only when opened.
 
@@ -315,7 +320,7 @@ starts an agent process, use `proc spawn --non-interactive` and do not expect it
 answer to appear in a chat:
 
 ```cron
-0 9 * * * proc spawn --non-interactive --label refresh-index "Refresh the search index."
+0 9 * * * proc spawn --non-interactive --label 'Refresh search index' "Refresh the search index."
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the

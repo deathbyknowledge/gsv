@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, SysTargetSummary } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -23,6 +23,7 @@ import { ThinkingMark } from "./ThinkingMark";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
+let targets: SysTargetSummary[];
 let hasMore: boolean;
 let ownerUid: number;
 let selfUid: number;
@@ -58,6 +59,7 @@ function status(state: GsvClientStatus["state"]): GsvClientStatus {
 beforeEach(() => {
   storage = new Map();
   messages = [];
+  targets = [];
   hasMore = false;
   ownerUid = 1000;
   selfUid = 1000;
@@ -91,7 +93,7 @@ beforeEach(() => {
     if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: ownerUid, username: "algo", label: "ship",
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
-    if (call === "sys.target.list") return { data: { targets: [] } };
+    if (call === "sys.target.list") return { data: { targets } };
     if (call === "sys.config.get") { if (configReads) await configReads; return { data: { entries: configEntries } }; }
     if (call === "sys.config.set") {
       const write = z.object({ key: z.string(), value: z.string() }).parse(args);
@@ -153,6 +155,18 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each([undefined, "laptop"])("defaults to gsv with an online machine, unless target %s was explicitly selected", async (initialTarget) => {
+    targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+      ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    send.mockReturnValue(deferred<ConversationSendResult>().promise);
+    const zen = await mountedZen(undefined, initialTarget);
+    try {
+      expect(zen.props(PromptLine).place.id).toBe(initialTarget ?? "gsv");
+      await act(() => { zen.props(PromptLine).onSubmit("Check the selected place"); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ selectedTarget: initialTarget ?? "gsv" })));
+    } finally { await zen.unmount(); }
+  });
+
   it("selects the next send's place and returns focus without discarding the draft", async () => {
     send.mockReturnValue(deferred<ConversationSendResult>().promise);
     const zen = await mountedZen(undefined, "laptop");

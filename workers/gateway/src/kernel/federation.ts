@@ -11,6 +11,10 @@ import type {
   ContactInviteListArgs,
   ContactInviteListResult,
   ContactInviteSummary,
+  ContactDeliveryListArgs,
+  ContactDeliveryListResult,
+  ContactDeliveryRetryArgs,
+  ContactDeliveryRetryResult,
   ContactDeliveryGetArgs,
   ContactDeliveryGetResult,
   ContactListArgs,
@@ -44,7 +48,6 @@ import type {
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
-  bodyToBytes,
   contactDisplayName,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
@@ -60,6 +63,7 @@ import {
 import * as z from "zod";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
 import { getConversationById } from "../shared/utils";
+import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   handleFsReadTransfer,
@@ -109,6 +113,7 @@ import {
   revokeFederationContact,
 } from "./federation/pairing";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
+import { fetchFederation, fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES, readFederationBody } from "./federation/http";
 import {
   assertDeliveryReplay,
   contactDeliveryStatus,
@@ -130,6 +135,7 @@ import {
   consumePublicRateLimits,
   pruneFederationState,
   RECEIPT_RETENTION_MS,
+  MAX_DELIVERY_AGE_MS,
 } from "./federation/limits";
 import {
   assertRequestTransition,
@@ -155,7 +161,6 @@ const RESOURCE_PATH_PREFIX = "/_gsv/federation/v1/resources/";
 const INVITE_PREFIX = "gsv-contact-v1:";
 const DEFAULT_INVITE_LIFETIME_MS = 60 * 60_000;
 const MAX_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60_000;
-const MAX_PUBLIC_JSON_BYTES = 128 * 1024;
 const MAX_CONTACT_DISPLAY_NAME_BYTES = 256;
 const MAX_OUTSTANDING_INVITES_PER_OWNER = 20;
 const MAX_INVITES_CREATED_PER_HOUR = 20;
@@ -169,7 +174,6 @@ export const MAX_FEDERATION_RECOVERABLE_INBOX = 250;
 export const FEDERATION_INBOX_RECOVERY_RETRY_MS = 30_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 const MAX_DELIVERY_ATTEMPTS = 12;
-const MAX_DELIVERY_AGE_MS = 7 * 24 * 60 * 60_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
@@ -347,6 +351,7 @@ export async function handleContactInviteAccept(
       headers: { accept: "application/json" },
       signal: ctx.requestSignal,
     },
+    ctx,
   ));
   await verifyShipDocument(remoteDocument);
   if (remoteDocument.shipId !== invite.shipId || remoteDocument.origin !== remoteOrigin) {
@@ -393,6 +398,7 @@ export async function handleContactInviteAccept(
         }),
         signal: ctx.requestSignal,
       },
+      ctx,
     ));
   } catch (error) {
     if (error instanceof FederationHttpError && isTerminalFederationError(error)) {
@@ -627,10 +633,7 @@ export async function handleContactSend(
   ctx.requestSignal?.throwIfAborted();
   ensureLocalSubject(ownerUid, ctx);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
-  const messageId = await stableOpaqueId(
-    "msg",
-    [contact.id, contact.generation, idempotencyKey],
-  );
+  const messageId = await contactSendMessageId(contact.id, contact.generation, idempotencyKey);
   const localMessage = localOutboundMessage({
     messageId,
     text,
@@ -682,6 +685,51 @@ export async function handleContactSend(
     : admitted;
   ctx.requestSignal?.throwIfAborted();
   return contactSendResult(record, contact);
+}
+
+export function handleContactDeliveryList(args: ContactDeliveryListArgs, ctx: KernelContext): ContactDeliveryListResult {
+  const ownerUid = requireContactCaller(ctx, false);
+  const contact = requireOwnedContact(args.contactId, ownerUid, ctx);
+  const { deliveryIds, messageSequences } = z.object({
+    deliveryIds: z.array(z.string().startsWith("delivery:").max(256)).max(100).default([]),
+    messageSequences: z.array(z.number().int().positive()).max(100).default([]),
+  }).parse(args);
+  if (deliveryIds.length + messageSequences.length > 100) {
+    throw new Error("Select at most 100 delivery identities or message sequences");
+  }
+  return {
+    deliveries: ctx.federation.listDeliveries(ownerUid, contact.id, deliveryIds, messageSequences)
+      .map((record) => contactDeliveryStatus(record, contact)),
+  };
+}
+
+export async function handleContactDeliveryRetry(args: ContactDeliveryRetryArgs, ctx: KernelContext): Promise<ContactDeliveryRetryResult> {
+  const ownerUid = requireContactCaller(ctx, true);
+  if (!Number.isSafeInteger(args.expectedUpdatedAtMs) || args.expectedUpdatedAtMs < 0) {
+    throw new Error("Delivery revision is invalid");
+  }
+  const now = Date.now();
+  const retried = ctx.federation.transaction(() => {
+    const record = ctx.federation.outbox(args.deliveryId);
+    if (!record || record.ownerUid !== ownerUid) throw new Error("Delivery not found");
+    const contact = requireOwnedActiveContact(record.contactId, ownerUid, ctx);
+    if (contact.generation !== record.contactGeneration || !record.retryable
+      || record.updatedAtMs !== args.expectedUpdatedAtMs || now - record.createdAtMs >= MAX_DELIVERY_AGE_MS) {
+      throw new Error("This delivery cannot be retried; review its current state");
+    }
+    if (isReadyFederationOutbox(record) && record.payload.kind !== "message") {
+      throw new Error("Only a message can use delivery retry");
+    }
+    assertOutboundCapacity(ownerUid, contact.id, ctx, now, true);
+    consumeOutboundDeliveryRate(ownerUid, contact.id, ctx, now);
+    if (!isReadyFederationOutbox(record)) assertResourceGrantCapacity(contact.id, record.preparation.resources.length, ctx);
+    return { record: ctx.federation.retryMessage(record, now), contact };
+  });
+  ctx.broadcastToUserUid(ownerUid, "contact.delivery.changed", { contactId: retried.contact.id });
+  await ctx.scheduleFederationDelivery(retried.record.deliveryId, now, false);
+  const record = retried.record.state === "preparing"
+    ? await advanceFederationMessagePreparationOrRecordFailure(retried.record, ctx) : retried.record;
+  return contactSendResult(record, retried.contact);
 }
 
 export function handleContactDeliveryGet(
@@ -757,6 +805,7 @@ export async function handleContactRequestCreate(
   }
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
   assertRequestCapacity(contact.id, ctx);
+  const deliveryId = `delivery:${crypto.randomUUID()}`;
   const request: ContactRequestRecord = {
     id: `request:${crypto.randomUUID()}`,
     contactId: contact.id,
@@ -767,10 +816,10 @@ export async function handleContactRequestCreate(
     ...(details ? { details } : undefined),
     state: "offered",
     revision: 1,
+    exchange: { state: "pending", source: "local", deliveryId },
     createdAtMs: now,
     updatedAtMs: now,
   };
-  const deliveryId = `delivery:${crypto.randomUUID()}`;
   const payload: FederationRequestDelivery = {
     kind: "request",
     request: requestWireRecord(request),
@@ -847,7 +896,7 @@ export async function handleContactRequestUpdate(
   }
   const expectedRevision = args.expectedRevision ?? current.revision;
   if (expectedRevision !== current.revision) throw new Error("Contact request revision changed");
-  assertRequestTransition(current.state, args.state);
+  assertRequestTransition(current, args.state);
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
   const wireRequestId = current.direction === "incoming"
@@ -861,6 +910,7 @@ export async function handleContactRequestUpdate(
       requestId: current.id,
       expectedRevision,
       state: args.state,
+      exchange: { state: "pending", source: "local", deliveryId },
       details,
       updatedAtMs: now,
     });
@@ -947,6 +997,7 @@ export async function processFederationDelivery(
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify(envelope),
       },
+      ctx,
     ));
     if (receipt.deliveryId !== record.deliveryId) {
       throw new Error("Remote Ship returned a receipt for another delivery");
@@ -960,11 +1011,13 @@ export async function processFederationDelivery(
       throw new Error("Remote delivery receipt signature is invalid");
     }
     const committedAtMs = Date.now();
+    let requestChanged = false;
     const committed = ctx.federation.transaction(() => {
       if (!ctx.federation.markDeliverySucceeded(
         deliveryId,
         record.contactGeneration,
         committedAtMs,
+        record.retryEpoch,
       )) {
         return false;
       }
@@ -975,9 +1028,15 @@ export async function processFederationDelivery(
       )) {
         throw new Error("Contact generation changed during delivery completion");
       }
+      requestChanged = syncRequestDeliveryOutcome(record, ctx);
       return true;
     });
     if (!committed) return;
+    ctx.broadcastToUserUid(record.ownerUid, "contact.delivery.changed", { contactId: record.contactId });
+    if (requestChanged) {
+      ctx.broadcastToUserUid(record.ownerUid, "contact.request.changed", { contactId: record.contactId });
+      await ctx.reconcileResponsibilityWake(record.ownerUid);
+    }
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     await recordFederationOutboxFailure(record, failure, ctx);
@@ -1016,7 +1075,7 @@ async function advanceFederationMessagePreparation(
   return ctx.federation.transaction(() => {
     const current = ctx.federation.outbox(record.deliveryId);
     if (!current) throw new Error("Contact message preparation disappeared");
-    if (current.state !== "preparing") return current;
+    if (current.state !== "preparing" || current.retryEpoch !== record.retryEpoch) return current;
     const contact = currentFederationDeliveryContact(current, ctx);
     if (!contact) throw new Error("Contact is no longer active");
     const resources = retained.map((resource) => createResourceGrant(
@@ -1060,6 +1119,7 @@ async function recordFederationOutboxFailure(
     !latest
     || latest.state !== record.state
     || latest.contactGeneration !== record.contactGeneration
+    || latest.retryEpoch !== record.retryEpoch
   ) {
     return;
   }
@@ -1073,24 +1133,61 @@ async function recordFederationOutboxFailure(
     || isTerminalFederationError(error);
   const retryAt = terminal ? null : Date.now() + deliveryRetryDelayMs(attempt);
   const message = error.message;
-  if (!ctx.federation.markOutboxFailed(
-    record.deliveryId,
-    record.contactGeneration,
-    record.state,
-    message,
-    retryAt,
-    terminal,
-  )) {
-    return;
+  const expectedState = record.state;
+  let requestChanged = false;
+  const recorded = ctx.federation.transaction(() => {
+    if (!ctx.federation.markOutboxFailed(
+      record.deliveryId,
+      record.contactGeneration,
+      expectedState,
+      message,
+      retryAt,
+      terminal,
+      Date.now(),
+      contactActive && (!isReadyFederationOutbox(record) || record.payload.kind === "message")
+        && Date.now() - record.createdAtMs < MAX_DELIVERY_AGE_MS && !isTerminalFederationError(error),
+      record.retryEpoch,
+    )) return false;
+    if (isReadyFederationOutbox(record)) requestChanged = syncRequestDeliveryOutcome(record, ctx);
+    return true;
+  });
+  if (!recorded) return;
+  ctx.broadcastToUserUid(record.ownerUid, "contact.delivery.changed", { contactId: record.contactId });
+  if (requestChanged) {
+    ctx.broadcastToUserUid(record.ownerUid, "contact.request.changed", { contactId: record.contactId });
+    await ctx.reconcileResponsibilityWake(record.ownerUid);
   }
   if (terminal) {
-    if (contactActive) {
+    const local = isReadyFederationOutbox(record) ? record.localMessage : record.preparation.localMessage;
+    if (contactActive && (local?.author.kind === "process" || isReadyFederationOutbox(record) && record.payload.kind !== "message")) {
       createDeliveryDebtResponsibility(record, message, ctx);
       await ctx.reconcileResponsibilityWake(record.ownerUid);
     }
     return;
   }
   await ctx.scheduleFederationDelivery(record.deliveryId, retryAt!, false);
+}
+
+function syncRequestDeliveryOutcome(
+  record: FederationReadyOutboxRecord,
+  ctx: KernelContext,
+): boolean {
+  if (record.payload.kind !== "request" && record.payload.kind !== "request.update") return false;
+  const latest = ctx.federation.outbox(record.deliveryId);
+  const contact = currentFederationDeliveryContact(record, ctx);
+  if (!latest || !isReadyFederationOutbox(latest) || !contact) return false;
+  const request = ctx.federation.settleRequestDelivery(latest);
+  if (!request) return false;
+  syncFederationRequestResponsibility({
+    request,
+    contact,
+    conversationId: contact.conversationId,
+    deliveryId: record.deliveryId,
+    remoteInput: false,
+    createAllowed: false,
+    now: Date.now(),
+  }, ctx);
+  return true;
 }
 
 export async function handleFederationHttpRequest(
@@ -1162,12 +1259,12 @@ export async function handleContactResourceSend(
     jsonValue(requestFields),
   );
   requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
-  const response = await fetch(`${contact.remoteOrigin}${path}`, {
+  const response = await fetchFederation(`${contact.remoteOrigin}${path}`, {
     method: "GET",
     headers: resourceRequestHeaders(requestFields, signature),
     redirect: "manual",
     signal: ctx.requestSignal,
-  });
+  }, ctx, 120_000);
   if (!isCurrentFederationContact(contact.id, contact.generation, ctx)) {
     await response.body?.cancel("Contact generation changed during resource read").catch(() => {});
     throw new Error("Contact generation changed during resource read");
@@ -1507,7 +1604,7 @@ async function receiveRemoteDelivery(
               : null;
             if (payload.kind !== "request.update" || !request
               || request.revision !== payload.expectedRevision
-              || !isRequestTransitionAllowed(request.state, payload.state)) {
+              || !isRequestTransitionAllowed(request, payload.state, "remote")) {
               throw new PublicFederationError(404, "Contact not found");
             }
           }
@@ -1808,6 +1905,7 @@ async function commitInboundRequest(
         ),
         ...(wire.details ? { details: boundedDetails(wire.details) } : undefined),
         state: "offered",
+        exchange: { state: "acknowledged", source: "remote", deliveryId: inbox.deliveryId },
         createdAtMs: inbox.receivedAtMs,
         updatedAtMs: inbox.receivedAtMs,
       });
@@ -1858,7 +1956,6 @@ async function commitInboundRequestUpdate(
   if (!current) throw new PublicFederationError(404, "Contact request not found");
   const details = payload.details ? boundedDetails(payload.details) : undefined;
   const receivedAtMs = inbox.receivedAtMs;
-  const conversation = await ensureContactConversation(contact, ctx);
   const updated = ctx.federation.transaction(() => {
     const latest = ctx.federation.requestForRemoteUpdate(
       contact.id,
@@ -1867,6 +1964,8 @@ async function commitInboundRequestUpdate(
     );
     if (!latest) throw new PublicFederationError(404, "Contact request not found");
     const alreadyApplied = latest.revision === payload.expectedRevision + 1
+      && latest.exchange?.source === "remote"
+      && latest.exchange.deliveryId === inbox.deliveryId
       && latest.state === payload.state
       && latest.updatedAtMs === receivedAtMs
       && (
@@ -1881,16 +1980,17 @@ async function commitInboundRequestUpdate(
       if (latest.revision !== payload.expectedRevision) {
         throw new PublicFederationError(409, "Contact request revision changed");
       }
-      if (!isRequestTransitionAllowed(latest.state, payload.state)) {
+      if (!isRequestTransitionAllowed(latest, payload.state, "remote")) {
         throw new PublicFederationError(
           409,
-          `Contact request cannot change from ${latest.state} to ${payload.state}`,
+          `This participant cannot change a contact request from ${latest.state} to ${payload.state}`,
         );
       }
       next = ctx.federation.updateRequest({
         requestId: latest.id,
         expectedRevision: payload.expectedRevision,
         state: payload.state,
+        exchange: { state: "acknowledged", source: "remote", deliveryId: inbox.deliveryId },
         ...(details ? { details } : undefined),
         updatedAtMs: receivedAtMs,
       });
@@ -1898,7 +1998,7 @@ async function commitInboundRequestUpdate(
     syncFederationRequestResponsibility({
       request: next,
       contact,
-      conversationId: conversation.id,
+      conversationId: contact.conversationId,
       deliveryId: inbox.deliveryId,
       remoteInput: true,
       createAllowed: !ctx.auth.isAccountDisabled(contact.ownerUid)
@@ -1907,6 +2007,7 @@ async function commitInboundRequestUpdate(
     }, ctx);
     return next;
   });
+  const conversation = await ensureContactConversation(contact, ctx);
   if (updated.revision !== current.revision) {
     ctx.broadcastToUserUid(contact.ownerUid, "contact.request.changed", { contactId: contact.id });
   }
@@ -2495,7 +2596,7 @@ async function readBoundedJson(request: Request): Promise<JsonValue> {
     throw new PublicFederationError(413, "Federation request body is too large");
   }
   if (!request.body) throw new PublicFederationError(400, "Federation request body is missing");
-  const bytes = await bodyToBytes(
+  const bytes = await readFederationBody(
     { stream: request.body, length: contentLength ? Number(contentLength) : undefined },
     MAX_PUBLIC_JSON_BYTES,
     request.signal,
@@ -2505,33 +2606,6 @@ async function readBoundedJson(request: Request): Promise<JsonValue> {
   } catch {
     throw new PublicFederationError(400, "Federation request body is invalid JSON");
   }
-}
-
-async function fetchJson(url: string, init: RequestInit): Promise<JsonValue> {
-  const timeoutSignal = AbortSignal.timeout(30_000);
-  const signal = init.signal
-    ? AbortSignal.any([init.signal, timeoutSignal])
-    : timeoutSignal;
-  const response = await fetch(url, {
-    ...init,
-    redirect: "manual",
-    signal,
-  });
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new FederationHttpError(response.status, `Remote Ship rejected the request (${response.status})`);
-  }
-  if (!response.body) throw new Error("Remote Ship returned an empty response");
-  const lengthHeader = response.headers.get("content-length");
-  const bytes = await bodyToBytes(
-    {
-      stream: response.body,
-      length: lengthHeader ? Number(lengthHeader) : undefined,
-    },
-    MAX_PUBLIC_JSON_BYTES,
-    signal,
-  );
-  return jsonValueSchema.parse(JSON.parse(decoder.decode(bytes)));
 }
 
 function jsonResponse(value: JsonValue, status = 200, extraHeaders?: HeadersInit): Response {

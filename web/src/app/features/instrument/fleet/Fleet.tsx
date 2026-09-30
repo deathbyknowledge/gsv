@@ -1,3 +1,4 @@
+import { useLedger } from "../wire/useLedger";
 import { FileReader } from "./FileReader";
 import { FleetDialog } from "./FleetDialog";
 import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
@@ -10,7 +11,7 @@ import { ConnectPlace } from "./ConnectPlace";
 import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
-import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
+import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -23,15 +24,12 @@ import {
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { readFilesPath } from "../../../services/files/backend/filesService";
 import type { FleetRow } from "../Instrument";
-import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_LEDGER_PAGE, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {
   CLOUD_TARGET_ID,
-  clockTime,
   formatUsd,
   costTodayByProcess,
   modelByProcess,
-  ledgerFromSysLines,
-  sysLedgerListResultSchema,
   orderPlaces,
   orderProcesses,
   placeStateLabel,
@@ -46,7 +44,6 @@ import {
   type LedgerLine,
   type Place,
   shortPid,
-  ledgerRow,
   fleetReferenceRow,
   isApprovalReference,
   isConnectReference,
@@ -67,11 +64,8 @@ export type FleetProps = {
   onZen: (prefill?: string, pid?: string) => void;
 };
 
-const LEDGER_PAGE = INSTRUMENT_LEDGER_PAGE;
-const NO_CURSOR: string | null = null;
 const PROCESS_PAGE = 8;
 type OpenFile = { target: string; path: string; name: string };
-const LEDGER_QUERY_KEY = INSTRUMENT_LEDGER_KEY;
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -85,15 +79,9 @@ function useNow(active: boolean): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "contact:", "work:", "routine:", "ledger:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "contact:", "work:", "routine:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function outcomeWord(outcome: string): string {
-  if (outcome === "completed") return "done";
-  if (outcome === "held" || outcome === "pending") return "held";
-  return outcome;
 }
 
 export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetProps) {
@@ -138,19 +126,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
-  /* the Kernel's ledger, newest first, a page at a time; a refetch walks every loaded page again so there is never a gap */
-  const sysLedgerQuery = useInfiniteQuery({
-    queryKey: [...LEDGER_QUERY_KEY, "sys"],
-    enabled: connected,
-    retry: false,
-    initialPageParam: NO_CURSOR,
-    queryFn: async ({ pageParam }) => {
-      const raw = await client.call("sys.ledger.list", pageParam ? { limit: LEDGER_PAGE, cursor: pageParam } : { limit: LEDGER_PAGE });
-      const page = sysLedgerListResultSchema.parse(raw);
-      return { lines: ledgerFromSysLines(page.lines), nextCursor: page.nextCursor };
-    },
-    getNextPageParam: (last) => last.nextCursor,
-  });
+  const sysLedgerQuery = useLedger(!!viewer && canConfigure(viewer, "sys.ledger.list"));
 
   const ledger = useMemo(() => (sysLedgerQuery.data?.pages ?? []).flatMap((page) => page.lines), [sysLedgerQuery.data]);
   const costToday = useMemo(() => costTodayByProcess(ledger, now), [ledger, now]);
@@ -194,8 +170,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const requestedKind = selected?.startsWith("proc:") ? "process" : "place";
   const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
-  /* the technical view shows raw syscalls and arguments; t toggles it */
-  const [technical, setTechnical] = useState(false);
   const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
   const shownProcesses = useMemo(() => visibleProcesses(processes, inspectorOpen ? selected : null, processLimit), [processes, inspectorOpen, selected, processLimit]);
   useEffect(() => {
@@ -231,11 +205,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const openCmd = useCallback(() => onCommand(cmdPlace?.id ?? CLOUD_TARGET_ID), [onCommand, cmdPlace?.id]);
   const shownLedger = ledger;
   const moreRow: FleetRow = "more:processes";
-  const olderRow: FleetRow = "more:ledger";
-  const loadOlder = useCallback(() => {
-    if (sysLedgerQuery.hasNextPage && !sysLedgerQuery.isFetchingNextPage) void sysLedgerQuery.fetchNextPage();
-  }, [sysLedgerQuery]);
   /* the rows are whatever is on screen, in reading order: places, processes, the ledger, folders and files */
+  // Full log rows now live in Settings; navigation follows the remaining manifest rows.
   const manifestRef = useRef<HTMLDivElement>(null);
   const focusedRow = useRef<FleetRow | null>(initialRow);
   useEffect(() => {
@@ -245,11 +216,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     // They now have grid boxes, so every row can scroll directly.
     row?.scrollIntoView({ block: "nearest" });
   }, [active, inspectorOpen, selected, places, shownProcesses]);
-  const selectedLine = useMemo(
-    () => (selected?.startsWith("ledger:") ? shownLedger.find((line) => ledgerRow(line.id) === selected) ?? null : null),
-    [selected, shownLedger],
-  );
-
   useLayoutEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
@@ -260,11 +226,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
       if (typing || expandedFile || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key === "t") {
-        event.preventDefault();
-        setTechnical((value) => !value);
-        return;
-      }
       if (inspectorOpen || (target instanceof HTMLElement && target.closest("[role=dialog], dialog"))) return;
       if (event.key === "j" || event.key === "ArrowDown" || event.key === "k" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -309,7 +270,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     setInspectorOpen(true);
   };
 
-  const ledgerState = sysLedgerQuery.isPending ? "ledger loading" : "ledger current";
   const responsibilityCount = (pid: string) =>
     work.open.filter((record) => assignedTo(record, processes.find((process) => process.pid === pid) ?? { pid, personal: false })).length;
   const selectedWork = work.records.find((record) => selected === `work:${record.id}`);
@@ -339,7 +299,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     : connecting === "place" ? "Connect a place" : connecting === "contact" ? "Add a contact"
       : creatingProcess ? "New process" : openFile ? "File" : selected?.startsWith("work:") ? "Responsibility"
         : selected?.startsWith("routine:") ? "Routine" : selected?.startsWith("contact:") ? "Contact"
-          : selected?.startsWith("ledger:") ? "Activity" : selected?.startsWith("proc:") ? "Process" : "Place";
+          : selected?.startsWith("proc:") ? "Process" : "Place";
 
   return (
     <main class="fleet" aria-label="Fleet">
@@ -487,35 +447,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
 
           <section class="fleet-block">
             <h2>
-              <i /> Ledger <span class="count">{ledgerState}</span>
-            </h2>
-            {sysLedgerQuery.error ? <p class="error">Could not read the ledger: {String(sysLedgerQuery.error)}</p> : null}
-            <div class="fleet-ledger" role="table">
-              {shownLedger.map((line) => (
-                <div class="row" role="row" key={line.id} data-row={ledgerRow(line.id)} tabIndex={0} onClick={() => selectRow(ledgerRow(line.id))}>
-                  <span class="t">{clockTime(line.timestamp)}</span>
-                  <span class="place">{placeLabel(line.place)}</span>
-                  <span class="what">{technical ? line.syscall : line.what}</span>
-                  <span class="m detail" title={line.detail}>{line.detail || "-"}</span>
-                  <span class={line.outcome === "completed" ? "ok" : line.outcome === "failed" || line.outcome === "denied" ? "no" : "m"}>
-                    {outcomeWord(line.outcome)}
-                  </span>
-                  <span class="m who">{line.processId === "you" ? "you" : processNameFor(line.processId)}</span>
-                </div>
-              ))}
-              {shownLedger.length === 0 ? <span class="m">{ledgerState === "ledger loading" ? <LoadingState>reading…</LoadingState> : "nothing has run yet"}</span> : null}
-              {sysLedgerQuery.hasNextPage ? (
-                <div class="older">
-                  <button type="button" data-row={olderRow} onClick={loadOlder} disabled={sysLedgerQuery.isFetchingNextPage}>
-                    {sysLedgerQuery.isFetchingNextPage ? <LoadingState>reading…</LoadingState> : `show ${LEDGER_PAGE} older`}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section class="fleet-block">
-            <h2>
               <i /> Files <span class="count">across places</span>
             </h2>
             <div class="fleet-tree">
@@ -556,8 +487,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
                   onSend={() => void contactDrafts.send(selectedContact.id)} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
-          ) : selectedLine && !openFile ? (
-            <LineInspector line={selectedLine} placeLabelFor={placeLabel} processName={selectedLine.processId === "you" ? "you" : processNameFor(selectedLine.processId)} now={now} technical={technical} onProcess={(pid) => selectRow(processRow(pid))} />
           ) : openFile ? (
             <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={closeInspector} onZen={onZen} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
@@ -830,7 +759,7 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
       </div>
       <PlaceActions place={place} uid={uid} focusPair={focusPair} />
       <p class="note">
-        Run a command opens Zen on this place. Commands run directly and appear in the ledger.
+        Run a command opens Zen on this place. Commands run directly and appear in Logs.
       </p>
     </div>
   );
@@ -854,7 +783,7 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
-    void queryClient.invalidateQueries({ queryKey: LEDGER_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: INSTRUMENT_LEDGER_KEY });
   };
   const stop = useMutation({
     mutationFn: () => runConsoleProcessAction(client, { pid: process.pid, runId: process.activeRunId ?? undefined, action: "abort" }),
@@ -912,64 +841,6 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
           ))}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-
-/** One line of the ledger, in full: everything the row truncated, and the way to the run it belongs to. */
-export function LineInspector({
-  line,
-  placeLabelFor,
-  processName,
-  now,
-  technical,
-  onProcess,
-}: {
-  line: LedgerLine;
-  placeLabelFor: (placeId: string) => string;
-  processName: string;
-  now: number;
-  technical: boolean;
-  onProcess: (pid: string) => void;
-}) {
-  const failed = line.outcome === "failed" || line.outcome === "denied";
-  return (
-    <div>
-      <h3>{line.what}</h3>
-      <div class="sub">
-        {placeLabelFor(line.place)} · {relativeTime(line.timestamp, now)}
-      </div>
-      <dl class="fleet-kv">
-        <dt>Outcome</dt>
-        <dd class={failed ? "error" : ""}>{outcomeWord(line.outcome)}</dd>
-        <dt>By</dt>
-        <dd>{processName}</dd>
-        {line.durationMs != null && <><dt>Duration</dt><dd>{line.durationMs < 1000 ? `${line.durationMs} ms` : `${(line.durationMs / 1000).toFixed(1)} s`}</dd></>}
-        {technical ? (
-          <>
-            <dt>Syscall</dt>
-            <dd>{line.syscall}</dd>
-          </>
-        ) : null}
-        {(technical || line.detail) && <>
-          <dt>{technical ? "Arguments" : "Detail"}</dt>
-          <dd><pre class="line-detail">{technical ? line.args : line.detail}</pre></dd>
-        </>}
-      </dl>
-      {line.error && <div class="fleet-line-error"><h4>Failure</h4><pre class="line-detail error">{line.error}</pre></div>}
-      <details class="fleet-work-technical"><summary>Request details</summary><dl class="fleet-work-details"><div><dt>Call</dt><dd>{line.syscall}</dd></div><div><dt>Target</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>Run</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
-      <div class="fleet-actions">
-        {line.processId !== "you" ? (
-          <button type="button" class="fleet-text-action is-primary" onClick={() => onProcess(line.processId)}>
-            inspect process
-          </button>
-        ) : null}
-        {(technical || line.detail) && <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>
-          copy
-        </button>}
-      </div>
-      <p class="note">{technical ? "Raw view. Press t for plain words." : "Press t for the raw syscall and arguments."}</p>
     </div>
   );
 }

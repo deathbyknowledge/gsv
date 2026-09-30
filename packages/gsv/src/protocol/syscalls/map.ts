@@ -286,6 +286,10 @@ import type {
   ContactInviteCreateResult,
   ContactInviteListArgs,
   ContactInviteListResult,
+  ContactDeliveryListArgs,
+  ContactDeliveryListResult,
+  ContactDeliveryRetryArgs,
+  ContactDeliveryRetryResult,
   ContactDeliveryGetArgs,
   ContactDeliveryGetResult,
   ContactListArgs,
@@ -342,6 +346,8 @@ export type SyscallDomains = {
   "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
   "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
   "contact.send": { args: ContactSendArgs; result: ContactSendResult };
+  "contact.delivery.list": { args: ContactDeliveryListArgs; result: ContactDeliveryListResult };
+  "contact.delivery.retry": { args: ContactDeliveryRetryArgs; result: ContactDeliveryRetryResult };
   "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };
   "contact.request.list": { args: ContactRequestListArgs; result: ContactRequestListResult };
   "contact.request.create": { args: ContactRequestCreateArgs; result: ContactRequestCreateResult };

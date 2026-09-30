@@ -144,7 +144,11 @@ is suppressed and its completion pushes the finished row. Successful, failed,
 denied, cancelled and stale-expired calls all use the same store transition
 notification. No recurring timer or history query drives this feed.
 
-Fleet merges by sequence, patches existing rows in place, and preserves page
+Open **Settings → Logs** to inspect the complete list and an individual
+action's arguments, outcome and failure details. Process links open Fleet's
+process inspector. Fleet retains its compact activity summaries.
+
+The shared Instrument cache merges by sequence, patches existing rows in place, and preserves page
 cursors. New rows are ordered against the last ordinary snapshot, so delayed
 owner batches seen by root cannot leave holes. Patches arriving during a page
 fetch are applied after its snapshot commits; an open snapshot cannot regress
@@ -153,7 +157,7 @@ stale hidden view still use `sys.ledger.list`. Ordinary row changes do not.
 An overflowing client buffer during a stalled fetch recovers with a snapshot;
 failed delivery closes that connection so reconnect recovers it too.
 
-Fleet labels `conversation.search` as “searched a conversation”; its query remains
+The ledger labels `conversation.search` as “searched a conversation”; its query remains
 inspectable in the owning user's ledger arguments like other syscall inputs.
 
 ## Cost
