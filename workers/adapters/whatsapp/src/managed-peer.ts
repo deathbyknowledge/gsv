@@ -848,6 +848,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     // platform responses do not, so a closed window never holds them again.
     const fallbackOwner = owner !== null && options.templateFallback !== false ? owner : null;
     let sentInAttempt = 0;
+    let attemptedProviderSend = false;
     let current = state;
     try {
       current = await this.requireState();
@@ -916,6 +917,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       let anchorMessageId = claim.progress.messageId;
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.typingBetweenParts(current, fetcher);
+        attemptedProviderSend = true;
         const messageId = await parts[index]!();
         sentInAttempt += 1;
         if (index === anchor) anchorMessageId = messageId;
@@ -937,7 +939,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         // unknown provider outcome stays ambiguous and is never replayed.
         return await fail(error.kind, error.message);
       }
-      return await fail(sentInAttempt > 0 || claim.progress.sent > 0 ? "ambiguous" : "permanent");
+      return await fail(attemptedProviderSend ? "ambiguous" : "retryable");
     }
   }
 

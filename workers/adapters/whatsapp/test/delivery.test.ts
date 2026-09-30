@@ -32,6 +32,23 @@ async function messages(actorId: string): Promise<GraphMessage[]> {
   return records.filter((record) => record.kind === "message" && record.body.to === actorId);
 }
 
+async function partiallySent(actorId: string) {
+  const fixture = await seed(actorId);
+  const { peer, route, message } = fixture;
+  const first = "a".repeat(400);
+  const second = `throttle-second-part ${"b".repeat(400)}`;
+  message.text = `${first}\n\n${second}`;
+  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "throttle-second-part" });
+  try {
+    using initial = await peer.sendMessage(route.installationId, message);
+    expect(initial).toMatchObject({ ok: false, retryable: true });
+  } finally {
+    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
+  }
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([first]);
+  return { ...fixture, first, second };
+}
+
 it.each([
   ["recordProgress", false, "34690201111", false],
   ["succeed", false, "34690202222", false],
@@ -60,18 +77,7 @@ it.each([
 
 it("does not template or hold an already partially sent delivery after the window closes", async () => {
   const actorId = "34690204444";
-  const { peer, route, message } = await seed(actorId);
-  const first = "a".repeat(400);
-  const second = `throttle-second-part ${"b".repeat(400)}`;
-  message.text = `${first}\n\n${second}`;
-  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "throttle-second-part" });
-  try {
-    using initial = await peer.sendMessage(route.installationId, message);
-    expect(initial).toMatchObject({ ok: false, retryable: true });
-  } finally {
-    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
-  }
-  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([first]);
+  const { peer, route, message } = await partiallySent(actorId);
   await runInDurableObject(peer, async (_instance, state) => {
     const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
     await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() - 25 * 60 * 60 * 1000 });
@@ -83,4 +89,27 @@ it("does not template or hold an already partially sent delivery after the windo
     expect((await state.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).size).toBe(0);
     expect((await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pendingTemplate).toBeUndefined();
   });
+});
+
+it("retries an unsent suffix after a local failure before the next provider call", async () => {
+  const actorId = "34690207777";
+  const { peer, route, message, first, second } = await partiallySent(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const read = instance["requireState"];
+    instance["requireState"] = async () => {
+      const receipt = await state.storage.get<{ state: string }>(`outbound_delivery:v1:record:${message.deliveryId}`);
+      if (receipt?.state === "attempting") throw new Error("state read temporarily unavailable");
+      return await read.call(instance);
+    };
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
+      expect(await state.storage.get(`outbound_delivery:v1:record:${message.deliveryId}`)).toMatchObject({ state: "retryable", progress: { sent: 1 } });
+    } finally {
+      instance["requireState"] = read;
+    }
+  });
+  expect(await messages(actorId)).toHaveLength(1);
+  using retried = await peer.sendMessage(route.installationId, message);
+  expect(retried).toMatchObject({ ok: true });
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([first, second]);
 });

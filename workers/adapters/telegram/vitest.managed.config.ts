@@ -78,7 +78,7 @@ export default defineConfig({
               let nextMessageId = 100;
               // The first text carrying this marker is answered with 429, the
               // way Telegram throttles a chat, so tests can watch a delivery resume.
-              let rateLimited = false;
+              const rateLimitedChats = new Set();
               export default {
                 async fetch(request) {
                   const url = new URL(request.url);
@@ -122,12 +122,16 @@ export default defineConfig({
                   }
                   if (method === "sendMessage" || method === "sendRichMessage") {
                     const text = body.text ?? body.rich_message?.markdown ?? "";
-                    if (text.includes("__rate_limit_once__") && !rateLimited) {
-                      rateLimited = true;
+                    if (text.includes("__rate_limit_once__") && !rateLimitedChats.has(String(body.chat_id))) {
+                      rateLimitedChats.add(String(body.chat_id));
                       return Response.json(
                         { ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } },
                         { status: 429 },
                       );
+                    }
+                    if (text === "__missing_send_result__") {
+                      messages.push({ method, body: { ...body, text }, result: null });
+                      return Response.json({ ok: true });
                     }
                     const result = { message_id: nextMessageId++ };
                     messages.push({ method, body: { ...body, text }, result });

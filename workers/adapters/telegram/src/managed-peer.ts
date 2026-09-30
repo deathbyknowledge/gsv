@@ -741,6 +741,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     };
 
     let sentInAttempt = 0;
+    let attemptedProviderSend = false;
     try {
       const current = await this.requireState();
       this.assertPeerDestination(current, message.surface, message.actorId);
@@ -806,6 +807,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       let anchorMessageId = claim.progress.messageId;
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.pauseBetweenParts(chatId, fetcher);
+        attemptedProviderSend = true;
         const messageId = await parts[index]!();
         sentInAttempt += 1;
         if (index === anchor) anchorMessageId = messageId;
@@ -821,7 +823,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // unknown provider outcome stays ambiguous and is never replayed.
       return await fail(error instanceof ManagedTelegramDeliveryError
         ? error.kind
-        : sentInAttempt > 0 || claim.progress.sent > 0 ? "ambiguous" : "permanent");
+        : attemptedProviderSend ? "ambiguous" : "retryable");
     }
   }
 
