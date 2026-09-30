@@ -1,6 +1,5 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
-import type { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import type { ManagedTelegramPeerEnv } from "../src/managed-peer";
 
 // SAFETY: the managed test configuration binds these Workers and namespaces.
@@ -23,7 +22,7 @@ it.each([
   await runInDurableObject(peer, async (instance, state) => {
     await state.storage.put("managed_telegram_peer:v1:state", { version: 1, actorId, surfaceId: actorId, activeRoute: route });
     // SAFETY: inject a storage failure at the instance's private ledger boundary.
-    const ledger = (instance as unknown as { deliveries: DeliveryLedger }).deliveries;
+    const ledger = instance["deliveries"];
     const failure = vi.spyOn(ledger, method).mockRejectedValueOnce(new Error("storage unavailable"));
     const markerFailure = markerFails ? vi.spyOn(ledger, "failAmbiguous").mockRejectedValueOnce(new Error("still unavailable")) : undefined;
     try {

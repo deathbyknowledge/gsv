@@ -1,6 +1,5 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
-import type { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import type { ManagedWhatsAppPeerEnv } from "../src/managed-peer";
 import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
 
@@ -43,7 +42,7 @@ it.each([
   const { peer, route, message } = await seed(actorId, closed);
   await runInDurableObject(peer, async (instance, state) => {
     // SAFETY: inject a storage failure at the instance's private ledger boundary.
-    const ledger = (instance as unknown as { deliveries: DeliveryLedger }).deliveries;
+    const ledger = instance["deliveries"];
     const failure = vi.spyOn(ledger, method).mockRejectedValueOnce(new Error("storage unavailable"));
     const markerFailure = markerFails ? vi.spyOn(ledger, "failAmbiguous").mockRejectedValueOnce(new Error("still unavailable")) : undefined;
     try {
