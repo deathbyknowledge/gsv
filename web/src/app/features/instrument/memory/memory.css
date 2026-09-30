@@ -9,7 +9,7 @@
 }
 .memory-body {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-columns: var(--instrument-rail-width, 300px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -19,7 +19,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  border-right: 1px solid var(--border);
   font-family: var(--gsv-font-mono);
   font-size: 12px;
 }

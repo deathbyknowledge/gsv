@@ -5,39 +5,61 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY } from "../wire/queryKeys";
+import { ConversationViewControls } from "./ConversationViewControls";
 
 export function RelationshipPreferences({ contact, account }: { contact: ContactSummary; account: ConsoleAccount | undefined }) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<"block" | "end" | null>(null);
   const allowed = (syscall: string) => connected && !!account && account.uid >= 1000 && account.uid === contact.ownerUid && canConfigure(account, syscall);
+  const mayEnd = connected && contact.state === "active" && !!account
+    && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.revoke");
+  const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY });
   const preferences = contact.preferences;
   const update = useMutation({
     mutationFn: (patch: ContactPreferencesUpdateArgs["patch"]) => {
       if (!preferences) throw new Error("Refresh this contact before changing its preferences");
       return client.contact.preferences.update({ contactId: contact.id, expectedRevision: preferences.revision, patch });
     },
-    onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY }),
+    onSuccess: refresh,
   });
   const block = useMutation({
     mutationFn: () => client.contact.block.set({ actor: { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, blocked: !contact.blocked }),
-    onSuccess: async () => { setConfirm(false); await cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY }); },
+    onSuccess: async () => { setConfirm(null); await refresh(); },
   });
-  const pending = update.isPending || block.isPending;
+  const revoke = useMutation({
+    mutationFn: () => client.contact.revoke({ contactId: contact.id }),
+    onSuccess: async () => { setConfirm(null); await refresh(); },
+  });
+  const pending = update.isPending || block.isPending || revoke.isPending;
   const disabled = pending || !allowed("contact.preferences.update");
-  return <section class="people-relationship" aria-label="Private relationship preferences">
-    <h4>In your space</h4>
-    {preferences && <>
-      <label class="people-setting"><input type="checkbox" checked={preferences.shipHandlesMessages} disabled={disabled || contact.state !== "active" || contact.blocked} onChange={(event) => update.mutate({ shipHandlesMessages: event.currentTarget.checked })} /><span>Let Ship handle this<small>Ship can read and reply using its usual permissions.</small></span></label>
-      <label class="people-setting"><input type="checkbox" checked={preferences.saved} disabled={disabled} onChange={(event) => update.mutate({ saved: event.currentTarget.checked })} /><span>Save in contacts<small>Removing it keeps this conversation.</small></span></label>
-      <label class="people-setting"><input type="checkbox" checked={preferences.muted} disabled={disabled} onChange={(event) => update.mutate({ muted: event.currentTarget.checked })} /><span>Mute<small>New messages won’t bring an archived conversation back.</small></span></label>
-    </>}
-    <div class="people-block-control">
-      {confirm ? <>
-        <p class="note">{contact.blocked ? "Unblock this identity? It may request a new conversation. The old connection stays ended." : "Block this identity? This ends the connection and refuses new messages and requests from it. Previously delivered messages cannot be recalled."}</p>
-        <div class="fleet-actions"><button class="fleet-text-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => block.mutate()}>{contact.blocked ? "confirm unblock" : "confirm block"}</button><button class="fleet-text-action" disabled={pending} onClick={() => setConfirm(false)}>cancel</button></div>
-      </> : <button class="fleet-text-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => setConfirm(true)}>{contact.blocked ? "unblock this person" : "block this person"}</button>}
+  const error = update.error ?? block.error ?? revoke.error;
+
+  return <section class="people-relationship" aria-label="Conversation preferences">
+    {preferences && <div class="people-settings">
+      <label class="people-setting"><span>Let Ship handle this<small>Ship can read and reply using its usual permissions.</small></span><input type="checkbox" role="switch" checked={preferences.shipHandlesMessages} disabled={disabled || contact.state !== "active" || contact.blocked} onChange={(event) => update.mutate({ shipHandlesMessages: event.currentTarget.checked })} /></label>
+      <label class="people-setting"><span>Mute conversation<small>New messages won’t bring an archived conversation back.</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => update.mutate({ muted: event.currentTarget.checked })} /></label>
+    </div>}
+    <div class="people-contact-actions">
+      {preferences && <button class="people-action" disabled={disabled} onClick={() => update.mutate({ saved: !preferences.saved })}>{preferences.saved ? "remove from contacts" : "save contact"}</button>}
+      <ConversationViewControls conversationId={contact.conversationId} account={account} />
     </div>
-    {(update.error ?? block.error) && <p class="error" role="alert">{(update.error ?? block.error)?.message}</p>}
+    <details class="people-details-fold">
+      <summary>Connection</summary>
+      <dl class="people-connection-facts"><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd><dt>Status</dt><dd>{contact.blocked ? "Blocked" : contact.state === "active" ? "Connected" : "Ended"}</dd></dl>
+      {confirm ? <div class="people-confirm">
+        <p>{confirm === "end" ? "End this connection? Messages and sharing will stop."
+          : contact.blocked ? "Allow new requests from this person? The old connection stays ended."
+            : "End this connection and block future messages and requests? Delivered messages will stay in history."}</p>
+        <div class="people-actions">
+          <button class="people-action is-danger" disabled={pending || !(confirm === "end" ? mayEnd : allowed("contact.block.set"))} onClick={() => confirm === "end" ? revoke.mutate() : block.mutate()}>{confirm === "end" ? "end connection" : contact.blocked ? "unblock" : "block"}</button>
+          <button class="people-action" disabled={pending} onClick={() => setConfirm(null)}>cancel</button>
+        </div>
+      </div> : <div class="people-actions">
+        {contact.state === "active" && <button class="people-action is-danger" disabled={pending || !mayEnd} onClick={() => setConfirm("end")}>end connection</button>}
+        <button class="people-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => setConfirm("block")}>{contact.blocked ? "unblock person" : "block person"}</button>
+      </div>}
+    </details>
+    {error && <p class="people-error" role="alert">{error.message}</p>}
   </section>;
 }

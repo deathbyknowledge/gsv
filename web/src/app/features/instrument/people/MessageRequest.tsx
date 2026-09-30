@@ -48,9 +48,8 @@ export function MessageRequest({ request, account, onOpen }: {
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}
     {request.state === "preparing" && <LoadingState>Sending…</LoadingState>}
     {canDecide && request.direction === "incoming" && <div class="people-decision">
-      <p class="people-note">Accept to exchange messages and attachments.</p>
       <div class="people-actions"><button class="ibtn is-primary" disabled={!allowed("approach.decide") || pending || request.state !== "pending"} onClick={() => decide.mutate("accept")}>{decide.isPending && decide.variables === "accept" ? "accepting…" : "accept conversation"}</button><button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("decline")}>decline</button></div>
-      <p class="people-note">Declining does not notify the sender.</p>
+      <p class="people-note">Declining is private.</p>
     </div>}
     {canDecide && request.direction === "outgoing" && <div class="people-decision">
       <p class="people-note">Waiting for them to accept. Requests expire after 30 days.</p>
@@ -59,8 +58,7 @@ export function MessageRequest({ request, account, onOpen }: {
     {requestMayRetry(request) && <div class="people-decision"><button class="ibtn" disabled={!allowed("approach.retry") || pending} onClick={() => retry.mutate()}>{retry.isPending ? "retrying…" : "retry"}</button></div>}
     {request.contactId && request.state === "accepted" && <button class="ibtn is-primary" onClick={() => onOpen(request.contactId!)}>open conversation</button>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
-    <details class="people-identity"><summary>Identity and controls</summary>
-      <p class="people-note">This request is authenticated to one GSV identity. A display name alone does not identify a person you know.</p>
+    <details class="people-identity"><summary>Connection</summary>
       <dl><dt>Ship identity</dt><dd>{request.peer.shipId}</dd><dt>Person identity</dt><dd>{request.peer.subjectId}</dd></dl>
       {blockConfirm ? <div class="people-decision"><p>{blocked ? "Allow new requests from this person? The old connection stays ended." : "Block this person? This ends the connection and prevents new messages and requests."}</p><div class="people-actions"><button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => block.mutate()}>{blocked ? "unblock" : "block"}</button><button class="people-action" disabled={pending} onClick={() => setBlockConfirm(false)}>cancel</button></div></div>
         : <button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => setBlockConfirm(true)}>{blocked ? "unblock this person" : "block this person"}</button>}

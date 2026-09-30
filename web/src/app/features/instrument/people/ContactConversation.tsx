@@ -2,8 +2,9 @@ import { MAX_FEDERATION_MESSAGE_RESOURCES, type ContactSummary, type OriginMessa
 import { useInfiniteQuery } from "../../../services/navigation/viewQueries";
 import { useQueries } from "@tanstack/preact-query";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { IconButton } from "../../../components/ui/IconButton";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -14,7 +15,6 @@ import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
 import { useConversationReadPosition } from "./useConversationReadPosition";
 import { MessageDelivery } from "./MessageDelivery";
-import { ConversationSearch } from "../shared/ConversationSearch";
 
 const NO_SEQUENCE: number | null = null;
 
@@ -33,19 +33,6 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const active = useViewActive();
   const { client, connected } = useGateway();
   const mayRead = !!account && canConfigure(account, "conversation.history");
-  const maySearch = mayRead && canConfigure(account!, "conversation.search");
-  const [searchOpen, setSearchOpen] = useState(false);
-  useEffect(() => {
-    if (!active || !maySearch) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.altKey) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault(); setSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [active, maySearch]);
   const maySend = !!account && canConfigure(account, "contact.send")
     && (account.uid === 0 || account.uid === contact.ownerUid) && contact.state === "active";
   const disabled = !connected || !maySend;
@@ -109,11 +96,9 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
     onDraft({ media: [...draft.media, ...files.map(zenAttachment)], error: null, status: null });
   };
 
-  return <section class="fleet-contact-conversation" aria-label="Contact messages">
-    {maySearch && <div class="people-message-actions"><button class="fleet-text-action" type="button" disabled={!connected} onClick={() => setSearchOpen(true)}>search</button></div>}
-    {active && searchOpen && <ConversationSearch conversationId={contact.conversationId} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone} onClose={() => setSearchOpen(false)} />}
+  return <section class="people-conversation" aria-label="Contact messages">
     {!mayRead && <p class="note">Your account cannot read this conversation.</p>}
-    {mayRead && <div class="fleet-contact-history" ref={scroll} onScroll={(event) => {
+    {mayRead && <div class="people-history" ref={scroll} onScroll={(event) => {
       const element = event.currentTarget;
       follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
     }}>
@@ -124,17 +109,17 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       {history.isPending && connected && <LoadingState variant="panel">Loading messages…</LoadingState>}
       {history.error && <p class="error" role="alert">{history.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
       {history.data && messages.length === 0 && <p class="note">No messages yet.</p>}
-      {messages.map((message) => <article key={message.id} data-message-sequence={message.sequence} class="fleet-contact-message">
+      {messages.map((message) => <article key={message.id} data-message-sequence={message.sequence} class="people-message">
         <header><span>{message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "Your Ship" : "you"}{message.author.kind === "contact" && message.social?.provenance.kind === "process" ? " · their Ship" : ""}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.social?.replyTo && <blockquote class="people-reply-quote">{messages.find((candidate) => sameReference(candidate.social?.reference, message.social!.replyTo!))?.text.slice(0, 240) || "Reply to an earlier message"}</blockquote>}
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
         <footer class="people-message-actions">
-          {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
+          {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
       </article>)}
-      {pendingMessages.map((entry) => <article key={entry.intent.idempotencyKey} class="fleet-contact-message people-pending-message">
+      {pendingMessages.map((entry) => <article key={entry.intent.idempotencyKey} class="people-message people-pending-message">
         <header><span>you</span><span role="status">{entry.state === "sending" ? <LoadingState>sending…</LoadingState> : entry.state === "queued" ? "accepted for delivery" : entry.state === "delivered" ? "delivered" : "send unconfirmed"}</span></header>
         {entry.reply && <blockquote class="people-reply-quote">{entry.reply.preview}</blockquote>}
         {entry.intent.text && <p>{entry.intent.text}</p>}
@@ -143,21 +128,21 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         {(entry.state === "failed" && entry.retryable || entry.state === "unconfirmed") && <button class="fleet-text-action" disabled={disabled || sendingFull} onClick={() => onRetry(entry.intent.idempotencyKey)}>retry same message</button>}
       </article>)}
     </div>}
-    <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); send(); }} onDragOver={(event) => { if (!disabled) event.preventDefault(); }} onDrop={(event) => {
+    <form class="people-composer" onSubmit={(event) => { event.preventDefault(); send(); }} onDragOver={(event) => { if (!disabled) event.preventDefault(); }} onDrop={(event) => {
       event.preventDefault();
       addFiles(Array.from(event.dataTransfer?.files ?? []));
     }}>
       {draft.reply && <div class="people-composer-reply"><span>Reply to {draft.reply.author}</span><blockquote class="people-reply-quote">{draft.reply.preview}</blockquote><button class="fleet-text-action" type="button" onClick={() => onDraft({ reply: null })}>cancel reply</button></div>}
-      <label>Message<textarea aria-label="Message to contact" placeholder="Write a message…" value={draft.text} disabled={disabled} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
+      <textarea aria-label="Message to contact" placeholder="Write a message…" rows={2} value={draft.text} disabled={disabled} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!event.repeat) send(); }
       }} onPaste={(event) => {
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length) { event.preventDefault(); addFiles(files); }
-      }} /></label>
+      }} />
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={disabled} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
-      <div class="fleet-actions">
-        <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
+      <div class="people-composer-actions">
+        <IconButton glyph="attach" variant="floating" size={32} title="Attach a file" disabled={disabled} onClick={() => fileInput.current?.click()} />
         {draft.status && <span class="note" role="status">{draft.status}</span>}
         <button class="fleet-text-action" type="submit" disabled={disabled || sendingFull || tooLong || (!draft.text.trim() && !draft.media.length)}>send</button>
       </div>

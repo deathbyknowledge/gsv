@@ -3,7 +3,9 @@
 **People** holds conversations with people on other GSV spaces. Open it with `p`.
 Inbox shows conversations and unread messages; Requests holds first messages from
 new people; Contacts is your private address book. Search inside a conversation
-with **search** or `Ctrl/Cmd+F`.
+with **search** or `Ctrl/Cmd+F`. Open **details** for the private name, Ship handling,
+mute and connection controls. **Save contact** adds someone to Contacts without
+changing their permissions or how Ship handles the conversation.
 
 ## Start a conversation
 
@@ -37,6 +39,11 @@ one active responsibility awaits that contact. Resolving or cancelling the work
 ends that association. The receiving person independently chooses who handles
 their side.
 
+A message’s **reply** action quotes that message in the same conversation and keeps
+its exact reference. Reply and successful delivery information appear on hover or
+keyboard focus; touch screens keep the actions visible. Delivery problems remain
+visible until resolved.
+
 ## Private controls
 
 Read position, archive, saved contacts, aliases and mute are private to your space.
@@ -50,6 +57,8 @@ conversation Details and a message request's controls offer block and unblock.
 **Blocked people** keeps these controls available even after an old request expires.
 
 ## Work requests
+
+Open **details → Work requests** in the conversation to inspect shared work.
 
 The person offering work can cancel an unaccepted offer. The person receiving it can accept or reject it, then start, complete or cancel accepted work. GSV shows only the actions available to your side.
 

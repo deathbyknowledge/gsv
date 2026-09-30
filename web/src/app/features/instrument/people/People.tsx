@@ -101,7 +101,7 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
 
   return <main class={`people${selection ? " has-selection" : ""}`} aria-label="People">
     <aside class="people-list" aria-label="People and conversations">
-      <header class="people-list-heading"><h1>People</h1><button class="people-action" disabled={!connected || !account || busy || !canConfigure(account, "approach.create")} onClick={() => setDialog("profile")}>new conversation</button></header>
+      <header class="people-list-heading"><h1>People</h1><button class="people-action" aria-label="New conversation" disabled={!connected || !account || busy || !canConfigure(account, "approach.create")} onClick={() => setDialog("profile")}>new</button></header>
       <nav class="people-tabs" aria-label="People sections">{(["inbox", "requests", "contacts"] as const).map((name) => <button key={name} aria-current={view === name ? "page" : undefined} disabled={busy} onClick={() => { setView(name); setFilter(""); }}>{name === "requests" ? "Requests" : name === "inbox" ? "Inbox" : "Contacts"}</button>)}</nav>
       {view === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
@@ -114,7 +114,8 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
       </> : <>
         {view === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">This account cannot read the inbox.</p>}
         {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">This account cannot read contacts.</p>}
-        <div class="people-list-tools"><input class="people-filter" aria-label={view === "contacts" ? "Find a contact" : "Find a conversation"} value={filter} placeholder={view === "contacts" ? "Find a contact…" : "Filter loaded conversations…"} onInput={(event) => setFilter(event.currentTarget.value)} />{view === "inbox" && <label class="people-check"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.currentTarget.checked)} />archive</label>}</div>
+        <div class="people-list-tools"><input class="people-filter" aria-label={view === "contacts" ? "Find a contact" : "Find a conversation"} value={filter} placeholder={view === "contacts" ? "Find a contact…" : "Filter conversations…"} onInput={(event) => setFilter(event.currentTarget.value)} /></div>
+        {view === "inbox" && archived && <div class="people-archive-heading"><span>Archived</span><button class="people-action" onClick={() => setArchived(false)}>back to inbox</button></div>}
         {(contactsQuery.isFetching && !contactsQuery.data || view === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">Loading conversations…</LoadingState>}
         {view === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
@@ -122,11 +123,18 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
         <ul class="people-rows">{visible.map((contact) => <li key={contact.id}><button class={`people-row${selectedContact?.id === contact.id ? " is-selected" : ""}${view === "inbox" && inboxByContact.get(contact.id)?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={selectedContact?.id === contact.id ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{view === "inbox" && inboxByContact.get(contact.id)?.unread && <span class="people-unread" aria-label="Unread" />}</span><time>{new Date(inboxByContact.get(contact.id)?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{inboxPreview(contact, view === "inbox" ? inboxByContact.get(contact.id) : undefined)}</span></button></li>)}</ul>
         {view === "inbox" && inbox.hasNextPage && <button class="people-action people-more" disabled={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>{inbox.isFetchingNextPage ? "loading…" : "earlier conversations"}</button>}
       </>}
-      <footer class="people-list-footer"><button class="people-action" disabled={busy} onClick={onProfile}>your public profile</button><button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={() => setDialog("blocked")}>blocked people</button>{!connected && <span role="status">reconnecting…</span>}</footer>
+      <footer class="people-list-footer">
+        <details class="people-list-more"><summary>more</summary><div>
+          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setView("inbox"); setArchived(!archived); }}>{archived ? "inbox" : "archived conversations"}</button>
+          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onProfile(); }}>your public profile</button>
+          <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>blocked people</button>
+        </div></details>
+        {!connected && <span role="status">reconnecting…</span>}
+      </footer>
     </aside>
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label="Selected conversation">
       {selection && <button class="people-action people-back" disabled={busy} onClick={() => setSelection(null)}>← back to {view}</button>}
-      {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} initialSection={view === "contacts" ? "details" : "messages"} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+      {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
         : requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={showConversation} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">Opening request…</LoadingState>
         : selection?.kind === "contact" ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
         : <div class="people-empty"><p>Select a conversation or start a new one.</p><button class="people-action" disabled={busy || !connected || !account || !canConfigure(account, "approach.create")} onClick={() => setDialog("profile")}>new conversation</button></div>}

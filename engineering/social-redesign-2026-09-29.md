@@ -91,3 +91,13 @@ Ship handoff uses ordinary capabilities and an ordinary responsibility. Per-task
 Integrate against current main and obtain CI for the actual head. Test the owning boundaries and a two-space flow: first contact and acceptance preserving the first message; human and Ship authorship; delegated reply continuation; no work from delivery acknowledgements or duplicate deliveries; interrupted/retried delivery; media; mute/block/reconnect; and main's search.
 
 The review of the old branch is recorded locally at `/tmp/gsv-pr-sweep-2026-09-29/social-assessment.md`. That assessment is evidence and history; this file records the approved direction.
+
+## Visual refinement, 30 September
+
+Keep reading and replying as the main People job: one conversation header, a
+readable message column and a quiet composer. Show message actions on interaction
+while keeping failures and active Ship handling visible. Details opens a focused
+dialog; saved contacts and archive are secondary actions, and connection management
+and structured work open on demand. Saving is address-book membership, independent
+of conversation access or delegation. Memory and People share a full-height shell
+divider, with content kept below the header.

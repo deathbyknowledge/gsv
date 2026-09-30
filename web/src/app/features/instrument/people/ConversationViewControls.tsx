@@ -27,7 +27,6 @@ export function ConversationViewControls({ conversationId, account }: { conversa
   if (!canRead) return null;
   return <div class="people-view-controls">
     {view.data && <button class="fleet-text-action" disabled={!connected || !canEdit || archive.isPending} onClick={() => archive.mutate()}>{archive.isPending ? "updating…" : view.data.entry.view.archived ? "return to inbox" : "archive conversation"}</button>}
-    {view.data?.entry.view.archived && <span class="note">Archived · history kept</span>}
     {(view.error ?? archive.error) && <p class="error" role="alert">{(view.error ?? archive.error)?.message}</p>}
   </div>;
 }

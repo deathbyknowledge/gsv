@@ -287,7 +287,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           </>}
         </aside>
       ) : null}
-      <div class="distance">
+      <div class="distance" data-view={distance}>
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;

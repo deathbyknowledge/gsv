@@ -9,7 +9,8 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { RelationshipPreferences } from "./RelationshipPreferences";
-import { ConversationViewControls } from "./ConversationViewControls";
+import { FleetDialog } from "../fleet/FleetDialog";
+import { ConversationSearch } from "../shared/ConversationSearch";
 import { canConfigure } from "../settings/settingsModel";
 import { SetupCommand } from "../shared/SetupCommand";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES_KEY } from "../wire/queryKeys";
@@ -114,47 +115,62 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
   </aside>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, initialSection }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined; initialSection?: "details" | "messages" }) {
-  const [section, setSection] = useState<"details" | "messages" | "requests">(initialSection ?? (draft.text || draft.media.length || draft.sent.length ? "messages" : "details"));
-  useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved }: ContactComposerProps & { contact: ContactSummary; account: ConsoleAccount | undefined }) {
+  const active = useViewActive();
   const { client, connected } = useGateway();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
-  const alias = aliasDraft ?? contact.localAlias ?? "";
-  const [confirm, setConfirm] = useState(false);
-  const allowed = (syscall: string) => connected && contact.state === "active" && !!account
-    && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, syscall);
+  const name = contactDisplayName(contact);
+  const alias = aliasDraft ?? name;
+  const nameChanged = aliasDraft !== null && alias.trim() !== name;
+  const maySearch = !!account && canConfigure(account, "conversation.history") && canConfigure(account, "conversation.search");
+  const mayRename = connected && contact.state === "active" && !!account
+    && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.alias.set");
   const save = useMutation({
     mutationFn: (value: string) => client.contact.alias.set({ contactId: contact.id, alias: value || null }),
     onSuccess: () => { setAliasDraft(null); },
   });
-  const revoke = useMutation({
-    mutationFn: () => client.contact.revoke({ contactId: contact.id }),
-    onSuccess: () => { setConfirm(false); },
-  });
-  const pending = save.isPending || revoke.isPending;
-  const error = save.error ?? revoke.error;
+  useEffect(() => {
+    if (!active || !maySearch || detailsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault(); setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, maySearch, detailsOpen]);
 
-  return <section class="fleet-connection" aria-label="Contact details">
-    <h3>{contactDisplayName(contact)}</h3>
-    <div class="sub">{contact.state !== "active" ? "Connection ended · history available" : contact.preferences?.shipHandlesMessages ? "Ship is handling this conversation" : null}</div>
-    <ConversationViewControls conversationId={contact.conversationId} account={account} />
-    <nav class="fleet-contact-tabs" aria-label="Contact sections">{(["details", "messages", "requests"] as const).map((name) => <button key={name} class="fleet-text-action" aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    {section === "messages" ? <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} />
-      : section === "requests" ? <ContactRequests contact={contact} account={account} />
-      : <>
-    <dl class="fleet-kv"><dt>Ship</dt><dd>{contact.remoteOrigin}</dd><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd></dl>
-    <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); if (allowed("contact.alias.set") && !pending) save.mutate(alias.trim()); }}>
-      <label>Name for this person<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!allowed("contact.alias.set") || pending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
-      <div class="fleet-actions"><button type="submit" class="ibtn" disabled={!allowed("contact.alias.set") || pending || alias.trim() === (contact.localAlias ?? "")}>{save.isPending ? <LoadingState>saving…</LoadingState> : "save name"}</button></div>
-    </form>
-    <RelationshipPreferences contact={contact} account={account} />
-    {contact.state === "active" && <div class="fleet-place-form">
-      {confirm ? <>
-        <p class="note">Revoke this connection? Messages and sharing with this contact will stop.</p>
-        <div class="fleet-actions"><button class="fleet-text-action is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => revoke.mutate()}>{revoke.isPending ? <LoadingState>revoking…</LoadingState> : "confirm revoke"}</button><button class="fleet-text-action" disabled={pending} onClick={() => setConfirm(false)}>keep contact</button></div>
-      </> : <div class="fleet-actions"><button class="fleet-text-action is-danger" disabled={!allowed("contact.revoke") || pending} onClick={() => setConfirm(true)}>revoke contact</button></div>}
-    </div>}
-    {error && <p class="error" role="alert">{error.message}</p>}
-    </>}
+  return <section class="people-contact" aria-label={`Conversation with ${name}`}>
+    <header class="people-conversation-header">
+      <div><h1>{name}</h1>
+        {contact.state !== "active" ? <p class="people-conversation-state">Connection ended</p>
+          : contact.preferences?.shipHandlesMessages && <p class="people-conversation-state is-handled">Ship is handling</p>}
+      </div>
+      <div class="people-header-actions">
+        {maySearch && <button class="people-action" disabled={!connected} onClick={() => setSearchOpen(true)}>search</button>}
+        <button class="people-action" onClick={() => setDetailsOpen(true)}>details</button>
+      </div>
+    </header>
+    <ContactConversation key={contact.id} contact={contact} account={account} draft={draft} onDraft={onDraft} onSend={onSend} onRetry={onRetry} onObserved={onObserved} />
+    {active && searchOpen && <ConversationSearch conversationId={contact.conversationId} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone} onClose={() => setSearchOpen(false)} />}
+    <FleetDialog open={active && detailsOpen} title={name} onClose={() => setDetailsOpen(false)}>
+      <div class="people-contact-details">
+        <p class="people-contact-origin">{new URL(contact.remoteOrigin).host}</p>
+        <form class="people-name-field" onSubmit={(event) => { event.preventDefault(); if (mayRename && nameChanged && !save.isPending) save.mutate(alias.trim()); }}>
+          <label>Name<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!mayRename || save.isPending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
+          {nameChanged && <button type="submit" class="people-action" disabled={!mayRename || save.isPending}>{save.isPending ? "saving…" : "save"}</button>}
+        </form>
+        {save.error && <p class="people-error" role="alert">{save.error.message}</p>}
+        <RelationshipPreferences contact={contact} account={account} />
+        <details class="people-details-fold" onToggle={(event) => setRequestsOpen(event.currentTarget.open)}>
+          <summary>Work requests</summary>
+          {requestsOpen && <ContactRequests contact={contact} account={account} />}
+        </details>
+      </div>
+    </FleetDialog>
   </section>;
 }
