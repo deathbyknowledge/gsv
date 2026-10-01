@@ -65,6 +65,7 @@ jobs:
           workspaces: host -> target
           key: windows-host
           cache-on-failure: true
+          cache-workspace-crates: true
       - name: Build shared frontend
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
