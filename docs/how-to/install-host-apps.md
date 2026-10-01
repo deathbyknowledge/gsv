@@ -232,6 +232,10 @@ gsv daemon doctor
 gsv daemon status
 ```
 
+From a source checkout, `python host/scripts/check-transcription.py` verifies
+streaming speech inference against a pinned public recording without opening a
+microphone. Its first run downloads the same verified model used by Desktop.
+
 Windows release artifacts are unsigned unless the release runner has a signing
 certificate configured. SmartScreen may show an unknown-publisher warning.
 The installer still checks every GSV asset against the release manifest.
